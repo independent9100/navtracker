@@ -51,6 +51,13 @@ Active radar with onboard Automatic Radar Plotting Aid producing tracks. All-wea
 - Per ARPA track: **track ID**, target **range** and **bearing** (relative to own-ship), derived **course** and **speed** (over ground or through water depending on stabilization), **CPA/TCPA**. Sometimes target length/size estimate from echo extent.
 - Or, if no ARPA: raw plots/detections (range, bearing, amplitude) — would need our own plot-to-track, currently out of scope (we assume ARPA tracks).
 
+### Wire formats (NMEA 0183)
+Most radars/ARPA emit one or both of these target sentences; the adapter should parse both and key on **target number**:
+- **TTM** — Tracked Target Message: target number, distance (range), bearing from own-ship, bearing units (T/R), speed, course, course units, CPA, TCPA, target name, status, reference-target flag, checksum. Transmitted ~every 2 s. → maps to a **range/bearing relative `Measurement`**.
+- **TLL** — Target Latitude/Longitude: target number, target **latitude/longitude** (WGS-84), target name, UTC of data, target status, reference-target flag. The radar has already combined the echo with own-ship GNSS to produce an absolute fix. → maps to a **position `Measurement`** (lat/lon → ENU).
+
+Modeling note: prefer **TTM** when you want to model own-ship pose error explicitly in `R` (range/bearing relative to own-ship). **TLL** has own-ship position error already folded into the reported lat/lon and cannot be separated out — inflate its position `R` accordingly. The two may describe the same target; associate by target number within one radar.
+
 ### Units
 Range meters/NM; bearing degrees relative (convert to true using own-ship heading); speed knots; course degrees true.
 
@@ -157,4 +164,5 @@ GNSS ~1–10 Hz; IMU/attitude 10–100+ Hz; compass ~10–50 Hz. Generally highe
 - [Class B Position Report (Msg 18) — NavCen](https://www.navcen.uscg.gov/ais-class-b-reports)
 - [IALA Guideline 1082 — Overview of AIS](https://www.navcen.uscg.gov/sites/default/files/pdf/IALA_Guideline_1082_An_Overview_of_AIS.pdf)
 - [IMO Res. A.823(19) — ARPA performance standards](https://imorules.com/IMORES_A823.19.html)
+- [NMEA 0183 sentence reference (TTM, TLL) — NMEA Revealed](https://gpsd.gitlab.io/gpsd/NMEA.html)
 - [Automatic Identification System — Wikipedia](https://en.wikipedia.org/wiki/Automatic_identification_system)
