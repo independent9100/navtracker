@@ -12,6 +12,7 @@ enable_testing()
 
 add_library(navtracker_core
   core/geo/Wgs84.cpp
+  core/geo/Datum.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
@@ -20,6 +21,7 @@ add_executable(navtracker_tests
   tests/smoke_test.cpp
   tests/types/test_timestamp.cpp
   tests/geo/test_wgs84.cpp
+  tests/geo/test_datum.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE navtracker_core GTest::gtest_main Eigen3::Eigen)
