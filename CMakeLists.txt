@@ -12,6 +12,7 @@ enable_testing()
 
 add_executable(navtracker_tests
   tests/smoke_test.cpp
+  tests/types/test_timestamp.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE GTest::gtest_main Eigen3::Eigen)
