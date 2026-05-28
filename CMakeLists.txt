@@ -20,6 +20,7 @@ target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
 add_executable(navtracker_tests
   tests/smoke_test.cpp
   tests/types/test_timestamp.cpp
+  tests/types/test_ids.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
 )
