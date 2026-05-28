@@ -22,6 +22,7 @@ add_executable(navtracker_tests
   tests/types/test_timestamp.cpp
   tests/types/test_ids.cpp
   tests/types/test_measurement.cpp
+  tests/types/test_track.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
 )
