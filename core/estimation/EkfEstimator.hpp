@@ -11,13 +11,18 @@ namespace navtracker {
 // model; nonlinear measurement updates via Jacobian linearization.
 class EkfEstimator : public IEstimator {
  public:
-  explicit EkfEstimator(std::shared_ptr<const IMotionModel> motion);
+  EkfEstimator(std::shared_ptr<const IMotionModel> motion,
+               double init_speed_std = 10.0);
 
   void predict(Track& track, Timestamp to) const override;
   void update(Track& track, const Measurement& z) const override;
 
+  // Create a new Tentative track seeded from a position-type measurement.
+  Track initiate(const Measurement& z) const;
+
  private:
   std::shared_ptr<const IMotionModel> motion_;
+  double init_speed_std_;
 };
 
 }  // namespace navtracker

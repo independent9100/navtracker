@@ -8,8 +8,9 @@
 
 namespace navtracker {
 
-EkfEstimator::EkfEstimator(std::shared_ptr<const IMotionModel> motion)
-    : motion_(std::move(motion)) {}
+EkfEstimator::EkfEstimator(std::shared_ptr<const IMotionModel> motion,
+                           double init_speed_std)
+    : motion_(std::move(motion)), init_speed_std_(init_speed_std) {}
 
 void EkfEstimator::predict(Track& track, Timestamp to) const {
   const double dt = to.secondsSince(track.last_update);
@@ -32,6 +33,33 @@ void EkfEstimator::update(Track& track, const Measurement& z) const {
   const Eigen::MatrixXd id = Eigen::MatrixXd::Identity(n, n);
   track.covariance = (id - k * h) * track.covariance;
   track.last_update = z.time;
+}
+
+Track EkfEstimator::initiate(const Measurement& z) const {
+  Track t;
+  t.last_update = z.time;
+  t.status = TrackStatus::Tentative;
+
+  Eigen::Vector4d x = Eigen::Vector4d::Zero();
+  x(0) = z.value(0);
+  x(1) = z.value(1);
+  t.state = x;
+
+  Eigen::Matrix4d p = Eigen::Matrix4d::Zero();
+  p(0, 0) = z.covariance(0, 0);
+  p(0, 1) = z.covariance(0, 1);
+  p(1, 0) = z.covariance(1, 0);
+  p(1, 1) = z.covariance(1, 1);
+  const double vv = init_speed_std_ * init_speed_std_;
+  p(2, 2) = vv;
+  p(3, 3) = vv;
+  t.covariance = p;
+
+  if (z.hints.mmsi.has_value()) {
+    t.attributes.mmsi = z.hints.mmsi;
+  }
+  t.contributing_sources.push_back(z.source_id);
+  return t;
 }
 
 }  // namespace navtracker

@@ -65,3 +65,26 @@ TEST(EkfEstimator, RangeBearingUpdateOnConsistentMeasurementIsStable) {
   EXPECT_NEAR(t.state(1), 4.0, 1e-6);
   EXPECT_LT(t.covariance(0, 0), 10.0);
 }
+
+TEST(EkfEstimator, InitiateSeedsStateFromPositionMeasurement) {
+  auto model = std::make_shared<ConstantVelocity2D>(1.0);
+  const EkfEstimator ekf(model, 8.0);
+  Measurement z;
+  z.time = Timestamp::fromSeconds(5.0);
+  z.model = MeasurementModel::Position2D;
+  z.source_id = "ais";
+  z.value = Eigen::Vector2d(100.0, -50.0);
+  z.covariance = Eigen::Matrix2d::Identity() * 9.0;
+  z.hints.mmsi = 211000000u;
+  const Track t = ekf.initiate(z);
+  EXPECT_EQ(t.status, navtracker::TrackStatus::Tentative);
+  EXPECT_DOUBLE_EQ(t.state(0), 100.0);
+  EXPECT_DOUBLE_EQ(t.state(1), -50.0);
+  EXPECT_DOUBLE_EQ(t.state(2), 0.0);
+  EXPECT_DOUBLE_EQ(t.covariance(0, 0), 9.0);
+  EXPECT_DOUBLE_EQ(t.covariance(2, 2), 64.0);  // 8^2
+  ASSERT_TRUE(t.attributes.mmsi.has_value());
+  EXPECT_EQ(*t.attributes.mmsi, 211000000u);
+  EXPECT_EQ(t.contributing_sources.size(), 1u);
+  EXPECT_DOUBLE_EQ(t.last_update.seconds(), 5.0);
+}
