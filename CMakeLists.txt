@@ -16,6 +16,7 @@ add_library(navtracker_core
   core/estimation/ConstantVelocity2D.cpp
   core/estimation/MeasurementModels.cpp
   core/estimation/EkfEstimator.cpp
+  core/association/Gating.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
@@ -29,6 +30,7 @@ add_executable(navtracker_tests
   tests/estimation/test_constant_velocity.cpp
   tests/estimation/test_measurement_models.cpp
   tests/estimation/test_ekf_estimator.cpp
+  tests/association/test_gating.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
 )
