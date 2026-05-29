@@ -1,0 +1,66 @@
+#include <cmath>
+
+#include <gtest/gtest.h>
+#include "core/estimation/MeasurementModels.hpp"
+
+using navtracker::MeasurementModel;
+using navtracker::measurementResidual;
+using navtracker::predictMeasurement;
+using navtracker::wrapAngle;
+
+namespace {
+constexpr double kPi = 3.14159265358979323846;
+}  // namespace
+
+TEST(MeasurementModels, Position2DLinear) {
+  const Eigen::Vector4d x(3.0, 4.0, 1.0, -2.0);
+  const auto p = predictMeasurement(MeasurementModel::Position2D, x);
+  EXPECT_EQ(p.z_pred.size(), 2);
+  EXPECT_DOUBLE_EQ(p.z_pred(0), 3.0);
+  EXPECT_DOUBLE_EQ(p.z_pred(1), 4.0);
+  EXPECT_EQ(p.H.rows(), 2);
+  EXPECT_EQ(p.H.cols(), 4);
+  EXPECT_DOUBLE_EQ(p.H(0, 0), 1.0);
+  EXPECT_DOUBLE_EQ(p.H(1, 1), 1.0);
+  EXPECT_DOUBLE_EQ(p.H(0, 2), 0.0);
+}
+
+TEST(MeasurementModels, RangeBearingValuesAndJacobian) {
+  const Eigen::Vector4d x(3.0, 4.0, 0.0, 0.0);
+  const auto p = predictMeasurement(MeasurementModel::RangeBearing2D, x);
+  EXPECT_NEAR(p.z_pred(0), 5.0, 1e-12);
+  EXPECT_NEAR(p.z_pred(1), std::atan2(4.0, 3.0), 1e-12);
+  EXPECT_NEAR(p.H(0, 0), 0.6, 1e-12);
+  EXPECT_NEAR(p.H(0, 1), 0.8, 1e-12);
+  EXPECT_NEAR(p.H(1, 0), -0.16, 1e-12);
+  EXPECT_NEAR(p.H(1, 1), 0.12, 1e-12);
+}
+
+TEST(MeasurementModels, JacobianMatchesFiniteDifference) {
+  const Eigen::Vector4d x(120.0, -50.0, 2.0, 1.0);
+  const auto p = predictMeasurement(MeasurementModel::RangeBearing2D, x);
+  const double eps = 1e-6;
+  for (int j = 0; j < 4; ++j) {
+    Eigen::Vector4d xp = x;
+    xp(j) += eps;
+    const auto pp = predictMeasurement(MeasurementModel::RangeBearing2D, xp);
+    const Eigen::Vector2d num = (pp.z_pred - p.z_pred) / eps;
+    EXPECT_NEAR(p.H(0, j), num(0), 1e-3);
+    EXPECT_NEAR(p.H(1, j), num(1), 1e-3);
+  }
+}
+
+TEST(MeasurementModels, BearingResidualWrapsAcrossPi) {
+  const Eigen::Vector2d z(10.0, -3.0);
+  const Eigen::Vector2d zpred(10.0, 3.0);
+  const Eigen::VectorXd y =
+      measurementResidual(MeasurementModel::RangeBearing2D, z, zpred);
+  EXPECT_NEAR(y(0), 0.0, 1e-12);
+  EXPECT_NEAR(y(1), -6.0 + 2.0 * kPi, 1e-9);
+}
+
+TEST(MeasurementModels, WrapAngleRange) {
+  EXPECT_NEAR(wrapAngle(0.0), 0.0, 1e-12);
+  EXPECT_NEAR(wrapAngle(3.0 * kPi), kPi, 1e-9);
+  EXPECT_NEAR(wrapAngle(-3.0 * kPi), kPi, 1e-9);
+}
