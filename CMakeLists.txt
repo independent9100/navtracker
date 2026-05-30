@@ -18,6 +18,7 @@ add_library(navtracker_core
   core/estimation/EkfEstimator.cpp
   core/association/Gating.cpp
   core/association/GnnAssociator.cpp
+  core/tracking/TrackManager.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
@@ -33,6 +34,7 @@ add_executable(navtracker_tests
   tests/estimation/test_ekf_estimator.cpp
   tests/association/test_gating.cpp
   tests/association/test_gnn_associator.cpp
+  tests/tracking/test_track_manager.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
 )
