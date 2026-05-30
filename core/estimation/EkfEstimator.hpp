@@ -18,7 +18,7 @@ class EkfEstimator : public IEstimator {
   void update(Track& track, const Measurement& z) const override;
 
   // Create a new Tentative track seeded from a position-type measurement.
-  Track initiate(const Measurement& z) const;
+  Track initiate(const Measurement& z) const override;
 
  private:
   std::shared_ptr<const IMotionModel> motion_;

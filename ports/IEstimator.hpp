@@ -17,6 +17,9 @@ class IEstimator {
   // Fold a measurement into the track. Assumes the track was already
   // predicted to z.time.
   virtual void update(Track& track, const Measurement& z) const = 0;
+
+  // Create a new Tentative track seeded from a position-type measurement.
+  virtual Track initiate(const Measurement& z) const = 0;
 };
 
 }  // namespace navtracker

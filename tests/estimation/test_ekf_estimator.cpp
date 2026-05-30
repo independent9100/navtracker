@@ -88,3 +88,19 @@ TEST(EkfEstimator, InitiateSeedsStateFromPositionMeasurement) {
   EXPECT_EQ(t.contributing_sources.size(), 1u);
   EXPECT_DOUBLE_EQ(t.last_update.seconds(), 5.0);
 }
+
+TEST(EkfEstimator, InitiateDispatchesViaIEstimatorBaseReference) {
+  auto model = std::make_shared<ConstantVelocity2D>(1.0);
+  const EkfEstimator ekf(model, 5.0);
+  const navtracker::IEstimator& base = ekf;
+  Measurement z;
+  z.time = Timestamp::fromSeconds(1.0);
+  z.model = MeasurementModel::Position2D;
+  z.source_id = "s";
+  z.value = Eigen::Vector2d(7.0, -3.0);
+  z.covariance = Eigen::Matrix2d::Identity();
+  const Track t = base.initiate(z);
+  EXPECT_DOUBLE_EQ(t.state(0), 7.0);
+  EXPECT_DOUBLE_EQ(t.state(1), -3.0);
+  EXPECT_EQ(t.status, navtracker::TrackStatus::Tentative);
+}
