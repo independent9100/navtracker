@@ -37,6 +37,7 @@ add_executable(navtracker_tests
   tests/association/test_gnn_associator.cpp
   tests/tracking/test_track_manager.cpp
   tests/pipeline/test_reorder_buffer.cpp
+  tests/ports/test_edge_ports.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
 )
