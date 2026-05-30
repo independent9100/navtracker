@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <Eigen/Core>
 #include "core/tracking/TrackManager.hpp"
 
 using navtracker::Track;
@@ -36,4 +37,18 @@ TEST(TrackManager, CoastsThenDeletesAfterMisses) {
   EXPECT_EQ(mgr.tracks()[0].status, TrackStatus::Coasting);
   mgr.recordMiss(id);                   // misses=2 -> Deleted (removed)
   EXPECT_EQ(mgr.size(), 0u);
+}
+
+TEST(TrackManager, TracksLastObservationAndPredictAll) {
+  TrackManager mgr(3, 3);
+  const TrackId id =
+      mgr.add(Track{}, navtracker::Timestamp::fromSeconds(10.0));
+  EXPECT_DOUBLE_EQ(mgr.lastObservation(id).seconds(), 10.0);
+
+  mgr.noteObservation(id, navtracker::Timestamp::fromSeconds(15.5));
+  EXPECT_DOUBLE_EQ(mgr.lastObservation(id).seconds(), 15.5);
+
+  // mutableTracks gives writable access (the EKF will write through it).
+  mgr.mutableTracks()[0].state = Eigen::VectorXd::Zero(4);
+  EXPECT_EQ(mgr.tracks()[0].state.size(), 4);
 }

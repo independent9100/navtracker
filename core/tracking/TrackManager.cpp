@@ -5,12 +5,13 @@ namespace navtracker {
 TrackManager::TrackManager(int confirm_hits, int delete_misses)
     : confirm_hits_(confirm_hits), delete_misses_(delete_misses) {}
 
-TrackId TrackManager::add(const Track& track) {
+TrackId TrackManager::add(const Track& track, Timestamp first_observation) {
   Track t = track;
   t.id = TrackId{next_id_++};
   t.status = TrackStatus::Tentative;
   tracks_.push_back(t);
   counters_.push_back(Counters{1, 0});
+  last_observation_.push_back(first_observation);
   return t.id;
 }
 
@@ -39,9 +40,22 @@ void TrackManager::recordMiss(TrackId id) {
   if (counters_[i].misses >= delete_misses_) {
     tracks_.erase(tracks_.begin() + i);
     counters_.erase(counters_.begin() + i);
+    last_observation_.erase(last_observation_.begin() + i);
     return;
   }
   tracks_[i].status = TrackStatus::Coasting;
+}
+
+void TrackManager::noteObservation(TrackId id, Timestamp t) {
+  const int i = index(id);
+  if (i < 0) return;
+  last_observation_[i] = t;
+}
+
+Timestamp TrackManager::lastObservation(TrackId id) const {
+  const int i = index(id);
+  if (i < 0) return Timestamp{};
+  return last_observation_[i];
 }
 
 }  // namespace navtracker
