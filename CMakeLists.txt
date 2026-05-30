@@ -20,6 +20,7 @@ add_library(navtracker_core
   core/association/GnnAssociator.cpp
   core/tracking/TrackManager.cpp
   core/pipeline/ReorderBuffer.cpp
+  core/pipeline/Tracker.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
@@ -38,6 +39,7 @@ add_executable(navtracker_tests
   tests/tracking/test_track_manager.cpp
   tests/pipeline/test_reorder_buffer.cpp
   tests/ports/test_edge_ports.cpp
+  tests/pipeline/test_tracker.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
 )

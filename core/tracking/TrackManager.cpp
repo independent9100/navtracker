@@ -1,5 +1,7 @@
 #include "core/tracking/TrackManager.hpp"
 
+#include "ports/IEstimator.hpp"
+
 namespace navtracker {
 
 TrackManager::TrackManager(int confirm_hits, int delete_misses)
@@ -56,6 +58,12 @@ Timestamp TrackManager::lastObservation(TrackId id) const {
   const int i = index(id);
   if (i < 0) return Timestamp{};
   return last_observation_[i];
+}
+
+void TrackManager::predictAll(const IEstimator& estimator, Timestamp to) {
+  for (auto& t : tracks_) {
+    estimator.predict(t, to);
+  }
 }
 
 }  // namespace navtracker

@@ -9,6 +9,8 @@
 
 namespace navtracker {
 
+class IEstimator;  // fwd
+
 // Owns the active track set, allocates stable TrackIds, and runs the M-of-N
 // lifecycle state machine. IDs are monotonic and never reused. The cycle that
 // drives hits/misses (predict/associate/update) lives in the pipeline.
@@ -17,16 +19,17 @@ class TrackManager {
   TrackManager(int confirm_hits, int delete_misses);
 
   // Register a new Tentative track; assigns and returns a fresh stable id.
-  // `first_observation` seeds the lifecycle's "last observed" clock.
   TrackId add(const Track& track,
               Timestamp first_observation = Timestamp{});
 
   void recordHit(TrackId id);
   void recordMiss(TrackId id);
 
-  // Record that this track absorbed a measurement at time `t`.
   void noteObservation(TrackId id, Timestamp t);
   Timestamp lastObservation(TrackId id) const;
+
+  // Advance every active track to `to` via the estimator.
+  void predictAll(const IEstimator& estimator, Timestamp to);
 
   const std::vector<Track>& tracks() const { return tracks_; }
   std::vector<Track>& mutableTracks() { return tracks_; }
@@ -43,8 +46,8 @@ class TrackManager {
   int delete_misses_;
   std::uint64_t next_id_{1};
   std::vector<Track> tracks_;
-  std::vector<Counters> counters_;     // parallel to tracks_
-  std::vector<Timestamp> last_observation_;  // parallel to tracks_
+  std::vector<Counters> counters_;
+  std::vector<Timestamp> last_observation_;
 };
 
 }  // namespace navtracker
