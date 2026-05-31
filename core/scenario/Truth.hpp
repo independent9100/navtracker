@@ -5,6 +5,7 @@
 
 #include <Eigen/Core>
 
+#include "core/types/Ids.hpp"
 #include "core/types/Measurement.hpp"
 #include "core/types/Timestamp.hpp"
 
@@ -20,6 +21,19 @@ struct TruthSample {
 struct Scenario {
   std::vector<Measurement> measurements;
   std::vector<TruthSample> truth;
+};
+
+// Snapshot of a single track at a particular processing step.
+struct TrackSnapshot {
+  TrackId id;
+  Eigen::Vector2d position;
+};
+
+// What the harness observed at one processing step.
+struct ScenarioStep {
+  Timestamp time;
+  std::vector<Eigen::Vector2d> truth;
+  std::vector<TrackSnapshot> tracks;
 };
 
 }  // namespace navtracker

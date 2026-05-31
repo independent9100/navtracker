@@ -11,6 +11,7 @@ namespace navtracker {
 struct ScenarioResult {
   std::vector<double> ospa_per_step;
   double mean_ospa{0.0};
+  std::vector<ScenarioStep> steps;
 };
 
 ScenarioResult runScenario(const Scenario& scenario,
