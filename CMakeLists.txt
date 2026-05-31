@@ -29,6 +29,7 @@ add_library(navtracker_core
   adapters/arpa/ArpaAdapter.cpp
   adapters/eoir/EoIrAdapter.cpp
   core/scenario/Builders.cpp
+  core/scenario/Ospa.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
@@ -59,6 +60,7 @@ add_executable(navtracker_tests
   tests/adapters/eoir/test_eoir_adapter.cpp
   tests/adapters/test_end_to_end.cpp
   tests/scenario/test_builders.cpp
+  tests/scenario/test_ospa.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE navtracker_core GTest::gtest_main Eigen3::Eigen)
