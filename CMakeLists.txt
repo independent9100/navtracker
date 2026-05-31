@@ -56,6 +56,7 @@ add_executable(navtracker_tests
   tests/adapters/own_ship/test_own_ship_nmea.cpp
   tests/adapters/arpa/test_arpa_adapter.cpp
   tests/adapters/eoir/test_eoir_adapter.cpp
+  tests/adapters/test_end_to_end.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE navtracker_core GTest::gtest_main Eigen3::Eigen)
