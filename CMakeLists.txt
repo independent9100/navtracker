@@ -24,6 +24,7 @@ add_library(navtracker_core
   adapters/own_ship/OwnShipProvider.cpp
   adapters/util/Projection.cpp
   adapters/util/Nmea.cpp
+  adapters/ais/AisAdapter.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
@@ -48,6 +49,7 @@ add_executable(navtracker_tests
   tests/adapters/own_ship/test_own_ship_provider.cpp
   tests/adapters/util/test_projection.cpp
   tests/adapters/util/test_nmea.cpp
+  tests/adapters/ais/test_ais_adapter.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE navtracker_core GTest::gtest_main Eigen3::Eigen)
