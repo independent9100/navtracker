@@ -36,4 +36,15 @@ Scenario buildCrossingTargetsScenario(
     double pos_noise_std_m,
     std::uint32_t seed = 0);
 
+// Two same-direction CV targets with a lateral offset. Truth is emitted in
+// (slow, fast) order per step.
+Scenario buildOvertakingScenario(
+    const Eigen::Vector2d& start_slow,
+    const Eigen::Vector2d& velocity_slow,
+    const Eigen::Vector2d& start_fast,
+    const Eigen::Vector2d& velocity_fast,
+    const std::vector<double>& sample_times_seconds,
+    double pos_noise_std_m,
+    std::uint32_t seed = 0);
+
 }  // namespace navtracker

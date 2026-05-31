@@ -102,4 +102,29 @@ Scenario buildCrossingTargetsScenario(const Eigen::Vector2d& start_a,
   return s;
 }
 
+Scenario buildOvertakingScenario(const Eigen::Vector2d& start_slow,
+                                 const Eigen::Vector2d& velocity_slow,
+                                 const Eigen::Vector2d& start_fast,
+                                 const Eigen::Vector2d& velocity_fast,
+                                 const std::vector<double>& times,
+                                 double pos_noise_std_m,
+                                 std::uint32_t seed) {
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> noise(0.0, pos_noise_std_m);
+  Scenario s;
+  for (double t : times) {
+    const Eigen::Vector2d truth_slow = start_slow + velocity_slow * t;
+    const Eigen::Vector2d truth_fast = start_fast + velocity_fast * t;
+    s.truth.push_back(makeTruth(truth_slow, velocity_slow, t, 1));
+    s.truth.push_back(makeTruth(truth_fast, velocity_fast, t, 2));
+    const Eigen::Vector2d noisy_slow(truth_slow.x() + noise(rng),
+                                     truth_slow.y() + noise(rng));
+    const Eigen::Vector2d noisy_fast(truth_fast.x() + noise(rng),
+                                     truth_fast.y() + noise(rng));
+    s.measurements.push_back(makeMeasurement(noisy_slow, t, pos_noise_std_m));
+    s.measurements.push_back(makeMeasurement(noisy_fast, t, pos_noise_std_m));
+  }
+  return s;
+}
+
 }  // namespace navtracker

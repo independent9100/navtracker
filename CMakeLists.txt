@@ -67,6 +67,7 @@ add_executable(navtracker_tests
   tests/scenario/test_parallel_targets.cpp
   tests/scenario/test_metrics.cpp
   tests/scenario/test_crossing.cpp
+  tests/scenario/test_overtaking.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE navtracker_core GTest::gtest_main Eigen3::Eigen)
