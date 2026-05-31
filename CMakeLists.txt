@@ -16,6 +16,7 @@ add_library(navtracker_core
   core/estimation/ConstantVelocity2D.cpp
   core/estimation/MeasurementModels.cpp
   core/estimation/EkfEstimator.cpp
+  core/estimation/SigmaPoints.cpp
   core/association/Gating.cpp
   core/association/GnnAssociator.cpp
   core/tracking/TrackManager.cpp
@@ -45,6 +46,7 @@ add_executable(navtracker_tests
   tests/estimation/test_constant_velocity.cpp
   tests/estimation/test_measurement_models.cpp
   tests/estimation/test_ekf_estimator.cpp
+  tests/estimation/test_sigma_points.cpp
   tests/association/test_gating.cpp
   tests/association/test_gnn_associator.cpp
   tests/tracking/test_track_manager.cpp
