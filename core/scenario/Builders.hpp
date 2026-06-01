@@ -47,4 +47,19 @@ Scenario buildOvertakingScenario(
     double pos_noise_std_m,
     std::uint32_t seed = 0);
 
+// One CV target observed by a sensor at the ENU origin: first sample is a
+// Position2D measurement (to seed the track), subsequent samples are
+// RangeBearing2D measurements with the supplied noise. Designed to stress
+// nonlinear measurement filtering — pass the target close to the origin
+// to exercise high curvature of h(x) = (r, atan2(py, px)).
+Scenario buildRangeBearingPassScenario(
+    const Eigen::Vector2d& start,
+    const Eigen::Vector2d& velocity,
+    const std::vector<double>& sample_times_seconds,
+    double initial_position_std_m,
+    double range_std_m,
+    double bearing_std_rad,
+    std::uint32_t seed = 0,
+    std::uint64_t truth_id = 1);
+
 }  // namespace navtracker

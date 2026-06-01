@@ -39,3 +39,35 @@ uncertainty is a prerequisite for any meaningful comparison. Without it
 every estimator we add will show identical numbers and we'll learn nothing.
 Recommend adding that scenario to `core/scenario/Builders.hpp` before or
 alongside the particle filter.
+
+## 2026-06-01 — UKF vs EKF on range/bearing pass scenarios
+
+New builder `buildRangeBearingPassScenario` (initial Position2D seed →
+RangeBearing2D thereafter, sensor at ENU origin). Two configurations:
+
+| Scenario | Geometry | Filter | mean OSPA (m) | Δ vs EKF |
+|----------|----------|--------|---------------|----------|
+| ShortRangePass | CPA ≈ 50 m, σ_r=10 m, σ_β=5° | EKF | 8.6976 | — |
+| ShortRangePass | as above | UKF | 8.6308 | −0.068 m (−0.8%) |
+| VeryShortRangePass | CPA ≈ 20 m, σ_r=20 m, σ_β=10° | EKF | 17.2779 | — |
+| VeryShortRangePass | as above | UKF | 16.1210 | −1.157 m (−6.7%) |
+
+**Takeaway.** UKF advantage is real and **scales with nonlinearity
+intensity**, as theory predicts. The mild-nonlinearity case (CPA 50 m, small
+noise) shows a ~1% improvement — near the noise floor of a single-seed run
+and likely not worth the extra cost in production. The sharper case (CPA
+20 m, large noise) shows ~7% — the EKF's first-order linearization across
+the closest-approach geometry materially diverges from the unscented
+treatment.
+
+**Implication.** Quoting a single "UKF vs EKF" number is misleading; the
+ratio depends entirely on how close to the sensor the geometry gets and how
+much measurement and prior uncertainty there is. For realistic maritime
+scenarios where vessels stay >1 km from sensors, the gap will be small. For
+harbor-proximity, docking, or close passes, the gap matters.
+
+**Methodology notes.** Single fixed seed per scenario, so the absolute
+numbers carry single-realization noise. A proper comparison would average
+over multiple seeds and report a confidence interval — that's a documented
+next step. Two configurations is a thin sample; widening to a sweep of CPAs
+and noise levels would let us draw the EKF→UKF transfer curve quantitatively.

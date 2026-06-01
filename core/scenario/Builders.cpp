@@ -1,5 +1,7 @@
 #include "core/scenario/Builders.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <random>
 
 #include "core/types/Ids.hpp"
@@ -17,6 +19,23 @@ Measurement makeMeasurement(const Eigen::Vector2d& noisy_pos,
   m.model = MeasurementModel::Position2D;
   m.value = noisy_pos;
   m.covariance = Eigen::Matrix2d::Identity() * (std_m * std_m + 1e-6);
+  return m;
+}
+
+Measurement makeRangeBearingMeasurement(double noisy_r,
+                                        double noisy_b,
+                                        double t_seconds,
+                                        double range_std,
+                                        double bearing_std) {
+  Measurement m;
+  m.time = Timestamp::fromSeconds(t_seconds);
+  m.sensor = SensorKind::ArpaTtm;
+  m.source_id = "sim_rb";
+  m.model = MeasurementModel::RangeBearing2D;
+  m.value = Eigen::Vector2d(noisy_r, noisy_b);
+  m.covariance = Eigen::Matrix2d::Zero();
+  m.covariance(0, 0) = range_std * range_std + 1e-6;
+  m.covariance(1, 1) = bearing_std * bearing_std + 1e-9;
   return m;
 }
 
@@ -123,6 +142,39 @@ Scenario buildOvertakingScenario(const Eigen::Vector2d& start_slow,
                                      truth_fast.y() + noise(rng));
     s.measurements.push_back(makeMeasurement(noisy_slow, t, pos_noise_std_m));
     s.measurements.push_back(makeMeasurement(noisy_fast, t, pos_noise_std_m));
+  }
+  return s;
+}
+
+Scenario buildRangeBearingPassScenario(const Eigen::Vector2d& start,
+                                       const Eigen::Vector2d& velocity,
+                                       const std::vector<double>& times,
+                                       double initial_position_std_m,
+                                       double range_std_m,
+                                       double bearing_std_rad,
+                                       std::uint32_t seed,
+                                       std::uint64_t truth_id) {
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> pos_noise(0.0, initial_position_std_m);
+  std::normal_distribution<double> r_noise(0.0, range_std_m);
+  std::normal_distribution<double> b_noise(0.0, bearing_std_rad);
+  Scenario s;
+  for (std::size_t i = 0; i < times.size(); ++i) {
+    const double t = times[i];
+    const Eigen::Vector2d truth = start + velocity * t;
+    s.truth.push_back(makeTruth(truth, velocity, t, truth_id));
+    if (i == 0) {
+      const Eigen::Vector2d noisy(truth.x() + pos_noise(rng),
+                                  truth.y() + pos_noise(rng));
+      s.measurements.push_back(makeMeasurement(noisy, t, initial_position_std_m));
+    } else {
+      const double r = std::hypot(truth.x(), truth.y());
+      const double b = std::atan2(truth.y(), truth.x());
+      const double noisy_r = std::max(0.001, r + r_noise(rng));
+      const double noisy_b = b + b_noise(rng);
+      s.measurements.push_back(
+          makeRangeBearingMeasurement(noisy_r, noisy_b, t, range_std_m, bearing_std_rad));
+    }
   }
   return s;
 }

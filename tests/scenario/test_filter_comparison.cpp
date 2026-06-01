@@ -120,6 +120,56 @@ TEST(FilterComparison, Crossing) {
   EXPECT_LE(u.id_switches, 2);
 }
 
+TEST(FilterComparison, ShortRangePass) {
+  // Target passes ~50 m abeam of the sensor; range/bearing nonlinearity is
+  // sharpest near closest approach. Initial position seed; the rest are
+  // RangeBearing2D.
+  std::vector<double> times;
+  for (int i = 0; i <= 40; ++i) times.push_back(static_cast<double>(i));
+  constexpr double kPi = 3.14159265358979323846;
+  const double bearing_std = 5.0 * kPi / 180.0;
+  const Scenario s = buildRangeBearingPassScenario(
+      Eigen::Vector2d(500.0, 50.0), Eigen::Vector2d(-25.0, 0.0),
+      times, 10.0, 10.0, bearing_std, 41);
+  auto motion = std::make_shared<ConstantVelocity2D>(0.5);
+  const EkfEstimator ekf(motion, 10.0);
+  const UkfEstimator ukf(motion, 10.0);
+
+  const RunOutput e = run(ekf, s, 1000.0, 200.0, 1, 5, 60.0);
+  const RunOutput u = run(ukf, s, 1000.0, 200.0, 1, 5, 60.0);
+
+  std::fprintf(stderr,
+               "\n[ShortRangePass] EKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[ShortRangePass] UKF mean_ospa=%.4f id_switches=%d tracks=%zu\n",
+               e.mean_ospa, e.id_switches, e.final_track_count,
+               u.mean_ospa, u.id_switches, u.final_track_count);
+}
+
+TEST(FilterComparison, VeryShortRangePass) {
+  // Sharper pass: closest approach 20 m, range std 20 m, bearing std 10 deg.
+  // Nonlinearity bites harder; UKF should pull ahead by more than the
+  // ShortRangePass scenario.
+  std::vector<double> times;
+  for (int i = 0; i <= 40; ++i) times.push_back(static_cast<double>(i));
+  constexpr double kPi = 3.14159265358979323846;
+  const double bearing_std = 10.0 * kPi / 180.0;
+  const Scenario s = buildRangeBearingPassScenario(
+      Eigen::Vector2d(400.0, 20.0), Eigen::Vector2d(-20.0, 0.0),
+      times, 15.0, 20.0, bearing_std, 53);
+  auto motion = std::make_shared<ConstantVelocity2D>(0.5);
+  const EkfEstimator ekf(motion, 10.0);
+  const UkfEstimator ukf(motion, 10.0);
+
+  const RunOutput e = run(ekf, s, 1500.0, 300.0, 1, 5, 60.0);
+  const RunOutput u = run(ukf, s, 1500.0, 300.0, 1, 5, 60.0);
+
+  std::fprintf(stderr,
+               "\n[VeryShortRangePass] EKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[VeryShortRangePass] UKF mean_ospa=%.4f id_switches=%d tracks=%zu\n",
+               e.mean_ospa, e.id_switches, e.final_track_count,
+               u.mean_ospa, u.id_switches, u.final_track_count);
+}
+
 TEST(FilterComparison, AisDropout) {
   std::vector<double> times;
   for (int i = 1; i <= 5; ++i) times.push_back(static_cast<double>(i));

@@ -41,3 +41,14 @@ TEST(Builders, DeterministicForSameSeed) {
     EXPECT_DOUBLE_EQ(a.measurements[i].value(1), b.measurements[i].value(1));
   }
 }
+
+TEST(Builders, RangeBearingPassFirstIsPositionThenRangeBearing) {
+  const std::vector<double> times{0.0, 1.0, 2.0};
+  const Scenario s = navtracker::buildRangeBearingPassScenario(
+      Eigen::Vector2d(1000.0, 0.0), Eigen::Vector2d(-50.0, 0.0),
+      times, 5.0, 10.0, 0.087, 7);
+  ASSERT_EQ(s.measurements.size(), 3u);
+  EXPECT_EQ(s.measurements[0].model, navtracker::MeasurementModel::Position2D);
+  EXPECT_EQ(s.measurements[1].model, navtracker::MeasurementModel::RangeBearing2D);
+  EXPECT_EQ(s.measurements[2].model, navtracker::MeasurementModel::RangeBearing2D);
+}
