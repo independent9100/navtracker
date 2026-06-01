@@ -78,4 +78,19 @@ Scenario buildBearingOnlyScenario(
     std::uint32_t seed = 0,
     std::uint64_t truth_id = 1);
 
+// Target follows three legs: straight at constant velocity from `start` for
+// `straight_duration_s`; then a constant-rate turn at `omega_rad_s` for
+// `turn_duration_s` (omega > 0 = left turn in ENU); then straight again for
+// `straight_duration_s`. Position2D measurements at every `sample_dt_s`.
+Scenario buildManeuveringTargetScenario(
+    const Eigen::Vector2d& start,
+    const Eigen::Vector2d& velocity,
+    double straight_duration_s,
+    double turn_duration_s,
+    double omega_rad_s,
+    double sample_dt_s,
+    double pos_noise_std_m,
+    std::uint32_t seed = 0,
+    std::uint64_t truth_id = 1);
+
 }  // namespace navtracker

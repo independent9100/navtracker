@@ -225,4 +225,67 @@ Scenario buildBearingOnlyScenario(const Eigen::Vector2d& start,
   return s;
 }
 
+Scenario buildManeuveringTargetScenario(const Eigen::Vector2d& start,
+                                        const Eigen::Vector2d& velocity,
+                                        double straight_duration_s,
+                                        double turn_duration_s,
+                                        double omega_rad_s,
+                                        double sample_dt_s,
+                                        double pos_noise_std_m,
+                                        std::uint32_t seed,
+                                        std::uint64_t truth_id) {
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> noise(0.0, pos_noise_std_m);
+  Scenario s;
+  const double t_end_leg1 = straight_duration_s;
+  const double t_end_turn = straight_duration_s + turn_duration_s;
+  const double t_end_leg2 =
+      straight_duration_s + turn_duration_s + straight_duration_s;
+  const Eigen::Vector2d p_turn_start =
+      start + velocity * straight_duration_s;
+
+  auto turnPositionVelocity = [&](double tau)
+      -> std::pair<Eigen::Vector2d, Eigen::Vector2d> {
+    const double w = omega_rad_s;
+    if (std::abs(w) < 1e-9) {
+      return {p_turn_start + velocity * tau, velocity};
+    }
+    const double c = std::cos(w * tau);
+    const double si = std::sin(w * tau);
+    const double vx = velocity.x() * c - velocity.y() * si;
+    const double vy = velocity.x() * si + velocity.y() * c;
+    const double px = p_turn_start.x() +
+                       (velocity.x() * si + velocity.y() * (c - 1.0)) / w;
+    const double py = p_turn_start.y() +
+                       (velocity.y() * si - velocity.x() * (c - 1.0)) / w;
+    return std::make_pair(Eigen::Vector2d(px, py), Eigen::Vector2d(vx, vy));
+  };
+  const auto turn_end = turnPositionVelocity(turn_duration_s);
+  const Eigen::Vector2d p_leg2_start = turn_end.first;
+  const Eigen::Vector2d v_leg2 = turn_end.second;
+
+  double t = 0.0;
+  while (t <= t_end_leg2 + 1e-9) {
+    Eigen::Vector2d truth_pos;
+    Eigen::Vector2d truth_vel;
+    if (t <= t_end_leg1) {
+      truth_pos = start + velocity * t;
+      truth_vel = velocity;
+    } else if (t <= t_end_turn) {
+      const auto pv = turnPositionVelocity(t - t_end_leg1);
+      truth_pos = pv.first;
+      truth_vel = pv.second;
+    } else {
+      truth_pos = p_leg2_start + v_leg2 * (t - t_end_turn);
+      truth_vel = v_leg2;
+    }
+    s.truth.push_back(makeTruth(truth_pos, truth_vel, t, truth_id));
+    const Eigen::Vector2d noisy(truth_pos.x() + noise(rng),
+                                truth_pos.y() + noise(rng));
+    s.measurements.push_back(makeMeasurement(noisy, t, pos_noise_std_m));
+    t += sample_dt_s;
+  }
+  return s;
+}
+
 }  // namespace navtracker

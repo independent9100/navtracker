@@ -52,3 +52,14 @@ TEST(Builders, RangeBearingPassFirstIsPositionThenRangeBearing) {
   EXPECT_EQ(s.measurements[1].model, navtracker::MeasurementModel::RangeBearing2D);
   EXPECT_EQ(s.measurements[2].model, navtracker::MeasurementModel::RangeBearing2D);
 }
+
+TEST(Builders, ManeuveringTargetHasStraightThenTurnThenStraight) {
+  const navtracker::Scenario s = navtracker::buildManeuveringTargetScenario(
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),
+      /*straight*/ 5.0, /*turn*/ 5.0, /*omega*/ 0.2,
+      /*dt*/ 1.0, /*noise*/ 0.0, /*seed*/ 1);
+  ASSERT_EQ(s.truth.size(), 16u);
+  EXPECT_NEAR(s.truth[5].position.x(), 50.0, 1e-9);
+  EXPECT_NEAR(s.truth[5].position.y(),  0.0, 1e-9);
+  EXPECT_GT(std::abs(s.truth[10].velocity.y()), 1e-3);
+}
