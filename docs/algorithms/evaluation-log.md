@@ -385,3 +385,73 @@ Murty's — the largest expected improvement to MHT itself. (4) IMM-backed
 MHT for maneuvering targets across ambiguous gaps. (5) Murty + JIPDA
 hybrid (track existence probability + hypothesis tree) as the
 eventual high-end maritime tracker.
+
+## 2026-06-01 — Bearing-only with moving sensor (parallax) — PF wins
+
+`Measurement.sensor_position_enu` is now wired through every estimator and
+associator's measurement-model call path. The new scenario builder
+`buildBearingOnlyMovingSensorScenario` emits an initial wide-covariance
+Position2D seed (σ = 300 m) followed by 60 s of `Bearing2D` measurements
+(σ = 1.5°) from a sensor moving +y at 10 m/s **perpendicular to the
+line-of-sight** to a stationary target at (1500, 0). Sensor sweeps from
+(0, −300) to (0, +300), producing ~22° of bearing change against the
+1.5° measurement noise (~15:1 parallax SNR). Wide initial range prior
+keeps the posterior in the non-Gaussian regime during the first ~15 s
+of convergence.
+
+Source: `tests/scenario/test_filter_comparison.cpp::FilterComparison.BearingOnlyMovingSensor`.
+
+| Filter | mean OSPA (m) | Δ vs EKF |
+|--------|----------------|----------|
+| EKF (CV)         | 181.6201 | — |
+| UKF (CV)         | 185.4117 | +3.79 (+2.1%) |
+| **PF (CV, N=2000)** | **123.1583** | **−58.46 (−32.2%)** |
+
+**Takeaway.** First scenario in the codebase where the PF demonstrably
+beats both Gaussian filters. The mechanism is exactly what theory
+predicts: with proper parallax geometry (sensor motion perpendicular to
+LOS) and a wide initial range prior, the posterior on `(px, py)` is
+genuinely banana-shaped during the early convergence window — the
+crescent of (bearing line) ∩ (broad range prior). EKF and UKF
+moment-match this into a Gaussian ellipse and accumulate error; the PF
+retains the actual non-Gaussian shape through the transient and gets
+substantially better position estimates.
+
+UKF is slightly worse than EKF here, consistent with sigma-point
+sampling error mildly exceeding linearization error at this nonlinearity
+level. Both Kalman variants sit at ~180 m OSPA because they collapse the
+banana to an axis-aligned ellipse around the centroid, which is far from
+the actual posterior mode early on.
+
+The first-attempt geometry (sensor moves along LOS at (0, 0) toward
+target at (1000, 100)) gave only ~2.4° of bearing sweep against 3° noise
+and produced a PF *loss* (112.87 vs 100.12 for EKF). That null result
+demonstrated the prerequisite: parallax SNR has to exceed measurement
+noise by a meaningful margin for the non-Gaussian regime to manifest.
+The retuned geometry above passes that bar comfortably.
+
+**Methodology notes.** Single seed (137), N=2000 particles. Multi-seed
+sweep is the straightforward next step. The PF win should survive
+averaging because the geometry advantage is structural, not seed-dependent.
+
+**Open follow-ups.** (1) Multi-seed sweep to tighten the 32% claim.
+(2) Sweep over sensor velocity (slower = less parallax = PF should win
+by more, until the parallax disappears entirely). (3) Slowly-moving
+target variant. (4) Closer target ((500, 0) instead of (1500, 0)) —
+geometry remains in the non-Gaussian regime longer, gap should grow.
+(5) Use this scenario harness to test JPDA / MHT with bearing-only
+measurements once the soft-update / branching paths support
+non-position measurement models.
+
+**Honest summary of the PF story.** Across three bearing-only attempts:
+- Stationary sensor, position-only-seed prior: PF tied EKF/UKF
+  (~182 m all, range unobservable from a stationary sensor — documented
+  earlier).
+- Moving sensor, sensor motion **along** LOS: PF *worst* by 12 m
+  (parallax SNR too low — first attempt above).
+- Moving sensor, sensor motion **perpendicular** to LOS, wide prior:
+  PF wins by 32% — the textbook geometry, finally exercised.
+
+The PF advantage was always conditional on geometry that lets the
+non-Gaussian posterior actually form. The first two scenarios didn't
+provide that; the third does.

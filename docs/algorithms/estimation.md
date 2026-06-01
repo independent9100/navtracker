@@ -38,9 +38,23 @@ zero-mean measurement noise with covariance `R` provided per measurement.
 **Rationale.** EKF Jacobian linearization is adequate for the mild range/bearing
 nonlinearity at operational geometry and is far cheaper than UKF/particle.
 
+**Sensor pose (added 2026-06-01).** `RangeBearing2D` and `Bearing2D` accept an
+optional `sensor_position_enu` parameter (default `(0, 0)`). When supplied,
+`r` and `β` are computed as `‖p_target − p_sensor‖` and
+`atan2(py − sy, px − sx)`; the Jacobian's position partials are evaluated
+at the shifted position. `Measurement.sensor_position_enu` carries the
+sensor's ENU location at measurement time, which the adapter sets either
+once (stationary shore radar) or per-measurement from `OwnShipProvider`
+(mounted on a moving platform). This is what makes moving-sensor
+bearing-only fusion tractable: the geometry that creates parallax is
+captured in `h(x)` directly, not baked into the adapter's projection layer.
+All call sites (EKF/UKF/PF/IMM update, Gating, JPDA, MHT) forward
+`z.sensor_position_enu` automatically.
+
 **Ways to improve / test next.** UKF for stronger nonlinearity or bearing-only
 geometry; particle filter for multimodal cases (bearing-only before range
-converges); per-sensor `R` calibration from data.
+converges); per-sensor `R` calibration from data; sensor orientation
+(boresight, pan/tilt) for body-frame bearings.
 
 ## 3. Extended Kalman Filter (`EkfEstimator`)
 
