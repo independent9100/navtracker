@@ -96,3 +96,36 @@ TEST(ImmEstimator, PredictOnEmptyImmIsNoOp) {
   imm.predict(t, Timestamp::fromSeconds(5.0));
   EXPECT_DOUBLE_EQ(t.last_update.seconds(), before.seconds());
 }
+
+TEST(ImmEstimator, UpdateShrinksPositionCovariance) {
+  auto cv  = std::make_shared<ConstantVelocity5State>(0.1, 0.01);
+  auto ct  = std::make_shared<CoordinatedTurn>(0.1, 0.05);
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {cv, ct};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05,
+        0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 0.5, 0.5;
+  ImmEstimator imm(motions, pi, mu0, 10.0, 0.1);
+  navtracker::Track t = imm.initiate(positionMeas(0.0, 0.0, 20.0, 0.0));
+  const double var_before = t.covariance(0, 0);
+  imm.update(t, positionMeas(0.0, 0.0, 1.0, 0.0));
+  EXPECT_LT(t.covariance(0, 0), var_before * 0.2);
+  EXPECT_LT(t.covariance(1, 1), var_before * 0.2);
+  EXPECT_NEAR(t.imm_mode_probabilities.sum(), 1.0, 1e-9);
+  EXPECT_GE(t.imm_mode_probabilities(0), 0.0);
+  EXPECT_GE(t.imm_mode_probabilities(1), 0.0);
+}
+
+TEST(ImmEstimator, UpdateOnEmptyImmIsNoOp) {
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {
+      std::make_shared<ConstantVelocity5State>(0.1, 0.01)};
+  Eigen::MatrixXd pi(1, 1);
+  pi << 1.0;
+  Eigen::VectorXd mu0(1);
+  mu0 << 1.0;
+  ImmEstimator imm(motions, pi, mu0, 10.0, 0.1);
+  navtracker::Track t;
+  imm.update(t, positionMeas(0.0, 0.0, 1.0, 1.0));
+  EXPECT_EQ(t.imm_means.cols(), 0);
+}

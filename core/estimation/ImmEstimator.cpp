@@ -3,6 +3,8 @@
 #include <cmath>
 #include <utility>
 
+#include <Eigen/LU>
+
 #include "core/estimation/CoordinatedTurn.hpp"
 #include "core/estimation/MeasurementModels.hpp"
 
@@ -91,9 +93,62 @@ void ImmEstimator::predict(Track& track, Timestamp to) const {
   track.last_update = to;
 }
 
-void ImmEstimator::update(Track& /*track*/,
-                          const Measurement& /*z*/) const {
-  // Implemented in Task 7.
+void ImmEstimator::update(Track& track, const Measurement& z) const {
+  if (track.imm_means.cols() == 0) return;
+  const int K = static_cast<int>(track.imm_means.cols());
+  const int n = static_cast<int>(track.imm_means.rows());
+
+  // c_j: mode-prior at update time. μ here is the previous-cycle posterior
+  // since predict does not modify it.
+  Eigen::VectorXd c(K);
+  for (int j = 0; j < K; ++j) {
+    double sum = 0.0;
+    for (int i = 0; i < K; ++i)
+      sum += pi_(i, j) * track.imm_mode_probabilities(i);
+    c(j) = sum;
+  }
+
+  // Per-mode EKF update + log-likelihood. Copies of (x_j, P_j) so we
+  // read the prior while writing the posterior back to the same slot.
+  Eigen::VectorXd log_lambda(K);
+  for (int j = 0; j < K; ++j) {
+    const Eigen::VectorXd x_j = track.imm_means.col(j);
+    const Eigen::MatrixXd P_j = track.imm_covariances[j];
+    const MeasurementPrediction pred = predictMeasurement(z.model, x_j);
+    const Eigen::VectorXd y =
+        measurementResidual(z.model, z.value, pred.z_pred);
+    const Eigen::MatrixXd& H = pred.H;
+    const Eigen::MatrixXd S = H * P_j * H.transpose() + z.covariance;
+    const Eigen::MatrixXd S_inv = S.inverse();
+    const Eigen::MatrixXd K_gain = P_j * H.transpose() * S_inv;
+    const Eigen::VectorXd x_new = x_j + K_gain * y;
+    const Eigen::MatrixXd I = Eigen::MatrixXd::Identity(n, n);
+    const Eigen::MatrixXd P_new = (I - K_gain * H) * P_j;
+    track.imm_means.col(j) = x_new;
+    track.imm_covariances[j] = P_new;
+
+    const double det = S.determinant();
+    const double safe_det = (det > 0.0 && std::isfinite(det)) ? det : 1e-300;
+    log_lambda(j) = -0.5 * std::log(safe_det) -
+                    0.5 * y.transpose() * S_inv * y;
+  }
+
+  // Mode-probability update (log-sum-exp).
+  Eigen::VectorXd log_w(K);
+  for (int j = 0; j < K; ++j)
+    log_w(j) = std::log(std::max(c(j), 1e-300)) + log_lambda(j);
+  const double max_lw = log_w.maxCoeff();
+  Eigen::VectorXd w = (log_w.array() - max_lw).exp();
+  const double sum = w.sum();
+  if (!std::isfinite(sum) || sum <= 0.0) {
+    w = Eigen::VectorXd::Constant(K, 1.0 / K);
+  } else {
+    w /= sum;
+  }
+  track.imm_mode_probabilities = w;
+
+  projectMixtureToTrack(track);
+  track.last_update = z.time;
 }
 
 Track ImmEstimator::initiate(const Measurement& z) const {
