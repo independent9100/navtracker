@@ -9,6 +9,7 @@ double effectiveSampleSize(const Eigen::VectorXd& weights) {
 std::vector<int> systematicResample(const Eigen::VectorXd& weights, double u) {
   const int N = static_cast<int>(weights.size());
   std::vector<int> idx(N);
+  if (N == 0) return idx;
   double c = weights(0);
   int i = 0;
   for (int j = 0; j < N; ++j) {

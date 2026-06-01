@@ -37,3 +37,9 @@ TEST(Resampling, DeterministicForSameOffset) {
   const auto b = systematicResample(w, 0.07);
   EXPECT_EQ(a, b);
 }
+
+TEST(Resampling, EmptyWeightsGiveEmptyIndices) {
+  const Eigen::VectorXd w;
+  const std::vector<int> idx = systematicResample(w, 0.5);
+  EXPECT_TRUE(idx.empty());
+}
