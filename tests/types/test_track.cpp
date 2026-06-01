@@ -38,3 +38,11 @@ TEST(Track, DefaultHasEmptyParticleEnsemble) {
   EXPECT_EQ(t.particles.cols(), 0);
   EXPECT_EQ(t.particle_weights.size(), 0);
 }
+
+TEST(Track, DefaultHasEmptyImmEnsemble) {
+  navtracker::Track t;
+  EXPECT_EQ(t.imm_means.rows(), 0);
+  EXPECT_EQ(t.imm_means.cols(), 0);
+  EXPECT_EQ(t.imm_covariances.size(), 0u);
+  EXPECT_EQ(t.imm_mode_probabilities.size(), 0);
+}

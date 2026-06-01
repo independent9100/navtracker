@@ -38,6 +38,15 @@ struct Track {
   // the canonical kinematic snapshot consumed by gating / association / sinks.
   Eigen::MatrixXd particles;        // n_state x N_particles, empty if unused
   Eigen::VectorXd particle_weights; // N_particles, sums to 1, empty if unused
+
+  // Optional ensemble carrier used by IMM. `imm_means` is n_state × K
+  // (one column per model), `imm_covariances` is a vector of K n_state × n_state
+  // matrices, `imm_mode_probabilities` is the K-vector of mode probabilities
+  // (sums to 1). The Gaussian (state, covariance) above is the mixture's
+  // moment-matched projection consumed by gating / association / sinks.
+  Eigen::MatrixXd imm_means;
+  std::vector<Eigen::MatrixXd> imm_covariances;
+  Eigen::VectorXd imm_mode_probabilities;
 };
 
 }  // namespace navtracker
