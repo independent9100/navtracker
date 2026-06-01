@@ -13,6 +13,7 @@
 #include "core/estimation/ConstantVelocity2D.hpp"
 #include "core/estimation/EkfEstimator.hpp"
 #include "core/estimation/UkfEstimator.hpp"
+#include "core/estimation/ParticleFilterEstimator.hpp"
 #include "core/pipeline/Tracker.hpp"
 #include "core/scenario/Builders.hpp"
 #include "core/scenario/Harness.hpp"
@@ -134,15 +135,19 @@ TEST(FilterComparison, ShortRangePass) {
   auto motion = std::make_shared<ConstantVelocity2D>(0.5);
   const EkfEstimator ekf(motion, 10.0);
   const UkfEstimator ukf(motion, 10.0);
+  const ParticleFilterEstimator pf(motion, 1000, 10.0, 0.5, 41);
 
   const RunOutput e = run(ekf, s, 1000.0, 200.0, 1, 5, 60.0);
   const RunOutput u = run(ukf, s, 1000.0, 200.0, 1, 5, 60.0);
+  const RunOutput p = run(pf,  s, 1000.0, 200.0, 1, 5, 60.0);
 
   std::fprintf(stderr,
                "\n[ShortRangePass] EKF mean_ospa=%.4f id_switches=%d tracks=%zu"
-               "\n[ShortRangePass] UKF mean_ospa=%.4f id_switches=%d tracks=%zu\n",
+               "\n[ShortRangePass] UKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[ShortRangePass] PF  mean_ospa=%.4f id_switches=%d tracks=%zu\n",
                e.mean_ospa, e.id_switches, e.final_track_count,
-               u.mean_ospa, u.id_switches, u.final_track_count);
+               u.mean_ospa, u.id_switches, u.final_track_count,
+               p.mean_ospa, p.id_switches, p.final_track_count);
 }
 
 TEST(FilterComparison, VeryShortRangePass) {
@@ -159,15 +164,19 @@ TEST(FilterComparison, VeryShortRangePass) {
   auto motion = std::make_shared<ConstantVelocity2D>(0.5);
   const EkfEstimator ekf(motion, 10.0);
   const UkfEstimator ukf(motion, 10.0);
+  const ParticleFilterEstimator pf(motion, 1000, 10.0, 0.5, 53);
 
   const RunOutput e = run(ekf, s, 1500.0, 300.0, 1, 5, 60.0);
   const RunOutput u = run(ukf, s, 1500.0, 300.0, 1, 5, 60.0);
+  const RunOutput p = run(pf,  s, 1500.0, 300.0, 1, 5, 60.0);
 
   std::fprintf(stderr,
                "\n[VeryShortRangePass] EKF mean_ospa=%.4f id_switches=%d tracks=%zu"
-               "\n[VeryShortRangePass] UKF mean_ospa=%.4f id_switches=%d tracks=%zu\n",
+               "\n[VeryShortRangePass] UKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[VeryShortRangePass] PF  mean_ospa=%.4f id_switches=%d tracks=%zu\n",
                e.mean_ospa, e.id_switches, e.final_track_count,
-               u.mean_ospa, u.id_switches, u.final_track_count);
+               u.mean_ospa, u.id_switches, u.final_track_count,
+               p.mean_ospa, p.id_switches, p.final_track_count);
 }
 
 TEST(FilterComparison, AisDropout) {
