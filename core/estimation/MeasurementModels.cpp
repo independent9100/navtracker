@@ -27,6 +27,13 @@ Eigen::VectorXd predictMeasurementValue(MeasurementModel model,
       if (r < 1e-6) r = 1e-6;
       return Eigen::Vector2d(r, std::atan2(py, px));
     }
+    case MeasurementModel::Bearing2D: {
+      double r = std::hypot(px, py);
+      if (r < 1e-6) r = 1e-6;
+      Eigen::VectorXd v(1);
+      v(0) = std::atan2(py, px);
+      return v;
+    }
   }
   return Eigen::VectorXd();
 }
@@ -58,6 +65,14 @@ MeasurementPrediction predictMeasurement(MeasurementModel model,
       out.H(1, 1) = px / (r * r);
       break;
     }
+    case MeasurementModel::Bearing2D: {
+      double r = std::hypot(px, py);
+      if (r < 1e-6) r = 1e-6;
+      out.H = Eigen::MatrixXd::Zero(1, 4);
+      out.H(0, 0) = -py / (r * r);
+      out.H(0, 1) =  px / (r * r);
+      break;
+    }
   }
   return out;
 }
@@ -68,6 +83,8 @@ Eigen::VectorXd measurementResidual(MeasurementModel model,
   Eigen::VectorXd y = z - z_pred;
   if (model == MeasurementModel::RangeBearing2D) {
     y(1) = wrapAngle(y(1));
+  } else if (model == MeasurementModel::Bearing2D) {
+    y(0) = wrapAngle(y(0));
   }
   return y;
 }

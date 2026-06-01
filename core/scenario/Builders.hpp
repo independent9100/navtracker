@@ -62,4 +62,20 @@ Scenario buildRangeBearingPassScenario(
     std::uint32_t seed = 0,
     std::uint64_t truth_id = 1);
 
+// One CV target observed by a bearing-only sensor at the ENU origin. The
+// first sample is a Position2D measurement with deliberately WIDE
+// covariance to seed a broad prior; subsequent samples are Bearing2D only
+// (scalar β = atan2(py, px)). Designed to stress filters: the posterior
+// over range stays as wide as the prior, so a Kalman filter's Gaussian
+// approximation degrades while a particle filter can represent the
+// banana-shaped posterior faithfully.
+Scenario buildBearingOnlyScenario(
+    const Eigen::Vector2d& start,
+    const Eigen::Vector2d& velocity,
+    const std::vector<double>& sample_times_seconds,
+    double initial_position_std_m,
+    double bearing_std_rad,
+    std::uint32_t seed = 0,
+    std::uint64_t truth_id = 1);
+
 }  // namespace navtracker

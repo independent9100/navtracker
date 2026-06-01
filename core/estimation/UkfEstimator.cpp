@@ -69,6 +69,7 @@ void UkfEstimator::update(Track& track, const Measurement& z) const {
   for (int i = 0; i < Zsp.cols(); ++i) {
     Eigen::VectorXd zd = Zsp.col(i) - z_pred;
     if (z.model == MeasurementModel::RangeBearing2D) zd(1) = wrapAngle(zd(1));
+    else if (z.model == MeasurementModel::Bearing2D) zd(0) = wrapAngle(zd(0));
     const Eigen::VectorXd xd = sp.points.col(i) - track.state;
     S += sp.Wc(i) * zd * zd.transpose();
     Pxz += sp.Wc(i) * xd * zd.transpose();

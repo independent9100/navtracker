@@ -11,7 +11,7 @@ enum class SensorKind { Unknown, Ais, ArpaTtm, ArpaTll, EoIr, OwnShip, Lidar };
 enum class TrackStatus { Tentative, Confirmed, Coasting, Deleted };
 
 // How a Measurement's value/covariance vectors are laid out.
-enum class MeasurementModel { Position2D, PositionVelocity2D, RangeBearing2D };
+enum class MeasurementModel { Position2D, PositionVelocity2D, RangeBearing2D, Bearing2D };
 
 // Stable internal track identity (primary key, never reused).
 struct TrackId {

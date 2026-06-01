@@ -204,6 +204,35 @@ TEST(FilterComparison, AisDropout) {
   EXPECT_EQ(u.final_track_count, 1u);
 }
 
+TEST(FilterComparison, BearingOnlyPass) {
+  // Wide initial position prior (σ=80 m), then 60 s of bearing-only
+  // measurements (σ=3°). EKF/UKF have to collapse the resulting banana-
+  // shaped posterior to a Gaussian; PF can keep the actual shape.
+  std::vector<double> times;
+  for (int i = 0; i <= 60; ++i) times.push_back(static_cast<double>(i));
+  constexpr double kPi = 3.14159265358979323846;
+  const double bearing_std = 3.0 * kPi / 180.0;
+  const Scenario s = buildBearingOnlyScenario(
+      Eigen::Vector2d(600.0, 200.0), Eigen::Vector2d(-10.0, 0.0),
+      times, 80.0, bearing_std, 71);
+  auto motion = std::make_shared<ConstantVelocity2D>(0.5);
+  const EkfEstimator ekf(motion, 10.0);
+  const UkfEstimator ukf(motion, 10.0);
+  const ParticleFilterEstimator pf(motion, 2000, 10.0, 0.5, 71);
+
+  const RunOutput e = run(ekf, s, 1500.0, 300.0, 1, 5, 90.0);
+  const RunOutput u = run(ukf, s, 1500.0, 300.0, 1, 5, 90.0);
+  const RunOutput p = run(pf,  s, 1500.0, 300.0, 1, 5, 90.0);
+
+  std::fprintf(stderr,
+               "\n[BearingOnlyPass] EKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[BearingOnlyPass] UKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[BearingOnlyPass] PF  mean_ospa=%.4f id_switches=%d tracks=%zu\n",
+               e.mean_ospa, e.id_switches, e.final_track_count,
+               u.mean_ospa, u.id_switches, u.final_track_count,
+               p.mean_ospa, p.id_switches, p.final_track_count);
+}
+
 TEST(FilterComparison, ShortRangeMultiSeedSweep) {
   // Repeat ShortRangePass over 20 seeds for each estimator config and report
   // mean ± stddev of mean_ospa. Confirms whether single-seed comparisons

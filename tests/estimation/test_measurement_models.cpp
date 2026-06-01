@@ -64,3 +64,29 @@ TEST(MeasurementModels, WrapAngleRange) {
   EXPECT_NEAR(wrapAngle(3.0 * kPi), kPi, 1e-9);
   EXPECT_NEAR(wrapAngle(-3.0 * kPi), kPi, 1e-9);
 }
+
+TEST(MeasurementModels, Bearing2DPredictAndJacobian) {
+  Eigen::Vector4d x;
+  x << 100.0, 200.0, 5.0, -3.0;
+  const navtracker::MeasurementPrediction p =
+      navtracker::predictMeasurement(navtracker::MeasurementModel::Bearing2D, x);
+  EXPECT_EQ(p.z_pred.size(), 1);
+  EXPECT_NEAR(p.z_pred(0), std::atan2(200.0, 100.0), 1e-12);
+  ASSERT_EQ(p.H.rows(), 1);
+  ASSERT_EQ(p.H.cols(), 4);
+  const double r2 = 100.0 * 100.0 + 200.0 * 200.0;
+  EXPECT_NEAR(p.H(0, 0), -200.0 / r2, 1e-12);
+  EXPECT_NEAR(p.H(0, 1),  100.0 / r2, 1e-12);
+  EXPECT_DOUBLE_EQ(p.H(0, 2), 0.0);
+  EXPECT_DOUBLE_EQ(p.H(0, 3), 0.0);
+}
+
+TEST(MeasurementModels, Bearing2DResidualWrapped) {
+  Eigen::VectorXd z(1), zp(1);
+  z(0) = 3.0;      // near +π
+  zp(0) = -3.0;    // near −π
+  const Eigen::VectorXd y =
+      navtracker::measurementResidual(navtracker::MeasurementModel::Bearing2D, z, zp);
+  // Raw diff is 6.0 rad; wrapped to (−π,π] should be about 6.0 − 2π ≈ −0.283.
+  EXPECT_NEAR(y(0), 6.0 - 2.0 * 3.14159265358979323846, 1e-9);
+}

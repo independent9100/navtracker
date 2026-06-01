@@ -51,6 +51,23 @@ TruthSample makeTruth(const Eigen::Vector2d& pos,
   return ts;
 }
 
+Measurement makeBearingMeasurement(double noisy_b,
+                                   double t_seconds,
+                                   double bearing_std) {
+  Measurement m;
+  m.time = Timestamp::fromSeconds(t_seconds);
+  m.sensor = SensorKind::EoIr;  // bearing-only is camera-like
+  m.source_id = "sim_b";
+  m.model = MeasurementModel::Bearing2D;
+  Eigen::VectorXd v(1);
+  v(0) = noisy_b;
+  m.value = v;
+  Eigen::MatrixXd r(1, 1);
+  r(0, 0) = bearing_std * bearing_std + 1e-9;
+  m.covariance = r;
+  return m;
+}
+
 }  // namespace
 
 Scenario buildStraightLineScenario(const Eigen::Vector2d& start,
@@ -174,6 +191,35 @@ Scenario buildRangeBearingPassScenario(const Eigen::Vector2d& start,
       const double noisy_b = b + b_noise(rng);
       s.measurements.push_back(
           makeRangeBearingMeasurement(noisy_r, noisy_b, t, range_std_m, bearing_std_rad));
+    }
+  }
+  return s;
+}
+
+Scenario buildBearingOnlyScenario(const Eigen::Vector2d& start,
+                                  const Eigen::Vector2d& velocity,
+                                  const std::vector<double>& times,
+                                  double initial_position_std_m,
+                                  double bearing_std_rad,
+                                  std::uint32_t seed,
+                                  std::uint64_t truth_id) {
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> pos_noise(0.0, initial_position_std_m);
+  std::normal_distribution<double> b_noise(0.0, bearing_std_rad);
+  Scenario s;
+  for (std::size_t i = 0; i < times.size(); ++i) {
+    const double t = times[i];
+    const Eigen::Vector2d truth = start + velocity * t;
+    s.truth.push_back(makeTruth(truth, velocity, t, truth_id));
+    if (i == 0) {
+      const Eigen::Vector2d noisy(truth.x() + pos_noise(rng),
+                                  truth.y() + pos_noise(rng));
+      s.measurements.push_back(makeMeasurement(noisy, t, initial_position_std_m));
+    } else {
+      const double b = std::atan2(truth.y(), truth.x());
+      const double noisy_b = b + b_noise(rng);
+      s.measurements.push_back(
+          makeBearingMeasurement(noisy_b, t, bearing_std_rad));
     }
   }
   return s;
