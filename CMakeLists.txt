@@ -39,6 +39,7 @@ add_library(navtracker_core
   core/scenario/Builders.cpp
   core/scenario/Ospa.cpp
   core/scenario/Harness.cpp
+  core/scenario/HarnessBatched.cpp
   core/scenario/Metrics.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
@@ -80,6 +81,7 @@ add_executable(navtracker_tests
   tests/scenario/test_builders.cpp
   tests/scenario/test_ospa.cpp
   tests/scenario/test_harness.cpp
+  tests/scenario/test_harness_batched.cpp
   tests/scenario/test_parallel_targets.cpp
   tests/scenario/test_metrics.cpp
   tests/scenario/test_crossing.cpp
