@@ -44,6 +44,7 @@ add_library(navtracker_core
   core/scenario/Ospa.cpp
   core/scenario/Harness.cpp
   core/scenario/HarnessBatched.cpp
+  core/scenario/HarnessBatchedMht.cpp
   core/scenario/Metrics.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
