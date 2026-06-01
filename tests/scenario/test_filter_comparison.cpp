@@ -18,6 +18,7 @@
 #include "core/estimation/ConstantVelocity5State.hpp"
 #include "core/estimation/CoordinatedTurn.hpp"
 #include "core/estimation/ImmEstimator.hpp"
+#include "core/estimation/PrescribedTurn.hpp"
 #include "core/pipeline/Tracker.hpp"
 #include "core/scenario/Builders.hpp"
 #include "core/scenario/Harness.hpp"
@@ -274,6 +275,60 @@ TEST(FilterComparison, ManeuveringTarget) {
                u.mean_ospa, u.id_switches, u.final_track_count,
                p.mean_ospa, p.id_switches, p.final_track_count,
                i.mean_ospa, i.id_switches, i.final_track_count);
+}
+
+TEST(FilterComparison, Maneuvering3ModeIMM) {
+  // Same maneuvering scenario as the 2-mode IMM test (5 s straight + 5 s
+  // turn at +0.2 rad/s + 5 s straight; 1 Hz Position2D, sigma = 5 m).
+  // Three IMM configurations are compared:
+  //   - EKF (CV) as the baseline
+  //   - IMM-2: CV5State + CoordinatedTurn (free omega)
+  //   - IMM-3: CV5State + PrescribedTurn(+0.2) + PrescribedTurn(-0.2)
+  // The IMM-3's CT(+0.2) mode matches the true turn rate exactly, so it
+  // should win discrimination during the turn segment.
+  const Scenario s = buildManeuveringTargetScenario(
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),
+      /*straight*/ 5.0, /*turn*/ 5.0, /*omega*/ 0.2,
+      /*dt*/ 1.0, /*noise*/ 5.0, /*seed*/ 91);
+
+  auto cv4 = std::make_shared<ConstantVelocity2D>(0.5);
+  const EkfEstimator ekf(cv4, 10.0);
+
+  // IMM-2 (free CT)
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions2 = {
+      std::make_shared<ConstantVelocity5State>(0.5, 0.01),
+      std::make_shared<CoordinatedTurn>(0.5, 0.1)};
+  Eigen::MatrixXd pi2(2, 2);
+  pi2 << 0.95, 0.05,
+         0.10, 0.90;
+  Eigen::VectorXd mu0_2(2);
+  mu0_2 << 0.5, 0.5;
+  const ImmEstimator imm2(motions2, pi2, mu0_2, 10.0, 0.1);
+
+  // IMM-3 (prescribed +/- 0.2 rad/s)
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions3 = {
+      std::make_shared<ConstantVelocity5State>(0.5, 0.001),
+      std::make_shared<PrescribedTurn>(+0.2, 0.5, 0.001),
+      std::make_shared<PrescribedTurn>(-0.2, 0.5, 0.001)};
+  Eigen::MatrixXd pi3(3, 3);
+  pi3 << 0.90, 0.05, 0.05,
+         0.10, 0.85, 0.05,
+         0.10, 0.05, 0.85;
+  Eigen::VectorXd mu0_3(3);
+  mu0_3 << 0.34, 0.33, 0.33;
+  const ImmEstimator imm3(motions3, pi3, mu0_3, 10.0, 0.01);
+
+  const RunOutput e  = run(ekf,  s, 200.0, 100.0, 1, 5, 10.0);
+  const RunOutput i2 = run(imm2, s, 200.0, 100.0, 1, 5, 10.0);
+  const RunOutput i3 = run(imm3, s, 200.0, 100.0, 1, 5, 10.0);
+
+  std::fprintf(stderr,
+               "\n[Maneuvering3Mode] EKF   mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[Maneuvering3Mode] IMM-2 mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[Maneuvering3Mode] IMM-3 mean_ospa=%.4f id_switches=%d tracks=%zu\n",
+               e.mean_ospa,  e.id_switches,  e.final_track_count,
+               i2.mean_ospa, i2.id_switches, i2.final_track_count,
+               i3.mean_ospa, i3.id_switches, i3.final_track_count);
 }
 
 TEST(FilterComparison, ShortRangeMultiSeedSweep) {
