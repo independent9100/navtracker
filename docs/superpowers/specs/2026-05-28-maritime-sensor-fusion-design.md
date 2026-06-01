@@ -268,3 +268,42 @@ scenario where a particle filter should provably outperform EKF / UKF
 14.1 lands, bearing-only from a stationary sensor at the ENU origin is
 range-unobservable and all three filters tie at the prior-range uncertainty
 (see `docs/algorithms/evaluation-log.md` entry of 2026-06-01).
+
+### 14.5 Close-range precision sensors
+
+Add support for sensors whose error budget is dramatically tighter than
+nav-class radar at sub-kilometre ranges. The classes worth wiring:
+
+1. **Laser rangefinder** — range σ ~1 m and bearing σ ~0.05° at 0–500 m
+   when manually aimed or auto-tracked on a designated target. Existing
+   `RangeBearing2D` model fits with no math change; only a new adapter is
+   needed.
+2. **Docking / close-range radar** (e.g. Furuno DRS-NXT short range) —
+   sub-metre range and tighter bearing than nav radar at <100 m. Same
+   measurement model, separate adapter so its `R` reflects the tighter
+   spec.
+3. **Stereo / RGB-D camera** — range + bearing at <50 m for visually
+   detected vessels. Same `RangeBearing2D`; the adapter extracts depth
+   from disparity or the camera's depth channel.
+4. **Forward-looking sonar** — range to surface/sub-surface obstacles.
+   Needs a new `Range2D` measurement model (range only, no bearing) and
+   its own adapter.
+
+**Unlocks.** Harbor pilotage / docking / anchor-handling / escort-tug
+operations where target proximity is what matters and nav radar's 50 m
+range σ swamps the posterior. The tighter `R` dominates the fusion at
+close range, so the gain shows up automatically without changing the
+estimator.
+
+**Cost.** Per sensor class: ~80 lines for the adapter, plus `Range2D`
+infrastructure if forward-looking sonar is in scope (~50 lines for the
+measurement model and its tests). `SensorKind` already has `Lidar`;
+add `LaserRangefinder`, `DockingRadar`, `StereoCamera`, and `Fls` when
+the corresponding adapters are wired.
+
+**Dependency.** Only meaningful after 14.1 (sensor pose on measurements).
+A laser rangefinder mounted on the bow with the GPS antenna 30 m aft
+would otherwise have its precise return co-located at the GPS receiver,
+defeating the precision. 14.2 (own-ship sensor offsets) further refines
+this for multi-sensor platforms. Without 14.1 the close-range sensors
+will appear to "miss" the target by their own mount offset.
