@@ -4,6 +4,8 @@
 #include <utility>
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "core/types/Measurement.hpp"
 #include "core/types/Track.hpp"
 
@@ -12,9 +14,17 @@ namespace navtracker {
 // Output of associating a batch of measurements to existing tracks. Indices
 // refer into the input `tracks` and `measurements` vectors.
 struct AssociationResult {
+  // Hard-association path (GNN, etc.). Empty if the associator returned soft
+  // probabilities instead.
   std::vector<std::pair<std::size_t, std::size_t>> matches;  // (track_idx, meas_idx)
   std::vector<std::size_t> unmatched_tracks;
   std::vector<std::size_t> unmatched_measurements;
+
+  // Soft-association path (JPDA, JIPDA). betas(j, t) = P(measurement j came
+  // from track t | data). beta_0(t) = P(track t has no measurement this
+  // scan). Empty if the associator returned hard matches instead.
+  Eigen::MatrixXd betas;       // shape M x T, rows = measurements
+  Eigen::VectorXd beta_0;      // shape T,    per-track no-detection prob
 };
 
 // Data-association strategy: assign measurements to tracks.
