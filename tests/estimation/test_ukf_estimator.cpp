@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include "core/estimation/ConstantVelocity2D.hpp"
+#include "core/estimation/EkfEstimator.hpp"
 #include "core/estimation/UkfEstimator.hpp"
 #include "core/types/Measurement.hpp"
 #include "core/types/Track.hpp"
@@ -87,4 +88,52 @@ TEST(UkfEstimator, InitiateSeedsStateFromPositionMeasurement) {
   EXPECT_DOUBLE_EQ(t.covariance(2, 2), 64.0);
   ASSERT_TRUE(t.attributes.mmsi.has_value());
   EXPECT_EQ(*t.attributes.mmsi, 211000000u);
+}
+
+TEST(UkfEstimator, AgreesWithEkfOnLinearPositionUpdate) {
+  auto model = std::make_shared<ConstantVelocity2D>(1.0);
+  const navtracker::EkfEstimator ekf(model, 5.0);
+  const UkfEstimator ukf(model, 5.0);
+
+  Track t0;
+  t0.last_update = Timestamp::fromSeconds(0.0);
+  t0.state = Eigen::Vector4d(0.0, 0.0, 1.0, 0.0);
+  t0.covariance = Eigen::Matrix4d::Identity() * 10.0;
+
+  Measurement z;
+  z.time = Timestamp::fromSeconds(0.0);
+  z.model = MeasurementModel::Position2D;
+  z.value = Eigen::Vector2d(2.0, 1.0);
+  z.covariance = Eigen::Matrix2d::Identity() * 0.5;
+
+  Track t_ekf = t0;
+  Track t_ukf = t0;
+  ekf.update(t_ekf, z);
+  ukf.update(t_ukf, z);
+
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_NEAR(t_ekf.state(i), t_ukf.state(i), 1e-9);
+  }
+  EXPECT_TRUE(t_ekf.covariance.isApprox(t_ukf.covariance, 1e-9));
+}
+
+TEST(UkfEstimator, AgreesWithEkfOnLinearPredict) {
+  auto model = std::make_shared<ConstantVelocity2D>(1.0);
+  const navtracker::EkfEstimator ekf(model, 5.0);
+  const UkfEstimator ukf(model, 5.0);
+
+  Track t0;
+  t0.last_update = Timestamp::fromSeconds(0.0);
+  t0.state = Eigen::Vector4d(1.0, 2.0, 3.0, -1.0);
+  t0.covariance = Eigen::Matrix4d::Identity() * 4.0;
+
+  Track t_ekf = t0;
+  Track t_ukf = t0;
+  ekf.predict(t_ekf, Timestamp::fromSeconds(2.0));
+  ukf.predict(t_ukf, Timestamp::fromSeconds(2.0));
+
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_NEAR(t_ekf.state(i), t_ukf.state(i), 1e-9);
+  }
+  EXPECT_TRUE(t_ekf.covariance.isApprox(t_ukf.covariance, 1e-9));
 }
