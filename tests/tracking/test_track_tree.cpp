@@ -52,3 +52,46 @@ TEST(TrackTree, BestLeafIndexPicksHighestScore) {
   tt.mutableNodes().push_back(b);
   EXPECT_EQ(tt.bestLeafIndex(), 2u);
 }
+
+#include <memory>
+#include "core/estimation/ConstantVelocity2D.hpp"
+#include "core/estimation/EkfEstimator.hpp"
+
+TEST(TrackTree, BranchProducesMissAndPerMeasurementChildren) {
+  TrackTree tt(TrackId{4}, rootNode(0.0, 0.0));
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+
+  navtracker::Measurement z;
+  z.time = navtracker::Timestamp::fromSeconds(1.0);
+  z.model = navtracker::MeasurementModel::Position2D;
+  z.value = Eigen::Vector2d(0.5, 0.0);
+  z.covariance = Eigen::Matrix2d::Identity() * 1.0;
+  z.source_id = "t";
+
+  TrackTree::BranchParams p{0.9, 1e-4, 9.0};
+  tt.branch(ekf, {z}, navtracker::Timestamp::fromSeconds(1.0), p);
+
+  EXPECT_FALSE(tt.nodes()[0].is_leaf);
+  EXPECT_EQ(tt.leafIndices().size(), 2u);
+  const std::size_t best = tt.bestLeafIndex();
+  EXPECT_GT(tt.nodes()[best].score, 0.0);
+}
+
+TEST(TrackTree, BranchSkipsUngatedMeasurements) {
+  TrackTree tt(TrackId{5}, rootNode(0.0, 0.0));
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+
+  navtracker::Measurement z;
+  z.time = navtracker::Timestamp::fromSeconds(1.0);
+  z.model = navtracker::MeasurementModel::Position2D;
+  z.value = Eigen::Vector2d(1000.0, 1000.0);
+  z.covariance = Eigen::Matrix2d::Identity() * 1.0;
+  z.source_id = "t";
+
+  TrackTree::BranchParams p{0.9, 1e-4, 9.0};
+  tt.branch(ekf, {z}, navtracker::Timestamp::fromSeconds(1.0), p);
+
+  EXPECT_EQ(tt.leafIndices().size(), 1u);
+}

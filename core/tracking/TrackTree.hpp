@@ -7,9 +7,12 @@
 #include <Eigen/Core>
 
 #include "core/types/Ids.hpp"
+#include "core/types/Measurement.hpp"
 #include "core/types/Timestamp.hpp"
 
 namespace navtracker {
+
+class IEstimator;
 
 // One node in a track-tree hypothesis. Index into the tree's nodes vector
 // serves as the node_id. Parent index of std::numeric_limits<std::size_t>::max()
@@ -38,6 +41,24 @@ class TrackTree {
 
   std::vector<std::size_t> leafIndices() const;
   std::size_t bestLeafIndex() const;
+
+  // Branching parameters for one scan.
+  struct BranchParams {
+    double probability_of_detection;
+    double clutter_density;
+    double gate_threshold;
+  };
+
+  // Branch every current leaf by:
+  //   - generating one missed-detection child (state advanced via predict only;
+  //     score += log(1 - P_D))
+  //   - for each gated measurement, generating one child with EKF-updated
+  //     state + score += log(P_D) + log N(z|x,P) - log lambda_C
+  // The old leaves get is_leaf = false; new nodes are is_leaf = true.
+  void branch(const IEstimator& estimator,
+              const std::vector<Measurement>& scan,
+              Timestamp scan_time,
+              const BranchParams& params);
 
  private:
   TrackId external_id_;
