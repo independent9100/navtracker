@@ -8,11 +8,20 @@ namespace navtracker::sim {
 namespace {
 
 std::string formatDdmm(double abs_deg, int deg_width) {
-  const int deg = static_cast<int>(abs_deg);
-  const double minutes = (abs_deg - static_cast<double>(deg)) * 60.0;
+  int deg = static_cast<int>(abs_deg);
+  double minutes = (abs_deg - static_cast<double>(deg)) * 60.0;
+  // Round minutes to 5 fractional digits via integer math, carrying if it
+  // rounds up to 60.00000.
+  long long frac_units = static_cast<long long>(std::llround(minutes * 100000.0));
+  if (frac_units >= 6000000LL) {  // 60.00000 minutes
+    frac_units -= 6000000LL;
+    deg += 1;
+  }
+  const int int_minutes  = static_cast<int>(frac_units / 100000LL);
+  const int frac_minutes = static_cast<int>(frac_units % 100000LL);
   char buf[32];
-  // %0*d for zero-padded degrees; %08.5f keeps width 8 (e.g. "30.00000").
-  std::snprintf(buf, sizeof(buf), "%0*d%08.5f", deg_width, deg, minutes);
+  std::snprintf(buf, sizeof(buf), "%0*d%02d.%05d",
+                deg_width, deg, int_minutes, frac_minutes);
   return std::string(buf);
 }
 

@@ -35,3 +35,9 @@ TEST(NmeaEncode, WrapWithChecksumRoundTripsParser) {
   EXPECT_EQ(parsed->talker, "GP");
   EXPECT_EQ(parsed->formatter, "GGA");
 }
+
+TEST(NmeaEncode, MinuteRoundingCarriesToNextDegree) {
+  // 53 deg + 59.999999.../60 deg ~= 53.999999..., rounds to "5400.00000".
+  const double almost_54 = 54.0 - 1e-9;
+  EXPECT_EQ(sim::formatLatDdmm(almost_54), std::string("5400.00000"));
+}
