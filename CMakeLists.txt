@@ -101,6 +101,7 @@ add_executable(navtracker_tests
   tests/scenario/test_filter_comparison.cpp
   tests/scenario/test_jpda_comparison.cpp
   tests/scenario/test_mht_comparison.cpp
+  tests/scenario/test_multi_seed_sweep.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE navtracker_core GTest::gtest_main Eigen3::Eigen)
