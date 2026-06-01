@@ -116,6 +116,7 @@ add_executable(navtracker_tests
   tests/sim/test_arpa_emitter.cpp
   tests/sim/test_eoir_emitter.cpp
   tests/sim/test_simulated_sensor_bus.cpp
+  tests/sim/test_bus_determinism.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE navtracker_core GTest::gtest_main Eigen3::Eigen)
