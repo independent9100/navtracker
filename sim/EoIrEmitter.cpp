@@ -61,6 +61,11 @@ void EoIrEmitter::emit(const EmitContext& ctx) {
       const double b_obs = bearing_rel_deg +
           (cfg_.bearing_std_deg > 0.0 ? bearing_noise_(rng_) : 0.0);
 
+      // Singularity guard: a zero std on either bearing or range would produce
+      // a singular Measurement covariance, breaking the EKF. When the caller
+      // configures std == 0 (deterministic tests), substitute a small positive
+      // value on the wire instead. Noise sampling above is already gated, so
+      // truth-on-the-wire is preserved.
       CameraDetection d;
       d.time = next_emit_;
       d.bearing_relative_deg = b_obs;

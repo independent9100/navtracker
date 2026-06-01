@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <random>
-#include <utility>
 #include <vector>
 
 #include "adapters/eoir/EoIrAdapter.hpp"
@@ -25,7 +24,7 @@ struct EoIrEmitterConfig {
   RangeMode range_mode{RangeMode::BearingAndRange};
   double bearing_std_deg{0.5};
   double range_std_m{10.0};
-  double bearing_only_range_std_m{1000.0};
+  double bearing_only_range_std_m{1000.0};  // wide along-range std for BearingOnly mode; produces an elongated 2D covariance after projection.
 };
 
 class EoIrEmitter final : public ISensorEmitter {

@@ -1,5 +1,6 @@
 #include "sim/EoIrEmitter.hpp"
 
+#include <Eigen/Eigenvalues>
 #include <gtest/gtest.h>
 
 #include "adapters/eoir/EoIrAdapter.hpp"
@@ -104,4 +105,36 @@ TEST(EoIrEmitter, RangeGateSkipsBeyondMaxRange) {
   EXPECT_EQ(adapter.poll().size(), 0u);
   emitter.emit(makeCtx(0.1, Eigen::Vector2d::Zero(), 1, Eigen::Vector2d(300.0, 0.0)));
   EXPECT_EQ(adapter.poll().size(), 1u);
+}
+
+TEST(EoIrEmitter, BearingOnlyModeWidensRangeCovariance) {
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider own = makeProviderAtOrigin();
+  EoIrAdapter adapter(datum, own);
+
+  sim::EoIrEmitterConfig cfg;
+  cfg.targets.push_back({1, 5});
+  cfg.bearing_std_deg = 0.5;
+  cfg.range_std_m = 0.0;          // not used in BearingOnly mode
+  cfg.range_mode = sim::EoIrEmitterConfig::RangeMode::BearingOnly;
+  cfg.bearing_only_range_std_m = 1000.0;
+  cfg.fov_deg = 360.0;
+  cfg.dt_s = 0.1;
+
+  sim::EoIrEmitter emitter(adapter, cfg, /*seed=*/9);
+
+  // Target due NORTH at 1 km.
+  emitter.emit(makeCtx(0.0, Eigen::Vector2d::Zero(), 1, Eigen::Vector2d(0.0, 1000.0)));
+  const auto out = adapter.poll();
+  ASSERT_EQ(out.size(), 1u);
+
+  // Largest eigenvalue of the 2D Measurement covariance should be near
+  // the configured range std squared (1000^2 = 1e6); transverse eigenvalue
+  // from the bearing std at 1 km range: (1000 * 0.5deg in rad)^2 ~ 76.
+  const Eigen::Matrix2d R = out[0].covariance;
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> es(R);
+  const double max_eig = es.eigenvalues()(1);
+  const double min_eig = es.eigenvalues()(0);
+  EXPECT_NEAR(max_eig, 1.0e6, 2.0e4);  // 2% tolerance on the dominant axis
+  EXPECT_LT(min_eig, 200.0);            // small transverse component
 }
