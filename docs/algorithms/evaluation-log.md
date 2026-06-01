@@ -290,3 +290,49 @@ sensitivity (how close does ω̂ have to match ω_true for IMM-3 to win?).
 (3) Wider mode bank, e.g. `CV + CT(±0.1) + CT(±0.2) + CT(±0.5)`.
 (4) UKF backend per mode to let a single free-ω CT mode work via
 sigma-point propagation through F (replaces prescribed rates).
+
+## 2026-06-01 — JPDA vs GNN on clutter-crossing scenario
+
+`JpdaAssociator(gate=20, P_D=0.9, λ_C=1e-4)` vs
+`GnnAssociator(gate=20)`. Same backend (`EkfEstimator` with
+`ConstantVelocity2D(0.1)`), same lifecycle thresholds. Scenario:
+`buildClutterCrossingScenario` — two CV targets crossing at the origin
+plus 4 uniform false alarms per scan in [−300, 300] × [−50, 50], target
+measurement σ = 5 m, 30 scans, seed 31. Run via `runScenarioBatched`.
+
+Source: `tests/scenario/test_jpda_comparison.cpp::JpdaComparison.ClutterCrossing`.
+
+| Associator | mean OSPA (m) | ID switches | Final tracks |
+|------------|----------------|-------------|---------------|
+| GNN  | 47.3286 | **11** | **35** |
+| JPDA | 45.9158 | **4**  | **14** |
+
+**Takeaway.** JPDA's primary value is identity stability and clutter
+rejection, not localization accuracy. ID switches drop **64%** (11 → 4)
+and final track count drops **60%** (35 → 14). The OSPA improvement is
+modest (~3%) because OSPA is clipped at the cutoff (50 m) and the GNN's
+errors are largely identity errors (track-swap at crossing) rather than
+position errors — the cutoff masks them. The right metric for this
+comparison is ID switches, not OSPA.
+
+The 35-track count for GNN reflects clutter contamination — each scan's
+4 false alarms have nonzero probability of being the closest in-gate
+measurement to some track, kicking GNN's hard assignment to a clutter
+point and seeding a new track when the next scan's real measurement
+fails to match the contaminated old track. JPDA's soft update spreads
+mass across all in-gate measurements weighted by likelihood; clutter
+measurements contribute near-zero weight to real tracks and the new
+tracks they would seed get suppressed by the M-of-N confirmation policy.
+
+**Methodology notes.** Single seed (31). Multi-seed sweep would
+strengthen the OSPA number but the ID-switch reduction is structural
+(it follows from JPDA's contamination resistance, not from one lucky
+seed) and should survive averaging. The clutter density (~ 4 false
+alarms per scan over a 600×100 m box) is moderate; sweeping density up
+should widen JPDA's advantage further. Runtime: enumeration cost is
+negligible at 2 tracks × ~6 gated measurements per scan.
+
+**Open follow-ups.** (1) Multi-seed × multi-clutter-density sweep.
+(2) JIPDA (Integrated PDA) — adds per-track existence probability,
+ties into M-of-N. (3) K-best joint events for cluster sizes beyond
+~6×6. (4) MHT, the natural next step in the hypothesis-deferment line.
