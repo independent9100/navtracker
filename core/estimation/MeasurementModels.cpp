@@ -13,28 +13,44 @@ double wrapAngle(double radians) {
   return a - kPi;
 }
 
-MeasurementPrediction predictMeasurement(MeasurementModel model,
-                                         const Eigen::VectorXd& state) {
+Eigen::VectorXd predictMeasurementValue(MeasurementModel model,
+                                        const Eigen::VectorXd& state) {
   const double px = state(0);
   const double py = state(1);
+  switch (model) {
+    case MeasurementModel::Position2D:
+      return Eigen::Vector2d(px, py);
+    case MeasurementModel::PositionVelocity2D:
+      return state.head<4>();
+    case MeasurementModel::RangeBearing2D: {
+      double r = std::hypot(px, py);
+      if (r < 1e-6) r = 1e-6;
+      return Eigen::Vector2d(r, std::atan2(py, px));
+    }
+  }
+  return Eigen::VectorXd();
+}
+
+MeasurementPrediction predictMeasurement(MeasurementModel model,
+                                         const Eigen::VectorXd& state) {
   MeasurementPrediction out;
+  out.z_pred = predictMeasurementValue(model, state);
+  const double px = state(0);
+  const double py = state(1);
   switch (model) {
     case MeasurementModel::Position2D: {
-      out.z_pred = Eigen::Vector2d(px, py);
       out.H = Eigen::MatrixXd::Zero(2, 4);
       out.H(0, 0) = 1.0;
       out.H(1, 1) = 1.0;
       break;
     }
     case MeasurementModel::PositionVelocity2D: {
-      out.z_pred = state.head<4>();
       out.H = Eigen::MatrixXd::Identity(4, 4);
       break;
     }
     case MeasurementModel::RangeBearing2D: {
       double r = std::hypot(px, py);
       if (r < 1e-6) r = 1e-6;
-      out.z_pred = Eigen::Vector2d(r, std::atan2(py, px));
       out.H = Eigen::MatrixXd::Zero(2, 4);
       out.H(0, 0) = px / r;
       out.H(0, 1) = py / r;

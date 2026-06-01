@@ -74,9 +74,9 @@ void ParticleFilterEstimator::update(Track& track, const Measurement& z) const {
   for (int i = 0; i < N; ++i) log_w(i) = std::log(track.particle_weights(i));
 
   for (int i = 0; i < N; ++i) {
-    const MeasurementPrediction pred =
-        predictMeasurement(z.model, track.particles.col(i));
-    const Eigen::VectorXd y = measurementResidual(z.model, z.value, pred.z_pred);
+    const Eigen::VectorXd z_pred =
+        predictMeasurementValue(z.model, track.particles.col(i));
+    const Eigen::VectorXd y = measurementResidual(z.model, z.value, z_pred);
     log_w(i) += -0.5 * y.transpose() * Rinv * y;
   }
 

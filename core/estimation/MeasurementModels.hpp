@@ -19,6 +19,11 @@ double wrapAngle(double radians);
 MeasurementPrediction predictMeasurement(MeasurementModel model,
                                          const Eigen::VectorXd& state);
 
+// h(x) only, no Jacobian. Cheaper than predictMeasurement for callers
+// (e.g. particle filter) that only need the predicted measurement value.
+Eigen::VectorXd predictMeasurementValue(MeasurementModel model,
+                                        const Eigen::VectorXd& state);
+
 // Measurement residual z - h(x); bearing component is angle-wrapped for
 // the RangeBearing2D model.
 Eigen::VectorXd measurementResidual(MeasurementModel model,
