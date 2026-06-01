@@ -99,3 +99,11 @@ bearing-only) to put a number on the UKF advantage.
 precision when `α` is tiny (the cancellation in `n + (α²(n+κ) − n)` produces
 errors of order `n·ε`, breaking the weights). The implementation computes
 `scale = α²(n+κ)` directly and recovers `λ = scale − n` from there.
+
+**Measured behaviour on the current scenario suite.** Bit-identical to the
+EKF (to four decimal places of mean OSPA) on every existing scenario, because
+all of them use Position2D measurements (linear `h`) where UKF and Kalman
+posteriors coincide by construction. The UKF advantage will only be visible
+once a materially nonlinear scenario exists (short-range range/bearing,
+bearing-only, rapid range-rate). See `docs/algorithms/evaluation-log.md` for
+the table of measurements.

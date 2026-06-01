@@ -1,0 +1,145 @@
+// Runs the canonical scenarios through both EKF and UKF and reports the
+// metrics so the comparison can be recorded in the evaluation log. Asserts
+// only that both filters succeed at the baseline thresholds — the numerical
+// comparison itself is documented, not asserted.
+
+#include <cmath>
+#include <cstdio>
+#include <memory>
+#include <vector>
+
+#include <gtest/gtest.h>
+#include "core/association/GnnAssociator.hpp"
+#include "core/estimation/ConstantVelocity2D.hpp"
+#include "core/estimation/EkfEstimator.hpp"
+#include "core/estimation/UkfEstimator.hpp"
+#include "core/pipeline/Tracker.hpp"
+#include "core/scenario/Builders.hpp"
+#include "core/scenario/Harness.hpp"
+#include "core/scenario/Metrics.hpp"
+#include "core/tracking/TrackManager.hpp"
+
+using namespace navtracker;
+
+namespace {
+
+struct RunOutput {
+  double mean_ospa;
+  int id_switches;
+  std::size_t final_track_count;
+};
+
+RunOutput run(const IEstimator& est,
+              const Scenario& s,
+              double gate,
+              double cutoff,
+              int confirm,
+              int del,
+              double miss_timeout) {
+  GnnAssociator assoc(gate);
+  TrackManager mgr(confirm, del);
+  Tracker tracker(est, assoc, mgr, miss_timeout);
+  const ScenarioResult r = runScenario(s, tracker, mgr, cutoff);
+  return {r.mean_ospa, countIdSwitches(r.steps, cutoff), mgr.size()};
+}
+
+}  // namespace
+
+TEST(FilterComparison, SingleStraightLine) {
+  std::vector<double> times;
+  for (int i = 1; i <= 20; ++i) times.push_back(static_cast<double>(i));
+  const Scenario s = buildStraightLineScenario(
+      Eigen::Vector2d(100.0, 0.0), Eigen::Vector2d(5.0, 0.0),
+      times, 5.0, 13);
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  const UkfEstimator ukf(motion, 5.0);
+
+  const RunOutput e = run(ekf, s, 50.0, 50.0, 2, 3, 30.0);
+  const RunOutput u = run(ukf, s, 50.0, 50.0, 2, 3, 30.0);
+
+  std::fprintf(stderr,
+               "\n[SingleStraightLine] EKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[SingleStraightLine] UKF mean_ospa=%.4f id_switches=%d tracks=%zu\n",
+               e.mean_ospa, e.id_switches, e.final_track_count,
+               u.mean_ospa, u.id_switches, u.final_track_count);
+
+  EXPECT_LT(e.mean_ospa, 15.0);
+  EXPECT_LT(u.mean_ospa, 15.0);
+}
+
+TEST(FilterComparison, ParallelTargets) {
+  std::vector<double> times;
+  for (int i = 1; i <= 30; ++i) times.push_back(static_cast<double>(i));
+  const Scenario s = buildParallelTargetsScenario(
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(0.0, 800.0),
+      Eigen::Vector2d(5.0, 0.0),
+      times, 5.0, 29);
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  const UkfEstimator ukf(motion, 5.0);
+
+  const RunOutput e = run(ekf, s, 50.0, 50.0, 2, 4, 30.0);
+  const RunOutput u = run(ukf, s, 50.0, 50.0, 2, 4, 30.0);
+
+  std::fprintf(stderr,
+               "\n[ParallelTargets] EKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[ParallelTargets] UKF mean_ospa=%.4f id_switches=%d tracks=%zu\n",
+               e.mean_ospa, e.id_switches, e.final_track_count,
+               u.mean_ospa, u.id_switches, u.final_track_count);
+
+  EXPECT_EQ(e.final_track_count, 2u);
+  EXPECT_EQ(u.final_track_count, 2u);
+  EXPECT_LT(e.mean_ospa, 20.0);
+  EXPECT_LT(u.mean_ospa, 20.0);
+}
+
+TEST(FilterComparison, Crossing) {
+  std::vector<double> times;
+  for (int i = 1; i <= 40; ++i) times.push_back(static_cast<double>(i));
+  const Scenario s = buildCrossingTargetsScenario(
+      Eigen::Vector2d(-500.0, 10.0), Eigen::Vector2d(25.0, 0.0),
+      Eigen::Vector2d(500.0, -10.0), Eigen::Vector2d(-25.0, 0.0),
+      times, 8.0, 11);
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  const UkfEstimator ukf(motion, 5.0);
+
+  const RunOutput e = run(ekf, s, 50.0, 50.0, 2, 4, 30.0);
+  const RunOutput u = run(ukf, s, 50.0, 50.0, 2, 4, 30.0);
+
+  std::fprintf(stderr,
+               "\n[Crossing] EKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[Crossing] UKF mean_ospa=%.4f id_switches=%d tracks=%zu\n",
+               e.mean_ospa, e.id_switches, e.final_track_count,
+               u.mean_ospa, u.id_switches, u.final_track_count);
+
+  EXPECT_EQ(e.final_track_count, 2u);
+  EXPECT_EQ(u.final_track_count, 2u);
+  EXPECT_LE(e.id_switches, 2);
+  EXPECT_LE(u.id_switches, 2);
+}
+
+TEST(FilterComparison, AisDropout) {
+  std::vector<double> times;
+  for (int i = 1; i <= 5; ++i) times.push_back(static_cast<double>(i));
+  for (int i = 12; i <= 20; ++i) times.push_back(static_cast<double>(i));
+  const Scenario s = buildStraightLineScenario(
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),
+      times, 5.0, 3);
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  const UkfEstimator ukf(motion, 5.0);
+
+  const RunOutput e = run(ekf, s, 80.0, 80.0, 2, 5, 15.0);
+  const RunOutput u = run(ukf, s, 80.0, 80.0, 2, 5, 15.0);
+
+  std::fprintf(stderr,
+               "\n[AisDropout] EKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[AisDropout] UKF mean_ospa=%.4f id_switches=%d tracks=%zu\n",
+               e.mean_ospa, e.id_switches, e.final_track_count,
+               u.mean_ospa, u.id_switches, u.final_track_count);
+
+  EXPECT_EQ(e.final_track_count, 1u);
+  EXPECT_EQ(u.final_track_count, 1u);
+}
