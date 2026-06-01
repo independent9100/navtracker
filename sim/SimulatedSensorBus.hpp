@@ -37,6 +37,7 @@ class SimulatedSensorBus {
   void setOwnShip(std::shared_ptr<ITruthTrajectory> trajectory);
   void addTarget(std::uint64_t truth_id, std::shared_ptr<ITruthTrajectory> trajectory);
 
+  // Adapter must outlive this SimulatedSensorBus. Bus borrows by reference.
   void attachOwnShip(OwnShipNmeaAdapter& adapter, OwnShipEmitterConfig cfg);
   void attachAis    (AisAdapter& adapter,         AisEmitterConfig cfg);
   void attachArpa   (ArpaAdapter& adapter,        ArpaEmitterConfig cfg);

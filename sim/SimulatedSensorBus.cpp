@@ -117,6 +117,10 @@ Scenario SimulatedSensorBus::run() {
     }
   }
 
+  // Safety net: per-tick emitters are dispatched in a fixed order, but a
+  // catching-up emitter (AIS dropout recovery) can produce a Measurement
+  // backdated relative to a later same-tick one. Stable-sort guarantees
+  // strict time ordering on the way out.
   std::stable_sort(out.measurements.begin(), out.measurements.end(),
                    [](const Measurement& a, const Measurement& b) {
                      return a.time < b.time;
