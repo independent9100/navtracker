@@ -1,0 +1,82 @@
+#include "sim/OwnShipEmitter.hpp"
+
+#include <memory>
+#include <random>
+
+#include <gtest/gtest.h>
+
+#include "adapters/own_ship/OwnShipNmeaAdapter.hpp"
+#include "adapters/own_ship/OwnShipProvider.hpp"
+#include "core/geo/Datum.hpp"
+#include "sim/TruthTrajectory.hpp"
+
+using namespace navtracker;
+using navtracker::geo::Datum;
+
+TEST(OwnShipEmitter, EmitsGgaAndHdtAtOneHz) {
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+
+  auto traj = std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d::Zero(),       // starts at datum origin
+      Eigen::Vector2d(2.0, 0.0),     // 2 m/s east
+      Timestamp::fromSeconds(0.0));
+
+  sim::OwnShipEmitterConfig cfg;
+  cfg.dt_s = 1.0;
+  cfg.gps_pos_std_m = 0.0;   // no noise for this test
+  cfg.heading_true_deg = 90.0;
+
+  sim::OwnShipEmitter emitter(adapter, datum, *traj, cfg, /*seed=*/42);
+
+  std::mt19937 unused_rng(0);  // not used by this emitter; bus passes one anyway
+  sim::EmitContext ctx;
+  ctx.now = Timestamp::fromSeconds(0.0);
+  ctx.rng_unused = &unused_rng;
+  emitter.emit(ctx);
+  ASSERT_TRUE(provider.latest().has_value());
+  EXPECT_NEAR(provider.latest()->lat_deg, 53.5, 1e-6);
+  EXPECT_NEAR(provider.latest()->heading_true_deg, 90.0, 1e-6);
+
+  // 0.5 s later: cadence is 1 Hz, nothing should emit.
+  const auto previous = *provider.latest();
+  ctx.now = Timestamp::fromSeconds(0.5);
+  emitter.emit(ctx);
+  EXPECT_DOUBLE_EQ(provider.latest()->lon_deg, previous.lon_deg);
+
+  // 1.0 s: next emission. Ownship has moved 2 m east => lon_deg slightly larger.
+  ctx.now = Timestamp::fromSeconds(1.0);
+  emitter.emit(ctx);
+  EXPECT_GT(provider.latest()->lon_deg, previous.lon_deg);
+}
+
+TEST(OwnShipEmitter, AppliesGpsPositionNoise) {
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+
+  auto traj = std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d::Zero(),
+      Eigen::Vector2d::Zero(),
+      Timestamp::fromSeconds(0.0));
+
+  sim::OwnShipEmitterConfig cfg;
+  cfg.dt_s = 1.0;
+  cfg.gps_pos_std_m = 5.0;
+  cfg.heading_true_deg = 0.0;
+
+  sim::OwnShipEmitter emitter(adapter, datum, *traj, cfg, /*seed=*/123);
+
+  std::mt19937 unused_rng(0);
+  sim::EmitContext ctx;
+  ctx.now = Timestamp::fromSeconds(0.0);
+  ctx.rng_unused = &unused_rng;
+  emitter.emit(ctx);
+
+  // With 5 m noise, lat should deviate from the truth (53.5).
+  ASSERT_TRUE(provider.latest().has_value());
+  EXPECT_NE(provider.latest()->lat_deg, 53.5);
+  // But not by more than ~5*sigma worth of metres (1 deg lat ~= 111 km).
+  EXPECT_NEAR(provider.latest()->lat_deg, 53.5, 30.0 / 111000.0);
+}
