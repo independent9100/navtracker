@@ -31,3 +31,9 @@ TEST(Measurement, CarriesAssociationHints) {
   ASSERT_TRUE(m.hints.sensor_track_id.has_value());
   EXPECT_EQ(*m.hints.sensor_track_id, 42);
 }
+
+TEST(Measurement, DefaultSensorPositionIsZero) {
+  navtracker::Measurement m;
+  EXPECT_DOUBLE_EQ(m.sensor_position_enu.x(), 0.0);
+  EXPECT_DOUBLE_EQ(m.sensor_position_enu.y(), 0.0);
+}

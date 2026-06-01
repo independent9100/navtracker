@@ -29,6 +29,12 @@ struct Measurement {
   Eigen::MatrixXd covariance;
   AssociationHints hints;
 
+  // Where the sensor was at measurement time, in the ENU frame. Default
+  // is the origin (stationary sensor at the datum). For a sensor mounted
+  // on a moving platform this is the platform's ENU position at the
+  // measurement timestamp.
+  Eigen::Vector2d sensor_position_enu{Eigen::Vector2d::Zero()};
+
   int dim() const { return static_cast<int>(value.size()); }
 };
 
