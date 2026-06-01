@@ -66,6 +66,17 @@ Track ParticleFilterEstimator::initiate(const Measurement& z) const {
   P(3, 3) = vv;
 
   const Eigen::LLT<Eigen::Matrix4d> llt(P);
+  if (llt.info() != Eigen::Success) {
+    // Init covariance was not positive-definite — return a Tentative track
+    // with the Gaussian carrier only (no particle ensemble). Predict/update
+    // will see empty particles and skip ensemble work; the next update may
+    // re-initiate. This guards against malformed measurement covariance.
+    t.state = x;
+    t.covariance = P;
+    if (z.hints.mmsi.has_value()) t.attributes.mmsi = z.hints.mmsi;
+    t.contributing_sources.push_back(z.source_id);
+    return t;
+  }
   const Eigen::Matrix4d L = llt.matrixL();
 
   std::normal_distribution<double> n01(0.0, 1.0);
