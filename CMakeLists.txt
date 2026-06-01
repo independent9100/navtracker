@@ -50,6 +50,7 @@ add_library(navtracker_core
   sim/TruthTrajectory.cpp
   sim/NmeaEncode.cpp
   sim/OwnShipEmitter.cpp
+  sim/AisEmitter.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
@@ -108,6 +109,7 @@ add_executable(navtracker_tests
   tests/sim/test_truth_trajectory.cpp
   tests/sim/test_nmea_encode.cpp
   tests/sim/test_own_ship_emitter.cpp
+  tests/sim/test_ais_emitter.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE navtracker_core GTest::gtest_main Eigen3::Eigen)
