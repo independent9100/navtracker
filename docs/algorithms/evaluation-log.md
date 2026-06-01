@@ -118,3 +118,81 @@ where the posterior is provably multimodal. (2) Sweep `N ∈ {200, 500, 1000,
 2000, 5000}` to characterize the variance/cost trade. (3) Refactor
 `MeasurementModels` so the PF update path does not allocate a throwaway
 Jacobian `H` per particle (noted in the code-review of Task 5).
+
+## 2026-06-01 — Multi-seed N-sweep on ShortRangePass
+
+Same scenario as before, but each `(filter, seed)` cell rerun for 20 seeds
+to convert single-realization deltas into mean ± standard deviation.
+
+Source: `tests/scenario/test_filter_comparison.cpp` ::
+`FilterComparison.ShortRangeMultiSeedSweep` (seeds 41–60).
+
+| Filter / Config | mean OSPA (m) ± stddev |
+|-----------------|------------------------|
+| EKF             | 9.2929 ± 1.4251 |
+| UKF             | 9.2467 ± 1.4377 |
+| PF, N=200       | 16.5884 ± 10.2107 |
+| PF, N=500       | 10.6783 ± 4.5291 |
+| PF, N=1000      | 10.0169 ± 1.5601 |
+| PF, N=2000      | 9.8517 ± 1.9292 |
+
+**Takeaway, retraction.** The previous entry quoted a 0.8% UKF advantage on
+ShortRangePass from a single seed. The 20-seed average **vacates** that
+claim: UKF beats EKF by **0.05 m (≈ 0.5%)** which is well within
+single-realization noise (1.4 m). On a unimodal Position+range/bearing
+posterior at moderate range, EKF and UKF are statistically indistinguishable
+on this scenario. The single-seed VeryShortRangePass UKF advantage (6.7%)
+likely survives averaging but is not yet re-measured.
+
+**Particle filter cost / accuracy frontier.** The PF requires roughly N=1000
+to come within ~8% of the UKF and N=2000 to come within ~6%. At N=200 it is
+catastrophically noisy (16.6 ± 10 m), meaning the bootstrap PF needs
+sufficient particle count for *minimum* viability before the trade-off
+discussion even starts. This is the expected story for a bootstrap PF on a
+Gaussian-ish posterior: no structural advantage to redeem the Monte-Carlo
+variance. Adaptive `N` or a more sophisticated PF variant (auxiliary,
+marginalized) is the next thing to try if PF is to be competitive at lower
+N.
+
+## 2026-06-01 — Bearing-only pass scenario (stationary sensor)
+
+New scenario builder `buildBearingOnlyScenario` + new measurement model
+`MeasurementModel::Bearing2D` (scalar `β = atan2(py, px)`, 1×4 Jacobian).
+Sensor at ENU origin, **stationary**. Initial Position2D seed with σ=80 m
+(wide), then 60 s of bearing-only measurements with σ=3°.
+
+| Filter | mean OSPA (m) (seed 71) |
+|--------|--------------------------|
+| EKF | 181.85 |
+| UKF | 183.26 |
+| PF, N=2000 | 183.66 |
+
+**Takeaway.** All three filters are statistically indistinguishable on this
+scenario. The expected PF advantage (representing a non-Gaussian
+banana-shaped posterior) is **not realized** here, because from a stationary
+sensor with no own-ship motion the **range channel is genuinely
+unobservable** — there is no information in any bearing sequence that
+recovers range. The posterior on range stays as wide as the prior allowed,
+and OSPA is dominated by the along-bearing position error that no estimator
+can fix. The PF correctly maintains the spread rather than artificially
+collapsing it, which is the right behaviour but invisible in OSPA.
+
+**Implication.** Bearing-only is *not* automatically a PF-favouring
+scenario. The PF only beats a Kalman filter when the posterior is genuinely
+non-Gaussian AND the data carries enough information to localize the true
+mode. To exercise the PF's real advantage we need one of:
+1. **Own-ship motion** — moving sensor → parallax → range becomes weakly
+   observable; intermediate posteriors are banana-shaped.
+2. **Crossed bearings** from a second sensor with known offset — produces a
+   bimodal prior that collapses to one mode as more data arrives.
+3. **Maneuvering target with known constraint** (e.g. confined to a
+   channel) breaking the bearing-only symmetry.
+
+All three are substantial scenario work and require a sensor-frame abstraction
+the codebase does not yet have. Documented as the next scenario investment.
+
+**Open follow-ups (carried forward).** (1) Build a scenario with own-ship
+motion to make bearing-only range observable. (2) Sweep the PF on
+VeryShortRangePass over 20 seeds to confirm whether the 6.7% UKF advantage
+survives averaging. (3) Auxiliary or regularized PF variants to reduce the
+N required for viability.
