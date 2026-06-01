@@ -14,6 +14,10 @@ AisEmitter::AisEmitter(AisAdapter& adapter,
       rng_(seed),
       noise_(0.0, cfg_.pos_std_m > 0.0 ? cfg_.pos_std_m : 1.0) {}
 
+// Class-A SOTDMA cadence (ITU-R M.1371-5 §3.3.4.1.2). Buckets are inclusive
+// on the lower bound: speed in [0, 14) kn -> 10 s, [14, 23) kn -> 6 s,
+// [23, +inf) kn -> 2 s. Position at the slot time uses the most recent
+// truth sample; v1 does not simulate slot-time fractional drift.
 double AisEmitter::cadenceSeconds(double speed_mps) {
   // Class-A SOTDMA buckets, table from spec §5.2.
   constexpr double kKnotsPerMps = 1.9438444924;  // 1 m/s in knots

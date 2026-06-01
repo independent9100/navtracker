@@ -88,3 +88,29 @@ TEST(AisEmitter, DropoutWindowSuppressesEmission) {
   emitter.emit(makeCtx(30.0, 1, Eigen::Vector2d(90.0, 0.0),     v));
   EXPECT_EQ(adapter.poll().size(), 1u);
 }
+
+TEST(AisEmitter, DropoutPreservesCadencePhase) {
+  Datum datum({53.5, 8.0, 0.0});
+  AisAdapter adapter(datum);
+
+  sim::AisEmitterConfig cfg;
+  cfg.targets.push_back({1u, 200000001u, true});
+  // Window NOT aligned to the 10 s cadence — start mid-period, end mid-period.
+  cfg.dropout_windows_s.emplace_back(5.0, 12.0);
+  cfg.pos_std_m = 0.0;
+
+  sim::AisEmitter emitter(adapter, datum, cfg, /*seed=*/4);
+
+  const Eigen::Vector2d v(3.0, 0.0);  // 10 s cadence
+
+  emitter.emit(makeCtx(0.0,  1, Eigen::Vector2d::Zero(),    v));
+  EXPECT_EQ(adapter.poll().size(), 1u);  // natural slot at t=0
+  emitter.emit(makeCtx(10.0, 1, Eigen::Vector2d(30.0, 0.0), v));
+  EXPECT_EQ(adapter.poll().size(), 0u);  // dropped (10 in [5,12))
+  // The next natural slot is t=20, NOT t=12. A buggy impl that resets
+  // next_emit_ on dropout exit would emit at t=12 here.
+  emitter.emit(makeCtx(15.0, 1, Eigen::Vector2d(45.0, 0.0), v));
+  EXPECT_EQ(adapter.poll().size(), 0u);  // still nothing — out of dropout but not at a slot
+  emitter.emit(makeCtx(20.0, 1, Eigen::Vector2d(60.0, 0.0), v));
+  EXPECT_EQ(adapter.poll().size(), 1u);  // natural slot at t=20
+}
