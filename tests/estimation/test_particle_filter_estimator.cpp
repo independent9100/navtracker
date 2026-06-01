@@ -101,3 +101,27 @@ TEST(ParticleFilterEstimator, PredictOnEmptyEnsembleIsNoOp) {
     EXPECT_DOUBLE_EQ(t.state(i), state_before(i));
   EXPECT_DOUBLE_EQ(t.last_update.seconds(), time_before.seconds());
 }
+
+TEST(ParticleFilterEstimator, UpdateShrinksPositionCovariance) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  ParticleFilterEstimator pf(motion, 2000, 10.0, 0.5, 23);
+  navtracker::Track t = pf.initiate(positionMeas(0.0, 0.0, 20.0, 0.0));
+  const double var_before = t.covariance(0, 0);
+  pf.update(t, positionMeas(0.0, 0.0, 1.0, 0.0));
+  EXPECT_LT(t.covariance(0, 0), var_before * 0.5);
+  EXPECT_LT(t.covariance(1, 1), var_before * 0.5);
+  EXPECT_NEAR(t.state(0), 0.0, 1.0);
+  EXPECT_NEAR(t.state(1), 0.0, 1.0);
+}
+
+TEST(ParticleFilterEstimator, UpdateResamplesWhenEssCollapses) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  ParticleFilterEstimator pf(motion, 1000, 50.0, 0.5, 31);
+  // Wide prior so a sharp measurement gives a heavily concentrated weight
+  // distribution → ESS collapses → triggers systematic resampling.
+  navtracker::Track t = pf.initiate(positionMeas(0.0, 0.0, 100.0, 0.0));
+  pf.update(t, positionMeas(0.0, 0.0, 0.5, 0.0));
+  // Post-resample weights are uniform.
+  for (int i = 0; i < t.particle_weights.size(); ++i)
+    EXPECT_NEAR(t.particle_weights(i), 1.0 / 1000.0, 1e-12);
+}

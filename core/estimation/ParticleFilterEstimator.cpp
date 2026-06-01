@@ -65,10 +65,46 @@ void ParticleFilterEstimator::predict(Track& track, Timestamp to) const {
   track.last_update = to;
 }
 
-void ParticleFilterEstimator::update(Track& track,
-                                     const Measurement& /*z*/) const {
+void ParticleFilterEstimator::update(Track& track, const Measurement& z) const {
   if (track.particles.cols() == 0) return;
-  // Implemented in Task 5.
+  const int N = static_cast<int>(track.particles.cols());
+  const Eigen::MatrixXd Rinv = z.covariance.inverse();
+
+  Eigen::VectorXd log_w(N);
+  for (int i = 0; i < N; ++i) log_w(i) = std::log(track.particle_weights(i));
+
+  for (int i = 0; i < N; ++i) {
+    const MeasurementPrediction pred =
+        predictMeasurement(z.model, track.particles.col(i));
+    Eigen::VectorXd y = z.value - pred.z_pred;
+    if (z.model == MeasurementModel::RangeBearing2D) y(1) = wrapAngle(y(1));
+    log_w(i) += -0.5 * y.transpose() * Rinv * y;
+  }
+
+  const double max_lw = log_w.maxCoeff();
+  Eigen::VectorXd w = (log_w.array() - max_lw).exp();
+  const double sum = w.sum();
+  if (!std::isfinite(sum) || sum <= 0.0) {
+    // All particles deemed impossible: reset to uniform — degenerate case.
+    w = Eigen::VectorXd::Constant(N, 1.0 / N);
+  } else {
+    w /= sum;
+  }
+  track.particle_weights = w;
+
+  if (effectiveSampleSize(w) < ess_threshold_) {
+    std::uniform_real_distribution<double> u01(
+        0.0, 1.0 / static_cast<double>(N));
+    const double u = u01(rng_);
+    const std::vector<int> idx = systematicResample(w, u);
+    Eigen::MatrixXd resampled(track.particles.rows(), N);
+    for (int i = 0; i < N; ++i) resampled.col(i) = track.particles.col(idx[i]);
+    track.particles = resampled;
+    track.particle_weights = Eigen::VectorXd::Constant(N, 1.0 / N);
+  }
+
+  projectToGaussian(track);
+  track.last_update = z.time;
 }
 
 Track ParticleFilterEstimator::initiate(const Measurement& z) const {
