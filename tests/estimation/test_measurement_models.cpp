@@ -90,3 +90,25 @@ TEST(MeasurementModels, Bearing2DResidualWrapped) {
   // Raw diff is 6.0 rad; wrapped to (−π,π] should be about 6.0 − 2π ≈ −0.283.
   EXPECT_NEAR(y(0), 6.0 - 2.0 * 3.14159265358979323846, 1e-9);
 }
+
+TEST(MeasurementModels, Position2DJacobianAdaptsToStateSize) {
+  Eigen::VectorXd x5(5);
+  x5 << 10.0, 20.0, 5.0, -3.0, 0.1;
+  const navtracker::MeasurementPrediction p =
+      navtracker::predictMeasurement(navtracker::MeasurementModel::Position2D, x5);
+  ASSERT_EQ(p.H.rows(), 2);
+  ASSERT_EQ(p.H.cols(), 5);
+  EXPECT_DOUBLE_EQ(p.H(0, 0), 1.0);
+  EXPECT_DOUBLE_EQ(p.H(1, 1), 1.0);
+  EXPECT_DOUBLE_EQ(p.H(0, 4), 0.0);
+  EXPECT_DOUBLE_EQ(p.H(1, 4), 0.0);
+}
+
+TEST(MeasurementModels, RangeBearingJacobianAdaptsToStateSize) {
+  Eigen::VectorXd x5(5);
+  x5 << 100.0, 0.0, 5.0, -3.0, 0.1;
+  const navtracker::MeasurementPrediction p =
+      navtracker::predictMeasurement(navtracker::MeasurementModel::RangeBearing2D, x5);
+  ASSERT_EQ(p.H.rows(), 2);
+  ASSERT_EQ(p.H.cols(), 5);
+}

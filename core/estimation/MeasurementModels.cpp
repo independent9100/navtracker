@@ -42,23 +42,28 @@ MeasurementPrediction predictMeasurement(MeasurementModel model,
                                          const Eigen::VectorXd& state) {
   MeasurementPrediction out;
   out.z_pred = predictMeasurementValue(model, state);
+  const int n = static_cast<int>(state.size());
   const double px = state(0);
   const double py = state(1);
   switch (model) {
     case MeasurementModel::Position2D: {
-      out.H = Eigen::MatrixXd::Zero(2, 4);
+      out.H = Eigen::MatrixXd::Zero(2, n);
       out.H(0, 0) = 1.0;
       out.H(1, 1) = 1.0;
       break;
     }
     case MeasurementModel::PositionVelocity2D: {
-      out.H = Eigen::MatrixXd::Identity(4, 4);
+      out.H = Eigen::MatrixXd::Zero(4, n);
+      out.H(0, 0) = 1.0;
+      out.H(1, 1) = 1.0;
+      out.H(2, 2) = 1.0;
+      out.H(3, 3) = 1.0;
       break;
     }
     case MeasurementModel::RangeBearing2D: {
       double r = std::hypot(px, py);
       if (r < 1e-6) r = 1e-6;
-      out.H = Eigen::MatrixXd::Zero(2, 4);
+      out.H = Eigen::MatrixXd::Zero(2, n);
       out.H(0, 0) = px / r;
       out.H(0, 1) = py / r;
       out.H(1, 0) = -py / (r * r);
@@ -68,7 +73,7 @@ MeasurementPrediction predictMeasurement(MeasurementModel model,
     case MeasurementModel::Bearing2D: {
       double r = std::hypot(px, py);
       if (r < 1e-6) r = 1e-6;
-      out.H = Eigen::MatrixXd::Zero(1, 4);
+      out.H = Eigen::MatrixXd::Zero(1, n);
       out.H(0, 0) = -py / (r * r);
       out.H(0, 1) =  px / (r * r);
       break;
