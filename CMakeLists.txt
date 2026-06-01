@@ -32,6 +32,7 @@ add_library(navtracker_core
   core/tracking/TrackTree.cpp
   core/pipeline/ReorderBuffer.cpp
   core/pipeline/Tracker.cpp
+  core/pipeline/MhtTracker.cpp
   adapters/own_ship/OwnShipProvider.cpp
   adapters/util/Projection.cpp
   adapters/util/Nmea.cpp
@@ -74,6 +75,7 @@ add_executable(navtracker_tests
   tests/pipeline/test_reorder_buffer.cpp
   tests/ports/test_edge_ports.cpp
   tests/pipeline/test_tracker.cpp
+  tests/pipeline/test_mht_tracker.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
   tests/adapters/own_ship/test_own_ship_provider.cpp
