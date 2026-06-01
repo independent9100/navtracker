@@ -15,6 +15,9 @@
 #include "core/estimation/EkfEstimator.hpp"
 #include "core/estimation/UkfEstimator.hpp"
 #include "core/estimation/ParticleFilterEstimator.hpp"
+#include "core/estimation/ConstantVelocity5State.hpp"
+#include "core/estimation/CoordinatedTurn.hpp"
+#include "core/estimation/ImmEstimator.hpp"
 #include "core/pipeline/Tracker.hpp"
 #include "core/scenario/Builders.hpp"
 #include "core/scenario/Harness.hpp"
@@ -231,6 +234,46 @@ TEST(FilterComparison, BearingOnlyPass) {
                e.mean_ospa, e.id_switches, e.final_track_count,
                u.mean_ospa, u.id_switches, u.final_track_count,
                p.mean_ospa, p.id_switches, p.final_track_count);
+}
+
+TEST(FilterComparison, ManeuveringTarget) {
+  // Target: 5 s straight at (10, 0) m/s, 5 s left turn at 0.2 rad/s,
+  // 5 s straight on the new heading. 1 Hz Position2D measurements,
+  // sigma = 5 m. CV-only filters lag through the turn; IMM should switch
+  // to the CT mode and recover.
+  const Scenario s = buildManeuveringTargetScenario(
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),
+      /*straight*/ 5.0, /*turn*/ 5.0, /*omega*/ 0.2,
+      /*dt*/ 1.0, /*noise*/ 5.0, /*seed*/ 91);
+  auto cv4 = std::make_shared<ConstantVelocity2D>(0.5);
+  const EkfEstimator ekf(cv4, 10.0);
+  const UkfEstimator ukf(cv4, 10.0);
+  const ParticleFilterEstimator pf(cv4, 1000, 10.0, 0.5, 91);
+
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {
+      std::make_shared<ConstantVelocity5State>(0.5, 0.01),
+      std::make_shared<CoordinatedTurn>(0.5, 0.1)};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05,
+        0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 0.5, 0.5;
+  const ImmEstimator imm(motions, pi, mu0, 10.0, 0.1);
+
+  const RunOutput e = run(ekf, s, 200.0, 100.0, 1, 5, 10.0);
+  const RunOutput u = run(ukf, s, 200.0, 100.0, 1, 5, 10.0);
+  const RunOutput p = run(pf,  s, 200.0, 100.0, 1, 5, 10.0);
+  const RunOutput i = run(imm, s, 200.0, 100.0, 1, 5, 10.0);
+
+  std::fprintf(stderr,
+               "\n[Maneuvering] EKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[Maneuvering] UKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[Maneuvering] PF  mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[Maneuvering] IMM mean_ospa=%.4f id_switches=%d tracks=%zu\n",
+               e.mean_ospa, e.id_switches, e.final_track_count,
+               u.mean_ospa, u.id_switches, u.final_track_count,
+               p.mean_ospa, p.id_switches, p.final_track_count,
+               i.mean_ospa, i.id_switches, i.final_track_count);
 }
 
 TEST(FilterComparison, ShortRangeMultiSeedSweep) {
