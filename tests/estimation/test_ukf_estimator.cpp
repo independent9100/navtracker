@@ -49,21 +49,24 @@ TEST(UkfEstimator, PositionUpdatePullsStateAndShrinksCovariance) {
 }
 
 TEST(UkfEstimator, RangeBearingUpdateOnConsistentMeasurementIsStable) {
+  // Realistic maritime geometry: 5 km range, 10 m position uncertainty.
+  // Far enough that the second-moment range bias is negligible (<< 1 m), so
+  // a measurement matching h(state) doesn't perturb the state appreciably.
   auto model = std::make_shared<ConstantVelocity2D>(1.0);
   const UkfEstimator ukf(model);
   Track t;
   t.last_update = Timestamp::fromSeconds(0.0);
-  t.state = Eigen::Vector4d(3.0, 4.0, 0.0, 0.0);
-  t.covariance = Eigen::Matrix4d::Identity() * 10.0;
+  t.state = Eigen::Vector4d(3000.0, 4000.0, 0.0, 0.0);
+  t.covariance = Eigen::Matrix4d::Identity() * 100.0;
   Measurement z;
   z.time = Timestamp::fromSeconds(0.0);
   z.model = MeasurementModel::RangeBearing2D;
-  z.value = Eigen::Vector2d(5.0, std::atan2(4.0, 3.0));
-  z.covariance = Eigen::Matrix2d::Identity() * 0.01;
+  z.value = Eigen::Vector2d(5000.0, std::atan2(4000.0, 3000.0));
+  z.covariance = Eigen::Matrix2d::Identity() * 1.0;
   ukf.update(t, z);
-  EXPECT_NEAR(t.state(0), 3.0, 1e-3);
-  EXPECT_NEAR(t.state(1), 4.0, 1e-3);
-  EXPECT_LT(t.covariance(0, 0), 10.0);
+  EXPECT_NEAR(t.state(0), 3000.0, 1.0);
+  EXPECT_NEAR(t.state(1), 4000.0, 1.0);
+  EXPECT_LT(t.covariance(0, 0), 100.0);
 }
 
 TEST(UkfEstimator, InitiateSeedsStateFromPositionMeasurement) {

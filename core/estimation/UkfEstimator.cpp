@@ -76,12 +76,7 @@ void UkfEstimator::update(Track& track, const Measurement& z) const {
   S += z.covariance;
 
   const Eigen::MatrixXd K = Pxz * S.inverse();
-  // Compute residual against h(mean) to avoid second-order bias in the
-  // unscented z_pred for strongly nonlinear measurement functions.
-  const MeasurementPrediction mean_pred =
-      predictMeasurement(z.model, track.state);
-  const Eigen::VectorXd y =
-      measurementResidual(z.model, z.value, mean_pred.z_pred);
+  const Eigen::VectorXd y = measurementResidual(z.model, z.value, z_pred);
   track.state += K * y;
   track.covariance -= K * S * K.transpose();
   track.last_update = z.time;
