@@ -37,7 +37,8 @@ AssociationResult JpdaAssociator::associate(
       const double d2 = mahalanobisDistance(tracks[t], measurements[j]);
       V(j, t) = (d2 <= gate_threshold_) ? 1 : 0;
       const MeasurementPrediction pred =
-          predictMeasurement(measurements[j].model, tracks[t].state);
+          predictMeasurement(measurements[j].model, tracks[t].state,
+                             measurements[j].sensor_position_enu);
       const Eigen::MatrixXd S =
           pred.H * tracks[t].covariance * pred.H.transpose() +
           measurements[j].covariance;

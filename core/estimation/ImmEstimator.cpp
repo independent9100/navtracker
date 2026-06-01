@@ -114,7 +114,7 @@ void ImmEstimator::update(Track& track, const Measurement& z) const {
   for (int j = 0; j < K; ++j) {
     const Eigen::VectorXd x_j = track.imm_means.col(j);
     const Eigen::MatrixXd P_j = track.imm_covariances[j];
-    const MeasurementPrediction pred = predictMeasurement(z.model, x_j);
+    const MeasurementPrediction pred = predictMeasurement(z.model, x_j, z.sensor_position_enu);
     const Eigen::VectorXd y =
         measurementResidual(z.model, z.value, pred.z_pred);
     const Eigen::MatrixXd& H = pred.H;

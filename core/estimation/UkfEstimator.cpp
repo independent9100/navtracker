@@ -57,7 +57,7 @@ void UkfEstimator::update(Track& track, const Measurement& z) const {
   Eigen::MatrixXd Zsp(nz, sp.points.cols());
   for (int i = 0; i < sp.points.cols(); ++i) {
     const MeasurementPrediction pred =
-        predictMeasurement(z.model, sp.points.col(i));
+        predictMeasurement(z.model, sp.points.col(i), z.sensor_position_enu);
     Zsp.col(i) = pred.z_pred;
   }
 

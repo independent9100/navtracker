@@ -24,7 +24,7 @@ void EkfEstimator::predict(Track& track, Timestamp to) const {
 }
 
 void EkfEstimator::update(Track& track, const Measurement& z) const {
-  const MeasurementPrediction pred = predictMeasurement(z.model, track.state);
+  const MeasurementPrediction pred = predictMeasurement(z.model, track.state, z.sensor_position_enu);
   const Eigen::VectorXd y = measurementResidual(z.model, z.value, pred.z_pred);
   const Eigen::MatrixXd& h = pred.H;
   const Eigen::MatrixXd s = h * track.covariance * h.transpose() + z.covariance;
@@ -70,7 +70,7 @@ void EkfEstimator::softUpdate(Track& track,
   const int M = static_cast<int>(gated_measurements.size());
   if (M == 0 || betas.size() != M) return;
   const Measurement& z0 = gated_measurements[0];
-  const MeasurementPrediction pred = predictMeasurement(z0.model, track.state);
+  const MeasurementPrediction pred = predictMeasurement(z0.model, track.state, z0.sensor_position_enu);
   const Eigen::MatrixXd& H = pred.H;
   const Eigen::MatrixXd S = H * track.covariance * H.transpose() + z0.covariance;
   const Eigen::MatrixXd S_inv = S.inverse();

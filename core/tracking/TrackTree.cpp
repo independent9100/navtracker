@@ -71,7 +71,7 @@ void TrackTree::branch(const IEstimator& estimator,
       if (d2 > params.gate_threshold) continue;
 
       const MeasurementPrediction pred =
-          predictMeasurement(z.model, tmp_predicted.state);
+          predictMeasurement(z.model, tmp_predicted.state, z.sensor_position_enu);
       const Eigen::MatrixXd S =
           pred.H * tmp_predicted.covariance * pred.H.transpose() + z.covariance;
       const int d = static_cast<int>(z.value.size());
