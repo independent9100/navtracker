@@ -16,6 +16,7 @@ add_library(navtracker_core
   core/estimation/ConstantVelocity2D.cpp
   core/estimation/ConstantVelocity5State.cpp
   core/estimation/CoordinatedTurn.cpp
+  core/estimation/ImmEstimator.cpp
   core/estimation/MeasurementModels.cpp
   core/estimation/EkfEstimator.cpp
   core/estimation/SigmaPoints.cpp
@@ -51,6 +52,7 @@ add_executable(navtracker_tests
   tests/estimation/test_constant_velocity.cpp
   tests/estimation/test_constant_velocity_5state.cpp
   tests/estimation/test_coordinated_turn.cpp
+  tests/estimation/test_imm_estimator.cpp
   tests/estimation/test_measurement_models.cpp
   tests/estimation/test_ekf_estimator.cpp
   tests/estimation/test_sigma_points.cpp
