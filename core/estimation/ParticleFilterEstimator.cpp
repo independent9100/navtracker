@@ -76,8 +76,7 @@ void ParticleFilterEstimator::update(Track& track, const Measurement& z) const {
   for (int i = 0; i < N; ++i) {
     const MeasurementPrediction pred =
         predictMeasurement(z.model, track.particles.col(i));
-    Eigen::VectorXd y = z.value - pred.z_pred;
-    if (z.model == MeasurementModel::RangeBearing2D) y(1) = wrapAngle(y(1));
+    const Eigen::VectorXd y = measurementResidual(z.model, z.value, pred.z_pred);
     log_w(i) += -0.5 * y.transpose() * Rinv * y;
   }
 
