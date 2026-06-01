@@ -1,7 +1,6 @@
 #include "sim/OwnShipEmitter.hpp"
 
 #include <memory>
-#include <random>
 
 #include <gtest/gtest.h>
 
@@ -30,10 +29,8 @@ TEST(OwnShipEmitter, EmitsGgaAndHdtAtOneHz) {
 
   sim::OwnShipEmitter emitter(adapter, datum, *traj, cfg, /*seed=*/42);
 
-  std::mt19937 unused_rng(0);  // not used by this emitter; bus passes one anyway
   sim::EmitContext ctx;
   ctx.now = Timestamp::fromSeconds(0.0);
-  ctx.rng_unused = &unused_rng;
   emitter.emit(ctx);
   ASSERT_TRUE(provider.latest().has_value());
   EXPECT_NEAR(provider.latest()->lat_deg, 53.5, 1e-6);
@@ -68,10 +65,8 @@ TEST(OwnShipEmitter, AppliesGpsPositionNoise) {
 
   sim::OwnShipEmitter emitter(adapter, datum, *traj, cfg, /*seed=*/123);
 
-  std::mt19937 unused_rng(0);
   sim::EmitContext ctx;
   ctx.now = Timestamp::fromSeconds(0.0);
-  ctx.rng_unused = &unused_rng;
   emitter.emit(ctx);
 
   // With 5 m noise, lat should deviate from the truth (53.5).
@@ -79,4 +74,32 @@ TEST(OwnShipEmitter, AppliesGpsPositionNoise) {
   EXPECT_NE(provider.latest()->lat_deg, 53.5);
   // But not by more than ~5*sigma worth of metres (1 deg lat ~= 111 km).
   EXPECT_NEAR(provider.latest()->lat_deg, 53.5, 30.0 / 111000.0);
+}
+
+TEST(OwnShipEmitter, HeadingWrapsToZero360Range) {
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+
+  auto traj = std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d::Zero(), Eigen::Vector2d::Zero(),
+      Timestamp::fromSeconds(0.0));
+
+  sim::OwnShipEmitterConfig cfg;
+  cfg.dt_s = 1.0;
+  cfg.gps_pos_std_m = 0.0;
+  cfg.heading_true_deg = 370.0;  // > 360, should wrap to 10
+  sim::OwnShipEmitter emitter(adapter, datum, *traj, cfg, /*seed=*/1);
+
+  sim::EmitContext ctx;
+  ctx.now = Timestamp::fromSeconds(0.0);
+  emitter.emit(ctx);
+  ASSERT_TRUE(provider.latest().has_value());
+  EXPECT_NEAR(provider.latest()->heading_true_deg, 10.0, 1e-6);
+
+  cfg.heading_true_deg = -45.0;  // negative, should wrap to 315
+  sim::OwnShipEmitter emitter2(adapter, datum, *traj, cfg, /*seed=*/2);
+  ctx.now = Timestamp::fromSeconds(0.0);
+  emitter2.emit(ctx);
+  EXPECT_NEAR(provider.latest()->heading_true_deg, 315.0, 1e-6);
 }

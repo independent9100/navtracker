@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <random>
 #include <vector>
 
 #include "core/types/Timestamp.hpp"
@@ -21,11 +20,6 @@ struct EmitContext {
   Timestamp now;
   TruthState ownship_truth;
   std::vector<TargetTruth> targets;
-  // Some emitters do not need randomness (OwnShipEmitter when noise=0 still
-  // pulls from its own member RNG). Keeping a pointer here so the bus can
-  // pass a tick-scoped RNG if we ever need shared randomness; for now,
-  // emitters own their own substream RNG and ignore this field.
-  std::mt19937* rng_unused{nullptr};
 };
 
 class ISensorEmitter {
