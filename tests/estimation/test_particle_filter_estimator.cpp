@@ -125,3 +125,24 @@ TEST(ParticleFilterEstimator, UpdateResamplesWhenEssCollapses) {
   for (int i = 0; i < t.particle_weights.size(); ++i)
     EXPECT_NEAR(t.particle_weights(i), 1.0 / 1000.0, 1e-12);
 }
+
+TEST(ParticleFilterEstimator, DeterministicForSameSeed) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  ParticleFilterEstimator a(motion, 256, 5.0, 0.5, 99);
+  ParticleFilterEstimator b(motion, 256, 5.0, 0.5, 99);
+
+  navtracker::Track ta = a.initiate(positionMeas(10.0, 20.0, 2.0, 0.0));
+  navtracker::Track tb = b.initiate(positionMeas(10.0, 20.0, 2.0, 0.0));
+  a.predict(ta, Timestamp::fromSeconds(1.0));
+  b.predict(tb, Timestamp::fromSeconds(1.0));
+  a.update(ta, positionMeas(11.0, 19.5, 1.0, 1.0));
+  b.update(tb, positionMeas(11.0, 19.5, 1.0, 1.0));
+
+  ASSERT_EQ(ta.particles.rows(), tb.particles.rows());
+  ASSERT_EQ(ta.particles.cols(), tb.particles.cols());
+  for (int j = 0; j < ta.particles.cols(); ++j)
+    for (int i = 0; i < ta.particles.rows(); ++i)
+      EXPECT_DOUBLE_EQ(ta.particles(i, j), tb.particles(i, j));
+  for (int i = 0; i < ta.particle_weights.size(); ++i)
+    EXPECT_DOUBLE_EQ(ta.particle_weights(i), tb.particle_weights(i));
+}
