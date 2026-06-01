@@ -63,6 +63,28 @@ TEST(Tracker, StaleTrackTimesOutAndIsDeleted) {
   EXPECT_EQ(manager.size(), 1u);
 }
 
+TEST(Tracker, ProcessBatchHandlesMultipleMeasurementsAtSameTime) {
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+  navtracker::GnnAssociator gnn(50.0);
+  navtracker::TrackManager mgr(1, 5);
+  navtracker::Tracker tr(ekf, gnn, mgr, 10.0);
+
+  navtracker::Measurement z1;
+  z1.time = navtracker::Timestamp::fromSeconds(1.0);
+  z1.model = navtracker::MeasurementModel::Position2D;
+  z1.value = Eigen::Vector2d(100.0, 0.0);
+  z1.covariance = Eigen::Matrix2d::Identity() * 4.0;
+  z1.source_id = "t";
+
+  navtracker::Measurement z2 = z1;
+  z2.value = Eigen::Vector2d(0.0, 100.0);
+
+  tr.processBatch({z1, z2});
+  // Two distinct measurements far apart -> two new tracks initiated.
+  EXPECT_EQ(mgr.size(), 2u);
+}
+
 TEST(Tracker, ReplayIsDeterministic) {
   const std::vector<Measurement> stream{
       positionAt(0.0, 0.0, 0.0, "a"),

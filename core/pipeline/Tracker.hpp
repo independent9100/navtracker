@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "core/types/Measurement.hpp"
 #include "ports/IDataAssociator.hpp"
 #include "ports/IEstimator.hpp"
@@ -18,6 +20,11 @@ class Tracker {
           double miss_timeout_seconds);
 
   void process(const Measurement& z);
+
+  // Process a batch of measurements that share a common timestamp ("scan").
+  // Calls associator with the full batch, then applies either hard matches
+  // (if `betas` empty) or soft updates via `softUpdate` (if `betas` filled).
+  void processBatch(const std::vector<Measurement>& scan);
 
  private:
   const IEstimator& estimator_;
