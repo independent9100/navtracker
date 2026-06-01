@@ -27,6 +27,7 @@ add_library(navtracker_core
   core/association/Gating.cpp
   core/association/GnnAssociator.cpp
   core/association/JointEvents.cpp
+  core/association/JpdaAssociator.cpp
   core/tracking/TrackManager.cpp
   core/pipeline/ReorderBuffer.cpp
   core/pipeline/Tracker.cpp
@@ -66,6 +67,7 @@ add_executable(navtracker_tests
   tests/association/test_gating.cpp
   tests/association/test_gnn_associator.cpp
   tests/association/test_joint_events.cpp
+  tests/association/test_jpda_associator.cpp
   tests/tracking/test_track_manager.cpp
   tests/pipeline/test_reorder_buffer.cpp
   tests/ports/test_edge_ports.cpp
