@@ -107,3 +107,66 @@ posteriors coincide by construction. The UKF advantage will only be visible
 once a materially nonlinear scenario exists (short-range range/bearing,
 bearing-only, rapid range-rate). See `docs/algorithms/evaluation-log.md` for
 the table of measurements.
+
+## 5. Particle Filter (`ParticleFilterEstimator`)
+
+**Math.** Bootstrap (sequential importance resampling) with `N` weighted
+particles `{xⁱ, wⁱ}`. State and motion model as for the EKF.
+
+- **Initiate:** sample `xⁱ ~ N(μ₀, P₀)` from the same one-point Gaussian
+  initiator as EKF / UKF; `wⁱ = 1/N`. Project ensemble → `(track.state,
+  track.covariance)`.
+- **Predict:** `xⁱ ← F(dt)·xⁱ + ηⁱ`, `ηⁱ ~ N(0, Q(dt))` via Cholesky
+  `Q = L Lᵀ`. Weights unchanged. Project ensemble → carrier.
+- **Update:** `log wⁱ ← log wⁱ − ½ yⁱᵀ R⁻¹ yⁱ`, `yⁱ = z − h(xⁱ)`
+  (bearing wrapped to (−π, π] via the shared `measurementResidual` helper).
+  Normalize via log-sum-exp: `wⁱ ∝ exp(log wⁱ − max log w)`, then `w /= Σ w`.
+  Compute `ESS = 1 / Σ (wⁱ)²`. If `ESS < N/2`, **systematic resampling**
+  with a single uniform draw `u ∈ [0, 1/N)`. Project ensemble → carrier.
+- **Carrier projection:** `x̂ = Σ wⁱ xⁱ`, `P̂ = Σ wⁱ (xⁱ − x̂)(xⁱ − x̂)ᵀ`.
+
+**Assumptions.** Process noise `Q(dt)` is positive-semidefinite; when `Q` is
+singular (e.g. `q = 0`) the Cholesky branch is skipped and predict collapses
+to a deterministic `F·x`. Measurement noise covariance `R` is
+positive-definite (used inverted in the log-likelihood; a sensor reporting
+zero-diagonal `R` makes the inverse explode but the degenerate-weights
+guard catches it and resets the ensemble to uniform — defensive only, not a
+correctness fallback). The initial covariance must be PD; if not, `initiate`
+returns a Track with the Gaussian carrier set and *no* particles
+(`particles.cols() == 0`), and subsequent `predict` / `update` early-return.
+Determinism requires that the call order against a freshly-seeded estimator
+be deterministic — the scenario harness guarantees this. Pinned by the
+`DeterministicForSameSeed` test (two PFs seeded identically and driven
+through the same initiate/predict/update sequence produce bit-identical
+particles and weights).
+
+**Rationale.** First estimator that can in principle represent non-Gaussian
+posteriors (multimodal range/bearing fusion, bearing-only flow before range
+converges). Chosen as the **second** comparison after the UKF because (a) it
+requires exactly the same nonlinear measurement model wiring as the UKF,
+(b) it trivially handles non-Gaussian priors that an IMM cannot represent at
+all, (c) projecting to a Gaussian carrier keeps the pipeline (gating,
+association, sinks) estimator-agnostic. Stored as
+`(Eigen::MatrixXd, Eigen::VectorXd)` on `Track` itself — colocation gives
+clean ownership semantics (no side map, no leak on track deletion).
+
+**Ways to improve / test next.** (1) Auxiliary or marginalized particle
+filters that use the measurement to bias the predict step — reduces particle
+count needed for sharp likelihoods. (2) Stratified or residual resampling
+instead of systematic — lower variance in some regimes. (3) Particle
+diversity injection (regularized PF) to recover from over-confident
+posteriors. (4) Adaptive `N` based on observed ESS — most updates do not
+need 1000 particles. (5) Bearing-only scenario (no range channel) where
+the PF's multimodal representation should definitively dominate the
+EKF / UKF. (6) Multi-seed Monte-Carlo sweep over `N ∈ {200, 500, 1000,
+2000}` to plot the cost / accuracy frontier. (7) Refactor `MeasurementModels`
+to expose a `z_pred`-only path so `update` does not allocate a throwaway
+Jacobian `H` per particle.
+
+**Measured behaviour on the current scenario suite.** On unimodal
+range/bearing passes the PF carries Monte-Carlo variance with no offsetting
+analytical advantage and lands slightly *behind* both the EKF and the UKF.
+See `docs/algorithms/evaluation-log.md` for numbers — the PF's theoretical
+advantage (representing non-Gaussian / multimodal posteriors) is **not**
+exercised by the current scenarios; a bearing-only or pre-range-convergence
+scenario is the prerequisite for a fair comparison.
