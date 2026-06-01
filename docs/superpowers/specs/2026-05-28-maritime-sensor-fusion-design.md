@@ -307,3 +307,74 @@ would otherwise have its precise return co-located at the GPS receiver,
 defeating the precision. 14.2 (own-ship sensor offsets) further refines
 this for multi-sensor platforms. Without 14.1 the close-range sensors
 will appear to "miss" the target by their own mount offset.
+
+### 14.6 CPA / TCPA — basic point-mass version
+
+Already implemented in `core/collision/Cpa.hpp` as
+`computeCpa(track_a, track_b, t_ref)`. Closed-form CV math; clamps past
+TCPA to 0 and reports current distance when diverging.
+
+This is the **point-mass, deterministic** version. Real collision-avoidance
+systems need uncertainty (§14.7) and hull geometry (§14.8) to be honest.
+Pairwise enumeration across all confirmed tracks and an own-ship-aware
+"CPA to me" path are also pending.
+
+### 14.7 CPA uncertainty propagation
+
+The deterministic CPA scalar is a point estimate. Each track carries a
+4×4 covariance; both contribute uncertainty to the CPA distance and TCPA.
+For a useful collision-warning system the right output is
+**`P(CPA < threshold)`** within some lookahead window, not a single
+CPA number.
+
+Three implementation paths, in order of fidelity:
+
+1. **Linearization.** Jacobian of `(cpa_distance, tcpa)` w.r.t. each
+   track's `(p, v)`; propagate `J Σ Jᵀ` to get a 2×2 covariance over
+   `(cpa, tcpa)`. Cheap, valid when uncertainty is small relative to the
+   geometry's nonlinearity. Closed-form derivatives are tractable.
+2. **Monte-Carlo.** Sample N draws from each track's Gaussian, compute
+   CPA per draw, build the empirical distribution. Always correct,
+   slow. Good baseline for validating (1).
+3. **Sigma-point / unscented.** UKF-style sigma points through the CPA
+   function. Better-than-linear nonlinearity capture, much cheaper than
+   Monte-Carlo. Likely the production sweet spot.
+
+**Unlocks.** Honest collision-warning thresholds; risk-tiered alerts
+(e.g., "85% chance CPA < 100 m within 5 min"); IMM/PF tracks where the
+posterior on velocity is genuinely non-Gaussian and the linearization
+breaks down.
+
+**Cost.** Closed-form Jacobians (1): ~80 lines + tests. Monte-Carlo (2):
+~40 lines + tests. Sigma-point (3): ~120 lines + tests. Plus a new
+output schema (`CpaDistribution { mean_cpa, std_cpa, mean_tcpa,
+std_tcpa, prob_collision }`) for downstream.
+
+### 14.8 Hull-aware closest-approach
+
+`CpaResult.cpa_distance_m` today is **center-to-center**. Real
+collision-avoidance wants **bow-to-hull** or **hull-to-hull** distance,
+which requires modeling each vessel as an oriented 2D rectangle (length,
+beam, heading). Existing infrastructure: `TrackAttributes.length_m` and
+`TrackAttributes.beam_m` are already populated by AIS but never consumed.
+
+**Math.** Two oriented rectangles → minimum point-to-rectangle or
+rectangle-to-rectangle distance via the separating axis theorem (SAT) or
+GJK. For maritime vessels with axis-aligned hull frames relative to
+heading, SAT is the right primitive: project both rectangles onto each
+axis (4 axes total for two rectangles), find the maximum gap, that's the
+distance. Time-of-closest-approach becomes a piecewise problem because
+the minimum can occur at any pair of vertices or edges over time.
+
+**Unlocks.** CPA values that mean what they sound like to a watch
+officer; correct warnings when a 300 m container ship's bow is 50 m from
+a 12 m fishing boat at the closest point of approach (today reports 150 m
+center-to-center, which sounds safe).
+
+**Cost.** Moderate. SAT primitive: ~100 lines + tests. Sweep-CPA for two
+oriented rectangles in linear motion: ~150 lines + tests (the geometry
+gets more interesting). Heading state needed (from velocity or from AIS).
+
+**Dependency.** §14.2 (target geometry attributes wired into the
+calculation). §14.7 (uncertainty) becomes more complex on top of this —
+deferred until the deterministic hull-aware version is in place.
