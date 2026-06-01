@@ -78,6 +78,22 @@ TEST(Builders, CrossingDropoutOmitsMeasurementsInDropoutWindow) {
   EXPECT_EQ(s.measurements.size(), 36u);
 }
 
+TEST(Builders, BearingOnlyMovingSensorAttachesSensorPose) {
+  std::vector<double> times{0.0, 1.0, 2.0};
+  const navtracker::Scenario s =
+      navtracker::buildBearingOnlyMovingSensorScenario(
+          Eigen::Vector2d(1000.0, 0.0),
+          Eigen::Vector2d(0.0, 0.0),
+          Eigen::Vector2d(5.0, 0.0),
+          times, 50.0, 0.05, /*seed*/ 99);
+  ASSERT_EQ(s.measurements.size(), 3u);
+  EXPECT_EQ(s.measurements[0].model, navtracker::MeasurementModel::Position2D);
+  EXPECT_DOUBLE_EQ(s.measurements[0].sensor_position_enu.x(), 0.0);
+  EXPECT_EQ(s.measurements[1].model, navtracker::MeasurementModel::Bearing2D);
+  EXPECT_NEAR(s.measurements[1].sensor_position_enu.x(), 5.0, 1e-9);
+  EXPECT_NEAR(s.measurements[2].sensor_position_enu.x(), 10.0, 1e-9);
+}
+
 TEST(Builders, ManeuveringTargetHasStraightThenTurnThenStraight) {
   const navtracker::Scenario s = navtracker::buildManeuveringTargetScenario(
       Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),

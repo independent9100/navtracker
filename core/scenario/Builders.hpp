@@ -124,4 +124,21 @@ Scenario buildCrossingDropoutScenario(
     double dropout_end_s,
     std::uint32_t seed = 0);
 
+// Stationary target observed by a bearing-only sensor on a moving platform.
+// Sensor starts at sensor_start and moves with sensor_velocity; target sits
+// at target_position. Initial sample emits a wide Position2D seed at the
+// target with covariance initial_position_std_m^2 (sensor_position_enu set
+// to the sensor's initial location). Subsequent samples emit Bearing2D
+// measurements whose sensor_position_enu is the sensor's ENU position at
+// that timestamp. Range becomes observable via parallax over the run.
+Scenario buildBearingOnlyMovingSensorScenario(
+    const Eigen::Vector2d& target_position,
+    const Eigen::Vector2d& sensor_start,
+    const Eigen::Vector2d& sensor_velocity,
+    const std::vector<double>& sample_times_seconds,
+    double initial_position_std_m,
+    double bearing_std_rad,
+    std::uint32_t seed = 0,
+    std::uint64_t truth_id = 1);
+
 }  // namespace navtracker

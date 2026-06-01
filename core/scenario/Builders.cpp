@@ -356,4 +356,41 @@ Scenario buildCrossingDropoutScenario(double velocity_x_mps,
   return s;
 }
 
+Scenario buildBearingOnlyMovingSensorScenario(
+    const Eigen::Vector2d& target_position,
+    const Eigen::Vector2d& sensor_start,
+    const Eigen::Vector2d& sensor_velocity,
+    const std::vector<double>& times,
+    double initial_position_std_m,
+    double bearing_std_rad,
+    std::uint32_t seed,
+    std::uint64_t truth_id) {
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> pos_noise(0.0, initial_position_std_m);
+  std::normal_distribution<double> b_noise(0.0, bearing_std_rad);
+  Scenario s;
+  const Eigen::Vector2d zero_vel(0.0, 0.0);
+  for (std::size_t i = 0; i < times.size(); ++i) {
+    const double t = times[i];
+    s.truth.push_back(makeTruth(target_position, zero_vel, t, truth_id));
+    const Eigen::Vector2d sensor_pos = sensor_start + sensor_velocity * t;
+    if (i == 0) {
+      const Eigen::Vector2d noisy(target_position.x() + pos_noise(rng),
+                                  target_position.y() + pos_noise(rng));
+      Measurement m = makeMeasurement(noisy, t, initial_position_std_m);
+      m.sensor_position_enu = sensor_pos;
+      s.measurements.push_back(std::move(m));
+    } else {
+      const double dx = target_position.x() - sensor_pos.x();
+      const double dy = target_position.y() - sensor_pos.y();
+      const double b = std::atan2(dy, dx);
+      const double noisy_b = b + b_noise(rng);
+      Measurement m = makeBearingMeasurement(noisy_b, t, bearing_std_rad);
+      m.sensor_position_enu = sensor_pos;
+      s.measurements.push_back(std::move(m));
+    }
+  }
+  return s;
+}
+
 }  // namespace navtracker
