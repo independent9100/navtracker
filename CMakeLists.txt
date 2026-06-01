@@ -14,6 +14,7 @@ add_library(navtracker_core
   core/geo/Wgs84.cpp
   core/geo/Datum.cpp
   core/estimation/ConstantVelocity2D.cpp
+  core/estimation/ConstantVelocity5State.cpp
   core/estimation/MeasurementModels.cpp
   core/estimation/EkfEstimator.cpp
   core/estimation/SigmaPoints.cpp
@@ -47,6 +48,7 @@ add_executable(navtracker_tests
   tests/types/test_measurement.cpp
   tests/types/test_track.cpp
   tests/estimation/test_constant_velocity.cpp
+  tests/estimation/test_constant_velocity_5state.cpp
   tests/estimation/test_measurement_models.cpp
   tests/estimation/test_ekf_estimator.cpp
   tests/estimation/test_sigma_points.cpp
