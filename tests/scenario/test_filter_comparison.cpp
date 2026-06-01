@@ -389,31 +389,33 @@ TEST(FilterComparison, ShortRangeMultiSeedSweep) {
 }
 
 TEST(FilterComparison, BearingOnlyMovingSensor) {
-  // Sensor moves +x at 5 m/s for 60 seconds. Target sits at (1000, 100).
-  // Initial Position2D seed has wide covariance (sigma = 100 m) so the
-  // prior on range is broad; subsequent bearings at sigma = 3 deg refine
-  // the posterior. With pure bearing measurements from a moving sensor,
-  // range is observable via parallax over time; the intermediate posterior
-  // is banana-shaped, where the PF can outperform Gaussian approximations.
+  // Sensor moves PERPENDICULAR to the line-of-sight to maximize parallax.
+  // Target at (1500, 0); sensor starts at (0, -300), moves +y at 10 m/s for
+  // 60 s, ending at (0, 300). Bearing sweeps from +11.3 deg to -11.3 deg
+  // (~22 deg total) against a bearing noise of 1.5 deg (~15:1 SNR for the
+  // parallax signal). Wide initial position seed (sigma = 300 m) so the
+  // range prior is genuinely loose; this is the regime where the posterior
+  // on (x, y) is banana-shaped during the first ~15 s of convergence and
+  // the PF should outperform the Gaussian filters.
   std::vector<double> times;
   for (int i = 0; i <= 60; ++i) times.push_back(static_cast<double>(i));
   constexpr double kPi = 3.14159265358979323846;
-  const double bearing_std = 3.0 * kPi / 180.0;
+  const double bearing_std = 1.5 * kPi / 180.0;
   const Scenario s = buildBearingOnlyMovingSensorScenario(
-      Eigen::Vector2d(1000.0, 100.0),
-      Eigen::Vector2d(0.0, 0.0),
-      Eigen::Vector2d(5.0, 0.0),
-      times, /*init_pos_std*/ 100.0, bearing_std, /*seed*/ 137);
+      Eigen::Vector2d(1500.0, 0.0),
+      Eigen::Vector2d(0.0, -300.0),
+      Eigen::Vector2d(0.0, 10.0),
+      times, /*init_pos_std*/ 300.0, bearing_std, /*seed*/ 137);
   auto motion = std::make_shared<ConstantVelocity2D>(0.05);
   const EkfEstimator ekf(motion, 5.0);
   const UkfEstimator ukf(motion, 5.0);
   const ParticleFilterEstimator pf(motion, /*N*/ 2000, /*v_std*/ 5.0,
                                    /*ess_frac*/ 0.5, /*seed*/ 137);
 
-  const RunOutput e = run(ekf, s, /*gate*/ 1500.0, /*cutoff*/ 300.0,
+  const RunOutput e = run(ekf, s, /*gate*/ 2500.0, /*cutoff*/ 500.0,
                           /*confirm*/ 1, /*delete*/ 8, /*miss_timeout*/ 90.0);
-  const RunOutput u = run(ukf, s, 1500.0, 300.0, 1, 8, 90.0);
-  const RunOutput p = run(pf,  s, 1500.0, 300.0, 1, 8, 90.0);
+  const RunOutput u = run(ukf, s, 2500.0, 500.0, 1, 8, 90.0);
+  const RunOutput p = run(pf,  s, 2500.0, 500.0, 1, 8, 90.0);
 
   std::fprintf(stderr,
                "\n[BearingOnlyMovingSensor] EKF mean_ospa=%.4f id_switches=%d tracks=%zu"
