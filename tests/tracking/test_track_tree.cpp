@@ -95,3 +95,33 @@ TEST(TrackTree, BranchSkipsUngatedMeasurements) {
 
   EXPECT_EQ(tt.leafIndices().size(), 1u);
 }
+
+TEST(TrackTree, PruneNScanKeepsBestTrunk) {
+  TrackTree tt(TrackId{6}, rootNode(0.0, 0.0));
+  tt.mutableNodes()[0].is_leaf = false;
+  auto add_node = [&](std::size_t parent, int sc, double score) -> std::size_t {
+    TrackTreeNode n;
+    n.parent = parent; n.scan_idx = sc; n.score = score;
+    n.state = Eigen::Vector4d::Zero(); n.covariance = Eigen::Matrix4d::Identity();
+    n.time = navtracker::Timestamp::fromSeconds(static_cast<double>(sc));
+    n.is_leaf = false;
+    tt.mutableNodes().push_back(n);
+    return tt.mutableNodes().size() - 1;
+  };
+  const std::size_t a  = add_node(0, 1, 1.0);
+  const std::size_t b  = add_node(0, 1, 0.5);
+  const std::size_t a1 = add_node(a, 2, 5.0);
+  const std::size_t b1 = add_node(b, 2, 2.0);
+  tt.mutableNodes()[a1].is_leaf = true;
+  tt.mutableNodes()[b1].is_leaf = true;
+
+  // N=1: leaves at scan 2 look back 1 step. Ancestors at depth 1: a (score 5.0
+  // via a1), b (score 2.0 via b1). Keep a's subtree.
+  const std::size_t removed = tt.pruneNScan(1);
+  EXPECT_GT(removed, 0u);
+  const auto leaves = tt.leafIndices();
+  ASSERT_EQ(leaves.size(), 1u);
+  // After pruning + compaction, indices have changed. Verify the remaining
+  // leaf has the highest score that previously belonged to a1.
+  EXPECT_DOUBLE_EQ(tt.nodes()[leaves[0]].score, 5.0);
+}

@@ -102,4 +102,86 @@ void TrackTree::branch(const IEstimator& estimator,
   }
 }
 
+std::size_t TrackTree::pruneNScan(int n_scan) {
+  std::vector<std::size_t> leaves = leafIndices();
+  if (leaves.empty()) return 0;
+  int max_scan = 0;
+  for (std::size_t li : leaves) {
+    if (nodes_[li].scan_idx > max_scan) max_scan = nodes_[li].scan_idx;
+  }
+  const int target_depth = max_scan - n_scan;
+  if (target_depth <= 0) return 0;
+
+  std::vector<std::size_t> ancestors(leaves.size());
+  for (std::size_t k = 0; k < leaves.size(); ++k) {
+    std::size_t cur = leaves[k];
+    while (cur != TrackTreeNode::kNoParent &&
+           nodes_[cur].scan_idx > target_depth) {
+      cur = nodes_[cur].parent;
+    }
+    ancestors[k] = cur;
+  }
+
+  std::vector<std::size_t> unique_ancestors;
+  std::vector<double> agg_scores;
+  for (std::size_t k = 0; k < leaves.size(); ++k) {
+    const std::size_t anc = ancestors[k];
+    const double s = nodes_[leaves[k]].score;
+    bool found = false;
+    for (std::size_t u = 0; u < unique_ancestors.size(); ++u) {
+      if (unique_ancestors[u] == anc) {
+        if (s > agg_scores[u]) agg_scores[u] = s;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      unique_ancestors.push_back(anc);
+      agg_scores.push_back(s);
+    }
+  }
+
+  std::size_t winner = unique_ancestors[0];
+  double best = agg_scores[0];
+  for (std::size_t u = 1; u < unique_ancestors.size(); ++u) {
+    if (agg_scores[u] > best) {
+      best = agg_scores[u];
+      winner = unique_ancestors[u];
+    }
+  }
+
+  std::vector<bool> keep(nodes_.size(), false);
+  std::size_t a = winner;
+  while (a != TrackTreeNode::kNoParent) {
+    keep[a] = true;
+    a = nodes_[a].parent;
+  }
+  std::vector<std::size_t> frontier{winner};
+  while (!frontier.empty()) {
+    const std::size_t cur = frontier.back();
+    frontier.pop_back();
+    for (std::size_t i = 0; i < nodes_.size(); ++i) {
+      if (!keep[i] && nodes_[i].parent == cur) {
+        keep[i] = true;
+        frontier.push_back(i);
+      }
+    }
+  }
+
+  std::vector<std::size_t> new_index(nodes_.size(), TrackTreeNode::kNoParent);
+  std::vector<TrackTreeNode> new_nodes;
+  for (std::size_t i = 0; i < nodes_.size(); ++i) {
+    if (keep[i]) {
+      new_index[i] = new_nodes.size();
+      new_nodes.push_back(nodes_[i]);
+    }
+  }
+  for (TrackTreeNode& n : new_nodes) {
+    if (n.parent != TrackTreeNode::kNoParent) n.parent = new_index[n.parent];
+  }
+  const std::size_t removed = nodes_.size() - new_nodes.size();
+  nodes_ = std::move(new_nodes);
+  return removed;
+}
+
 }  // namespace navtracker

@@ -49,6 +49,13 @@ class TrackTree {
     double gate_threshold;
   };
 
+  // N-scan pruning. For each current leaf, walk back N steps via parent
+  // pointers to find its scan-(t-N) ancestor. Among all (leaf, ancestor)
+  // pairs, find the ancestor with the highest descendant leaf score; mark
+  // all other ancestors at that depth (and their descendants) for removal.
+  // Returns the number of nodes removed.
+  std::size_t pruneNScan(int n_scan);
+
   // Branch every current leaf by:
   //   - generating one missed-detection child (state advanced via predict only;
   //     score += log(1 - P_D))
