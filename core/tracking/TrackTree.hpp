@@ -56,6 +56,11 @@ class TrackTree {
   // Returns the number of nodes removed.
   std::size_t pruneNScan(int n_scan);
 
+  // Keep only the top-k highest-scoring leaves. Lower-scoring leaves are
+  // marked is_leaf = false but kept in nodes_ (for future N-scan ancestor
+  // walks). Returns the number of leaves dropped.
+  std::size_t pruneKLocal(std::size_t k);
+
   // Branch every current leaf by:
   //   - generating one missed-detection child (state advanced via predict only;
   //     score += log(1 - P_D))

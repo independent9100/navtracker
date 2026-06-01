@@ -1,5 +1,6 @@
 #include "core/tracking/TrackTree.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 #include <Eigen/LU>
@@ -182,6 +183,21 @@ std::size_t TrackTree::pruneNScan(int n_scan) {
   const std::size_t removed = nodes_.size() - new_nodes.size();
   nodes_ = std::move(new_nodes);
   return removed;
+}
+
+std::size_t TrackTree::pruneKLocal(std::size_t k) {
+  std::vector<std::size_t> leaves = leafIndices();
+  if (leaves.size() <= k) return 0;
+  std::sort(leaves.begin(), leaves.end(),
+            [this](std::size_t a, std::size_t b) {
+              return nodes_[a].score > nodes_[b].score;
+            });
+  std::size_t dropped = 0;
+  for (std::size_t i = k; i < leaves.size(); ++i) {
+    nodes_[leaves[i]].is_leaf = false;
+    ++dropped;
+  }
+  return dropped;
 }
 
 }  // namespace navtracker

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <gtest/gtest.h>
 #include "core/tracking/TrackTree.hpp"
 
@@ -124,4 +125,30 @@ TEST(TrackTree, PruneNScanKeepsBestTrunk) {
   // After pruning + compaction, indices have changed. Verify the remaining
   // leaf has the highest score that previously belonged to a1.
   EXPECT_DOUBLE_EQ(tt.nodes()[leaves[0]].score, 5.0);
+}
+
+TEST(TrackTree, PruneKLocalDropsLowestScoringLeaves) {
+  TrackTree tt(TrackId{7}, rootNode(0.0, 0.0));
+  tt.mutableNodes()[0].is_leaf = false;
+  auto add_leaf = [&](double score) {
+    TrackTreeNode n;
+    n.parent = 0; n.scan_idx = 1; n.score = score;
+    n.state = Eigen::Vector4d::Zero(); n.covariance = Eigen::Matrix4d::Identity();
+    n.time = navtracker::Timestamp::fromSeconds(1.0);
+    n.is_leaf = true;
+    tt.mutableNodes().push_back(n);
+  };
+  add_leaf(5.0);
+  add_leaf(3.0);
+  add_leaf(7.0);
+  add_leaf(1.0);
+  const std::size_t dropped = tt.pruneKLocal(2);
+  EXPECT_EQ(dropped, 2u);
+  const auto leaves = tt.leafIndices();
+  ASSERT_EQ(leaves.size(), 2u);
+  std::vector<double> scores;
+  for (std::size_t li : leaves) scores.push_back(tt.nodes()[li].score);
+  std::sort(scores.begin(), scores.end());
+  EXPECT_DOUBLE_EQ(scores[0], 5.0);
+  EXPECT_DOUBLE_EQ(scores[1], 7.0);
 }
