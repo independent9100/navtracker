@@ -1,6 +1,7 @@
 #include "core/estimation/EkfEstimator.hpp"
 
 #include <utility>
+#include <vector>
 
 #include <Eigen/Dense>
 
@@ -60,6 +61,40 @@ Track EkfEstimator::initiate(const Measurement& z) const {
   }
   t.contributing_sources.push_back(z.source_id);
   return t;
+}
+
+void EkfEstimator::softUpdate(Track& track,
+                              const std::vector<Measurement>& gated_measurements,
+                              const Eigen::VectorXd& betas,
+                              double beta_0) const {
+  const int M = static_cast<int>(gated_measurements.size());
+  if (M == 0 || betas.size() != M) return;
+  const Measurement& z0 = gated_measurements[0];
+  const MeasurementPrediction pred = predictMeasurement(z0.model, track.state);
+  const Eigen::MatrixXd& H = pred.H;
+  const Eigen::MatrixXd S = H * track.covariance * H.transpose() + z0.covariance;
+  const Eigen::MatrixXd S_inv = S.inverse();
+  const Eigen::MatrixXd K = track.covariance * H.transpose() * S_inv;
+
+  Eigen::VectorXd y_combined = Eigen::VectorXd::Zero(z0.value.size());
+  Eigen::MatrixXd spread_sum =
+      Eigen::MatrixXd::Zero(z0.value.size(), z0.value.size());
+  for (int j = 0; j < M; ++j) {
+    const Eigen::VectorXd y_j =
+        measurementResidual(z0.model, gated_measurements[j].value, pred.z_pred);
+    y_combined += betas(j) * y_j;
+    spread_sum += betas(j) * y_j * y_j.transpose();
+  }
+  spread_sum -= y_combined * y_combined.transpose();
+
+  const Eigen::MatrixXd I =
+      Eigen::MatrixXd::Identity(track.state.size(), track.state.size());
+  const Eigen::MatrixXd P_post_full = (I - K * H) * track.covariance;
+  track.state += K * y_combined;
+  track.covariance = beta_0 * track.covariance +
+                     (1.0 - beta_0) * P_post_full +
+                     K * spread_sum * K.transpose();
+  track.last_update = z0.time;
 }
 
 }  // namespace navtracker

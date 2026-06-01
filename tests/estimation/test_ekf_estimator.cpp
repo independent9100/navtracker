@@ -104,3 +104,66 @@ TEST(EkfEstimator, InitiateDispatchesViaIEstimatorBaseReference) {
   EXPECT_DOUBLE_EQ(t.state(1), -3.0);
   EXPECT_EQ(t.status, navtracker::TrackStatus::Tentative);
 }
+
+TEST(EkfEstimator, SoftUpdateWithOneMeasurementEqualsHardUpdate) {
+  // betas = [1.0], beta_0 = 0: softUpdate must equal hard update.
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+
+  navtracker::Measurement z;
+  z.time = navtracker::Timestamp::fromSeconds(1.0);
+  z.model = navtracker::MeasurementModel::Position2D;
+  z.value = Eigen::Vector2d(10.0, 5.0);
+  z.covariance = Eigen::Matrix2d::Identity() * 4.0;
+  z.source_id = "t";
+
+  navtracker::Track t_hard = ekf.initiate(z);
+  navtracker::Measurement z2 = z;
+  z2.time = navtracker::Timestamp::fromSeconds(2.0);
+  z2.value = Eigen::Vector2d(12.0, 6.0);
+  ekf.predict(t_hard, z2.time);
+  navtracker::Track t_soft = t_hard;
+  ekf.update(t_hard, z2);
+
+  Eigen::VectorXd betas(1);
+  betas << 1.0;
+  ekf.softUpdate(t_soft, {z2}, betas, 0.0);
+
+  ASSERT_EQ(t_hard.state.size(), t_soft.state.size());
+  for (int i = 0; i < t_hard.state.size(); ++i)
+    EXPECT_NEAR(t_hard.state(i), t_soft.state(i), 1e-9);
+  for (int r = 0; r < t_hard.covariance.rows(); ++r)
+    for (int c = 0; c < t_hard.covariance.cols(); ++c)
+      EXPECT_NEAR(t_hard.covariance(r, c), t_soft.covariance(r, c), 1e-9);
+}
+
+TEST(EkfEstimator, SoftUpdateWithBetaZeroOneIsNoOpOnState) {
+  // beta_0 = 1: no measurement assigned. State and covariance unchanged.
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+
+  navtracker::Measurement z;
+  z.time = navtracker::Timestamp::fromSeconds(1.0);
+  z.model = navtracker::MeasurementModel::Position2D;
+  z.value = Eigen::Vector2d(10.0, 5.0);
+  z.covariance = Eigen::Matrix2d::Identity() * 4.0;
+  z.source_id = "t";
+
+  navtracker::Track t = ekf.initiate(z);
+  const Eigen::VectorXd x_before = t.state;
+  const Eigen::MatrixXd P_before = t.covariance;
+
+  navtracker::Measurement z2 = z;
+  z2.time = navtracker::Timestamp::fromSeconds(2.0);
+  z2.value = Eigen::Vector2d(12.0, 6.0);
+
+  Eigen::VectorXd betas(1);
+  betas << 0.0;
+  ekf.softUpdate(t, {z2}, betas, 1.0);
+
+  for (int i = 0; i < t.state.size(); ++i)
+    EXPECT_NEAR(t.state(i), x_before(i), 1e-12);
+  for (int r = 0; r < t.covariance.rows(); ++r)
+    for (int c = 0; c < t.covariance.cols(); ++c)
+      EXPECT_NEAR(t.covariance(r, c), P_before(r, c), 1e-12);
+}

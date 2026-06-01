@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include "ports/IEstimator.hpp"
 #include "ports/IMotionModel.hpp"
@@ -19,6 +20,11 @@ class EkfEstimator : public IEstimator {
 
   // Create a new Tentative track seeded from a position-type measurement.
   Track initiate(const Measurement& z) const override;
+
+  void softUpdate(Track& track,
+                  const std::vector<Measurement>& gated_measurements,
+                  const Eigen::VectorXd& betas,
+                  double beta_0) const override;
 
  private:
   std::shared_ptr<const IMotionModel> motion_;
