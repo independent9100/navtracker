@@ -26,6 +26,7 @@ add_library(navtracker_core
   core/estimation/ParticleFilterEstimator.cpp
   core/association/Gating.cpp
   core/association/GnnAssociator.cpp
+  core/association/JointEvents.cpp
   core/tracking/TrackManager.cpp
   core/pipeline/ReorderBuffer.cpp
   core/pipeline/Tracker.cpp
@@ -64,6 +65,7 @@ add_executable(navtracker_tests
   tests/estimation/test_particle_filter_estimator.cpp
   tests/association/test_gating.cpp
   tests/association/test_gnn_associator.cpp
+  tests/association/test_joint_events.cpp
   tests/tracking/test_track_manager.cpp
   tests/pipeline/test_reorder_buffer.cpp
   tests/ports/test_edge_ports.cpp
