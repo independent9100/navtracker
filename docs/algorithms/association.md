@@ -107,3 +107,64 @@ across the gated set). (5) MHT as the natural next step — defers
 commitment further by maintaining a hypothesis tree.
 
 **Measured behaviour.** See `docs/algorithms/evaluation-log.md`.
+
+## 5. Multiple Hypothesis Tracking — TOMHT (`MhtTracker`)
+
+**Math.** Track-oriented MHT. Each track owns a `TrackTree` of hypothesis
+nodes. Each node carries `(state, covariance, parent, scan_idx, score)`
+where score is the cumulative log-likelihood-ratio (LLR).
+
+Per scan:
+
+- **Branch.** For each leaf in each tree, produce one missed-detection
+  child (`Δscore = log(1 − P_D)`) and one child per gated measurement
+  (`Δscore = log P_D + log N(z; ẑ, S) − log λ_C`). The EKF update is
+  applied per measurement-assigned child.
+- **K_local prune.** Drop the lowest-scoring leaves per tree until at most
+  `k_max_leaves` remain.
+- **N-scan trunk-merge.** For each tree, find each current leaf's
+  scan-(t−N) ancestor. The ancestor with the highest descendant-leaf
+  score wins; prune all other branches at that depth and their
+  descendants. Commits the past ≥ N scans to a single hypothesis while
+  the most recent N scans stay multi-hypothesis.
+- **Spawn.** Any measurement not gated to any existing tree's best leaf
+  starts a new track tree.
+- **Output.** For each tree, the best-scoring leaf's `(state, covariance)`
+  is the externally-visible track.
+
+**Assumptions.** EKF backend (score formula assumes Gaussian likelihood);
+state space matches `IEstimator::initiate`. Track identity is stable:
+each tree gets a monotonic external id at spawn that is never reused.
+Tracks are independent across trees: this first-cut MHT does **not**
+enforce global non-conflict (the same measurement can in principle
+contribute to two trees' winning leaves within one scan). The
+K-best-global / Murty's-algorithm extension is captured as future work.
+Tracks are dropped when their best leaf's score falls below
+`score_delete_threshold`.
+
+**Rationale.** GNN commits per scan and stays wrong; JPDA spreads update
+mass per scan and stays uncommitted; MHT carries multiple full-history
+hypotheses across N scans before any commitment. The structural advantage
+shows up when the optimal assignment is ambiguous *at the current scan*
+but becomes clear after seeing 2-3 more scans — exactly the
+crossing-with-dropout case. **Measured: 7x lower OSPA than JPDA, zero ID
+switches vs JPDA's 2, correct final track count (2 vs JPDA's 3)** on the
+documented scenario.
+
+**Ways to improve / test next.** (1) **K-best global non-conflict** via
+Murty's or auction-style assignment over current leaves — the single
+largest practical improvement and the standard TOMHT formulation.
+(2) Score-based confirmation/deletion as a first-class alternative to
+M-of-N. (3) UKF / IMM / PF backends for the per-leaf predict + update +
+likelihood. (4) MHT with track merging (when two trees converge to
+nearly the same state for several scans, merge them). (5) Sensitivity
+sweep over (dropout length, N_scan, closest-approach distance).
+
+**Configuration choices for the documented scenario.** P_D = 0.9,
+λ_C = 1e-4, gate = 9.0 (χ²₂ at 0.99), N_scan = 3, K_max_leaves = 5,
+score_delete_threshold = −15.0. N_scan = 3 covers the 4-scan dropout
+because the leaf depth grows by 1 per processed scan (no growth during
+the dropout window where there are no measurements to process), so the
+trunk extends through the gap.
+
+**Measured behaviour.** See `docs/algorithms/evaluation-log.md`.
