@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <numeric>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -201,4 +202,61 @@ TEST(FilterComparison, AisDropout) {
 
   EXPECT_EQ(e.final_track_count, 1u);
   EXPECT_EQ(u.final_track_count, 1u);
+}
+
+TEST(FilterComparison, ShortRangeMultiSeedSweep) {
+  // Repeat ShortRangePass over 20 seeds for each estimator config and report
+  // mean ± stddev of mean_ospa. Confirms whether single-seed comparisons
+  // survive Monte-Carlo averaging.
+  std::vector<double> times;
+  for (int i = 0; i <= 40; ++i) times.push_back(static_cast<double>(i));
+  constexpr double kPi = 3.14159265358979323846;
+  const double bearing_std = 5.0 * kPi / 180.0;
+
+  const std::vector<int> seeds = {
+      41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+      51, 52, 53, 54, 55, 56, 57, 58, 59, 60};
+  const std::vector<int> Ns = {200, 500, 1000, 2000};
+
+  std::vector<double> ekf_ospa, ukf_ospa;
+  std::vector<std::vector<double>> pf_ospa(Ns.size());
+
+  for (int seed : seeds) {
+    const Scenario s = buildRangeBearingPassScenario(
+        Eigen::Vector2d(500.0, 50.0), Eigen::Vector2d(-25.0, 0.0),
+        times, 10.0, 10.0, bearing_std, static_cast<std::uint32_t>(seed));
+    auto motion = std::make_shared<ConstantVelocity2D>(0.5);
+
+    const EkfEstimator ekf(motion, 10.0);
+    const UkfEstimator ukf(motion, 10.0);
+    ekf_ospa.push_back(run(ekf, s, 1000.0, 200.0, 1, 5, 60.0).mean_ospa);
+    ukf_ospa.push_back(run(ukf, s, 1000.0, 200.0, 1, 5, 60.0).mean_ospa);
+
+    for (std::size_t k = 0; k < Ns.size(); ++k) {
+      const ParticleFilterEstimator pf(motion, Ns[k], 10.0, 0.5,
+                                       static_cast<std::uint64_t>(seed));
+      pf_ospa[k].push_back(run(pf, s, 1000.0, 200.0, 1, 5, 60.0).mean_ospa);
+    }
+  }
+
+  auto stats = [](const std::vector<double>& v) {
+    const double mean =
+        std::accumulate(v.begin(), v.end(), 0.0) / static_cast<double>(v.size());
+    double sse = 0.0;
+    for (double x : v) sse += (x - mean) * (x - mean);
+    const double sd =
+        std::sqrt(sse / static_cast<double>(v.size() - 1));
+    return std::make_pair(mean, sd);
+  };
+
+  const auto e = stats(ekf_ospa);
+  const auto u = stats(ukf_ospa);
+  std::fprintf(stderr, "\n[Sweep ShortRangePass, %zu seeds]\n", seeds.size());
+  std::fprintf(stderr, "  EKF            : %.4f ± %.4f m\n", e.first, e.second);
+  std::fprintf(stderr, "  UKF            : %.4f ± %.4f m\n", u.first, u.second);
+  for (std::size_t k = 0; k < Ns.size(); ++k) {
+    const auto p = stats(pf_ospa[k]);
+    std::fprintf(stderr, "  PF  N=%-4d     : %.4f ± %.4f m\n",
+                 Ns[k], p.first, p.second);
+  }
 }
