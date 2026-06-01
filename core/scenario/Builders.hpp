@@ -109,4 +109,19 @@ Scenario buildClutterCrossingScenario(
     const Eigen::Vector2d& clutter_max,
     std::uint32_t seed = 0);
 
+// Two CV targets crossing at the origin with a brief sensor dropout. Targets
+// move toward each other along the x axis at +/- velocity_x, with a small
+// y offset (closest approach ~ 2 * y_offset_m). A sensor dropout zeroes the
+// emitted measurements for any scan whose timestamp falls within
+// [dropout_start_s, dropout_end_s); truth is still emitted so OSPA can be
+// computed.
+Scenario buildCrossingDropoutScenario(
+    double velocity_x_mps,
+    double y_offset_m,
+    const std::vector<double>& sample_times_seconds,
+    double pos_noise_std_m,
+    double dropout_start_s,
+    double dropout_end_s,
+    std::uint32_t seed = 0);
+
 }  // namespace navtracker

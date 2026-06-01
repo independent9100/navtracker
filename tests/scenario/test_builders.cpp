@@ -66,6 +66,18 @@ TEST(Builders, ClutterCrossingEmitsTwoRealPlusNFalsePerScan) {
   EXPECT_EQ(s.truth.size(), 4u);
 }
 
+TEST(Builders, CrossingDropoutOmitsMeasurementsInDropoutWindow) {
+  std::vector<double> times;
+  for (int i = 0; i <= 20; ++i) times.push_back(static_cast<double>(i));
+  const navtracker::Scenario s = navtracker::buildCrossingDropoutScenario(
+      /*vx*/ 5.0, /*y*/ 1.0, times, /*noise*/ 0.0,
+      /*dropout_start*/ 9.0, /*dropout_end*/ 12.0, 17);
+  // Truth: 2 per timestamp * 21 timestamps = 42.
+  EXPECT_EQ(s.truth.size(), 42u);
+  // Measurements: 2 per timestamp * (21 - 3 dropout) = 36.
+  EXPECT_EQ(s.measurements.size(), 36u);
+}
+
 TEST(Builders, ManeuveringTargetHasStraightThenTurnThenStraight) {
   const navtracker::Scenario s = navtracker::buildManeuveringTargetScenario(
       Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),
