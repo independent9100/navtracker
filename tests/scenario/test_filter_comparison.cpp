@@ -387,3 +387,39 @@ TEST(FilterComparison, ShortRangeMultiSeedSweep) {
                  Ns[k], p.first, p.second);
   }
 }
+
+TEST(FilterComparison, BearingOnlyMovingSensor) {
+  // Sensor moves +x at 5 m/s for 60 seconds. Target sits at (1000, 100).
+  // Initial Position2D seed has wide covariance (sigma = 100 m) so the
+  // prior on range is broad; subsequent bearings at sigma = 3 deg refine
+  // the posterior. With pure bearing measurements from a moving sensor,
+  // range is observable via parallax over time; the intermediate posterior
+  // is banana-shaped, where the PF can outperform Gaussian approximations.
+  std::vector<double> times;
+  for (int i = 0; i <= 60; ++i) times.push_back(static_cast<double>(i));
+  constexpr double kPi = 3.14159265358979323846;
+  const double bearing_std = 3.0 * kPi / 180.0;
+  const Scenario s = buildBearingOnlyMovingSensorScenario(
+      Eigen::Vector2d(1000.0, 100.0),
+      Eigen::Vector2d(0.0, 0.0),
+      Eigen::Vector2d(5.0, 0.0),
+      times, /*init_pos_std*/ 100.0, bearing_std, /*seed*/ 137);
+  auto motion = std::make_shared<ConstantVelocity2D>(0.05);
+  const EkfEstimator ekf(motion, 5.0);
+  const UkfEstimator ukf(motion, 5.0);
+  const ParticleFilterEstimator pf(motion, /*N*/ 2000, /*v_std*/ 5.0,
+                                   /*ess_frac*/ 0.5, /*seed*/ 137);
+
+  const RunOutput e = run(ekf, s, /*gate*/ 1500.0, /*cutoff*/ 300.0,
+                          /*confirm*/ 1, /*delete*/ 8, /*miss_timeout*/ 90.0);
+  const RunOutput u = run(ukf, s, 1500.0, 300.0, 1, 8, 90.0);
+  const RunOutput p = run(pf,  s, 1500.0, 300.0, 1, 8, 90.0);
+
+  std::fprintf(stderr,
+               "\n[BearingOnlyMovingSensor] EKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[BearingOnlyMovingSensor] UKF mean_ospa=%.4f id_switches=%d tracks=%zu"
+               "\n[BearingOnlyMovingSensor] PF  mean_ospa=%.4f id_switches=%d tracks=%zu\n",
+               e.mean_ospa, e.id_switches, e.final_track_count,
+               u.mean_ospa, u.id_switches, u.final_track_count,
+               p.mean_ospa, p.id_switches, p.final_track_count);
+}
