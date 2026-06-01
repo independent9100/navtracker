@@ -31,3 +31,10 @@ TEST(Track, HoldsKinematicStateAndProvenance) {
   EXPECT_EQ(*t.attributes.name, "MV TEST");
   EXPECT_EQ(t.contributing_sources.size(), 2u);
 }
+
+TEST(Track, DefaultHasEmptyParticleEnsemble) {
+  navtracker::Track t;
+  EXPECT_EQ(t.particles.rows(), 0);
+  EXPECT_EQ(t.particles.cols(), 0);
+  EXPECT_EQ(t.particle_weights.size(), 0);
+}

@@ -32,6 +32,12 @@ struct Track {
   Eigen::MatrixXd covariance;  // P
   TrackAttributes attributes;
   std::vector<std::string> contributing_sources;  // provenance
+
+  // Optional ensemble carrier used by ensemble-based estimators (particle
+  // filter today; IMM later). The Gaussian (state, covariance) above remains
+  // the canonical kinematic snapshot consumed by gating / association / sinks.
+  Eigen::MatrixXd particles;        // n_state x N_particles, empty if unused
+  Eigen::VectorXd particle_weights; // N_particles, sums to 1, empty if unused
 };
 
 }  // namespace navtracker
