@@ -53,6 +53,19 @@ TEST(Builders, RangeBearingPassFirstIsPositionThenRangeBearing) {
   EXPECT_EQ(s.measurements[2].model, navtracker::MeasurementModel::RangeBearing2D);
 }
 
+TEST(Builders, ClutterCrossingEmitsTwoRealPlusNFalsePerScan) {
+  std::vector<double> times{1.0, 2.0};
+  const navtracker::Scenario s = navtracker::buildClutterCrossingScenario(
+      Eigen::Vector2d(-100.0, 0.0), Eigen::Vector2d(10.0, 0.0),
+      Eigen::Vector2d( 100.0, 0.0), Eigen::Vector2d(-10.0, 0.0),
+      times, 1.0, /*clutter*/ 3,
+      Eigen::Vector2d(-500.0, -500.0), Eigen::Vector2d(500.0, 500.0),
+      11);
+  // 2 timestamps * (2 real + 3 clutter) = 10 measurements
+  EXPECT_EQ(s.measurements.size(), 10u);
+  EXPECT_EQ(s.truth.size(), 4u);
+}
+
 TEST(Builders, ManeuveringTargetHasStraightThenTurnThenStraight) {
   const navtracker::Scenario s = navtracker::buildManeuveringTargetScenario(
       Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),

@@ -93,4 +93,20 @@ Scenario buildManeuveringTargetScenario(
     std::uint32_t seed = 0,
     std::uint64_t truth_id = 1);
 
+// Two crossing CV targets plus uniform-random clutter measurements per scan.
+// All measurements at a given timestamp share that timestamp exactly, so
+// `runScenarioBatched` will group them. `n_clutter_per_scan` false alarms
+// are drawn uniformly within the box [clutter_min, clutter_max] each scan.
+Scenario buildClutterCrossingScenario(
+    const Eigen::Vector2d& start_a,
+    const Eigen::Vector2d& velocity_a,
+    const Eigen::Vector2d& start_b,
+    const Eigen::Vector2d& velocity_b,
+    const std::vector<double>& sample_times_seconds,
+    double pos_noise_std_m,
+    int n_clutter_per_scan,
+    const Eigen::Vector2d& clutter_min,
+    const Eigen::Vector2d& clutter_max,
+    std::uint32_t seed = 0);
+
 }  // namespace navtracker

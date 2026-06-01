@@ -288,4 +288,38 @@ Scenario buildManeuveringTargetScenario(const Eigen::Vector2d& start,
   return s;
 }
 
+Scenario buildClutterCrossingScenario(const Eigen::Vector2d& start_a,
+                                      const Eigen::Vector2d& velocity_a,
+                                      const Eigen::Vector2d& start_b,
+                                      const Eigen::Vector2d& velocity_b,
+                                      const std::vector<double>& times,
+                                      double pos_noise_std_m,
+                                      int n_clutter_per_scan,
+                                      const Eigen::Vector2d& clutter_min,
+                                      const Eigen::Vector2d& clutter_max,
+                                      std::uint32_t seed) {
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> noise(0.0, pos_noise_std_m);
+  std::uniform_real_distribution<double> ux(clutter_min.x(), clutter_max.x());
+  std::uniform_real_distribution<double> uy(clutter_min.y(), clutter_max.y());
+  Scenario s;
+  for (double t : times) {
+    const Eigen::Vector2d truth_a = start_a + velocity_a * t;
+    const Eigen::Vector2d truth_b = start_b + velocity_b * t;
+    s.truth.push_back(makeTruth(truth_a, velocity_a, t, 1));
+    s.truth.push_back(makeTruth(truth_b, velocity_b, t, 2));
+    const Eigen::Vector2d noisy_a(truth_a.x() + noise(rng),
+                                  truth_a.y() + noise(rng));
+    const Eigen::Vector2d noisy_b(truth_b.x() + noise(rng),
+                                  truth_b.y() + noise(rng));
+    s.measurements.push_back(makeMeasurement(noisy_a, t, pos_noise_std_m));
+    s.measurements.push_back(makeMeasurement(noisy_b, t, pos_noise_std_m));
+    for (int k = 0; k < n_clutter_per_scan; ++k) {
+      const Eigen::Vector2d fp(ux(rng), uy(rng));
+      s.measurements.push_back(makeMeasurement(fp, t, pos_noise_std_m));
+    }
+  }
+  return s;
+}
+
 }  // namespace navtracker
