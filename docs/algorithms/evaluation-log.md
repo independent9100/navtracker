@@ -71,3 +71,50 @@ numbers carry single-realization noise. A proper comparison would average
 over multiple seeds and report a confidence interval — that's a documented
 next step. Two configurations is a thin sample; widening to a sweep of CPAs
 and noise levels would let us draw the EKF→UKF transfer curve quantitatively.
+
+## 2026-06-01 — PF vs EKF vs UKF on range/bearing pass scenarios
+
+`ParticleFilterEstimator` with `N=1000`, `ess_fraction=0.5`,
+`init_speed_std=10`, seed = scenario seed. Same scenarios, gates, and
+thresholds as the previous entry.
+
+| Scenario | Filter | mean OSPA (m) | Δ vs EKF |
+|----------|--------|---------------|----------|
+| ShortRangePass | EKF | 8.6976 | — |
+| ShortRangePass | UKF | 8.6308 | −0.068 m (−0.8%) |
+| ShortRangePass | PF  | 9.9828 | +1.285 m (+14.8%) |
+| VeryShortRangePass | EKF | 17.2779 | — |
+| VeryShortRangePass | UKF | 16.1210 | −1.157 m (−6.7%) |
+| VeryShortRangePass | PF  | 16.4674 | −0.811 m (−4.7%) |
+
+**Takeaway.** The PF lands *behind* both Kalman variants on the mild
+nonlinearity scenario and *between* them on the sharper one. This is the
+expected outcome for a bootstrap PF on a unimodal posterior: with N=1000
+particles and a 4-D state the Monte-Carlo variance of the weighted mean is
+non-negligible, and there is no offsetting structural advantage when the
+true posterior is well-approximated by a Gaussian. The UKF's `2n+1 = 9`
+sigma points capture the second-moment correction at a tiny fraction of the
+runtime cost.
+
+The PF's theoretical advantage — representing non-Gaussian or *multimodal*
+posteriors — is not exercised by either of these scenarios. Both pass
+geometries produce a posterior that converges to a single mode once range
+information accumulates over a few updates. To see the PF win against the
+UKF we need a scenario where the posterior is genuinely multimodal: a
+**bearing-only** track, a target near closest approach with high prior
+position uncertainty, or two targets whose individual posteriors overlap
+significantly. Documented as the next scenario to build.
+
+**Methodology notes.** Single seed per filter, N=1000, ESS threshold 0.5·N.
+The PF runs to completion in tens of milliseconds for these scenarios, so
+runtime is not a current concern. Multi-seed averaging is still the right
+next step before quoting absolute numbers — single-seed deltas of <1 m are
+within Monte-Carlo noise for N=1000. The 14.8% gap on ShortRangePass is
+large enough that it would survive averaging, but the 4.7% gap on
+VeryShortRangePass is borderline.
+
+**Open follow-ups.** (1) Build a bearing-only or close-approach scenario
+where the posterior is provably multimodal. (2) Sweep `N ∈ {200, 500, 1000,
+2000, 5000}` to characterize the variance/cost trade. (3) Refactor
+`MeasurementModels` so the PF update path does not allocate a throwaway
+Jacobian `H` per particle (noted in the code-review of Task 5).
