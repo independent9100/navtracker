@@ -194,3 +194,77 @@ Q = process noise from continuous white-noise acceleration with PSD q  (standard
 - Exact confirmation/deletion policy parameters (M-of-N vs. score-based) — decide during Phase 1 with scenario data.
 - Whether ARPA tracks ever need true track-level fusion (covariance intersection) rather than pseudo-measurement treatment — revisit if measurement-level proves biased.
 - Multi-radar overlap handling (same target from two radars in one cycle) — refine association's one-measurement-per-track assumption.
+
+## 14. Future Improvements (deferred)
+
+Items captured here so we do not lose them. None are scheduled; each is a
+candidate project in its own right.
+
+### 14.1 Sensor pose on measurements
+
+Add `sensor_position_enu` (and eventually `sensor_orientation`) to
+`Measurement` so the range/bearing/bearing-only h(x) families can be
+evaluated against an arbitrary sensor pose instead of the implicit ENU
+origin. Defaults to `(0,0)` so existing tests and adapters are unaffected.
+
+**Unlocks.** True bearing-only fusion with parallax (own-ship motion makes
+range observable); shore-based or off-origin sensors; multi-platform fusion
+(own-ship + escort + UAV).
+
+**Cost.** ~50 lines + tests in `MeasurementModels` and the adapter layer.
+Independent of, but prerequisite to, 14.2.
+
+### 14.2 Rigid-body platform / target geometry
+
+Two coupled extensions:
+
+1. **Own-ship sensor offsets.** Configurable `(dx, dy)` per sensor relative
+   to the navigation reference point (GPS antenna). Adapters apply the
+   offset when populating `sensor_position_enu`. Today every sensor is
+   implicitly co-located at the GPS antenna; the error is bounded by the
+   longest offset (~50 m on a 100 m platform). Sub-percent at open-water
+   ranges; meaningful at harbor / docking ranges.
+
+2. **Target geometry into association + CPA.** `TrackAttributes` already
+   carries `length_m` and `beam_m`; today they are populated by adapters
+   and never consumed. Wire them into:
+   - **CPA / collision metrics** — replace `‖center_A − center_B‖` with a
+     bow/beam-aware closest-approach calculation.
+   - **Association strength** — radar return size consistency with claimed
+     vessel length as an extra association feature alongside Mahalanobis
+     gating.
+   - **Outlier rejection** — a measurement that "jumps" by less than half
+     the hull length is likely a different return from the same ship, not
+     a tracking glitch.
+
+**Unlocks.** Honest collision-avoidance metrics; stronger association at
+close range; better lifecycle decisions when measurement spread is
+comparable to vessel size.
+
+**Cost.** Medium. Sensor-offset config + adapter changes ~100 lines.
+Geometry-aware CPA + association feature is a separate, larger change.
+
+### 14.3 Extended object tracking
+
+Promote target extent (length, beam, orientation) into the dynamic state
+rather than carrying it as a passive attribute. State grows to roughly
+`[px, py, vx, vy, ψ, L, B]`; motion model needs leeway and heading-vs-
+velocity-direction constraints; measurement models must handle radar
+extent reports and camera bounding boxes natively.
+
+**Unlocks.** Tracking maneuvering large vessels accurately at close range
+(tugs, anchor handling, low-speed dock approaches); confidence on size
+from multi-look fusion; native handling of extended-return sensors.
+
+**Cost.** Substantial — its own project. Predicate: 14.1 and 14.2 in place
+so that the simpler representations have been exhausted first.
+
+### 14.4 Bearing-only scenarios with own-ship motion
+
+Once 14.1 is in, build a scenario harness that emits bearing-only
+measurements from a moving sensor frame. This is the smallest meaningful
+scenario where a particle filter should provably outperform EKF / UKF
+(banana-shaped posterior during the parallax convergence window). Until
+14.1 lands, bearing-only from a stationary sensor at the ENU origin is
+range-unobservable and all three filters tie at the prior-range uncertainty
+(see `docs/algorithms/evaluation-log.md` entry of 2026-06-01).
