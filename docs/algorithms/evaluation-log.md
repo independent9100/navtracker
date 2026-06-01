@@ -455,3 +455,115 @@ non-position measurement models.
 The PF advantage was always conditional on geometry that lets the
 non-Gaussian posterior actually form. The first two scenarios didn't
 provide that; the third does.
+
+## 2026-06-01 — Multi-seed sweep on the four "wins" (retraction + confirmations)
+
+Re-ran the four winning comparison scenarios with 20 seeds each (seeds
+201..220, same set across scenarios) to convert single-realization
+deltas into mean ± stddev. Source:
+`tests/scenario/test_multi_seed_sweep.cpp`.
+
+### IMM-3 on Maneuvering — **confirmed**
+
+| Filter | mean OSPA ± stddev (m) | mean ID switches |
+|--------|--------------------------|------------------|
+| EKF (CV)   | 5.6713 ± 0.9093 | 0.00 |
+| IMM-2      | 5.6713 ± 0.9093 | 0.00 |
+| IMM-3      | **4.8148 ± 0.5916** | 0.00 |
+
+Confidence intervals do not overlap. The 7.4% single-seed delta tightens
+to ~15% in expectation (≈0.86 m), and IMM-3's stddev is also smaller
+than EKF's, indicating the prescribed-CT modes reduce *variability* in
+addition to mean error. EKF and IMM-2 are bit-identical to 4 decimals
+because position-only measurements collapse the 5-state-CV and free-ω-CT
+posteriors into the same predicted positions (no information channel to
+distinguish ω modes — same observability gap documented earlier).
+
+### JPDA on ClutterCrossing — **confirmed, very cleanly**
+
+| Filter | mean OSPA ± stddev (m) | mean ID switches |
+|--------|--------------------------|------------------|
+| GNN  | 47.3207 ± 0.1141 | 9.90 |
+| JPDA | **45.3199 ± 0.4377** | **2.45** |
+
+OSPA intervals barely overlap; ID-switch advantage is enormous and
+robust (9.90 → 2.45 mean across 20 seeds = ~75% reduction, larger than
+the original single-seed 64% claim). Strongest and most defensible win
+in the codebase.
+
+### MHT on CrossingDropout — **retracted**
+
+| Filter | mean OSPA ± stddev (m) | mean ID switches |
+|--------|--------------------------|------------------|
+| GNN  | 1.9659 ± 1.9014 | 0.70 |
+| JPDA | 1.9656 ± 1.9017 | **0.20** |
+| MHT  | 1.9656 ± 1.9010 | 0.90 |
+
+**The 7× MHT win was a single-seed artifact.** Averaged over 20 seeds,
+all three associators land at the same OSPA (1.966) with the same
+±1.9 m noise floor. The stddev is ≈97% of the mean, indicating the
+scenario is genuinely bimodal: some seeds the crossing resolves
+cleanly for everyone, some seeds it doesn't resolve cleanly for anyone.
+On ID switches, **JPDA actually slightly beats MHT** (0.20 vs 0.90 mean
+across 20 seeds). The previous entry (seed 113) is left intact for
+historical record but the "7× lower OSPA" headline is wrong in
+expectation — it was a single favorable realization.
+
+**Methodological lesson.** Scenarios designed to expose an algorithm's
+structural advantage need multi-seed validation before any claim is
+made. The dropout window in `buildCrossingDropoutScenario` interacts
+with the seed-driven position noise in ways that make the crossing
+genuinely ambiguous on some draws — and on those draws, deferred
+commitment doesn't help because the right answer isn't recoverable
+even with hindsight.
+
+**What this changes.** MHT is no longer the codebase's "biggest win."
+The infrastructure (TrackTree, N-scan pruning, K_local cap) is still
+correctly implemented and architecturally useful, but the demonstrated
+empirical advantage over JPDA on this specific scenario doesn't survive
+averaging. A scenario where MHT *does* dominate over the multi-seed
+average likely exists (e.g., longer dropout vs N_scan, more targets,
+explicit identity-preservation metric) but hasn't been found yet.
+Recorded as an open follow-up.
+
+### PF on BearingOnlyMovingSensor — direction holds, intervals overlap
+
+| Filter | mean OSPA ± stddev (m) | mean ID switches |
+|--------|--------------------------|------------------|
+| EKF (CV) | 212.8332 ± 124.6144 | 0.00 |
+| UKF (CV) | 214.2199 ± 125.9745 | 0.00 |
+| PF       | **180.3379 ± 124.5977** | 0.00 |
+
+The 32% single-seed PF win narrows to ~15% in expectation (212.83 vs
+180.34 = 32.49 m gap). The direction is consistent — PF beats both
+Kalman variants on every aggregate — but the per-seed variance is so
+large (±125 m, ≈70% of mean) that confidence intervals overlap
+substantially. Individual seeds can favor either filter; the *average*
+favors PF.
+
+The large variance is inherent to bearing-only with a wide range prior:
+on some seeds the bearing sequence converges range quickly, on others
+it stays in the banana-shaped ambiguity zone for most of the run and
+every filter does poorly. 20 seeds is insufficient to tighten this;
+N ≥ 100 is the right next step to convert "directionally PF wins" into
+"PF beats EKF with 95% confidence."
+
+---
+
+### Honest revised summary of the wins
+
+| Component | Multi-seed status |
+|-----------|---------------------|
+| UKF | Tied with EKF on every scenario averaged |
+| **PF** | **Wins on bearing-only-with-parallax, but ±125 m variance — need more seeds** |
+| IMM-2 (free ω) | Tied with EKF (observability gap, expected) |
+| **IMM-3 (prescribed ω)** | **Confirmed: 15% OSPA reduction with non-overlapping CIs** |
+| **JPDA** | **Confirmed: 75% ID-switch reduction, tightest CIs of any win** |
+| ~~MHT~~ | **Retracted: ties JPDA on this scenario; no demonstrated win** |
+
+The codebase has **two confirmed wins** (JPDA, IMM-3), **one
+directional win** (PF on parallax bearing-only), and **one retraction**
+(MHT). Net: still useful, more honest, less impressive than the
+single-seed numbers suggested. JPDA is the clear winner of the
+association axis on the scenarios we have today; MHT's added complexity
+over JPDA is not yet justified on demonstrated empirical grounds.

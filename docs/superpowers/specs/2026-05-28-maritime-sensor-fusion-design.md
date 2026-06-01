@@ -378,3 +378,59 @@ gets more interesting). Heading state needed (from velocity or from AIS).
 **Dependency.** §14.2 (target geometry attributes wired into the
 calculation). §14.7 (uncertainty) becomes more complex on top of this —
 deferred until the deterministic hull-aware version is in place.
+
+### 14.9 Heading errors and gyro drift in own-ship pose
+
+Today every relative-bearing sensor (ARPA TTM in "relative" mode, EO/IR
+bearing) is rotated into the ENU frame using the latest
+`OwnShipPose.heading_true_deg`. The adapter does
+`bearing_true = bearing_relative + own_ship_heading`. **This treats own-ship
+heading as if it were known exactly**, which it isn't:
+
+1. **Instantaneous bias.** A 1° gyro error on a target at 5 km range
+   creates an 87 m cross-track position bias on the projected measurement.
+   That's larger than typical nav-radar bearing noise — so heading error
+   dominates the actual measurement error budget at long range.
+2. **Drift over time.** Gyro bias of even 0.01°/s accumulates to 36° over
+   an hour. AIS doesn't catch this (the AIS receiver doesn't know your
+   heading); only an absolute reference (GPS course-over-ground,
+   dual-antenna heading, magnetic compass with corrected declination)
+   can. Without it, the entire fused track picture rotates around
+   own-ship slowly and OSPA on synthetic scenarios — where heading is
+   exact — wouldn't catch it.
+
+Three things real maritime trackers do that we don't:
+
+1. **Heading-error contribution to measurement R.** For any sensor that
+   used own-ship heading in its projection, the adapter should add
+   `(range × σ_heading)²` to the cross-track component of `R`. This
+   makes the tracker correctly down-weight long-range relative bearings
+   when heading is uncertain. Today `R` reflects only the sensor's own
+   noise.
+2. **Heading bias as a state.** Estimate gyro bias online from
+   comparison of dead-reckoned vs GPS-COG / fix-derived heading; apply
+   the bias correction to subsequent measurement projections.
+   Conceptually a one-state extension of the tracker (or a separate
+   own-ship navigation filter that feeds corrected heading downstream).
+3. **Sensor orientation on the measurement.** Extension of §14.1: not
+   just *where* was the sensor but *which way was it pointing* at
+   measurement time. For bearings reported in body frame, the sensor's
+   pointing matters; for bearings already true-North-referenced, it
+   doesn't (own-ship heading absorbed the rotation).
+
+**Unlocks.** Honest measurement covariances at long range, where
+heading-induced cross-track error dominates sensor-intrinsic noise.
+Detectability of gyro drift through the tracker (currently invisible
+because synthetic scenarios assume perfect heading). Multi-platform
+scenarios where each platform has its own gyro/heading source.
+
+**Cost.** Heading-error R contribution: ~50 lines in
+`adapters/util/Projection.cpp` plus a way to pass `σ_heading` from the
+adapter config. ~50 lines. Heading bias as a state in a small
+own-ship filter: ~200 lines. Sensor orientation field: ~30 lines + the
+same threading work as §14.1.
+
+**Dependency.** Useful in isolation but most impactful once §14.1 is in
+heavy use (which it now is for bearing-only). Stacks cleanly with §14.2
+(sensor offsets) and §14.5 (close-range precision sensors where heading
+error at short range is small but not zero).
