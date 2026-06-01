@@ -103,25 +103,14 @@ Scenario SimulatedSensorBus::run() {
     }
 
     if (t >= next_truth_sample) {
-      if (targets_.empty()) {
-        // No targets configured: fall back to recording own-ship truth so the
-        // truth timeline reflects the scenario's elapsed cadence.
+      for (const auto& [tid, traj] : targets_) {
+        const TruthState s = traj->eval(t);
         TruthSample ts;
         ts.time = t;
-        ts.truth_id = 0;
-        ts.position = ctx.ownship_truth.position;
-        ts.velocity = ctx.ownship_truth.velocity;
+        ts.truth_id = tid;
+        ts.position = s.position;
+        ts.velocity = s.velocity;
         out.truth.push_back(ts);
-      } else {
-        for (const auto& [tid, traj] : targets_) {
-          const TruthState s = traj->eval(t);
-          TruthSample ts;
-          ts.time = t;
-          ts.truth_id = tid;
-          ts.position = s.position;
-          ts.velocity = s.velocity;
-          out.truth.push_back(ts);
-        }
       }
       next_truth_sample = Timestamp::fromSeconds(
           next_truth_sample.seconds() + cfg_.truth_sample_dt_s);

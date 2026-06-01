@@ -94,5 +94,5 @@ TEST(SimulatedSensorBus, NoSensorsAttachedProducesEmptyMeasurements) {
 
   const Scenario s = bus.run();
   EXPECT_TRUE(s.measurements.empty());
-  EXPECT_EQ(s.truth.size(), 6u);
+  EXPECT_EQ(s.truth.size(), 0u);
 }
