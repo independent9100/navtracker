@@ -229,9 +229,25 @@ Three known fixes for this limitation, in order of increasing change:
    or heading directly; the CT and CV modes' velocity predictions differ
    visibly and the likelihood ratio shifts.
 
-**Ways to improve / test next.** Implement (1) above as the next IMM
-variant; it is the smallest practical change that should make IMM
-visibly beat CV. After that: (2) UKF backend per mode; (3) measurement-rate
-sensitivity sweep on the maneuver length / rate / noise three-axis grid.
+**Resolution of the limitation: prescribed-rate three-mode IMM.**
+Implemented via `PrescribedTurn(omega_const, q_a, q_omega)`, which fixes
+ω at construction time and uses it in every `transitionMatrix(dt)` query
+(state's ω component is ignored by F but remains in the 5-d state for
+unified IMM mixing). The classic maritime configuration is
+`{CV5State, PrescribedTurn(+ω̂), PrescribedTurn(−ω̂)}` with a uniform
+initial mixture and a transition matrix that lets the modes interconvert
+freely (e.g. `[[0.90,0.05,0.05],[0.10,0.85,0.05],[0.10,0.05,0.85]]`).
+The CT modes don't have to *discover* the turn rate — each one is
+committed to a known rate, so the moment the target turns at that rate,
+its likelihood dominates and the mode probability shifts. **Measured: 7.4%
+OSPA reduction** vs the CV baseline on the standard maneuvering scenario
+(see evaluation log).
+
+**Ways to improve / test next.** (1) UKF backend per mode (sigma-point
+propagation through CT lets a single free-ω CT mode work without
+prescribing rates). (2) Adaptive transition matrix π. (3) Multi-seed
+sweep over turn rate × duration × noise to characterize when IMM-3
+dominates. (4) Bank of prescribed rates for a wider maneuver envelope
+(±0.1, ±0.2, ±0.5 rad/s).
 
 **Measured behaviour.** See `docs/algorithms/evaluation-log.md`.

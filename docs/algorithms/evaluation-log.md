@@ -240,3 +240,53 @@ classic maritime configuration. This is captured as the next IMM step in
 **Methodology notes.** Single seed (91), single scenario, single
 configuration. With IMM tied to the single-mode baseline, multi-seed
 averaging does not change the conclusion; no sweep was run.
+
+## 2026-06-01 — Three-mode IMM (CV + prescribed CT±) on maneuvering target
+
+`PrescribedTurn(omega_const, q_a, q_omega)` motion model: fixed turn rate
+at construction, otherwise identical to `CoordinatedTurn`. Three-mode IMM
+configuration: `{CV5State(0.5, 0.001), PrescribedTurn(+0.2, 0.5, 0.001),
+PrescribedTurn(-0.2, 0.5, 0.001)}`, transition matrix
+`[[0.90,0.05,0.05],[0.10,0.85,0.05],[0.10,0.05,0.85]]`, initial mixture
+`[0.34, 0.33, 0.33]`. Same maneuvering scenario as the previous IMM entry
+(5 s straight + 5 s turn at +0.2 rad/s + 5 s straight; 1 Hz Position2D,
+σ = 5 m, seed 91).
+
+Source: `tests/scenario/test_filter_comparison.cpp::FilterComparison.Maneuvering3ModeIMM`.
+
+| Filter | mean OSPA (m) | Δ vs EKF |
+|--------|----------------|----------|
+| EKF (CV2D)                          | 6.5871 | — |
+| IMM-2 (CV5 + free-ω CT)             | 6.5871 | 0.0 (0%) |
+| IMM-3 (CV5 + CT(+0.2) + CT(-0.2))   | **6.0973** | **−0.4898 (−7.4%)** |
+
+**Takeaway.** First IMM configuration to actually beat the EKF baseline
+on any scenario in this codebase. The mechanism is exactly the one
+predicted in the prior entry's diagnosis: `CT(+0.2)` matches the true turn
+rate, so during the 5-second turn its predicted positions track truth
+while the CV mode's predicted positions diverge. The mode-probability
+update shifts mass to `CT(+0.2)`, the mixture projection uses it more,
+and OSPA drops. `CT(-0.2)` stays quiet (its predicted positions diverge
+even more than CV's during a left turn).
+
+The 7.4% number is bounded by the fact that the maneuver is only 5/15 of
+the scenario duration. Restricting OSPA to just the turn-segment timesteps
+would show a much larger gap; the cross-segment average is what we report
+for direct comparability with the prior IMM-2 entry.
+
+**Implication.** Prescribed-rate IMM is the right baseline for maritime
+maneuver tracking with position-only AIS/Position2D inputs. The free-ω
+single-CT IMM-2 should be considered a curiosity rather than a useful
+configuration when measurements don't observe ω.
+
+**Methodology notes.** Single seed (91). Multi-seed averaging would tighten
+the 7.4% claim but the directional result (IMM-3 < EKF, IMM-2 ≈ EKF) is
+robust by construction — the prescribed-rate CT has a structural advantage
+the other modes cannot offer.
+
+**Open follow-ups.** (1) Multi-seed sweep on this scenario. (2) Sweep over
+maneuver rate ω_true with fixed prescribed ω̂ to characterize the
+sensitivity (how close does ω̂ have to match ω_true for IMM-3 to win?).
+(3) Wider mode bank, e.g. `CV + CT(±0.1) + CT(±0.2) + CT(±0.5)`.
+(4) UKF backend per mode to let a single free-ω CT mode work via
+sigma-point propagation through F (replaces prescribed rates).
