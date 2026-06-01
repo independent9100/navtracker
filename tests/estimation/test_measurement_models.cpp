@@ -112,3 +112,38 @@ TEST(MeasurementModels, RangeBearingJacobianAdaptsToStateSize) {
   ASSERT_EQ(p.H.rows(), 2);
   ASSERT_EQ(p.H.cols(), 5);
 }
+
+TEST(MeasurementModels, RangeBearingFromOffsetSensor) {
+  Eigen::Vector4d state;
+  state << 100.0, 0.0, 0.0, 0.0;
+  const Eigen::Vector2d sensor(50.0, 0.0);
+  const Eigen::VectorXd z =
+      navtracker::predictMeasurementValue(
+          navtracker::MeasurementModel::RangeBearing2D, state, sensor);
+  EXPECT_NEAR(z(0), 50.0, 1e-9);
+  EXPECT_NEAR(z(1), 0.0, 1e-9);
+}
+
+TEST(MeasurementModels, BearingOnlyFromOffsetSensor) {
+  Eigen::Vector4d state;
+  state << 0.0, 100.0, 0.0, 0.0;
+  const Eigen::Vector2d sensor(0.0, 50.0);
+  const Eigen::VectorXd z =
+      navtracker::predictMeasurementValue(
+          navtracker::MeasurementModel::Bearing2D, state, sensor);
+  EXPECT_NEAR(z(0), 3.14159265358979323846 / 2.0, 1e-9);
+}
+
+TEST(MeasurementModels, RangeBearingJacobianFromOffsetSensor) {
+  Eigen::Vector4d state;
+  state << 60.0, 80.0, 0.0, 0.0;
+  const Eigen::Vector2d sensor(10.0, 20.0);
+  const navtracker::MeasurementPrediction p =
+      navtracker::predictMeasurement(
+          navtracker::MeasurementModel::RangeBearing2D, state, sensor);
+  const double r = std::sqrt(6100.0);
+  EXPECT_NEAR(p.H(0, 0), 50.0 / r, 1e-9);
+  EXPECT_NEAR(p.H(0, 1), 60.0 / r, 1e-9);
+  EXPECT_NEAR(p.H(1, 0), -60.0 / (r * r), 1e-9);
+  EXPECT_NEAR(p.H(1, 1),  50.0 / (r * r), 1e-9);
+}
