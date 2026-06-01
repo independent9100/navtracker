@@ -75,6 +75,8 @@ void ArpaEmitter::emit(const EmitContext& ctx) {
         const double r_obs = range + (cfg_.range_std_m > 0.0 ? range_noise_(rng_) : 0.0);
         const double b_obs = wrap360(bearing_rel_deg +
                                      (cfg_.bearing_std_deg > 0.0 ? bearing_noise_(rng_) : 0.0));
+        double b_obs_emit = b_obs;
+        if (b_obs_emit >= 359.9995) b_obs_emit = 0.0;  // avoid "360.000" wire artefact
         const double r_nm = r_obs / kMetresPerNm;
         std::string body = "RATTM,";
         char tn[8];
@@ -83,7 +85,7 @@ void ArpaEmitter::emit(const EmitContext& ctx) {
         body += ',';
         body += formatMilli3(r_nm);
         body += ',';
-        body += formatMilli3(b_obs);
+        body += formatMilli3(b_obs_emit);
         body += ",R,0.0,0.0,T,0.0,0.0,N,T,,000000.00,A";
         const std::string sentence = wrapWithChecksum(body);
         adapter_.ingest(sentence, next);

@@ -113,3 +113,29 @@ TEST(ArpaEmitter, SkipsTargetsOutsideRangeGate) {
                        Eigen::Vector2d(1000.0, 0.0)));   // out of range
   EXPECT_EQ(adapter.poll().size(), 0u);
 }
+
+TEST(ArpaEmitter, SkipsTargetsInsideMinRangeGate) {
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider own;
+  OwnShipPose pose;
+  pose.time = Timestamp::fromSeconds(0.0);
+  pose.lat_deg = 53.5;
+  pose.lon_deg = 8.0;
+  pose.heading_true_deg = 0.0;
+  own.update(pose);
+  ArpaAdapter adapter(datum, own);
+
+  sim::ArpaEmitterConfig cfg;
+  cfg.targets.push_back({1, 3});
+  cfg.range_std_m = 0.0;
+  cfg.bearing_std_deg = 0.0;
+  cfg.min_range_m = 100.0;  // 100 m gate
+
+  sim::ArpaEmitter emitter(adapter, datum, cfg, /*seed=*/4);
+
+  emitter.emit(makeCtx(0.0,
+                       Eigen::Vector2d(0.0, 0.0),
+                       /*truth_id=*/1,
+                       Eigen::Vector2d(30.0, 0.0)));   // 30 m, below gate
+  EXPECT_EQ(adapter.poll().size(), 0u);
+}

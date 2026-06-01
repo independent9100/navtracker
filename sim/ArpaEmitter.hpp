@@ -14,7 +14,7 @@ namespace navtracker::sim {
 
 struct ArpaTargetEntry {
   std::uint64_t truth_id{0};
-  int arpa_track_num{0};
+  int arpa_track_num{0};  // NMEA $RATTM target number; conventionally 0-99.
 };
 
 struct ArpaEmitterConfig {
