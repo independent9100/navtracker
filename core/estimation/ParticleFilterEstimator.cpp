@@ -41,6 +41,7 @@ void ParticleFilterEstimator::projectToGaussian(Track& track) const {
 void ParticleFilterEstimator::predict(Track& track, Timestamp to) const {
   const double dt = to.secondsSince(track.last_update);
   if (dt <= 0.0) return;
+  if (track.particles.cols() == 0) return;
   const int n = static_cast<int>(track.particles.rows());
   const int N = static_cast<int>(track.particles.cols());
   const Eigen::MatrixXd F = motion_->transitionMatrix(dt);
@@ -64,8 +65,9 @@ void ParticleFilterEstimator::predict(Track& track, Timestamp to) const {
   track.last_update = to;
 }
 
-void ParticleFilterEstimator::update(Track& /*track*/,
+void ParticleFilterEstimator::update(Track& track,
                                      const Measurement& /*z*/) const {
+  if (track.particles.cols() == 0) return;
   // Implemented in Task 5.
 }
 

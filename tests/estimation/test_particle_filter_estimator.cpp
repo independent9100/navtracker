@@ -78,3 +78,26 @@ TEST(ParticleFilterEstimator, InitiateSeedsEnsembleAndCarrier) {
   EXPECT_GT(t.covariance(2, 2), 1.0);
   EXPECT_GT(t.covariance(3, 3), 1.0);
 }
+
+TEST(ParticleFilterEstimator, PredictOnEmptyEnsembleIsNoOp) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  ParticleFilterEstimator pf(motion, 500, 5.0, 0.5, 0);
+  // Initiate with a non-PD measurement covariance to land in the
+  // fallback path (no particles populated).
+  Measurement bad;
+  bad.time = Timestamp::fromSeconds(0.0);
+  bad.model = MeasurementModel::Position2D;
+  bad.value = Eigen::Vector2d(0.0, 0.0);
+  bad.covariance = Eigen::Matrix2d::Zero();  // zero matrix → LLT fails
+  bad.source_id = "test";
+  navtracker::Track t = pf.initiate(bad);
+  ASSERT_EQ(t.particles.cols(), 0);
+  // predict must not crash and must leave the track unchanged.
+  const Eigen::VectorXd state_before = t.state;
+  const navtracker::Timestamp time_before = t.last_update;
+  pf.predict(t, Timestamp::fromSeconds(5.0));
+  EXPECT_EQ(t.state.size(), state_before.size());
+  for (int i = 0; i < state_before.size(); ++i)
+    EXPECT_DOUBLE_EQ(t.state(i), state_before(i));
+  EXPECT_DOUBLE_EQ(t.last_update.seconds(), time_before.seconds());
+}
