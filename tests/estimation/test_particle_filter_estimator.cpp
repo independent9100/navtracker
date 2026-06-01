@@ -25,6 +25,38 @@ Measurement positionMeas(double x, double y, double std_m, double t) {
 
 }  // namespace
 
+TEST(ParticleFilterEstimator, PredictAdvancesMeanByMotionModel) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.0);  // zero process noise
+  ParticleFilterEstimator pf(motion, 2000, 5.0, 0.5, 7);
+  navtracker::Track t = pf.initiate(positionMeas(0.0, 0.0, 1.0, 0.0));
+  // Inject a deterministic velocity into every particle so the predict step
+  // has something to advance.
+  for (int i = 0; i < t.particles.cols(); ++i) {
+    t.particles(2, i) = 5.0;
+    t.particles(3, i) = -3.0;
+  }
+  pf.predict(t, Timestamp::fromSeconds(2.0));
+  EXPECT_NEAR(t.state(0), 10.0, 0.3);
+  EXPECT_NEAR(t.state(1), -6.0, 0.3);
+  EXPECT_DOUBLE_EQ(t.last_update.seconds(), 2.0);
+}
+
+TEST(ParticleFilterEstimator, PredictGrowsCovarianceWithProcessNoise) {
+  auto motion_q0 = std::make_shared<ConstantVelocity2D>(0.0);
+  auto motion_q1 = std::make_shared<ConstantVelocity2D>(1.0);
+  ParticleFilterEstimator pf0(motion_q0, 2000, 5.0, 0.5, 11);
+  ParticleFilterEstimator pf1(motion_q1, 2000, 5.0, 0.5, 11);
+
+  navtracker::Track t0 = pf0.initiate(positionMeas(0.0, 0.0, 1.0, 0.0));
+  navtracker::Track t1 = pf1.initiate(positionMeas(0.0, 0.0, 1.0, 0.0));
+  pf0.predict(t0, Timestamp::fromSeconds(5.0));
+  pf1.predict(t1, Timestamp::fromSeconds(5.0));
+
+  // The q=1 predict must add appreciably more position spread than q=0.
+  EXPECT_GT(t1.covariance(0, 0), t0.covariance(0, 0) + 1.0);
+  EXPECT_GT(t1.covariance(1, 1), t0.covariance(1, 1) + 1.0);
+}
+
 TEST(ParticleFilterEstimator, InitiateSeedsEnsembleAndCarrier) {
   auto motion = std::make_shared<ConstantVelocity2D>(0.1);
   ParticleFilterEstimator pf(motion, 500, 5.0, 0.5, 42);

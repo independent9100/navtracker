@@ -38,8 +38,30 @@ void ParticleFilterEstimator::projectToGaussian(Track& track) const {
   track.covariance = cov;
 }
 
-void ParticleFilterEstimator::predict(Track& /*track*/, Timestamp /*to*/) const {
-  // Implemented in Task 4.
+void ParticleFilterEstimator::predict(Track& track, Timestamp to) const {
+  const double dt = to.secondsSince(track.last_update);
+  if (dt <= 0.0) return;
+  const int n = static_cast<int>(track.particles.rows());
+  const int N = static_cast<int>(track.particles.cols());
+  const Eigen::MatrixXd F = motion_->transitionMatrix(dt);
+  const Eigen::MatrixXd Q = motion_->processNoise(dt);
+
+  Eigen::MatrixXd noise = Eigen::MatrixXd::Zero(n, N);
+  const Eigen::LLT<Eigen::MatrixXd> llt(Q);
+  if (llt.info() == Eigen::Success) {
+    const Eigen::MatrixXd L = llt.matrixL();
+    std::normal_distribution<double> n01(0.0, 1.0);
+    Eigen::MatrixXd eta(n, N);
+    for (int j = 0; j < N; ++j)
+      for (int i = 0; i < n; ++i) eta(i, j) = n01(rng_);
+    noise = L * eta;
+  }
+  // If Q is not PD (e.g. q == 0 → singular), skip the noise term entirely;
+  // the predict becomes deterministic F·x for every particle.
+
+  track.particles = (F * track.particles) + noise;
+  projectToGaussian(track);
+  track.last_update = to;
 }
 
 void ParticleFilterEstimator::update(Track& /*track*/,
