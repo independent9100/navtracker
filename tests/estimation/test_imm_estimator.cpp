@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <memory>
 
 #include "core/estimation/ConstantVelocity5State.hpp"
@@ -56,4 +57,42 @@ TEST(ImmEstimator, InitiateSeedsModesUniformly) {
   EXPECT_DOUBLE_EQ(t.state(1), -50.0);
   EXPECT_NEAR(t.covariance(2, 2), 100.0, 1e-9);
   EXPECT_NEAR(t.covariance(4, 4), 0.01, 1e-9);
+}
+
+TEST(ImmEstimator, PredictAdvancesModesByTheirOwnDynamics) {
+  auto cv  = std::make_shared<ConstantVelocity5State>(0.0, 0.0);
+  auto ct  = std::make_shared<CoordinatedTurn>(0.0, 0.0);
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {cv, ct};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05,
+        0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 1.0, 0.0;
+  ImmEstimator imm(motions, pi, mu0, 10.0, 0.1);
+  navtracker::Track t = imm.initiate(positionMeas(0.0, 0.0, 1.0, 0.0));
+  for (int j = 0; j < 2; ++j) {
+    t.imm_means(2, j) = 5.0;
+    t.imm_means(3, j) = 0.0;
+    t.imm_means(4, j) = 0.5;
+  }
+  imm.predict(t, Timestamp::fromSeconds(1.0));
+  EXPECT_NEAR(t.imm_means(0, 0), 5.0, 1e-9);
+  EXPECT_NEAR(t.imm_means(1, 0), 0.0, 1e-9);
+  EXPECT_NEAR(t.imm_means(2, 1), 5.0 * std::cos(0.5), 1e-9);
+  EXPECT_NEAR(t.imm_means(3, 1), 5.0 * std::sin(0.5), 1e-9);
+  EXPECT_DOUBLE_EQ(t.last_update.seconds(), 1.0);
+}
+
+TEST(ImmEstimator, PredictOnEmptyImmIsNoOp) {
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {
+      std::make_shared<ConstantVelocity5State>(0.1, 0.01)};
+  Eigen::MatrixXd pi(1, 1);
+  pi << 1.0;
+  Eigen::VectorXd mu0(1);
+  mu0 << 1.0;
+  ImmEstimator imm(motions, pi, mu0, 10.0, 0.1);
+  navtracker::Track t;
+  const navtracker::Timestamp before = t.last_update;
+  imm.predict(t, Timestamp::fromSeconds(5.0));
+  EXPECT_DOUBLE_EQ(t.last_update.seconds(), before.seconds());
 }
