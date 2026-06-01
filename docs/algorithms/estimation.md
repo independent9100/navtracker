@@ -170,3 +170,68 @@ See `docs/algorithms/evaluation-log.md` for numbers — the PF's theoretical
 advantage (representing non-Gaussian / multimodal posteriors) is **not**
 exercised by the current scenarios; a bearing-only or pre-range-convergence
 scenario is the prerequisite for a fair comparison.
+
+## 6. Interacting Multiple Model (`ImmEstimator`)
+
+**Math.** K modes, each running an EKF over its own motion model in a
+unified 5-state space `[px, py, vx, vy, ω]`. Fixed `K×K` Markov transition
+matrix π; mode probabilities `μⱼ` carried per track.
+
+Per cycle:
+
+- **Mixing (in `predict`).** `cⱼ = Σᵢ π[i][j]·μᵢ`,
+  `μᵢⱼ = π[i][j]·μᵢ / cⱼ`,
+  `x̂₀ⱼ = Σᵢ μᵢⱼ·xᵢ`,
+  `P̂₀ⱼ = Σᵢ μᵢⱼ·(Pᵢ + (xᵢ − x̂₀ⱼ)(xᵢ − x̂₀ⱼ)ᵀ)`.
+- **Per-mode prediction.** `xⱼ ← Fⱼ(dt)·x̂₀ⱼ`,
+  `Pⱼ ← Fⱼ·P̂₀ⱼ·Fⱼᵀ + Qⱼ(dt)`.
+  For `CoordinatedTurn`, `Fⱼ(dt)` is evaluated at the mixed-prior `ωⱼ`.
+- **Per-mode update (EKF).** `Sⱼ = H Pⱼ Hᵀ + R`, `Kⱼ = Pⱼ Hᵀ Sⱼ⁻¹`,
+  `xⱼ ← xⱼ + Kⱼ y`, `Pⱼ ← (I − Kⱼ H) Pⱼ`. Mode likelihood
+  `Λⱼ = N(y; 0, Sⱼ) ∝ |Sⱼ|^{−½} · exp(−½ yᵀ Sⱼ⁻¹ y)`.
+- **Mode-probability update.** `μⱼ ← cⱼ·Λⱼ / Σₖ (cₖ·Λₖ)` (log-sum-exp).
+- **Output projection.** `x = Σⱼ μⱼ·xⱼ`,
+  `P = Σⱼ μⱼ·(Pⱼ + (xⱼ − x)(xⱼ − x)ᵀ)`.
+
+**Assumptions.** Unified state dimension across all K models (5-state).
+`CoordinatedTurn` is evaluated at the current `ω` estimate (not iteratively
+re-linearized through `ω`). Mixing happens inside `predict`; mode
+probabilities are not changed by `predict`. Transition matrix π is
+time-invariant and chosen by the user.
+
+**Rationale.** Single-model filters (EKF/UKF/PF over CV) lag through
+maneuvers because `Q_CV` does not represent a turn — they widen their
+covariance but never adapt their predicted dynamics. IMM keeps a separate
+filter per hypothesis and weighs them by data. The unified-5-state design
+avoids heterogeneous-IMM dimension bookkeeping at negligible cost.
+
+**Known limitation: position-only measurements + EKF backend → no mode
+discrimination.** With `Position2D` measurements alone, `H` has zero in
+the `ω` column, so `ω` is unobservable by the linearized update. Both CV
+and CT modes settle on `ω_mean ≈ 0`, making their predicted positions
+nearly identical, so their likelihoods are nearly identical and the mode
+probability is driven entirely by the transition-matrix prior (which
+slightly favors whichever mode has the larger self-loop). The IMM-2-mode
+configuration **does not** outperform single-mode CV on the current
+maneuvering scenario for this reason — confirmed empirically (see
+evaluation log).
+
+Three known fixes for this limitation, in order of increasing change:
+
+1. **Prescribed-rate three-mode IMM.** `CV + CT(+ω̂) + CT(−ω̂)`. The two
+   CT modes don't have to *discover* the turn rate — they only have to
+   recognize a turn matches their prescribed rate. This is the classic
+   maritime IMM-3 setup and works with position-only measurements.
+2. **UKF per mode.** Sigma points propagate `ω` uncertainty through the
+   nonlinear F, so even an initially unknown ω gets a position-domain
+   spread that differentiates the modes' likelihoods.
+3. **Velocity-bearing measurements.** Add an `H` row that observes velocity
+   or heading directly; the CT and CV modes' velocity predictions differ
+   visibly and the likelihood ratio shifts.
+
+**Ways to improve / test next.** Implement (1) above as the next IMM
+variant; it is the smallest practical change that should make IMM
+visibly beat CV. After that: (2) UKF backend per mode; (3) measurement-rate
+sensitivity sweep on the maneuver length / rate / noise three-axis grid.
+
+**Measured behaviour.** See `docs/algorithms/evaluation-log.md`.

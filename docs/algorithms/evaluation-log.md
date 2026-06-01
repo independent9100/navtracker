@@ -196,3 +196,47 @@ motion to make bearing-only range observable. (2) Sweep the PF on
 VeryShortRangePass over 20 seeds to confirm whether the 6.7% UKF advantage
 survives averaging. (3) Auxiliary or regularized PF variants to reduce the
 N required for viability.
+
+## 2026-06-01 — IMM (CV+CT, EKF backend) vs EKF/UKF/PF on maneuvering target
+
+`ImmEstimator` with K=2 (`ConstantVelocity5State` + `CoordinatedTurn`), EKF
+backend per mode, transition matrix `[[0.95, 0.05], [0.10, 0.90]]`,
+initial mode probabilities `[0.5, 0.5]`, `q_a = 0.5`, `q_ω = 0.1` (CT) and
+`0.01` (CV5). Scenario: target moves straight for 5 s, turns at 0.2 rad/s
+for 5 s, straight for 5 s. Position2D measurements at 1 Hz, σ = 5 m.
+Source: `tests/scenario/test_filter_comparison.cpp::FilterComparison.ManeuveringTarget`.
+
+| Filter | mean OSPA (m) |
+|--------|----------------|
+| EKF (CV2D)        | 6.5871 |
+| UKF (CV2D)        | 6.5871 |
+| PF  (CV2D, N=1000)| 6.7230 |
+| IMM (CV5 + CT)    | 6.5871 |
+
+**Takeaway.** IMM ties EKF and UKF exactly to four decimals. This is **not
+a measurement-noise-floor effect** — a sharper diagnostic scenario
+(`ω = 0.5 rad/s`, σ = 1 m, dt = 0.5 s, 8 s turn) gave EKF=UKF=IMM=1.9767
+with PF=41.0334 (collapsed). The IMM's CT-mode probability is observed to
+**decline monotonically** from its initial 0.5 throughout the run, reaching
+0.334 at the end — the CT mode is never activated, regardless of how
+sharp the turn is.
+
+**Diagnosis (not a bug).** With `Position2D`-only measurements the
+linearized `H` has zero in the `ω` column, so `ω` is unobservable by the
+EKF update. Both CV and CT modes converge their `ω_mean` to 0, making
+their predicted positions essentially identical, so their likelihoods are
+indistinguishable. The transition-matrix prior (CV self-loop 0.95 vs
+CT self-loop 0.90) then drives the mode probability monotonically toward
+CV. The IMM algorithm is correct — it's the position-only + EKF-backend
++ symmetric-2-mode configuration that has no observability path.
+
+**Implication.** The current IMM is correctly built and unit-tested, but
+it does not win against single-model CV on the position-only scenarios we
+have. To see IMM win on position-only measurements, implement
+**prescribed-rate three-mode IMM** (`CV + CT(+ω̂) + CT(−ω̂)`) — the
+classic maritime configuration. This is captured as the next IMM step in
+`docs/algorithms/estimation.md` § 6 "Known limitation".
+
+**Methodology notes.** Single seed (91), single scenario, single
+configuration. With IMM tied to the single-mode baseline, multi-seed
+averaging does not change the conclusion; no sweep was run.
