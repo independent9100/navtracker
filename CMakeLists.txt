@@ -121,6 +121,7 @@ add_executable(navtracker_tests
   tests/sim/test_bus_determinism.cpp
   tests/sim/test_bus_regression.cpp
   tests/sim/test_per_window_ospa.cpp
+  tests/sim/test_bus_jpda_comparison.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE navtracker_core GTest::gtest_main Eigen3::Eigen)
