@@ -8,21 +8,38 @@ ScenarioResult runScenarioBatchedMht(const Scenario& scenario,
                                      MhtTracker& tracker,
                                      double ospa_cutoff) {
   ScenarioResult r;
-  std::size_t i = 0;
-  while (i < scenario.measurements.size()) {
-    const Timestamp t = scenario.measurements[i].time;
-    std::vector<Measurement> scan;
-    while (i < scenario.measurements.size() &&
-           scenario.measurements[i].time == t) {
-      scan.push_back(scenario.measurements[i]);
-      ++i;
-    }
-    tracker.processBatch(scan);
+  if (scenario.truth.empty()) return r;
 
-    std::vector<Eigen::Vector2d> truth_xy;
-    for (const TruthSample& ts : scenario.truth) {
-      if (ts.time == t) truth_xy.push_back(ts.position);
+  std::size_t mi = 0;  // next unprocessed measurement
+  std::size_t ti = 0;  // first truth sample of the current tick group
+
+  while (ti < scenario.truth.size()) {
+    const Timestamp tick = scenario.truth[ti].time;
+
+    // Intake: process all measurements with time <= tick, grouped into
+    // same-timestamp scans for batched data association.
+    while (mi < scenario.measurements.size() &&
+           !(tick < scenario.measurements[mi].time)) {
+      const Timestamp t = scenario.measurements[mi].time;
+      std::vector<Measurement> scan;
+      while (mi < scenario.measurements.size() &&
+             scenario.measurements[mi].time == t) {
+        scan.push_back(scenario.measurements[mi]);
+        ++mi;
+      }
+      tracker.processBatch(scan);
     }
+
+    // Truth gather: collect all truth samples for this tick.
+    std::vector<Eigen::Vector2d> truth_xy;
+    std::size_t tj = ti;
+    while (tj < scenario.truth.size() && scenario.truth[tj].time == tick) {
+      truth_xy.push_back(scenario.truth[tj].position);
+      ++tj;
+    }
+
+    // Snapshot: capture current tracks and score OSPA at this tick.
+    // MHT has no separate TrackManager; tracks live on the tracker.
     std::vector<Eigen::Vector2d> est_xy;
     std::vector<TrackSnapshot> snaps;
     for (const Track& tr : tracker.tracks()) {
@@ -31,14 +48,18 @@ ScenarioResult runScenarioBatchedMht(const Scenario& scenario,
         snaps.push_back(TrackSnapshot{tr.id, Eigen::Vector2d(tr.state(0), tr.state(1))});
       }
     }
+
     r.ospa_per_step.push_back(ospaGreedy(truth_xy, est_xy, ospa_cutoff));
 
     ScenarioStep step;
-    step.time = t;
+    step.time = tick;
     step.truth = std::move(truth_xy);
     step.tracks = std::move(snaps);
     r.steps.push_back(std::move(step));
+
+    ti = tj;
   }
+
   if (!r.ospa_per_step.empty()) {
     double sum = 0.0;
     for (double v : r.ospa_per_step) sum += v;
