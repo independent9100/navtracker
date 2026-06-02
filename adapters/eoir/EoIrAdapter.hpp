@@ -22,9 +22,14 @@ struct CameraDetection {
   std::string source_id{"eo_ir"};
 };
 
+struct EoIrAdapterConfig {
+  double heading_std_deg{0.0};
+};
+
 class EoIrAdapter : public ISensorAdapter {
  public:
-  EoIrAdapter(geo::Datum datum, OwnShipProvider& own_ship);
+  EoIrAdapter(geo::Datum datum, OwnShipProvider& own_ship,
+              EoIrAdapterConfig cfg = {});
 
   void ingest(const CameraDetection& d);
   std::vector<Measurement> poll() override;
@@ -32,6 +37,7 @@ class EoIrAdapter : public ISensorAdapter {
  private:
   geo::Datum datum_;
   OwnShipProvider& own_ship_;
+  EoIrAdapterConfig cfg_;
   std::vector<Measurement> buffer_;
 };
 

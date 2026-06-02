@@ -10,8 +10,9 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kDeg2Rad = kPi / 180.0;
 }
 
-EoIrAdapter::EoIrAdapter(geo::Datum datum, OwnShipProvider& own_ship)
-    : datum_(std::move(datum)), own_ship_(own_ship) {}
+EoIrAdapter::EoIrAdapter(geo::Datum datum, OwnShipProvider& own_ship,
+                         EoIrAdapterConfig cfg)
+    : datum_(std::move(datum)), own_ship_(own_ship), cfg_(cfg) {}
 
 void EoIrAdapter::ingest(const CameraDetection& d) {
   const auto own_opt = own_ship_.latest();
@@ -25,7 +26,7 @@ void EoIrAdapter::ingest(const CameraDetection& d) {
   const PointAndCov2D out = projectRangeBearingToEnu(
       d.range_m, bearing_true_rad,
       d.range_std_m, d.bearing_std_deg * kDeg2Rad,
-      0.0,  // σ_heading; wired in Task 3
+      cfg_.heading_std_deg * kDeg2Rad,
       own_xy);
 
   Measurement m;
