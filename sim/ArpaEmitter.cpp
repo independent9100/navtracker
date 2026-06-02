@@ -41,12 +41,43 @@ ArpaEmitter::ArpaEmitter(ArpaAdapter& adapter,
       cfg_(std::move(cfg)),
       rng_(seed),
       range_noise_(0.0, cfg_.range_std_m > 0.0 ? cfg_.range_std_m : 1.0),
-      bearing_noise_(0.0, cfg_.bearing_std_deg > 0.0 ? cfg_.bearing_std_deg : 1.0) {}
+      bearing_noise_(0.0, cfg_.bearing_std_deg > 0.0 ? cfg_.bearing_std_deg : 1.0)
+    , clutter_count_dist_(cfg_.clutter_per_rotation > 0
+                          ? static_cast<double>(cfg_.clutter_per_rotation)
+                          : 1.0)
+    , clutter_range_dist_(cfg_.clutter_min_range_m, cfg_.max_range_m)
+    , clutter_bearing_dist_(0.0, 360.0)
+{}
 
 void ArpaEmitter::emit(const EmitContext& ctx) {
   if (!initialised_) {
     for (const auto& te : cfg_.targets) next_emit_[te.truth_id] = ctx.now;
     initialised_ = true;
+  }
+
+  if (!clutter_initialised_) {
+    next_clutter_emit_ = ctx.now;
+    clutter_initialised_ = true;
+  }
+
+  if (cfg_.clutter_per_rotation > 0) {
+    while (next_clutter_emit_ <= ctx.now) {
+      const int n_clutter = clutter_count_dist_(rng_);
+      for (int k = 0; k < n_clutter; ++k) {
+        const double r_clutter = clutter_range_dist_(rng_);
+        const double b_clutter = clutter_bearing_dist_(rng_);
+        const double r_nm = r_clutter / 1852.0;
+        std::string body = "RATTM,00,";
+        body += formatMilli3(r_nm);
+        body += ',';
+        body += formatMilli3(b_clutter);
+        body += ",R,0.0,0.0,T,0.0,0.0,N,T,,000000.00,A";
+        const std::string sentence = wrapWithChecksum(body);
+        adapter_.ingest(sentence, next_clutter_emit_);
+      }
+      next_clutter_emit_ = Timestamp::fromSeconds(
+          next_clutter_emit_.seconds() + cfg_.rotation_dt_s);
+    }
   }
 
   std::unordered_map<std::uint64_t, TruthState> truths;

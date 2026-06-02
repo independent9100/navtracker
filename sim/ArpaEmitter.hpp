@@ -24,6 +24,8 @@ struct ArpaEmitterConfig {
   double bearing_std_deg{1.0};
   double min_range_m{50.0};
   double max_range_m{22224.0};  // 12 NM
+  int clutter_per_rotation{0};       // Poisson mean N false alarms per rotation
+  double clutter_min_range_m{50.0};  // clutter drawn uniformly in [min, max_range_m]
 };
 
 class ArpaEmitter final : public ISensorEmitter {
@@ -44,6 +46,11 @@ class ArpaEmitter final : public ISensorEmitter {
   std::normal_distribution<double> bearing_noise_;
   std::unordered_map<std::uint64_t, Timestamp> next_emit_;
   bool initialised_{false};
+  Timestamp next_clutter_emit_{};
+  bool clutter_initialised_{false};
+  std::poisson_distribution<int> clutter_count_dist_;
+  std::uniform_real_distribution<double> clutter_range_dist_;
+  std::uniform_real_distribution<double> clutter_bearing_dist_;
 };
 
 }  // namespace navtracker::sim

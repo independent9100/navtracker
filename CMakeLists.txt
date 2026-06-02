@@ -115,6 +115,7 @@ add_executable(navtracker_tests
   tests/sim/test_own_ship_emitter.cpp
   tests/sim/test_ais_emitter.cpp
   tests/sim/test_arpa_emitter.cpp
+  tests/sim/test_arpa_clutter.cpp
   tests/sim/test_eoir_emitter.cpp
   tests/sim/test_simulated_sensor_bus.cpp
   tests/sim/test_bus_determinism.cpp
