@@ -110,6 +110,7 @@ add_executable(navtracker_tests
   tests/scenario/test_mht_comparison.cpp
   tests/scenario/test_multi_seed_sweep.cpp
   tests/sim/test_truth_trajectory.cpp
+  tests/sim/test_maneuvering_trajectory.cpp
   tests/sim/test_nmea_encode.cpp
   tests/sim/test_own_ship_emitter.cpp
   tests/sim/test_ais_emitter.cpp

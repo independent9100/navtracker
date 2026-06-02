@@ -31,4 +31,28 @@ class ConstantVelocityTrajectory final : public ITruthTrajectory {
   Timestamp t0_;
 };
 
+class ManeuveringTrajectory final : public ITruthTrajectory {
+ public:
+  // Three-leg: straight at `velocity` from `start` for `straight_duration_s`,
+  // then a constant-rate turn at `omega_rad_s` for `turn_duration_s`
+  // (positive omega = left turn in ENU), then straight at the post-turn
+  // heading and speed indefinitely. t0 anchors the first leg's start.
+  ManeuveringTrajectory(Eigen::Vector2d start,
+                        Eigen::Vector2d velocity,
+                        double straight_duration_s,
+                        double turn_duration_s,
+                        double omega_rad_s,
+                        Timestamp t0);
+
+  TruthState eval(Timestamp t) const override;
+
+ private:
+  Eigen::Vector2d start_;
+  Eigen::Vector2d v0_;
+  double t_straight_;
+  double t_turn_;
+  double omega_;
+  Timestamp t0_;
+};
+
 }  // namespace navtracker::sim
