@@ -37,6 +37,8 @@ class ManeuveringTrajectory final : public ITruthTrajectory {
   // then a constant-rate turn at `omega_rad_s` for `turn_duration_s`
   // (positive omega = left turn in ENU), then straight at the post-turn
   // heading and speed indefinitely. t0 anchors the first leg's start.
+  // Precondition: omega_rad_s != 0 (use ConstantVelocityTrajectory for a
+  // pure straight trajectory).
   ManeuveringTrajectory(Eigen::Vector2d start,
                         Eigen::Vector2d velocity,
                         double straight_duration_s,

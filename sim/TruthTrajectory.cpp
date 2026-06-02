@@ -1,5 +1,6 @@
 #include "sim/TruthTrajectory.hpp"
 
+#include <cassert>
 #include <cmath>
 
 namespace navtracker::sim {
@@ -25,7 +26,10 @@ ManeuveringTrajectory::ManeuveringTrajectory(Eigen::Vector2d start,
       t_straight_(straight_duration_s),
       t_turn_(turn_duration_s),
       omega_(omega_rad_s),
-      t0_(t0) {}
+      t0_(t0) {
+  assert(omega_ != 0.0 && "ManeuveringTrajectory omega_rad_s must be non-zero; "
+                         "use ConstantVelocityTrajectory for zero turn rate.");
+}
 
 TruthState ManeuveringTrajectory::eval(Timestamp t) const {
   double tau = t.secondsSince(t0_);
