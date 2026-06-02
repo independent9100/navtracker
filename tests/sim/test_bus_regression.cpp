@@ -133,13 +133,14 @@ TEST(BusRegression, CrossingMeanOspaWithinTolerance) {
   auto kit = makeTracker(0.1, 50.0, 30.0, 2, 4);
   const ScenarioResult r = runScenario(s, *kit.tracker, *kit.mgr, 50.0);
 
-  // Bus injects strictly more noise (multi-sensor cadence variation, real
-  // adapter chain — ArpaEmitter / EoIrEmitter produce range-bearing rather
-  // than the baseline's direct 2D position; ~10x more measurements at higher
-  // cadence). Observed ratio ~6.66x on seed=11; tolerance 7.0x as a
-  // "no catastrophic regression" guard. The bus is allowed to be noisier;
-  // do not tune emitters to chase the direct-Measurement baseline.
-  EXPECT_LT(r.mean_ospa, baseline * 7.0)
+  // Bus injects more noise (multi-sensor cadence variation, real adapter
+  // chain; ArpaEmitter / EoIrEmitter produce range-bearing rather than the
+  // baseline's direct 2D position). Pre-truth-tick-OSPA-fix the metric
+  // saturated and showed a ~6.66x ratio; post-fix (2026-06-02) the
+  // observed ratio on seed=11 is ~4.35x. Tolerance 5.01x = ratio * 1.15
+  // for headroom. The bus is allowed to be noisier; do not tune emitters
+  // to chase the direct-Measurement baseline.
+  EXPECT_LT(r.mean_ospa, baseline * 5.01)
       << "bus mean OSPA " << r.mean_ospa
       << " vs baseline " << baseline;
 }
@@ -172,8 +173,10 @@ TEST(BusRegression, OvertakingMeanOspaWithinTolerance) {
 
   auto kit = makeTracker(0.1, 50.0, 30.0, 2, 4);
   const ScenarioResult r = runScenario(s, *kit.tracker, *kit.mgr, 50.0);
-  // Observed ratio ~7.44x on seed=11; bumped tolerance to 8.0x.
-  EXPECT_LT(r.mean_ospa, baseline * 8.0)
+  // Pre-truth-tick-OSPA-fix the metric saturated and showed a ~7.44x ratio;
+  // post-fix (2026-06-02) the observed ratio on seed=11 is ~4.53x.
+  // Tolerance 5.22x = ratio * 1.15 for headroom.
+  EXPECT_LT(r.mean_ospa, baseline * 5.22)
       << "bus mean OSPA " << r.mean_ospa << " vs baseline " << baseline;
 }
 
@@ -204,7 +207,9 @@ TEST(BusRegression, ParallelTargetsMeanOspaWithinTolerance) {
 
   auto kit = makeTracker(0.1, 50.0, 30.0, 2, 4);
   const ScenarioResult r = runScenario(s, *kit.tracker, *kit.mgr, 50.0);
-  EXPECT_LT(r.mean_ospa, baseline * 7.0)
+  // Post-truth-tick-OSPA-fix (2026-06-02) the observed ratio on seed=17 is
+  // ~2.77x. Tolerance 3.19x = ratio * 1.15 for headroom.
+  EXPECT_LT(r.mean_ospa, baseline * 3.19)
       << "bus mean OSPA " << r.mean_ospa << " vs baseline " << baseline;
 }
 
@@ -268,7 +273,9 @@ TEST(BusRegression, BearingOnlyMovingSensorMeanOspaWithinTolerance) {
   const Scenario s = runBusBearingOnlyMoving();
   auto kit = makeTracker(0.1, 200.0, 400.0, 2, 4);
   const ScenarioResult r = runScenario(s, *kit.tracker, *kit.mgr, 400.0);
-  // Bearing-only is high-variance; allow a wider tolerance band.
-  EXPECT_LT(r.mean_ospa, baseline * 7.0)
+  // Bearing-only is high-variance. Post-truth-tick-OSPA-fix (2026-06-02)
+  // the observed ratio on seed=202 is ~4.38x. Tolerance 5.04x =
+  // ratio * 1.15 for headroom.
+  EXPECT_LT(r.mean_ospa, baseline * 5.04)
       << "bus mean OSPA " << r.mean_ospa << " vs baseline " << baseline;
 }
