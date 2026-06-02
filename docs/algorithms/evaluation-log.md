@@ -567,3 +567,120 @@ directional win** (PF on parallax bearing-only), and **one retraction**
 single-seed numbers suggested. JPDA is the clear winner of the
 association axis on the scenarios we have today; MHT's added complexity
 over JPDA is not yet justified on demonstrated empirical grounds.
+
+---
+
+## Bus-driven confirmation pass (2026-06-02)
+
+Re-ran the four winning comparisons through `SimulatedSensorBus` (full
+sensor quartet: OwnShip + AIS + ARPA + EO/IR; ARPA clutter Poisson(5)
+per rotation on JPDA and MHT scenarios). Metric: per-window OSPA
+(1 s windows, mean of per-window means) + cumulative ID-switch count.
+20 seeds (range 201..220, identical to the prior direct-Measurement
+sweep). Heading bias deferred to §14.9.
+
+### JPDA vs GNN — bus clutter crossing
+
+| Method | per-window OSPA (m) | mean ID switches |
+|--------|---------------------|------------------|
+| GNN    | 49.8548 ± 0.0222    | 16.90            |
+| JPDA   | 49.8452 ± 0.0274    | **18.55**        |
+
+**Verdict: retracted (under bus).** Prior direct-Measurement win (45.32
+vs 47.32 OSPA, 2.45 vs 9.90 ID-switches) does not meaningfully survive.
+Both methods saturate near the 50 m OSPA cutoff; JPDA's OSPA edge
+(~0.01 m) is well inside one stddev, and it actually **loses on
+ID-switches** (18.55 vs 16.90). The prior JPDA advantage came from
+clean clutter discrimination on direct Position2D measurements; under
+the bus's EO/IR-dominated stream (10 Hz, ~600 measurements per 30 s),
+the per-batch clutter exposure is too sparse for JPDA's soft-assignment
+machinery to differentiate from GNN's hard nearest-neighbour.
+
+### IMM-3 vs CV — bus maneuvering
+
+| Method | per-window OSPA (m) | mean ID switches |
+|--------|---------------------|------------------|
+| EKF    | 96.9531 ± 0.4587    | 4.00             |
+| IMM-3  | **96.7948 ± 0.3768** | **3.85**        |
+
+**Verdict: directionally preserved, materially diminished.** Prior
+direct-Measurement IMM-3 win was 4.81 ± 0.59 vs 5.67 ± 0.91 OSPA
+(~15% gap, non-overlapping CIs). Through the bus, IMM-3 still wins on
+both metrics but the margin is <1σ (~0.16 m on a ~97 m baseline) — the
+prior 15% advantage collapses. Both methods sit near the 100 m OSPA
+cutoff, suggesting the 15 s scenario length and the bus's measurement
+heterogeneity together prevent IMM from settling into the right mode
+before the metric saturates. The direction of the effect is right;
+the magnitude no longer matches prior claims.
+
+### PF vs EKF — bus bearing-only moving sensor
+
+| Method | per-window OSPA (m) | mean ID switches |
+|--------|---------------------|------------------|
+| EKF    | 387.0256 ± 51.5514  | 0.00             |
+| PF     | **380.4102 ± 53.6372** | 0.00          |
+
+**Verdict: directional, unchanged from prior.** PF beats EKF on OSPA by
+~6.6 m, but the per-seed stddev (~52 m) means CIs overlap heavily —
+identical pattern to the prior direct-Measurement sweep (180 ± 125 vs
+213 ± 125). The bus version operates at higher absolute OSPA (~380 m vs
+~200 m) because the bus EO/IR bearing-only emission has the
+projection-time own-ship pose attached via §14.1 — but the ratio is
+similar. No new conclusion: PF directionally wins on the high-curvature
+bearing-only posterior; N≥100 seeds needed to nail statistical significance.
+
+### MHT vs JPDA — bus clutter crossing
+
+| Method | per-window OSPA (m) | mean ID switches |
+|--------|---------------------|------------------|
+| JPDA   | 49.8452 ± 0.0274    | **18.55**        |
+| MHT    | **49.5934 ± 0.0465** | 25.55           |
+
+**Verdict: retraction re-confirmed.** Prior multi-seed sweep retracted
+the MHT win (both ≈ 1.97 m, tied). Under the bus, MHT shows a tiny OSPA
+edge (49.59 vs 49.85, ~0.5%) but loses ID-stability by 38% (25.55 vs
+18.55). MHT's deferred branching pays for itself only when track
+confusion under clutter can be unwound retroactively — here, the bus's
+heavy non-ARPA measurement stream (~600 EO/IR detections per 30 s)
+already gives JPDA enough info to track correctly without needing
+N-scan hypotheses. **Neither dominates; the retraction stands.**
+
+### Cross-cutting observation
+
+Three of four scenarios (JPDA, IMM-3, MHT) show OSPA saturating near
+the cutoff — under bus-realistic noise and 20 seeds, the metric loses
+discriminative power between methods. This is itself a finding:
+
+- The prior direct-Measurement scenarios (where each scan was 2 clean
+  Position2D measurements) gave tracker-quality differences a clear
+  signal pathway. The bus's EO/IR-dominated stream (~600 measurements
+  per 30 s scenario) overwhelms the per-scan information advantage
+  that JPDA's soft assignment / MHT's deferred branching were
+  designed to exploit.
+- Likely follow-ups: (a) revisit tracker init/delete and gate
+  parameters for bus-regime measurement densities, (b) report
+  per-window OSPA *conditioned on at-least-one-track-confirmed* so
+  the cardinality-penalty saturation doesn't dominate the signal,
+  (c) longer scenario durations for IMM-3 to give the mode-switching
+  enough time to express.
+
+The bus pass surfaces these limits honestly rather than burying them
+behind tuned parameters chasing the direct-Measurement baselines.
+
+### Methodology notes
+
+- Per-window OSPA differs in scale from the prior per-measurement mean
+  OSPA because the bus emits ~10× more measurements than direct-
+  Measurement scenarios, and 1 s windows average each tick once. Direct
+  comparison of *absolute numbers* between this table and the prior
+  table is illustrative, not strict; the comparison that matters is
+  between methods on the SAME row of each sub-table.
+- Bus injects: 1 Hz OwnShip GPS (no heading bias yet), Class-A SOTDMA
+  AIS, 3 s ARPA rotation (with optional Poisson clutter), 10 Hz EO/IR
+  with bearing+range or bearing-only.
+- Determinism: each seed produces a byte-identical Scenario; re-running
+  this table yields the same numbers.
+- Tests live at `tests/sim/test_bus_jpda_comparison.cpp`,
+  `tests/sim/test_bus_imm3_comparison.cpp`,
+  `tests/sim/test_bus_pf_comparison.cpp`,
+  `tests/sim/test_bus_mht_comparison.cpp`.
