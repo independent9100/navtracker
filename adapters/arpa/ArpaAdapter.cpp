@@ -80,7 +80,10 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
     const Eigen::Vector2d own_xy(own_enu.x(), own_enu.y());
 
     const PointAndCov2D out =
-        projectRangeBearingToEnu(range_m, bearing_true_rad, 50.0, 1.0 * kDeg2Rad, own_xy);
+        projectRangeBearingToEnu(range_m, bearing_true_rad,
+                                 50.0, 1.0 * kDeg2Rad,
+                                 0.0,  // σ_heading; wired in Task 2
+                                 own_xy);
 
     Measurement m;
     m.time = t;

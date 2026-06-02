@@ -23,7 +23,10 @@ void EoIrAdapter::ingest(const CameraDetection& d) {
   const Eigen::Vector2d own_xy(own_enu.x(), own_enu.y());
 
   const PointAndCov2D out = projectRangeBearingToEnu(
-      d.range_m, bearing_true_rad, d.range_std_m, d.bearing_std_deg * kDeg2Rad, own_xy);
+      d.range_m, bearing_true_rad,
+      d.range_std_m, d.bearing_std_deg * kDeg2Rad,
+      0.0,  // σ_heading; wired in Task 3
+      own_xy);
 
   Measurement m;
   m.time = d.time;
