@@ -684,3 +684,107 @@ behind tuned parameters chasing the direct-Measurement baselines.
   `tests/sim/test_bus_imm3_comparison.cpp`,
   `tests/sim/test_bus_pf_comparison.cpp`,
   `tests/sim/test_bus_mht_comparison.cpp`.
+
+## Post-metric-fix bus pass (2026-06-02)
+
+The "Bus-driven confirmation pass" section above was contaminated by a metric
+artifact: `runScenario` / `runScenarioBatched` / `runScenarioBatchedMht`
+evaluated OSPA *per measurement* and matched truth by `==` on timestamps.
+With truth at 1 Hz and EO/IR at 10 Hz, ~93% of evaluation points had empty
+`truth_xy`, and `ospaGreedy([], est, cutoff)` returns exactly the cutoff for
+any non-empty track set — pinning the reported mean near saturation. See
+`docs/superpowers/plans/2026-06-02-truth-tick-ospa.md` for the fix (drive
+OSPA evaluation on the truth-sample clock).
+
+### Saturation evidence (seed=201)
+
+| Scenario | Pre-fix empty-truth % | Pre-fix overall OSPA | Post-fix overall OSPA |
+|---|---|---|---|
+| JPDA clutter crossing (cutoff 50 m)   | 93.1% | 49.88 | 48.26 |
+| IMM-3 maneuvering (cutoff 100 m)      | 92.4% | 98.00 | 81.33 |
+| PF bearing-only (cutoff 500 m)        |  0.0% | 329.46 | 329.46 |
+
+PF was untouched because that scenario already configures EO/IR at 1 Hz,
+matching the truth sample rate.
+
+### Re-run verdicts (20 seeds, post-fix metric)
+
+#### JPDA vs GNN — clutter crossing (cutoff 50)
+
+| Algorithm | Per-window OSPA mean ± σ | ID switches mean |
+|---|---|---|
+| GNN  | 48.27 ± 0.29 | 20.40 |
+| JPDA | 48.15 ± 0.35 | 24.20 |
+
+OSPA margin 0.12 m sits well within seed stddev (~0.3 m) — statistically a
+tie. GNN wins ID-stability by ~4 switches/30 s on average. **The
+direct-measurement JPDA win remains retracted under bus-realistic noise.**
+The pre-fix verdict was correct in direction but masked the magnitude: the
+metric was already at 49.85 (cutoff 50) so neither method had room to express
+itself; now both are 1.5 m below cutoff with a real but tiny gap.
+
+#### IMM-3 vs CV — maneuvering (cutoff 100)
+
+| Algorithm | Per-window OSPA mean ± σ | ID switches mean |
+|---|---|---|
+| CV (EKF)   | 76.57 ± 3.47 | 5.55 |
+| IMM-3      | 75.51 ± 3.14 | 5.05 |
+
+Direction preserved but the 1.07-m margin is within 1σ. **The direct-measurement
+IMM-3 win is meaningfully diminished**: at 15 s scenario length with the bus's
+plentiful position fixes (AIS 2 s, ARPA 3 s, EO/IR 10 Hz), the CV-only
+estimator stays close enough to truth that IMM's mode-switching advantage
+doesn't dominate. Likely needs longer scenarios with sustained maneuvering to
+re-express.
+
+#### PF vs EKF — bearing-only moving sensor (cutoff 500)
+
+| Algorithm | Per-window OSPA mean ± σ | ID switches mean |
+|---|---|---|
+| EKF | 387.03 ± 51.55 | 0.00 |
+| PF  | 380.41 ± 53.64 | 0.00 |
+
+**Numerically identical to pre-fix** (as predicted): this scenario configures
+EO/IR at 1 Hz with truth at 1 Hz, so no cadence mismatch → no saturation. The
+prior verdict stands: directional PF advantage, CIs overlap, PF is not a
+clearly justified choice for bearing-only in this regime.
+
+#### MHT vs JPDA — clutter crossing (cutoff 50)
+
+| Algorithm | Per-window OSPA mean ± σ | ID switches mean |
+|---|---|---|
+| JPDA | 48.15 ± 0.35 | 24.20 |
+| MHT  | 45.09 ± 0.60 | 32.60 |
+
+This is the most interesting reveal: under the pre-fix saturated metric MHT
+was tied with JPDA at the cutoff. Under the corrected metric MHT shows a real
+OSPA margin (~3 m, outside seed stddev), but pays ~35% more ID switches.
+**Verdict: trade-off, not a clear winner** — MHT's deferred branch resolution
+yields better positional accuracy by re-binding measurements once enough
+evidence accumulates, but the cost is more aggressive track ID churn.
+Downstream consumers that care about identity continuity (CPA, sensor
+hand-off) may still prefer JPDA; consumers that care about positional
+accuracy may prefer MHT. The decision is application-dependent rather than
+algorithmic.
+
+### Cross-cutting
+
+Three of four prior verdicts (JPDA, IMM-3, MHT) were either reversed or
+materially diminished. The metric artifact is responsible for the three
+retractions in the pre-fix table appearing more uniform than they should
+have. With the corrected metric:
+
+- One verdict held outright (PF — directional only).
+- One was meaningfully weakened (IMM-3 — within 1σ).
+- One was confirmed-retracted but for the right reason now (JPDA — GNN
+  matches on OSPA and beats on ID-stability).
+- One revealed a genuine accuracy-vs-stability trade-off (MHT — better OSPA
+  at the cost of ID churn).
+
+The general lesson: when evaluating a fusion stack, **the temporal alignment
+between truth sampling and metric evaluation has to match** — otherwise
+sensors that fire faster than truth ticks contribute cardinality-penalty
+noise rather than signal. The truth-tick clock is the standard convention
+in the OSPA literature and matches the cadence at which real ground-truth
+(GPS) is typically available; we should not have used the per-measurement
+clock in the first place.
