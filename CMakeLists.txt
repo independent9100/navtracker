@@ -124,6 +124,7 @@ add_executable(navtracker_tests
   tests/sim/test_bus_jpda_comparison.cpp
   tests/sim/test_bus_imm3_comparison.cpp
   tests/sim/test_bus_pf_comparison.cpp
+  tests/sim/test_bus_mht_comparison.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE navtracker_core GTest::gtest_main Eigen3::Eigen)
