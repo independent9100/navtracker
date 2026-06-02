@@ -33,8 +33,9 @@ double distanceToMeters(double value, const std::string& units) {
 
 }  // namespace
 
-ArpaAdapter::ArpaAdapter(geo::Datum datum, OwnShipProvider& own_ship)
-    : datum_(std::move(datum)), own_ship_(own_ship) {}
+ArpaAdapter::ArpaAdapter(geo::Datum datum, OwnShipProvider& own_ship,
+                         ArpaAdapterConfig cfg)
+    : datum_(std::move(datum)), own_ship_(own_ship), cfg_(cfg) {}
 
 bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
   const auto parsed = parseNmea(line);
@@ -82,7 +83,7 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
     const PointAndCov2D out =
         projectRangeBearingToEnu(range_m, bearing_true_rad,
                                  50.0, 1.0 * kDeg2Rad,
-                                 0.0,  // σ_heading; wired in Task 2
+                                 cfg_.heading_std_deg * kDeg2Rad,
                                  own_xy);
 
     Measurement m;

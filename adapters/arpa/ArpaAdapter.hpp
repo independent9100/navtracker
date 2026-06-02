@@ -10,12 +10,17 @@
 
 namespace navtracker {
 
+struct ArpaAdapterConfig {
+  double heading_std_deg{0.0};
+};
+
 // Parses NMEA 0183 TTM (range/bearing) and TLL (target lat/lon) into
 // Position2D Measurements in the supplied Datum's ENU frame. TTM needs
 // the latest own-ship pose to project relative measurements.
 class ArpaAdapter : public ISensorAdapter {
  public:
-  ArpaAdapter(geo::Datum datum, OwnShipProvider& own_ship);
+  ArpaAdapter(geo::Datum datum, OwnShipProvider& own_ship,
+              ArpaAdapterConfig cfg = {});
 
   bool ingest(std::string_view line, Timestamp t);
   std::vector<Measurement> poll() override;
@@ -23,6 +28,7 @@ class ArpaAdapter : public ISensorAdapter {
  private:
   geo::Datum datum_;
   OwnShipProvider& own_ship_;
+  ArpaAdapterConfig cfg_;
   std::vector<Measurement> buffer_;
 };
 
