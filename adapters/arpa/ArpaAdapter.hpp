@@ -6,6 +6,7 @@
 #include "adapters/own_ship/OwnShipProvider.hpp"
 #include "core/geo/Datum.hpp"
 #include "core/types/Measurement.hpp"
+#include "ports/IHeadingBiasProvider.hpp"
 #include "ports/ISensorAdapter.hpp"
 
 namespace navtracker {
@@ -20,7 +21,8 @@ struct ArpaAdapterConfig {
 class ArpaAdapter : public ISensorAdapter {
  public:
   ArpaAdapter(geo::Datum datum, OwnShipProvider& own_ship,
-              ArpaAdapterConfig cfg = {});
+              ArpaAdapterConfig cfg = {},
+              const IHeadingBiasProvider* bias_provider = nullptr);
 
   bool ingest(std::string_view line, Timestamp t);
   std::vector<Measurement> poll() override;
@@ -29,6 +31,7 @@ class ArpaAdapter : public ISensorAdapter {
   geo::Datum datum_;
   OwnShipProvider& own_ship_;
   ArpaAdapterConfig cfg_;
+  const IHeadingBiasProvider* bias_provider_;
   std::vector<Measurement> buffer_;
 };
 

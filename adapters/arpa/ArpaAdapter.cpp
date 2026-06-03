@@ -34,8 +34,12 @@ double distanceToMeters(double value, const std::string& units) {
 }  // namespace
 
 ArpaAdapter::ArpaAdapter(geo::Datum datum, OwnShipProvider& own_ship,
-                         ArpaAdapterConfig cfg)
-    : datum_(std::move(datum)), own_ship_(own_ship), cfg_(cfg) {}
+                         ArpaAdapterConfig cfg,
+                         const IHeadingBiasProvider* bias_provider)
+    : datum_(std::move(datum)),
+      own_ship_(own_ship),
+      cfg_(cfg),
+      bias_provider_(bias_provider) {}
 
 bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
   const auto parsed = parseNmea(line);
@@ -80,10 +84,23 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
     const Eigen::Vector3d own_enu = datum_.toEnu({own_opt->lat_deg, own_opt->lon_deg, 0.0});
     const Eigen::Vector2d own_xy(own_enu.x(), own_enu.y());
 
+    HeadingBiasEstimate bias_est = bias_provider_
+                                       ? bias_provider_->current()
+                                       : HeadingBiasEstimate{};
+    const double b_hat = bias_est.is_published ? bias_est.bias_rad : 0.0;
+    const double var_b_hat =
+        bias_est.is_published ? bias_est.variance_rad2 : 0.0;
+
+    const double bearing_true_rad_corrected = bearing_true_rad - b_hat;
+
+    const double sigma_heading_cfg = cfg_.heading_std_deg * kDeg2Rad;
+    const double sigma_heading_eff =
+        std::sqrt(sigma_heading_cfg * sigma_heading_cfg + var_b_hat);
+
     const PointAndCov2D out =
-        projectRangeBearingToEnu(range_m, bearing_true_rad,
+        projectRangeBearingToEnu(range_m, bearing_true_rad_corrected,
                                  50.0, 1.0 * kDeg2Rad,
-                                 cfg_.heading_std_deg * kDeg2Rad,
+                                 sigma_heading_eff,
                                  own_xy);
 
     Measurement m;
