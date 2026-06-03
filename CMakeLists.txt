@@ -28,6 +28,7 @@ add_library(navtracker_core
   core/bias/AisArpaPairExtractor.cpp
   core/own_ship/UereEstimator.cpp
   core/collision/Cpa.cpp
+  core/collision/CpaOwnShip.cpp
   core/association/Gating.cpp
   core/association/GnnAssociator.cpp
   core/association/JointEvents.cpp
@@ -80,6 +81,7 @@ add_executable(navtracker_tests
   tests/estimation/test_particle_filter_estimator.cpp
   tests/collision/test_cpa.cpp
   tests/collision/test_cpa_uncertainty.cpp
+  tests/collision/test_cpa_synthesize_own_ship.cpp
   tests/association/test_gating.cpp
   tests/association/test_gnn_associator.cpp
   tests/association/test_joint_events.cpp
