@@ -4,6 +4,7 @@
 #include "tests/adapters/util/NmeaTestHelpers.hpp"
 
 using navtracker::OwnShipNmeaAdapter;
+using navtracker::OwnShipNmeaAdapterConfig;
 using navtracker::OwnShipProvider;
 using navtracker::Timestamp;
 using navtracker_test::makeNmea;
@@ -37,4 +38,32 @@ TEST(OwnShipNmeaAdapter, RejectsMalformedLines) {
   OwnShipProvider provider;
   OwnShipNmeaAdapter adapter(provider);
   EXPECT_FALSE(adapter.ingest("garbage", Timestamp::fromSeconds(0.0)));
+}
+
+TEST(OwnShipNmeaAdapterTest, ParsesHdopFromGga) {
+  OwnShipProvider provider;
+  OwnShipNmeaAdapterConfig cfg;
+  cfg.uere_m = 5.0;
+  OwnShipNmeaAdapter adapter(provider, cfg);
+
+  // GGA with HDOP = 1.2 in field 7 (zero-based). uere_m = 5.0 -> sigma = 6.0.
+  EXPECT_TRUE(adapter.ingest(
+      makeNmea("GPGGA,123519,4807.038,N,01131.000,E,1,08,1.2,545.4,M,46.9,M,,"),
+      Timestamp::fromSeconds(0.0)));
+  const auto pose = provider.latest();
+  ASSERT_TRUE(pose.has_value());
+  EXPECT_NEAR(pose->position_std_m, 6.0, 1e-9);
+}
+
+TEST(OwnShipNmeaAdapterTest, AbsentHdopLeavesStdAtZero) {
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider, {});
+
+  // GGA with empty HDOP field. No sticky setter call -> sigma stays at 0.
+  EXPECT_TRUE(adapter.ingest(
+      makeNmea("GPGGA,123519,4807.038,N,01131.000,E,1,08,,545.4,M,46.9,M,,"),
+      Timestamp::fromSeconds(0.0)));
+  const auto pose = provider.latest();
+  ASSERT_TRUE(pose.has_value());
+  EXPECT_DOUBLE_EQ(pose->position_std_m, 0.0);
 }

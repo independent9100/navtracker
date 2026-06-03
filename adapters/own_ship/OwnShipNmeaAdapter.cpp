@@ -20,8 +20,9 @@ double parseDdmm(const std::string& s) {
 
 }  // namespace
 
-OwnShipNmeaAdapter::OwnShipNmeaAdapter(OwnShipProvider& provider)
-    : provider_(provider) {}
+OwnShipNmeaAdapter::OwnShipNmeaAdapter(OwnShipProvider& provider,
+                                       OwnShipNmeaAdapterConfig cfg)
+    : provider_(provider), cfg_(cfg) {}
 
 void OwnShipNmeaAdapter::setPositionStd(double sigma_m) {
   position_std_m_ = sigma_m;
@@ -42,6 +43,16 @@ bool OwnShipNmeaAdapter::ingest(std::string_view line, Timestamp t) {
     if (parsed->fields[4] == "W") lon = -lon;
     pose.lat_deg = lat;
     pose.lon_deg = lon;
+    // HDOP -> position sigma. Precedence: a positive HDOP from the GGA
+    // overrides the sticky setter value for this message. If HDOP is
+    // absent or non-positive, fall back to the sticky setter value
+    // already loaded above.
+    if (parsed->fields.size() > 7 && !parsed->fields[7].empty()) {
+      const double hdop = std::strtod(parsed->fields[7].c_str(), nullptr);
+      if (hdop > 0.0) {
+        pose.position_std_m = hdop * cfg_.uere_m;
+      }
+    }
     provider_.update(pose);
     return true;
   }
