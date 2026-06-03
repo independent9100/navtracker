@@ -122,18 +122,27 @@ Default `false` so existing constructors and tests are byte-compatible. Downstre
 
 ## 5. `MeasurementBuilders`
 
-### 5.1 Three constructors
+### 5.1 Three constructors (timestamp-aware)
+
+Builders take `const OwnShipProvider&` and the measurement timestamp; the provider's `poseAtOrBefore(t)` lookup picks the right pose. The user does not need to know which pose to pass — they give the measurement's timestamp and the library handles the rest. This closes the "I called provider.latest() and got a stale pose during a turn" footgun.
 
 ```cpp
 // core/types/MeasurementBuilders.hpp
 namespace navtracker {
 
 // Range + RELATIVE bearing (the radar / EO-IR / sonar common case).
-// Internally adds own-ship heading and projects to ENU Position2D via
+// Looks up the most recent OwnShipPose with pose.time <= t, then adds
+// own-ship heading and projects to ENU Position2D via
 // projectRangeBearingToEnu. Composes sigma_heading and sigma_gps from
-// the pose; the resulting covariance reflects the full GPS-and-heading
-// budget the rest of the system uses. Returns Position2D measurement
-// with sensor_position_enu set to own-ship's ENU position.
+// the looked-up pose; the resulting covariance reflects the full
+// GPS-and-heading budget the rest of the system uses. Returns
+// Position2D measurement with sensor_position_enu set to own-ship's
+// ENU position.
+//
+// If no pose at-or-before t is available, returns a Measurement with
+// empty value/covariance and `covariance_is_default == false`; callers
+// should drop or buffer these (the situation indicates the sensor
+// arrived before any GPS fix).
 //
 // All angles in radians. Range in meters.
 Measurement makeMeasurementFromRelativeBearing(
@@ -144,7 +153,7 @@ Measurement makeMeasurementFromRelativeBearing(
     double relative_bearing_rad,
     double range_std_m,
     double bearing_std_rad,
-    const OwnShipPose& own_ship_pose,
+    const OwnShipProvider& provider,
     const geo::Datum& datum,
     AssociationHints hints = {});
 
@@ -159,12 +168,13 @@ Measurement makeMeasurementFromTrueBearing(
     double true_bearing_rad,
     double range_std_m,
     double bearing_std_rad,
-    const OwnShipPose& own_ship_pose,
+    const OwnShipProvider& provider,
     const geo::Datum& datum,
     AssociationHints hints = {});
 
 // Absolute ENU position (AIS-style). Mostly trivial — fills value and
-// covariance, sets time/sensor/source/model/hints. Exposes a uniform
+// covariance, sets time/sensor/source/model/hints. No pose lookup
+// needed because the ENU position is absolute. Exposes a uniform
 // construction surface so SensorDefaults composition is consistent.
 Measurement makeMeasurementFromEnuPosition(
     SensorKind sensor,
@@ -178,6 +188,8 @@ Measurement makeMeasurementFromEnuPosition(
 ```
 
 ### 5.2 Implementation notes
+
+The two bearing builders first call `provider.poseAtOrBefore(t)`. If it returns `std::nullopt`, they return an empty `Measurement` (the caller should drop or buffer it). Otherwise:
 
 All three builders set:
 - `m.time = t`
@@ -195,7 +207,40 @@ The relative-bearing builder also:
 
 The true-bearing builder is identical minus the heading addition.
 
-The ENU-position builder skips projection entirely — it's the AIS case.
+The ENU-position builder skips both pose-lookup and projection entirely — it's the AIS case.
+
+### 5.3 `OwnShipProvider` pose history (Layer 2)
+
+`OwnShipProvider` keeps a small ring buffer of recent poses (default 16; configurable at construction). Three accessors:
+
+```cpp
+class OwnShipProvider {
+ public:
+  explicit OwnShipProvider(std::size_t history_size = 16);
+
+  void update(const OwnShipPose& pose);                     // existing
+  std::optional<OwnShipPose> latest() const;                // existing
+  std::optional<OwnShipPose> poseAtOrBefore(Timestamp t) const;  // NEW
+  std::size_t historySize() const;                          // NEW (diagnostic)
+
+ private:
+  std::deque<OwnShipPose> history_;
+  std::size_t history_size_limit_;
+};
+```
+
+Semantics:
+- `update(pose)` pushes the pose to the back of the ring. If the buffer is full, the oldest entry is popped.
+- `latest()` returns the most-recently-pushed pose (preserves existing semantics).
+- `poseAtOrBefore(t)` returns the most recent pose with `pose.time <= t`. Returns `std::nullopt` when the buffer is empty or all stored poses are strictly newer than `t`.
+
+The lookup is linear over the ring (16 entries). For a 16-pose ring, the cost is negligible compared to anything else in the per-measurement loop. A more sophisticated search (binary, indexed) is documented as a follow-up if profiling shows it matters.
+
+This does not implement interpolation between two surrounding poses — that's Layer 3, documented in §13. Layer 2 closes the worst case ("operator called `latest()` after a turn and got a 500ms-stale pose") without taking on the full complexity of interpolation.
+
+### 5.4 Migration of existing NMEA adapters
+
+`ArpaAdapter::ingest` and `EoIrAdapter::ingest` currently call `own_ship_.latest()`. Updating them to call `own_ship_.poseAtOrBefore(t)` (where `t` is the measurement's timestamp) is a 1-line change per adapter that automatically gets the same correctness improvement. The existing test suite must remain green after this update — see §11 for the regression-guard test.
 
 ### 5.3 Interaction with SensorDefaults
 
@@ -503,23 +548,28 @@ Append "Library-friendliness pass (2026-06-03)" — brief section noting the CMa
 - `README.md` (~20 lines)
 - `tests/types/test_sensor_defaults.cpp`
 - `tests/types/test_measurement_builders.cpp`
+- `tests/adapters/own_ship/test_pose_history.cpp` (or extend existing tests)
 
 ### Moved
 - `adapters/util/Projection.hpp`, `adapters/util/Projection.cpp` → `core/projection/Projection.{hpp,cpp}`. Include paths search-and-replaced across the codebase.
 
 ### Modified
 - `core/types/Measurement.hpp` — add `bool covariance_is_default{false};` field.
+- `adapters/own_ship/OwnShipProvider.hpp`, `adapters/own_ship/OwnShipProvider.cpp` — add ring-buffer history and `poseAtOrBefore(Timestamp)`; keep `latest()` semantics.
+- `adapters/arpa/ArpaAdapter.cpp`, `adapters/eoir/EoIrAdapter.cpp` — replace `own_ship_.latest()` with `own_ship_.poseAtOrBefore(t)` for timestamp correctness.
 - `CMakeLists.txt` — three internal libraries; test target links all three; `app/example.cpp` builds as a test-suite executable or stand-alone.
 - `CLAUDE.md` — "Library use" section per §8.1.
 
 ## 13. Ways to improve / what to test next
 
-1. **C API / language bindings.** A thin extern "C" layer over `tracker.process(...)` and the builders enables Python / Rust / Go bindings. Useful when the consumer's pipeline is in a non-C++ language.
-2. **Type-safe units.** `Radians` / `Degrees` newtypes catch unit confusion at compile time. Adds new types to the surface; defer until we see a confusion bug.
-3. **First-class RangeBearing2D path.** Document the trade-off and provide a `makeMeasurementFromRangeBearing(...)` variant that returns `MeasurementModel::RangeBearing2D` directly (no projection). For long-range tracking where the projection covariance approximation degrades.
-4. **`OwnShipPose` builders.** Symmetrically with `MeasurementBuilders`, helpers like `makeOwnShipPoseFromGps(...)` that fill in derived fields (velocity from successive calls if appropriate). Slots in with the RMC work.
-5. **Header-only / installable distribution.** CMake `install()` rules + version macros so consumers can `find_package(Navtracker)`. Tedious but unblocks easy adoption.
-6. **Multi-tracker support.** Today `Tracker` and `TrackManager` are not thread-safe. A documented pattern for one-tracker-per-thread (with shared SensorDefaults / OwnShipProvider) would help library consumers with parallel sensor pipelines.
+1. **Layer-3 pose interpolation.** Linear interpolation of position/velocity between the two surrounding poses; SLERP-style for heading (handle the ±π wrap correctly). Pulls the per-measurement timing error from up-to-(GPS-sample-period) down to near-zero. Useful during sharp turns where GPS is at 1 Hz and bearing sensors at 10–20 Hz. Architectural shape: `poseAt(Timestamp t)` returns an interpolated `OwnShipPose`; chooses between snap-and-return (no interpolation) and lerp-and-return based on a config knob.
+2. **C API / language bindings.** A thin extern "C" layer over `tracker.process(...)` and the builders enables Python / Rust / Go bindings. Useful when the consumer's pipeline is in a non-C++ language.
+3. **Type-safe units.** `Radians` / `Degrees` newtypes catch unit confusion at compile time. Adds new types to the surface; defer until we see a confusion bug.
+4. **First-class RangeBearing2D path.** Document the trade-off and provide a `makeMeasurementFromRangeBearing(...)` variant that returns `MeasurementModel::RangeBearing2D` directly (no projection). For long-range tracking where the projection covariance approximation degrades.
+5. **`OwnShipPose` builders.** Symmetrically with `MeasurementBuilders`, helpers like `makeOwnShipPoseFromGps(...)` that fill in derived fields (velocity from successive calls if appropriate). Slots in with the RMC work.
+6. **Header-only / installable distribution.** CMake `install()` rules + version macros so consumers can `find_package(Navtracker)`. Tedious but unblocks easy adoption.
+7. **Multi-tracker support.** Today `Tracker` and `TrackManager` are not thread-safe. A documented pattern for one-tracker-per-thread (with shared SensorDefaults / OwnShipProvider) would help library consumers with parallel sensor pipelines.
+8. **History-size sensitivity sweep.** Default ring is 16 poses; at 1 Hz GPS that's 16 seconds of history. Validate that bearing sensors at up to 20 Hz with 200 ms processing delay always find a pose in-window. If long pipelines (e.g., satellite uplink) exceed this, expose the knob via composition-root config.
 
 ## 14. Decision summary
 
