@@ -40,6 +40,11 @@ struct Measurement {
   // can budget the GPS noise floor. Default 0 means "no floor known".
   double sensor_position_std_m{0.0};
 
+  // True when the covariance was populated from SensorDefaults rather
+  // than from a real sensor uncertainty. Diagnostic only — the tracker
+  // behaves identically regardless of this flag.
+  bool covariance_is_default{false};
+
   int dim() const { return static_cast<int>(value.size()); }
 };
 

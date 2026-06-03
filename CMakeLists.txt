@@ -11,6 +11,7 @@ find_package(GTest REQUIRED)
 enable_testing()
 
 add_library(navtracker_core
+  core/types/SensorDefaults.cpp
   core/geo/Wgs84.cpp
   core/geo/Datum.cpp
   core/estimation/ConstantVelocity2D.cpp
@@ -67,6 +68,7 @@ add_executable(navtracker_tests
   tests/types/test_timestamp.cpp
   tests/types/test_ids.cpp
   tests/types/test_measurement.cpp
+  tests/types/test_sensor_defaults.cpp
   tests/types/test_track.cpp
   tests/estimation/test_constant_velocity.cpp
   tests/estimation/test_constant_velocity_5state.cpp
