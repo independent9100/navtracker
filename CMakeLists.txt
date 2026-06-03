@@ -25,6 +25,7 @@ add_library(navtracker_core
   core/estimation/Resampling.cpp
   core/estimation/ParticleFilterEstimator.cpp
   core/bias/HeadingBiasEstimator.cpp
+  core/bias/AisArpaPairExtractor.cpp
   core/collision/Cpa.cpp
   core/association/Gating.cpp
   core/association/GnnAssociator.cpp
@@ -130,6 +131,7 @@ add_executable(navtracker_tests
   tests/sim/test_bus_heading_sweep.cpp
   tests/sim/test_bus_heading_bias_drift_probe.cpp
   tests/bias/test_heading_bias_estimator.cpp
+  tests/bias/test_ais_arpa_pair_extractor.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE navtracker_core GTest::gtest_main Eigen3::Eigen)
