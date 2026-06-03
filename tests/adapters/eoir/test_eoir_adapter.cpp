@@ -230,3 +230,57 @@ TEST(EoIrAdapterTest, ComposesVarianceWithConfiguredHeadingStd) {
   EXPECT_NEAR(mp[0].covariance(1, 0), me[0].covariance(1, 0), 1.0);
   EXPECT_NEAR(mp[0].covariance(1, 1), me[0].covariance(1, 1), 1.0);
 }
+
+TEST(EoIrAdapterTest, InflatesCovarianceFromOwnShipGpsStd) {
+  // Same camera detection scenario as the baseline tests: own-ship at the
+  // datum origin heading 0 deg, EO/IR camera target at range 1000 m on
+  // relative bearing 90 deg (east). Test with pose.position_std_m = 5:
+  // expect covariance to increase by 25 (5^2) on the diagonal vs baseline
+  // where position_std_m = 0.
+
+  // Baseline scenario: no GPS std.
+  OwnShipProvider provider_base;
+  OwnShipPose pose_base;
+  pose_base.time = Timestamp::fromSeconds(0.0);
+  pose_base.lat_deg = 53.5;
+  pose_base.lon_deg = 8.0;
+  pose_base.heading_true_deg = 0.0;
+  pose_base.position_std_m = 0.0;
+  provider_base.update(pose_base);
+
+  EoIrAdapter adapter_base(Datum({53.5, 8.0, 0.0}), provider_base);
+  CameraDetection d;
+  d.time = Timestamp::fromSeconds(1.0);
+  d.bearing_relative_deg = 90.0;
+  d.range_m = 1000.0;
+  d.bearing_std_deg = 0.5;
+  d.range_std_m = 10.0;
+  adapter_base.ingest(d);
+  const auto m_base = adapter_base.poll();
+  ASSERT_EQ(m_base.size(), 1u);
+
+  // High GPS std scenario: position_std_m = 5.
+  OwnShipProvider provider_gps;
+  OwnShipPose pose_gps;
+  pose_gps.time = Timestamp::fromSeconds(0.0);
+  pose_gps.lat_deg = 53.5;
+  pose_gps.lon_deg = 8.0;
+  pose_gps.heading_true_deg = 0.0;
+  pose_gps.position_std_m = 5.0;
+  provider_gps.update(pose_gps);
+
+  EoIrAdapter adapter_gps(Datum({53.5, 8.0, 0.0}), provider_gps);
+  adapter_gps.ingest(d);
+  const auto m_gps = adapter_gps.poll();
+  ASSERT_EQ(m_gps.size(), 1u);
+
+  // The difference on the diagonal should be sigma_gps^2 = 25.
+  const double sigma_gps_sq = 5.0 * 5.0;
+  EXPECT_NEAR(m_gps[0].covariance(0, 0) - m_base[0].covariance(0, 0),
+              sigma_gps_sq, 1.0);
+  EXPECT_NEAR(m_gps[0].covariance(1, 1) - m_base[0].covariance(1, 1),
+              sigma_gps_sq, 1.0);
+  // Off-diagonal should be unchanged.
+  EXPECT_NEAR(m_gps[0].covariance(0, 1) - m_base[0].covariance(0, 1), 0.0, 1e-9);
+  EXPECT_NEAR(m_gps[0].covariance(1, 0) - m_base[0].covariance(1, 0), 0.0, 1e-9);
+}
