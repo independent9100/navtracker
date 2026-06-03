@@ -189,4 +189,178 @@ inline navtracker::Scenario runBusManeuvering(std::uint32_t seed) {
 constexpr int kNumSeeds = 20;
 constexpr double kWindowDtS = 1.0;
 
+struct HeadingSweepKnob {
+  double sigma_heading_deg{0.0};        // per-tick white noise on HDT
+  double bias_deg{0.0};                 // constant offset
+  double drift_deg_per_s{0.0};          // linear-in-time offset
+  bool   r_inflation_on{false};         // pass σ_h through to adapter cfg
+};
+
+inline navtracker::Scenario runBusClutterCrossingWithHeading(
+    std::uint32_t seed, int clutter_per_rotation,
+    const HeadingSweepKnob& knob) {
+  using namespace navtracker;
+  using navtracker::geo::Datum;
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter own_adapter(provider);
+  AisAdapter ais_adapter(datum);
+
+  ArpaAdapterConfig arpa_cfg_adapter;
+  EoIrAdapterConfig eo_cfg_adapter;
+  if (knob.r_inflation_on) {
+    arpa_cfg_adapter.heading_std_deg = knob.sigma_heading_deg;
+    eo_cfg_adapter.heading_std_deg   = knob.sigma_heading_deg;
+  }
+  ArpaAdapter arpa_adapter(datum, provider, arpa_cfg_adapter);
+  EoIrAdapter eo_adapter (datum, provider, eo_cfg_adapter);
+
+  sim::SimulatedSensorBusConfig cfg;
+  cfg.t0 = Timestamp::fromSeconds(0.0);
+  cfg.duration_s = 30.0;
+  cfg.dt_s = 0.1;
+  cfg.truth_sample_dt_s = 1.0;
+  cfg.seed = seed;
+  cfg.datum = datum;
+  sim::SimulatedSensorBus bus(cfg);
+
+  bus.setOwnShip(std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d::Zero(), Eigen::Vector2d::Zero(),
+      Timestamp::fromSeconds(0.0)));
+  bus.addTarget(1, std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d(-200.0,  5.0), Eigen::Vector2d(15.0, 0.0),
+      Timestamp::fromSeconds(0.0)));
+  bus.addTarget(2, std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d( 200.0, -5.0), Eigen::Vector2d(-15.0, 0.0),
+      Timestamp::fromSeconds(0.0)));
+
+  sim::OwnShipEmitterConfig own_cfg;
+  own_cfg.heading_bias_deg = knob.bias_deg;
+  own_cfg.heading_drift_deg_per_s = knob.drift_deg_per_s;
+  own_cfg.heading_noise_std_deg = knob.sigma_heading_deg;
+  bus.attachOwnShip(own_adapter, own_cfg);
+
+  sim::AisEmitterConfig ais_cfg;
+  ais_cfg.targets.push_back({1, 200000001u, true});
+  ais_cfg.targets.push_back({2, 200000002u, true});
+  bus.attachAis(ais_adapter, ais_cfg);
+
+  sim::ArpaEmitterConfig arpa_emitter_cfg;
+  arpa_emitter_cfg.targets.push_back({1, 1});
+  arpa_emitter_cfg.targets.push_back({2, 2});
+  arpa_emitter_cfg.clutter_per_rotation = clutter_per_rotation;
+  bus.attachArpa(arpa_adapter, arpa_emitter_cfg);
+
+  sim::EoIrEmitterConfig eo_emitter_cfg;
+  eo_emitter_cfg.targets.push_back({1, 1});
+  eo_emitter_cfg.targets.push_back({2, 2});
+  eo_emitter_cfg.fov_deg = 360.0;
+  bus.attachEoIr(eo_adapter, eo_emitter_cfg);
+
+  return bus.run();
+}
+
+inline navtracker::Scenario runBusBearingOnlyMovingWithHeading(
+    std::uint32_t seed, const HeadingSweepKnob& knob) {
+  using namespace navtracker;
+  using navtracker::geo::Datum;
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter own_adapter(provider);
+
+  EoIrAdapterConfig eo_cfg_adapter;
+  if (knob.r_inflation_on) eo_cfg_adapter.heading_std_deg = knob.sigma_heading_deg;
+  EoIrAdapter eo_adapter(datum, provider, eo_cfg_adapter);
+
+  sim::SimulatedSensorBusConfig cfg;
+  cfg.t0 = Timestamp::fromSeconds(0.0);
+  cfg.duration_s = 60.0;
+  cfg.dt_s = 0.1;
+  cfg.truth_sample_dt_s = 1.0;
+  cfg.seed = seed;
+  cfg.datum = datum;
+  sim::SimulatedSensorBus bus(cfg);
+
+  bus.setOwnShip(std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d(0.0, -300.0), Eigen::Vector2d(0.0, 10.0),
+      Timestamp::fromSeconds(0.0)));
+  bus.addTarget(1, std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d(1500.0, 0.0), Eigen::Vector2d::Zero(),
+      Timestamp::fromSeconds(0.0)));
+
+  sim::OwnShipEmitterConfig own_cfg;
+  own_cfg.heading_bias_deg = knob.bias_deg;
+  own_cfg.heading_drift_deg_per_s = knob.drift_deg_per_s;
+  own_cfg.heading_noise_std_deg = knob.sigma_heading_deg;
+  bus.attachOwnShip(own_adapter, own_cfg);
+
+  sim::EoIrEmitterConfig eo_emitter_cfg;
+  eo_emitter_cfg.targets.push_back({1, 1});
+  eo_emitter_cfg.fov_deg = 360.0;
+  eo_emitter_cfg.range_mode = sim::EoIrEmitterConfig::RangeMode::BearingOnly;
+  eo_emitter_cfg.bearing_std_deg = 1.5;
+  eo_emitter_cfg.dt_s = 1.0;
+  bus.attachEoIr(eo_adapter, eo_emitter_cfg);
+
+  return bus.run();
+}
+
+inline navtracker::Scenario runBusManeuveringWithHeading(
+    std::uint32_t seed, const HeadingSweepKnob& knob) {
+  using namespace navtracker;
+  using navtracker::geo::Datum;
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter own_adapter(provider);
+  AisAdapter ais_adapter(datum);
+
+  ArpaAdapterConfig arpa_cfg_adapter;
+  EoIrAdapterConfig eo_cfg_adapter;
+  if (knob.r_inflation_on) {
+    arpa_cfg_adapter.heading_std_deg = knob.sigma_heading_deg;
+    eo_cfg_adapter.heading_std_deg   = knob.sigma_heading_deg;
+  }
+  ArpaAdapter arpa_adapter(datum, provider, arpa_cfg_adapter);
+  EoIrAdapter eo_adapter (datum, provider, eo_cfg_adapter);
+
+  sim::SimulatedSensorBusConfig cfg;
+  cfg.t0 = Timestamp::fromSeconds(0.0);
+  cfg.duration_s = 15.0;
+  cfg.dt_s = 0.1;
+  cfg.truth_sample_dt_s = 1.0;
+  cfg.seed = seed;
+  cfg.datum = datum;
+  sim::SimulatedSensorBus bus(cfg);
+
+  bus.setOwnShip(std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d::Zero(), Eigen::Vector2d::Zero(),
+      Timestamp::fromSeconds(0.0)));
+  bus.addTarget(1, std::make_shared<sim::ManeuveringTrajectory>(
+      Eigen::Vector2d(0.0, 0.0),
+      Eigen::Vector2d(10.0, 0.0),
+      /*straight=*/5.0, /*turn=*/5.0, /*omega=*/0.2,
+      Timestamp::fromSeconds(0.0)));
+
+  sim::OwnShipEmitterConfig own_cfg;
+  own_cfg.heading_bias_deg = knob.bias_deg;
+  own_cfg.heading_drift_deg_per_s = knob.drift_deg_per_s;
+  own_cfg.heading_noise_std_deg = knob.sigma_heading_deg;
+  bus.attachOwnShip(own_adapter, own_cfg);
+
+  sim::AisEmitterConfig ais_cfg;
+  ais_cfg.targets.push_back({1, 200000001u, true});
+  bus.attachAis(ais_adapter, ais_cfg);
+
+  sim::ArpaEmitterConfig arpa_emitter_cfg;
+  arpa_emitter_cfg.targets.push_back({1, 1});
+  bus.attachArpa(arpa_adapter, arpa_emitter_cfg);
+
+  sim::EoIrEmitterConfig eo_emitter_cfg;
+  eo_emitter_cfg.targets.push_back({1, 1});
+  eo_emitter_cfg.fov_deg = 360.0;
+  bus.attachEoIr(eo_adapter, eo_emitter_cfg);
+
+  return bus.run();
+}
+
 }  // namespace navtracker_test
