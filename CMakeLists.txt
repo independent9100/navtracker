@@ -15,6 +15,7 @@ add_library(navtracker_core
   core/types/MeasurementBuilders.cpp
   core/geo/Wgs84.cpp
   core/geo/Datum.cpp
+  core/projection/Projection.cpp
   core/estimation/ConstantVelocity2D.cpp
   core/estimation/ConstantVelocity5State.cpp
   core/estimation/CoordinatedTurn.cpp
@@ -40,19 +41,28 @@ add_library(navtracker_core
   core/pipeline/ReorderBuffer.cpp
   core/pipeline/Tracker.cpp
   core/pipeline/MhtTracker.cpp
-  adapters/own_ship/OwnShipProvider.cpp
-  core/projection/Projection.cpp
-  adapters/util/Nmea.cpp
-  adapters/ais/AisAdapter.cpp
-  adapters/own_ship/OwnShipNmeaAdapter.cpp
-  adapters/arpa/ArpaAdapter.cpp
-  adapters/eoir/EoIrAdapter.cpp
   core/scenario/Builders.cpp
   core/scenario/Ospa.cpp
   core/scenario/Harness.cpp
   core/scenario/HarnessBatched.cpp
   core/scenario/HarnessBatchedMht.cpp
   core/scenario/Metrics.cpp
+  adapters/own_ship/OwnShipProvider.cpp
+)
+target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
+
+add_library(navtracker_nmea
+  adapters/util/Nmea.cpp
+  adapters/ais/AisAdapter.cpp
+  adapters/arpa/ArpaAdapter.cpp
+  adapters/eoir/EoIrAdapter.cpp
+  adapters/own_ship/OwnShipNmeaAdapter.cpp
+)
+target_include_directories(navtracker_nmea PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(navtracker_nmea PUBLIC navtracker_core Eigen3::Eigen)
+
+add_library(navtracker_sim
   sim/TruthTrajectory.cpp
   sim/NmeaEncode.cpp
   sim/OwnShipEmitter.cpp
@@ -61,8 +71,8 @@ add_library(navtracker_core
   sim/EoIrEmitter.cpp
   sim/SimulatedSensorBus.cpp
 )
-target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
+target_include_directories(navtracker_sim PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(navtracker_sim PUBLIC navtracker_nmea Eigen3::Eigen)
 
 add_executable(navtracker_tests
   tests/smoke_test.cpp
@@ -149,7 +159,16 @@ add_executable(navtracker_tests
   tests/own_ship/test_uere_estimator.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
-target_link_libraries(navtracker_tests PRIVATE navtracker_core GTest::gtest_main Eigen3::Eigen)
+target_link_libraries(navtracker_tests PRIVATE
+    navtracker_core navtracker_nmea navtracker_sim
+    GTest::gtest_main Eigen3::Eigen)
 
 include(GoogleTest)
 gtest_discover_tests(navtracker_tests)
+
+add_executable(navtracker_core_only_smoke
+    tests/types/test_link_core_only.cpp)
+target_link_libraries(navtracker_core_only_smoke PRIVATE
+    navtracker_core Eigen3::Eigen)
+
+add_test(NAME CoreOnlyLinks COMMAND $<TARGET_FILE:navtracker_core_only_smoke>)
