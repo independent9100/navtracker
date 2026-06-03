@@ -56,6 +56,7 @@ void EoIrAdapter::ingest(const CameraDetection& d) {
   m.value = out.pos_enu;
   m.covariance = out.cov;
   if (d.sensor_track_id) m.hints.sensor_track_id = d.sensor_track_id;
+  m.sensor_position_std_m = own_opt->position_std_m;
   buffer_.push_back(std::move(m));
 }
 

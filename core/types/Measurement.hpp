@@ -35,6 +35,11 @@ struct Measurement {
   // measurement timestamp.
   Eigen::Vector2d sensor_position_enu{Eigen::Vector2d::Zero()};
 
+  // Own-ship GPS position 1-sigma (m) in effect when this measurement was
+  // produced. Carried so downstream consumers (e.g. heading-bias estimator)
+  // can budget the GPS noise floor. Default 0 means "no floor known".
+  double sensor_position_std_m{0.0};
+
   int dim() const { return static_cast<int>(value.size()); }
 };
 

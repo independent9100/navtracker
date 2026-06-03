@@ -39,6 +39,7 @@ void Tracker::process(const Measurement& z) {
         }
       }
       touch.sensor_position_enu = z.sensor_position_enu;
+      touch.own_position_std_m = z.sensor_position_std_m;
       tr.recent_contributions.push_back(std::move(touch));
     }
     bool has_src = false;
@@ -111,6 +112,7 @@ void Tracker::processBatch(const std::vector<Measurement>& scan) {
           }
         }
         touch.sensor_position_enu = gz.sensor_position_enu;
+        touch.own_position_std_m = gz.sensor_position_std_m;
         tr.recent_contributions.push_back(std::move(touch));
       }
       const TrackId id = tr.id;
@@ -136,6 +138,7 @@ void Tracker::processBatch(const std::vector<Measurement>& scan) {
           }
         }
         touch.sensor_position_enu = z.sensor_position_enu;
+        touch.own_position_std_m = z.sensor_position_std_m;
         tr.recent_contributions.push_back(std::move(touch));
       }
       bool has_src = false;

@@ -163,3 +163,44 @@ TEST(Tracker, ReplayIsDeterministic) {
     }
   }
 }
+
+TEST(Tracker, PropagatesOwnPositionStdToSourceTouch) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator estimator(motion, 10.0);
+  const GnnAssociator associator(50.0);
+  TrackManager manager(1, 3);
+  Tracker tracker(estimator, associator, manager, 10.0);
+
+  // Seed a track with an AIS measurement so a track exists.
+  Measurement ais;
+  ais.time = Timestamp::fromSeconds(0.0);
+  ais.sensor = SensorKind::Ais;
+  ais.source_id = "ais";
+  ais.model = MeasurementModel::Position2D;
+  ais.value = Eigen::Vector2d(100.0, 0.0);
+  ais.covariance = Eigen::Matrix2d::Identity();
+  tracker.process(ais);
+
+  // Now feed an ARPA measurement at the same target, with a non-zero
+  // sensor_position_std_m: the tracker must copy it onto SourceTouch.
+  Measurement arpa;
+  arpa.time = Timestamp::fromSeconds(1.0);
+  arpa.sensor = SensorKind::ArpaTtm;
+  arpa.source_id = "arpa";
+  arpa.model = MeasurementModel::Position2D;
+  arpa.value = Eigen::Vector2d(100.6, 0.1);
+  arpa.covariance = Eigen::Matrix2d::Identity();
+  arpa.sensor_position_std_m = 4.2;
+  tracker.process(arpa);
+
+  ASSERT_EQ(manager.size(), 1u);
+  const auto& tr = manager.tracks()[0];
+  bool found_arpa = false;
+  for (const auto& t : tr.recent_contributions) {
+    if (t.source_id == "arpa") {
+      found_arpa = true;
+      EXPECT_DOUBLE_EQ(t.own_position_std_m, 4.2);
+    }
+  }
+  EXPECT_TRUE(found_arpa);
+}

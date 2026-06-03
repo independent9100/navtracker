@@ -113,6 +113,7 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
     m.value = out.pos_enu;
     m.covariance = out.cov;
     m.hints.sensor_track_id = target_num;
+    m.sensor_position_std_m = own_opt->position_std_m;
     buffer_.push_back(std::move(m));
     return true;
   }
