@@ -8,6 +8,7 @@
 #include "adapters/own_ship/OwnShipProvider.hpp"
 #include "core/geo/Datum.hpp"
 #include "core/types/Measurement.hpp"
+#include "ports/IHeadingBiasProvider.hpp"
 #include "ports/ISensorAdapter.hpp"
 
 namespace navtracker {
@@ -29,7 +30,8 @@ struct EoIrAdapterConfig {
 class EoIrAdapter : public ISensorAdapter {
  public:
   EoIrAdapter(geo::Datum datum, OwnShipProvider& own_ship,
-              EoIrAdapterConfig cfg = {});
+              EoIrAdapterConfig cfg = {},
+              const IHeadingBiasProvider* bias_provider = nullptr);
 
   void ingest(const CameraDetection& d);
   std::vector<Measurement> poll() override;
@@ -38,6 +40,7 @@ class EoIrAdapter : public ISensorAdapter {
   geo::Datum datum_;
   OwnShipProvider& own_ship_;
   EoIrAdapterConfig cfg_;
+  const IHeadingBiasProvider* bias_provider_;
   std::vector<Measurement> buffer_;
 };
 
