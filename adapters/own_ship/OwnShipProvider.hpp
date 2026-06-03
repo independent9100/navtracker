@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <deque>
 #include <optional>
 
 #include "core/types/Timestamp.hpp"
@@ -17,11 +19,23 @@ struct OwnShipPose {
 
 class OwnShipProvider {
  public:
+  explicit OwnShipProvider(std::size_t history_size = 16);
+
   void update(const OwnShipPose& pose);
+
+  // Most recently pushed pose.
   std::optional<OwnShipPose> latest() const;
 
+  // Most recent pose with pose.time <= t. Returns nullopt when the
+  // history is empty or every stored pose is strictly newer than t.
+  std::optional<OwnShipPose> poseAtOrBefore(Timestamp t) const;
+
+  // Diagnostic: how many poses are currently stored.
+  std::size_t historySize() const { return history_.size(); }
+
  private:
-  std::optional<OwnShipPose> latest_;
+  std::deque<OwnShipPose> history_;
+  std::size_t history_size_limit_;
 };
 
 }  // namespace navtracker

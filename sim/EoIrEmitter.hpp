@@ -42,6 +42,8 @@ class EoIrEmitter final : public ISensorEmitter {
   std::normal_distribution<double> bearing_noise_;
   std::normal_distribution<double> range_noise_;
   Timestamp next_emit_{};
+  Timestamp t0_{};
+  long long step_idx_{0};
   bool initialised_{false};
 };
 

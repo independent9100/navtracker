@@ -30,6 +30,8 @@ EoIrEmitter::EoIrEmitter(EoIrAdapter& adapter,
 void EoIrEmitter::emit(const EmitContext& ctx) {
   if (!initialised_) {
     next_emit_ = ctx.now;
+    t0_ = ctx.now;
+    step_idx_ = 0;
     initialised_ = true;
   }
 
@@ -81,7 +83,15 @@ void EoIrEmitter::emit(const EmitContext& ctx) {
       d.sensor_track_id = te.sensor_track_id;
       adapter_.ingest(d);
     }
-    next_emit_ = Timestamp::fromSeconds(next_emit_.seconds() + cfg_.dt_s);
+    // Compute next emit time from the start + step count to avoid drift
+    // that the incremental form (next + dt) accumulates when dt is not
+    // exactly representable (e.g. 0.1s). A 1ns drift past an own-ship
+    // GGA tick boundary is enough for OwnShipProvider::poseAtOrBefore to
+    // return the prior-second pose, which makes the bus tests noisier
+    // than the timestamp-coincident baseline they're compared against.
+    ++step_idx_;
+    next_emit_ = Timestamp::fromSeconds(t0_.seconds() +
+                                        step_idx_ * cfg_.dt_s);
   }
 }
 

@@ -20,7 +20,7 @@ EoIrAdapter::EoIrAdapter(geo::Datum datum, OwnShipProvider& own_ship,
       bias_provider_(bias_provider) {}
 
 void EoIrAdapter::ingest(const CameraDetection& d) {
-  const auto own_opt = own_ship_.latest();
+  const auto own_opt = own_ship_.poseAtOrBefore(d.time);
   if (!own_opt) return;
   const double bearing_true_rad =
       (d.bearing_relative_deg + own_opt->heading_true_deg) * kDeg2Rad;

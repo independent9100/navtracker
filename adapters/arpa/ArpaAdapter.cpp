@@ -69,7 +69,7 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
 
   if (parsed->formatter == "TTM") {
     if (parsed->fields.size() < 10) return false;
-    const auto own_opt = own_ship_.latest();
+    const auto own_opt = own_ship_.poseAtOrBefore(t);
     if (!own_opt) return false;
     const int target_num = std::atoi(parsed->fields[0].c_str());
     const double dist = std::strtod(parsed->fields[1].c_str(), nullptr);
