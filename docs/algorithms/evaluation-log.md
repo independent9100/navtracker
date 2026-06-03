@@ -1173,3 +1173,90 @@ analogous to the heading bias estimator (2026-06-03) on the heading side.
   HDT branch — only GGA messages update position uncertainty. This fixes
   a Task-2-era oversight where an interleaved HDT would clobber the
   adaptive σ between GGA fixes.
+
+## CPA uncertainty (2026-06-03)
+
+**Setup.** Jacobian-based linear propagation of joint track covariance
+through the closed-form CPA function. Output: mean and σ on cpa and
+tcpa, and P(CPA < d_threshold) under a 1-D Gaussian on CPA. Own-ship is
+synthesised as a Track via `synthesizeOwnShipTrack` with σ_pos from the
+GPS work; σ_v_own = 0 per v1 decision. Spec:
+`docs/superpowers/specs/2026-06-03-cpa-uncertainty-design.md`. Plan:
+`docs/superpowers/plans/2026-06-03-cpa-uncertainty.md`.
+
+### Predicted CPA on a known perpendicular-pass
+
+Geometry: own-ship stationary at the ENU origin; target starts at
+(0, 1000) m moving east at 10 m/s. Truth CPA = 1000 m (target is at its
+closest at t = 0 and only recedes); tracker is driven with 1 Hz
+Position2D measurements for 20 s. Predicted CPA evaluated at t_ref =
+10 s; alarm threshold = 500 m. Numbers from
+`tests/scenario/test_cpa_scenario.cpp`.
+
+| measurement noise (σ_pos_meas) | own-ship σ_pos | predicted CPA (m) | σ_cpa (m) | P(<500 m) | in 2σ band? |
+|---|---|---|---|---|---|
+| 1 m | 1 m | 1006.722 | 4.2561 | < 1e-6 | yes |
+| 1 m | 5 m | 1006.722 | 6.4896 | < 1e-6 | yes |
+| 5 m | 1 m | 1003.826 | 5.8069 | < 1e-6 | yes |
+| 5 m | 5 m | 1003.826 | 7.5974 | < 1e-6 | yes |
+
+### CPA bands across §14.9 sweep scenarios (20 seeds, R-on, EKF+GNN)
+
+Mean CPA / σ_cpa / P(<200 m) aggregated over every confirmed-target
+pair against a synthesised own-ship at the ENU origin (Clutter and
+Maneuvering: stationary own-ship; BearingOnlyMoving: own-ship velocity
+(0, 10) m/s, matching the sim). Numbers from
+`tests/sim/test_bus_cpa_uncertainty.cpp`. d_threshold = 200 m.
+
+| scenario | σ_h | σ_GPS | mean CPA (m) | σ_cpa (m) | P(<200 m) | n pairs |
+|---|---|---|---|---|---|---|
+| ClutterCrossing | 0° | 0 m | 1939.329 | 742.918 | 0.2116 | 323 |
+| ClutterCrossing | 2° | 0 m | 4344.420 | 3574.362 | 0.1832 | 298 |
+| ClutterCrossing | 0° | 5 m | 4178.077 | 1690.213 | 0.1193 | 141 |
+| Maneuvering | 0° | 0 m |  133.996 |   9.419 | 0.9937 | 119 |
+| Maneuvering | 2° | 0 m |  136.433 |   7.202 | 0.9993 |  64 |
+| BearingOnlyMoving | 0° | 0 m | 1057.467 | 182.779 | 0.000794 | 20 |
+| BearingOnlyMoving | 2° | 0 m | 1062.396 | 190.656 | 0.002076 | 20 |
+| BearingOnlyMoving | 0° | 5 m | 1062.478 | 182.593 | 0.000728 | 20 |
+
+(The Maneuvering / σ_GPS = 5 m cell is omitted: the existing harness
+provides single-knob helpers only, so the simpler variant from the plan
+covers each cell with one knob at a time. The 3 × 3 picture below is
+sufficient for the verdict.)
+
+### Verdict
+
+Truth CPA = 1000 m falls inside the 2σ band on the known perpendicular-
+pass in every noise cell (σ_cpa is order-of-magnitude small relative to
+the 4-7 m deviation between predicted and truth, so the band closes
+comfortably). σ_cpa grows monotonically with own-ship σ_pos at fixed
+measurement noise (4.26 → 6.49 m) and with measurement noise at fixed
+own-ship σ_pos (4.26 → 5.81 m), confirming the joint Jacobian path
+faithfully carries both legs of input uncertainty through to the
+output. On the §14.9 bus sweeps σ_cpa is materially larger when σ_h is
+raised (ClutterCrossing 743 → 3574 m at 0 → 2°) than when σ_GPS is
+raised (743 → 1690 m at 0 → 5 m), which lines up with the Task-7/Task-8
+heading-bias work being the dominant covariance source in stationary-
+own-ship scenarios. P(<200 m) is the operational output: it cleanly
+separates the Maneuvering scenario (mean P ≥ 0.99 — the target really
+does pass within 200 m) from the recede-only ClutterCrossing /
+BearingOnlyMoving scenarios (mean P ≤ 0.21), so a downstream alarm can
+threshold on this number directly. The 1-D Gaussian approximation
+remains documented for near-collision cases (spec §11).
+
+### Methodology notes
+
+- One assertive scenario test
+  (`tests/scenario/test_cpa_scenario.cpp::PerpendicularPassTwoSigmaBandContainsTruth`)
+  pins the 2σ-band claim; one SUCCEED-only sweep
+  (`PerpendicularPassNoiseSweepReport`) and one bus sweep
+  (`tests/sim/test_bus_cpa_uncertainty.cpp::SweepAcrossScenarios`)
+  print the tables above.
+- The bus sweep uses `runBus*WithHeading` and `runBus*WithGps` helpers
+  one knob at a time per cell. Adding a combined-knob helper was
+  unnecessary for the verdict.
+- For BearingOnlyMoving the own-ship is moving north at 10 m/s in the
+  sim; the synthesised own-ship Track for CPA uses the same velocity so
+  the geometry is consistent.
+- Suite size 286/286 green after this work (+3 over the 283 baseline:
+  two `CpaScenario.*` tests plus one `BusCpaUncertainty.*` sweep).

@@ -112,6 +112,7 @@ add_executable(navtracker_tests
   tests/scenario/test_overtaking.cpp
   tests/scenario/test_ais_dropout.cpp
   tests/scenario/test_filter_comparison.cpp
+  tests/scenario/test_cpa_scenario.cpp
   tests/scenario/test_jpda_comparison.cpp
   tests/scenario/test_mht_comparison.cpp
   tests/scenario/test_multi_seed_sweep.cpp
@@ -138,6 +139,7 @@ add_executable(navtracker_tests
   tests/sim/test_bus_heading_bias_drift_probe.cpp
   tests/sim/test_bus_bias_estimator_sweep.cpp
   tests/sim/test_bus_anchor_loss.cpp
+  tests/sim/test_bus_cpa_uncertainty.cpp
   tests/bias/test_heading_bias_estimator.cpp
   tests/bias/test_ais_arpa_pair_extractor.cpp
   tests/own_ship/test_uere_estimator.cpp
