@@ -97,11 +97,12 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
     const double sigma_heading_eff =
         std::sqrt(sigma_heading_cfg * sigma_heading_cfg + var_b_hat);
 
+    const double sigma_gps_pos = own_opt->position_std_m;
     const PointAndCov2D out =
         projectRangeBearingToEnu(range_m, bearing_true_rad_corrected,
                                  50.0, 1.0 * kDeg2Rad,
                                  sigma_heading_eff,
-                                 0.0,
+                                 sigma_gps_pos,
                                  own_xy);
 
     Measurement m;

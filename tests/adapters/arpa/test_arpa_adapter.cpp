@@ -220,3 +220,98 @@ TEST(ArpaAdapterTest, ComposesVarianceWithConfiguredHeadingStd) {
   EXPECT_NEAR(mp[0].covariance(1, 0), me[0].covariance(1, 0), 1.0);
   EXPECT_NEAR(mp[0].covariance(1, 1), me[0].covariance(1, 1), 1.0);
 }
+
+TEST(ArpaAdapterTest, InflatesCovarianceFromOwnShipGpsStd) {
+  // Same TTM scenario as the baseline tests: own-ship at the datum origin
+  // heading 0 deg, ARPA target at range 1 NM on relative bearing 90 deg.
+  // Test with pose.position_std_m = 5: expect covariance to increase by 25
+  // (5^2) on the diagonal vs baseline where position_std_m = 0.
+
+  // Baseline scenario: no GPS std.
+  OwnShipProvider provider_base;
+  OwnShipPose pose_base;
+  pose_base.time = Timestamp::fromSeconds(0.0);
+  pose_base.lat_deg = 53.5;
+  pose_base.lon_deg = 8.0;
+  pose_base.heading_true_deg = 0.0;
+  pose_base.position_std_m = 0.0;
+  provider_base.update(pose_base);
+
+  ArpaAdapter adapter_base(kDatum, provider_base);
+  const std::string ttm =
+      makeNmea("RATTM,01,1.0,90.0,T,0.0,0.0,T,0.0,0.0,K,TARG1,T,R,123456.78,A");
+  EXPECT_TRUE(adapter_base.ingest(ttm, Timestamp::fromSeconds(1.0)));
+  const auto m_base = adapter_base.poll();
+  ASSERT_EQ(m_base.size(), 1u);
+
+  // High GPS std scenario: position_std_m = 5.
+  OwnShipProvider provider_gps;
+  OwnShipPose pose_gps;
+  pose_gps.time = Timestamp::fromSeconds(0.0);
+  pose_gps.lat_deg = 53.5;
+  pose_gps.lon_deg = 8.0;
+  pose_gps.heading_true_deg = 0.0;
+  pose_gps.position_std_m = 5.0;
+  provider_gps.update(pose_gps);
+
+  ArpaAdapter adapter_gps(kDatum, provider_gps);
+  EXPECT_TRUE(adapter_gps.ingest(ttm, Timestamp::fromSeconds(1.0)));
+  const auto m_gps = adapter_gps.poll();
+  ASSERT_EQ(m_gps.size(), 1u);
+
+  // The difference on the diagonal should be sigma_gps^2 = 25.
+  const double sigma_gps_sq = 5.0 * 5.0;
+  EXPECT_NEAR(m_gps[0].covariance(0, 0) - m_base[0].covariance(0, 0),
+              sigma_gps_sq, 1e-6);
+  EXPECT_NEAR(m_gps[0].covariance(1, 1) - m_base[0].covariance(1, 1),
+              sigma_gps_sq, 1e-6);
+  // Off-diagonal should be unchanged.
+  EXPECT_NEAR(m_gps[0].covariance(0, 1) - m_base[0].covariance(0, 1), 0.0, 1e-9);
+  EXPECT_NEAR(m_gps[0].covariance(1, 0) - m_base[0].covariance(1, 0), 0.0, 1e-9);
+}
+
+TEST(ArpaAdapterTest, TllUnaffectedByGpsStd) {
+  // TLL provides absolute lat/lon directly from the ARPA radar; it does
+  // not project from own-ship position. Therefore, GPS std on the own-ship
+  // pose should have no effect on TLL measurements.
+
+  // Scenario with position_std_m = 0.
+  OwnShipProvider provider0;
+  OwnShipPose pose0;
+  pose0.time = Timestamp::fromSeconds(0.0);
+  pose0.lat_deg = 53.5;
+  pose0.lon_deg = 8.0;
+  pose0.heading_true_deg = 0.0;
+  pose0.position_std_m = 0.0;
+  provider0.update(pose0);
+
+  ArpaAdapter adapter0(kDatum, provider0);
+  EXPECT_TRUE(adapter0.ingest(
+      makeNmea("RATLL,01,5330.6,N,00800.0,E,TARG1,123456,T,R"),
+      Timestamp::fromSeconds(10.0)));
+  const auto m0 = adapter0.poll();
+  ASSERT_EQ(m0.size(), 1u);
+
+  // Same scenario with position_std_m = 5.
+  OwnShipProvider provider5;
+  OwnShipPose pose5;
+  pose5.time = Timestamp::fromSeconds(0.0);
+  pose5.lat_deg = 53.5;
+  pose5.lon_deg = 8.0;
+  pose5.heading_true_deg = 0.0;
+  pose5.position_std_m = 5.0;
+  provider5.update(pose5);
+
+  ArpaAdapter adapter5(kDatum, provider5);
+  EXPECT_TRUE(adapter5.ingest(
+      makeNmea("RATLL,01,5330.6,N,00800.0,E,TARG1,123456,T,R"),
+      Timestamp::fromSeconds(10.0)));
+  const auto m5 = adapter5.poll();
+  ASSERT_EQ(m5.size(), 1u);
+
+  // Covariances must be identical.
+  EXPECT_NEAR(m5[0].covariance(0, 0), m0[0].covariance(0, 0), 1e-9);
+  EXPECT_NEAR(m5[0].covariance(0, 1), m0[0].covariance(0, 1), 1e-9);
+  EXPECT_NEAR(m5[0].covariance(1, 0), m0[0].covariance(1, 0), 1e-9);
+  EXPECT_NEAR(m5[0].covariance(1, 1), m0[0].covariance(1, 1), 1e-9);
+}
