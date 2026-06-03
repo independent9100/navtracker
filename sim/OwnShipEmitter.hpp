@@ -16,6 +16,7 @@ struct OwnShipEmitterConfig {
   // §14.9 hooks (default zero — deferred per spec).
   double heading_bias_deg{0.0};
   double heading_drift_deg_per_s{0.0};
+  double heading_noise_std_deg{0.0};
 };
 
 class OwnShipEmitter final : public ISensorEmitter {

@@ -54,8 +54,13 @@ void OwnShipEmitter::emit(const EmitContext& ctx) {
     // of snprintf %f.
     {
       const double dt = next_emit_.secondsSince(t0_);
-      const double hdg = cfg_.heading_true_deg + cfg_.heading_bias_deg +
-                         cfg_.heading_drift_deg_per_s * dt;
+      double hdg = cfg_.heading_true_deg + cfg_.heading_bias_deg +
+                   cfg_.heading_drift_deg_per_s * dt;
+      if (cfg_.heading_noise_std_deg > 0.0) {
+        std::normal_distribution<double> h_noise(
+            0.0, cfg_.heading_noise_std_deg);
+        hdg += h_noise(rng_);
+      }
       double hdg_norm = std::fmod(hdg, 360.0);
       if (hdg_norm < 0.0) hdg_norm += 360.0;
       long long milli = static_cast<long long>(std::llround(hdg_norm * 1000.0));
