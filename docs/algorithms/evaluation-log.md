@@ -1021,3 +1021,75 @@ BearingOnlyMoving.
 - AIS dropout in the anchor-loss test uses `sim::AisEmitterConfig::dropout_windows_s`.
 - Default `AisArpaPairExtractorConfig` (cycle window 0.5 s, AIS σ fallback 10 m, ARPA bearing σ fallback 1°).
 - The estimator is intentionally bias-agnostic during sim warmup — initial state b̂ = 0, variance (5°)². No precomputed calibration.
+
+## GPS position uncertainty (2026-06-03)
+
+**Setup.** Sim injects own-ship GPS position noise via
+`sim::OwnShipEmitterConfig::gps_pos_std_m` (zero-mean Gaussian on lat/lon
+each tick). When `report_gps_std` is true the emitter advertises
+`σ_GPS` on the published `OwnShipPose`, and `ArpaAdapter`/`EoIrAdapter`
+inflate projected covariance by `σ²_GPS · I` (the R-on row). When false
+the same noise corrupts the projection origin but the adapter is blind
+to the budget (R-off row — apples-to-apples noise, unmodeled).
+EKF + GNN, 20 seeds (201..220), σ_GPS ∈ {0, 0.1, 1, 5} m.
+
+### ClutterCrossing (close range, ~200 m)
+
+```
+[Bus GPS Sweep on ClutterCrossing, 20 seeds]
+  sigma_gps_m | R_inflate | per-window OSPA mean   | id_sw_mean
+        0.00  | off       | 48.6067 +/- 0.2158 m | 10.20
+        0.00  | on        | 48.6067 +/- 0.2158 m | 10.20
+        0.10  | off       | 48.6073 +/- 0.2141 m |  9.85
+        0.10  | on        | 48.6064 +/- 0.2149 m |  9.05
+        1.00  | off       | 48.6122 +/- 0.2163 m | 14.80
+        1.00  | on        | 48.6087 +/- 0.2145 m |  9.05
+        5.00  | off       | 48.7099 +/- 0.2069 m | 21.40
+        5.00  | on        | 48.6223 +/- 0.2150 m |  7.75
+```
+
+### BearingOnlyMoving (long range, ~1500 m, sanity probe)
+
+```
+[Bus GPS Sweep on BearingOnlyMoving, 20 seeds]
+  sigma_gps_m | R_inflate | per-window OSPA mean   | id_sw_mean
+        0.00  | off       | 388.8522 +/- 49.0193 m | 0.00
+        0.00  | on        | 388.8522 +/- 49.0193 m | 0.00
+        0.10  | off       | 388.8307 +/- 49.0620 m | 0.00
+        0.10  | on        | 388.8292 +/- 49.0622 m | 0.00
+        1.00  | off       | 388.6445 +/- 49.4416 m | 0.00
+        1.00  | on        | 388.5005 +/- 49.4561 m | 0.00
+        5.00  | off       | 387.5510 +/- 51.4886 m | 0.00
+        5.00  | on        | 384.0360 +/- 51.8883 m | 0.00
+```
+
+### Verdict
+
+At close range (ClutterCrossing, targets ~200 m), the R-on inflation
+materially improves ID stability as σ_GPS grows: at σ_GPS = 5 m the
+mean id-switch count drops from 21.40 (R-off) to 7.75 (R-on) — a ~64%
+reduction — while OSPA is essentially unchanged (positional accuracy
+is dominated by the bearing/range terms even before GPS noise). The
+mechanism is the same as §14.9's heading-R-inflation: a better-budgeted
+R gate keeps the GNN from chasing clutter that the unmodeled GPS
+wobble has dragged into the gate. At long range (BearingOnlyMoving,
+target ~1500 m), the σ_GPS = 5 m R-on vs R-off OSPA delta is in the
+single-seed noise (~3.5 m on a ~388 m baseline with stddev ~50 m) —
+exactly the inverse-of-heading gradient predicted by the spec:
+GPS uncertainty is a position-frame additive σ² that doesn't scale
+with range, so its relative impact shrinks as the target moves away,
+while heading uncertainty rotates the whole bearing arm and grows
+linearly with range. Together with §14.9 (heading R-inflation, close
+range wins on ID; long range wins on OSPA) and the heading bias
+estimator (2026-06-03; closes the loop on slowly-varying mean offset),
+the GPS-uncertainty budget completes the own-ship error pipeline for
+the cooperative tracker.
+
+### Methodology notes
+
+- One sweep TEST per scenario: `tests/sim/test_bus_gps_sweep.cpp`.
+- Same R-on/off comparison protocol as the heading sweep: noise is
+  always injected; only the advertised `pose.position_std_m` toggles.
+- ClutterCrossing uses `clutter_per_rotation = 8`; BearingOnlyMoving is
+  EOIR-only and still picks up `σ_GPS` through `projectRangeBearingToEnu`
+  when R-on.

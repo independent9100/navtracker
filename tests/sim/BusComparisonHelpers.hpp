@@ -369,6 +369,107 @@ inline navtracker::Scenario runBusManeuveringWithHeading(
   return bus.run();
 }
 
+struct GpsSweepKnob {
+  double sigma_gps_m{0.0};       // injected lat/lon noise std (m)
+  bool   r_inflation_on{false};  // when true, pose advertises position_std_m
+};
+
+inline navtracker::Scenario runBusClutterCrossingWithGps(
+    std::uint32_t seed, const GpsSweepKnob& knob) {
+  using namespace navtracker;
+  using navtracker::geo::Datum;
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter own_adapter(provider);
+  AisAdapter ais_adapter(datum);
+  ArpaAdapter arpa_adapter(datum, provider);
+  EoIrAdapter eo_adapter(datum, provider);
+
+  sim::SimulatedSensorBusConfig cfg;
+  cfg.t0 = Timestamp::fromSeconds(0.0);
+  cfg.duration_s = 30.0;
+  cfg.dt_s = 0.1;
+  cfg.truth_sample_dt_s = 1.0;
+  cfg.seed = seed;
+  cfg.datum = datum;
+  sim::SimulatedSensorBus bus(cfg);
+
+  bus.setOwnShip(std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d::Zero(), Eigen::Vector2d::Zero(),
+      Timestamp::fromSeconds(0.0)));
+  bus.addTarget(1, std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d(-200.0,  5.0), Eigen::Vector2d(15.0, 0.0),
+      Timestamp::fromSeconds(0.0)));
+  bus.addTarget(2, std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d( 200.0, -5.0), Eigen::Vector2d(-15.0, 0.0),
+      Timestamp::fromSeconds(0.0)));
+
+  sim::OwnShipEmitterConfig own_cfg;
+  own_cfg.gps_pos_std_m = knob.sigma_gps_m;
+  own_cfg.report_gps_std = knob.r_inflation_on;
+  bus.attachOwnShip(own_adapter, own_cfg);
+
+  sim::AisEmitterConfig ais_cfg;
+  ais_cfg.targets.push_back({1, 200000001u, true});
+  ais_cfg.targets.push_back({2, 200000002u, true});
+  bus.attachAis(ais_adapter, ais_cfg);
+
+  sim::ArpaEmitterConfig arpa_emitter_cfg;
+  arpa_emitter_cfg.targets.push_back({1, 1});
+  arpa_emitter_cfg.targets.push_back({2, 2});
+  arpa_emitter_cfg.clutter_per_rotation = 8;
+  bus.attachArpa(arpa_adapter, arpa_emitter_cfg);
+
+  sim::EoIrEmitterConfig eo_emitter_cfg;
+  eo_emitter_cfg.targets.push_back({1, 1});
+  eo_emitter_cfg.targets.push_back({2, 2});
+  eo_emitter_cfg.fov_deg = 360.0;
+  bus.attachEoIr(eo_adapter, eo_emitter_cfg);
+
+  return bus.run();
+}
+
+inline navtracker::Scenario runBusBearingOnlyMovingWithGps(
+    std::uint32_t seed, const GpsSweepKnob& knob) {
+  using namespace navtracker;
+  using navtracker::geo::Datum;
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter own_adapter(provider);
+  EoIrAdapter eo_adapter(datum, provider);
+
+  sim::SimulatedSensorBusConfig cfg;
+  cfg.t0 = Timestamp::fromSeconds(0.0);
+  cfg.duration_s = 60.0;
+  cfg.dt_s = 0.1;
+  cfg.truth_sample_dt_s = 1.0;
+  cfg.seed = seed;
+  cfg.datum = datum;
+  sim::SimulatedSensorBus bus(cfg);
+
+  bus.setOwnShip(std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d(0.0, -300.0), Eigen::Vector2d(0.0, 10.0),
+      Timestamp::fromSeconds(0.0)));
+  bus.addTarget(1, std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d(1500.0, 0.0), Eigen::Vector2d::Zero(),
+      Timestamp::fromSeconds(0.0)));
+
+  sim::OwnShipEmitterConfig own_cfg;
+  own_cfg.gps_pos_std_m = knob.sigma_gps_m;
+  own_cfg.report_gps_std = knob.r_inflation_on;
+  bus.attachOwnShip(own_adapter, own_cfg);
+
+  sim::EoIrEmitterConfig eo_emitter_cfg;
+  eo_emitter_cfg.targets.push_back({1, 1});
+  eo_emitter_cfg.fov_deg = 360.0;
+  eo_emitter_cfg.range_mode = sim::EoIrEmitterConfig::RangeMode::BearingOnly;
+  eo_emitter_cfg.bearing_std_deg = 1.5;
+  eo_emitter_cfg.dt_s = 1.0;
+  bus.attachEoIr(eo_adapter, eo_emitter_cfg);
+
+  return bus.run();
+}
+
 // ---------------------------------------------------------------------------
 // Bias-estimator wiring (Task 8 of heading-bias-estimator plan).
 //
