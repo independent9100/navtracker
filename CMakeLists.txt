@@ -24,6 +24,7 @@ add_library(navtracker_core
   core/estimation/UkfEstimator.cpp
   core/estimation/Resampling.cpp
   core/estimation/ParticleFilterEstimator.cpp
+  core/bias/HeadingBiasEstimator.cpp
   core/collision/Cpa.cpp
   core/association/Gating.cpp
   core/association/GnnAssociator.cpp
