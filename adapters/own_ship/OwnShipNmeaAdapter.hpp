@@ -3,6 +3,7 @@
 #include <string_view>
 
 #include "adapters/own_ship/OwnShipProvider.hpp"
+#include "core/own_ship/UereEstimator.hpp"
 
 namespace navtracker {
 
@@ -10,8 +11,15 @@ namespace navtracker {
 // per-satellite ranging error used to derive a horizontal position sigma from
 // the GGA HDOP: sigma_pos = HDOP * uere_m. Default 5 m matches the
 // commonly-cited consumer-GPS value.
+//
+// When enable_adaptive_uere is true, the adapter additionally runs a
+// UereEstimator over GGA-derived local-meter offsets (equirectangular
+// projection about the first fix). When the estimator publishes, its sigma
+// overrides the HDOP * uere_m static path; otherwise the static path applies.
 struct OwnShipNmeaAdapterConfig {
   double uere_m{5.0};
+  bool enable_adaptive_uere{false};
+  UereEstimatorConfig uere_estimator_cfg{};
 };
 
 // Parses NMEA 0183 GGA (position) and HDT (true heading) into OwnShipPose
@@ -36,6 +44,12 @@ class OwnShipNmeaAdapter {
   OwnShipProvider& provider_;
   OwnShipNmeaAdapterConfig cfg_;
   double position_std_m_{0.0};
+  UereEstimator uere_estimator_;
+  // Equirectangular reference, captured on the first GGA fix. Used only
+  // to feed the UereEstimator meter-scale inputs; not exposed externally.
+  bool enu_ref_set_{false};
+  double enu_ref_lat_deg_{0.0};
+  double enu_ref_lon_deg_{0.0};
 };
 
 }  // namespace navtracker
