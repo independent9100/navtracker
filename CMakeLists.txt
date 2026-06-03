@@ -172,3 +172,7 @@ target_link_libraries(navtracker_core_only_smoke PRIVATE
     navtracker_core Eigen3::Eigen)
 
 add_test(NAME CoreOnlyLinks COMMAND $<TARGET_FILE:navtracker_core_only_smoke>)
+
+add_executable(navtracker_example app/example.cpp)
+target_link_libraries(navtracker_example PRIVATE
+    navtracker_core Eigen3::Eigen)
