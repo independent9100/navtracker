@@ -129,6 +129,7 @@ add_executable(navtracker_tests
   tests/sim/test_bus_mht_comparison.cpp
   tests/sim/test_bus_heading_sweep.cpp
   tests/sim/test_bus_heading_bias_drift_probe.cpp
+  tests/bias/test_heading_bias_estimator.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE navtracker_core GTest::gtest_main Eigen3::Eigen)
