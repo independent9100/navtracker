@@ -131,6 +131,7 @@ add_executable(navtracker_tests
   tests/sim/test_bus_heading_sweep.cpp
   tests/sim/test_bus_heading_bias_drift_probe.cpp
   tests/sim/test_bus_bias_estimator_sweep.cpp
+  tests/sim/test_bus_anchor_loss.cpp
   tests/bias/test_heading_bias_estimator.cpp
   tests/bias/test_ais_arpa_pair_extractor.cpp
 )
