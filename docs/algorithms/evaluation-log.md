@@ -901,3 +901,123 @@ projections — this work makes that path real in navtracker.
 - Determinism: each seed produces a byte-identical Scenario.
 - Tests live at `tests/sim/test_bus_heading_sweep.cpp` and
   `tests/sim/test_bus_heading_bias_drift_probe.cpp`.
+
+## Heading bias estimator (2026-06-03)
+
+**Setup.** Re-runs the §14.9 heading sweep with a global scalar
+heading-bias state that the tracker estimates from AIS-vs-ARPA position
+residuals on fused tracks. ClutterCrossing's and Maneuvering's primary
+target already carries AIS+ARPA+EOIR, so pair observations flow as soon
+as a track is confirmed; BearingOnlyMoving has no AIS or ARPA in scene
+(EOIR-only), so the estimator never publishes — that row directly tests
+the graceful-fallback path. Three rows per σ_h cell: (R-off, no
+estimator), (R-on, no estimator), (R-on + estimator). 20 seeds
+(201..220), EKF + GNN, publish-variance threshold relaxed to (0.5°)²
+so the estimator publishes within the short scenarios. SUCCEED-only
+data capture.
+
+### ClutterCrossing — 20 seeds
+
+| σ_h | row        | OSPA mean ± stddev (m) | id_sw_mean |
+|-----|------------|------------------------|------------|
+| 0.0° | R-off      | 48.27 ± 0.29           | 20.40      |
+| 0.0° | R-on       | 48.27 ± 0.29           | 20.40      |
+| 0.0° | R-on + est | 47.88 ± 0.48           | **17.85**  |
+| 0.5° | R-off      | 48.24 ± 0.29           | 20.60      |
+| 0.5° | R-on       | 48.19 ± 0.30           | 17.90      |
+| 0.5° | R-on + est | 47.76 ± 0.56           | **14.90**  |
+| 1.0° | R-off      | 48.25 ± 0.30           | 20.60      |
+| 1.0° | R-on       | 48.15 ± 0.33           | 16.40      |
+| 1.0° | R-on + est | 47.65 ± 0.61           | **10.40**  |
+| 2.0° | R-off      | 48.29 ± 0.29           | 19.60      |
+| 2.0° | R-on       | 48.11 ± 0.34           | 12.05      |
+| 2.0° | R-on + est | **47.57 ± 0.62**       | **7.65**   |
+
+### BearingOnlyMoving — 20 seeds (no AIS / no ARPA in scene)
+
+| σ_h | row        | OSPA mean ± stddev (m) | id_sw_mean |
+|-----|------------|------------------------|------------|
+| 0.0° | R-off      | 387.55 ± 51.49         | 0.00       |
+| 0.0° | R-on       | 387.55 ± 51.49         | 0.00       |
+| 0.0° | R-on + est | 387.55 ± 51.49         | 0.00       |
+| 0.5° | R-off      | 419.00 ± 47.67         | 0.00       |
+| 0.5° | R-on       | 397.60 ± 51.99         | 0.00       |
+| 0.5° | R-on + est | 397.60 ± 51.99         | 0.00       |
+| 1.0° | R-off      | 457.05 ± 32.74         | 0.00       |
+| 1.0° | R-on       | 402.94 ± 52.33         | 0.00       |
+| 1.0° | R-on + est | 402.94 ± 52.33         | 0.00       |
+| 2.0° | R-off      | 482.61 ± 12.01         | 0.00       |
+| 2.0° | R-on       | 408.80 ± 47.10         | 0.00       |
+| 2.0° | R-on + est | 408.80 ± 47.10         | 0.00       |
+
+R-on+est is byte-identical to R-on across the cell: no AIS+ARPA pairs
+get extracted, so the estimator's variance never falls below the
+publish threshold and gating stays closed. This is the designed
+behavior, not a bug — the R-inflation budget continues to do all the
+work in non-cooperative scenes.
+
+### Maneuvering — 20 seeds
+
+| σ_h | row        | OSPA mean ± stddev (m) | id_sw_mean |
+|-----|------------|------------------------|------------|
+| 0.0° | R-off      | 81.65 ± 2.02           | 6.15       |
+| 0.0° | R-on       | 81.65 ± 2.02           | 6.15       |
+| 0.0° | R-on + est | 81.66 ± 1.95           | 6.25       |
+| 0.5° | R-off      | 81.06 ± 2.25           | 6.55       |
+| 0.5° | R-on       | 79.50 ± 2.87           | 5.55       |
+| 0.5° | R-on + est | 79.37 ± 2.90           | 5.30       |
+| 1.0° | R-off      | 81.19 ± 2.40           | 6.60       |
+| 1.0° | R-on       | 77.53 ± 4.03           | 4.90       |
+| 1.0° | R-on + est | 77.54 ± 4.03           | 4.90       |
+| 2.0° | R-off      | 81.10 ± 2.37           | 6.55       |
+| 2.0° | R-on       | 74.54 ± 4.90           | 3.45       |
+| 2.0° | R-on + est | 74.51 ± 4.92           | 3.60       |
+
+### Anchor-loss scenario (single seed 401, 120 s)
+
+ClutterCrossing-style scene with σ_h = 2°, R-inflation on, estimator
+on. AIS broadcasts on target 1 for [0, 60) s and drops out at t = 60 s.
+
+- `is_published` at t ∈ [30, 60): **true** (estimator converged on
+  AIS+ARPA pairs; final variance ≈ (0.29°)²).
+- `is_published` at t = 90 s (30 s after dropout): **false** (stale
+  window closed; adapters revert to b̂ = 0 with R-inflation only).
+- Pre-dropout mean per-window OSPA on [40, 60): 14.17 m.
+- Post-dropout mean per-window OSPA on [60, 120): 30.59 m. Growth is
+  dominated by target 1's increasing range (cross-track error scales
+  with range) and is structurally unrelated to the dropout; the
+  bounded-fallback assertion confirms OSPA stays well below the
+  cutoff with no divergence.
+
+### Verdict
+
+The bias estimator delivers a clean, measurable ID-stability win in
+the AIS-cooperative scene and reverts cleanly when the AIS anchor
+disappears. The largest effect is on ClutterCrossing's `id_sw_mean`:
+at σ_h = 2°, R-inflation already cut switches 19.6 → 12.05; the
+estimator drops them further to **7.65** — a 60% total reduction vs
+the no-mitigation baseline. OSPA improvement on the same cell is
+smaller (48.11 → 47.57 m) because ClutterCrossing's targets sit at
+~200 m where the `range × σ_h` penalty is modest — the ID benefit
+comes from sharper, less-uncertain bearings making data-association
+decisions more confident under clutter. Maneuvering and
+BearingOnlyMoving see no closed-loop OSPA change: Maneuvering's 15 s
+duration leaves the estimator barely above the publish threshold, and
+BearingOnlyMoving has no AIS in scene so the estimator stays
+unpublished by design. Anchor-loss confirms the gating contract — the
+30 s stale window closes cleanly, behavior falls back to the §14.9
+R-inflation path, and there is no accuracy cliff at the dropout
+moment. Practical implication: AIS-vs-ARPA bias estimation is most
+valuable in cluttered cooperative scenes where ID stability matters
+most; the deferred multi-track bearing-innovation observer (spec
+§11 #1) remains the right next step for non-cooperative scenes like
+BearingOnlyMoving.
+
+### Methodology notes
+
+- Three sweep TESTs and one anchor-loss TEST: `tests/sim/test_bus_bias_estimator_sweep.cpp`, `tests/sim/test_bus_anchor_loss.cpp`.
+- Bus driven via `sim::SimulatedSensorBus::stepOnce(...)` for the estimator-on rows so adapter projections see the latest published b̂ on the cycle after each AIS+ARPA pair is observed.
+- Publish threshold (0.5°)² for the sweep; default (0.3°)² used elsewhere.
+- AIS dropout in the anchor-loss test uses `sim::AisEmitterConfig::dropout_windows_s`.
+- Default `AisArpaPairExtractorConfig` (cycle window 0.5 s, AIS σ fallback 10 m, ARPA bearing σ fallback 1°).
+- The estimator is intentionally bias-agnostic during sim warmup — initial state b̂ = 0, variance (5°)². No precomputed calibration.
