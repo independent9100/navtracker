@@ -372,25 +372,27 @@ inline navtracker::Scenario runBusManeuveringWithHeading(
 // ---------------------------------------------------------------------------
 // Bias-estimator wiring (Task 8 of heading-bias-estimator plan).
 //
-// Knob + parallel scenario builders that wire a HeadingBiasEstimator into the
-// ARPA and EO/IR adapters at construction. A small per-cycle runner
-// (runScenarioWithBiasEstimator) drives the tracker measurement-by-measurement
-// and, at each truth-tick boundary, calls extractPairs(...) and feeds
-// AIS+ARPA pair observations to the estimator before clearing per-track
-// `recent_contributions`.
+// Closed-loop interleaving via SimulatedSensorBus::stepOnce.
 //
-// Path B caveat: the bus produces the full Scenario before the tracker runs,
-// so adapter-side bias corrections see the estimator state at *scenario build
-// time* (initially unpublished -> b=0). The estimator's published b̂ therefore
-// affects the variance composition (var_b_hat folded into sigma_heading) once
-// it converges within bus.run(), but the projected ENU positions for an
-// already-emitted scenario are baked. T9 uses this runner to A/B compare R-on
-// + estimator vs R-on no-estimator; the comparison is conservative w.r.t.
-// what an interleaved implementation would deliver, but the trajectory of
-// b̂ is real and is what feeds future adapter projections within the same
-// bus.run() call (TTM/EOIR detections after AIS-derived updates already
-// landed in the bus emission order benefit from the latest published b̂
-// because the adapters query the provider per detection).
+// `runBusCellInterleaved` is the low-level driver: it owns the per-cycle loop
+// where on each outer iteration we (1) step the bus by dt, appending one
+// cycle's worth of measurements and (when due) truth samples to a running
+// Scenario, (2) feed the new measurements into the tracker, (3) at every
+// truth-tick boundary call extractPairs() against the live track set and
+// observe any AIS+ARPA pairs that completed this cycle on the estimator,
+// (4) clear `recent_contributions` so the next cycle starts clean, (5)
+// snapshot tracks for per-tick OSPA. Because the estimator publishes its
+// b_hat through the IHeadingBiasProvider interface, the very next call to
+// `bus.stepOnce` re-projects ARPA/EO-IR detections with the updated b_hat —
+// this is the closed loop that the post-hoc runner in 3c39e13 lacked.
+//
+// `runBus{Clutter,BearingOnly,Maneuvering}*WithHeadingAndBiasCell` are
+// integrated cell helpers that build the bus + adapters + tracker + manager
+// + estimator with appropriate config and drive `runBusCellInterleaved`,
+// returning a RunStats. The integrated form is needed because the adapters
+// hold references the bus consumes per-step; keeping everything in one
+// stack frame side-steps the ownership puzzle that a "build then run later"
+// split would otherwise require.
 // ---------------------------------------------------------------------------
 
 struct BiasEstimatorKnob {
@@ -399,249 +401,97 @@ struct BiasEstimatorKnob {
   navtracker::AisArpaPairExtractorConfig extractor_cfg{};
 };
 
-// Per-cycle runner mirroring core/scenario/Harness.cpp::runScenario but with
-// a hook at every truth tick: after the tracker has consumed all measurements
-// up to the tick, call extractPairs(tracks(), tick, extractor_cfg) and feed
-// pairs into the estimator; then clear `recent_contributions` on every track.
-inline navtracker::ScenarioResult runScenarioWithBiasEstimator(
-    const navtracker::Scenario& scenario,
+// Low-level interleaved driver. Steps the bus one cycle at a time, dispatches
+// each new measurement into the tracker, and at every truth-tick boundary
+// runs extract+observe on the estimator before clearing recent_contributions.
+// Returns a RunStats computed against per-window OSPA (window = kWindowDtS)
+// and the standard id-switch count over track snapshots.
+//
+// Pre: bus has all emitters/adapters attached and own-ship/targets set.
+//      tracker, manager, estimator are fresh (or in their desired initial
+//      state). The estimator must be wired into the ARPA/EO-IR adapters
+//      held by `bus` (via their `bias_provider` parameter) so that
+//      adapter-side projections after estimator updates see b_hat.
+inline RunStats runBusCellInterleaved(
+    navtracker::sim::SimulatedSensorBus& bus,
     navtracker::Tracker& tracker,
     navtracker::TrackManager& manager,
-    double ospa_cutoff,
     navtracker::HeadingBiasEstimator& estimator,
-    const navtracker::AisArpaPairExtractorConfig& extractor_cfg) {
+    const navtracker::AisArpaPairExtractorConfig& extractor_cfg,
+    double ospa_cutoff) {
   using namespace navtracker;
-  ScenarioResult r;
-  if (scenario.truth.empty()) return r;
 
-  std::size_t mi = 0;
-  std::size_t ti = 0;
+  Scenario scenario;  // grows as the bus produces cycles
+  ScenarioResult result;
 
-  while (ti < scenario.truth.size()) {
-    const Timestamp tick = scenario.truth[ti].time;
+  std::size_t mi_processed = 0;  // measurements already dispatched to tracker
+  std::size_t ti_processed = 0;  // truth samples already scored
 
-    while (mi < scenario.measurements.size() &&
-           !(tick < scenario.measurements[mi].time)) {
-      tracker.process(scenario.measurements[mi]);
-      ++mi;
+  while (bus.stepOnce(scenario)) {
+    // (1) Dispatch any measurements appended this step into the tracker.
+    //     Within one bus cycle, emissions are time-ordered by construction,
+    //     so no sort is needed; the tracker handles same-timestamp dispatch.
+    while (mi_processed < scenario.measurements.size()) {
+      tracker.process(scenario.measurements[mi_processed]);
+      ++mi_processed;
     }
 
-    // Run bias estimator extract + observe at this cycle boundary.
-    const auto pairs = extractPairs(manager.tracks(), tick, extractor_cfg);
-    for (const auto& p : pairs) estimator.observe(p);
-    // Predict to current tick so age tracking advances even without obs.
-    estimator.predictTo(tick);
-    // Clear recent_contributions so next cycle's extraction is clean.
-    for (auto& tr : manager.mutableTracks()) tr.recent_contributions.clear();
+    // (2) For every truth tick that completed this step, run estimator
+    //     extract+observe and emit an OSPA sample. A single bus step adds
+    //     at most one truth-sample timestamp (truth_sample_dt_s >= dt_s),
+    //     but multiple truth samples may share that timestamp (one per
+    //     target).
+    while (ti_processed < scenario.truth.size()) {
+      const Timestamp tick = scenario.truth[ti_processed].time;
 
-    std::vector<Eigen::Vector2d> truth_xy;
-    std::size_t tj = ti;
-    while (tj < scenario.truth.size() && scenario.truth[tj].time == tick) {
-      truth_xy.push_back(scenario.truth[tj].position);
-      ++tj;
-    }
+      // Extract AIS+ARPA pairs visible on tracks at this cycle boundary and
+      // feed them to the estimator. Then advance estimator age and clear
+      // contribution buffers so the next cycle starts clean.
+      const auto pairs = extractPairs(manager.tracks(), tick, extractor_cfg);
+      for (const auto& p : pairs) estimator.observe(p);
+      estimator.predictTo(tick);
+      for (auto& tr : manager.mutableTracks()) tr.recent_contributions.clear();
 
-    std::vector<Eigen::Vector2d> est_xy;
-    std::vector<TrackSnapshot> snaps;
-    for (const Track& tr : manager.tracks()) {
-      if (tr.state.size() >= 2) {
-        est_xy.emplace_back(tr.state(0), tr.state(1));
-        snaps.push_back(TrackSnapshot{tr.id,
-                                      Eigen::Vector2d(tr.state(0), tr.state(1))});
+      // Gather all truth samples sharing this tick.
+      std::vector<Eigen::Vector2d> truth_xy;
+      std::size_t tj = ti_processed;
+      while (tj < scenario.truth.size() && scenario.truth[tj].time == tick) {
+        truth_xy.push_back(scenario.truth[tj].position);
+        ++tj;
       }
+
+      // Snapshot tracks; score OSPA.
+      std::vector<Eigen::Vector2d> est_xy;
+      std::vector<TrackSnapshot> snaps;
+      for (const Track& tr : manager.tracks()) {
+        if (tr.state.size() >= 2) {
+          est_xy.emplace_back(tr.state(0), tr.state(1));
+          snaps.push_back(TrackSnapshot{tr.id,
+                                        Eigen::Vector2d(tr.state(0), tr.state(1))});
+        }
+      }
+
+      result.ospa_per_step.push_back(ospaGreedy(truth_xy, est_xy, ospa_cutoff));
+
+      ScenarioStep step;
+      step.time = tick;
+      step.truth = std::move(truth_xy);
+      step.tracks = std::move(snaps);
+      result.steps.push_back(std::move(step));
+
+      ti_processed = tj;
     }
-
-    r.ospa_per_step.push_back(ospaGreedy(truth_xy, est_xy, ospa_cutoff));
-
-    ScenarioStep step;
-    step.time = tick;
-    step.truth = std::move(truth_xy);
-    step.tracks = std::move(snaps);
-    r.steps.push_back(std::move(step));
-
-    ti = tj;
   }
 
-  if (!r.ospa_per_step.empty()) {
+  if (!result.ospa_per_step.empty()) {
     double sum = 0.0;
-    for (double v : r.ospa_per_step) sum += v;
-    r.mean_ospa = sum / static_cast<double>(r.ospa_per_step.size());
+    for (double v : result.ospa_per_step) sum += v;
+    result.mean_ospa = sum / static_cast<double>(result.ospa_per_step.size());
   }
-  return r;
-}
 
-// Parallel scenario builders that take an optional bias provider. Wire it
-// into the ARPA and EO/IR adapter constructors so projection-time
-// corrections kick in once the estimator publishes during bus.run().
-
-inline navtracker::Scenario runBusClutterCrossingWithHeadingAndBias(
-    std::uint32_t seed, int clutter_per_rotation,
-    const HeadingSweepKnob& knob,
-    const navtracker::IHeadingBiasProvider* bias_provider) {
-  using namespace navtracker;
-  using navtracker::geo::Datum;
-  Datum datum({53.5, 8.0, 0.0});
-  OwnShipProvider provider;
-  OwnShipNmeaAdapter own_adapter(provider);
-  AisAdapter ais_adapter(datum);
-
-  ArpaAdapterConfig arpa_cfg_adapter;
-  EoIrAdapterConfig eo_cfg_adapter;
-  if (knob.r_inflation_on) {
-    arpa_cfg_adapter.heading_std_deg = knob.sigma_heading_deg;
-    eo_cfg_adapter.heading_std_deg   = knob.sigma_heading_deg;
-  }
-  ArpaAdapter arpa_adapter(datum, provider, arpa_cfg_adapter, bias_provider);
-  EoIrAdapter eo_adapter (datum, provider, eo_cfg_adapter,   bias_provider);
-
-  sim::SimulatedSensorBusConfig cfg;
-  cfg.t0 = Timestamp::fromSeconds(0.0);
-  cfg.duration_s = 30.0;
-  cfg.dt_s = 0.1;
-  cfg.truth_sample_dt_s = 1.0;
-  cfg.seed = seed;
-  cfg.datum = datum;
-  sim::SimulatedSensorBus bus(cfg);
-
-  bus.setOwnShip(std::make_shared<sim::ConstantVelocityTrajectory>(
-      Eigen::Vector2d::Zero(), Eigen::Vector2d::Zero(),
-      Timestamp::fromSeconds(0.0)));
-  bus.addTarget(1, std::make_shared<sim::ConstantVelocityTrajectory>(
-      Eigen::Vector2d(-200.0,  5.0), Eigen::Vector2d(15.0, 0.0),
-      Timestamp::fromSeconds(0.0)));
-  bus.addTarget(2, std::make_shared<sim::ConstantVelocityTrajectory>(
-      Eigen::Vector2d( 200.0, -5.0), Eigen::Vector2d(-15.0, 0.0),
-      Timestamp::fromSeconds(0.0)));
-
-  sim::OwnShipEmitterConfig own_cfg;
-  own_cfg.heading_bias_deg = knob.bias_deg;
-  own_cfg.heading_drift_deg_per_s = knob.drift_deg_per_s;
-  own_cfg.heading_noise_std_deg = knob.sigma_heading_deg;
-  bus.attachOwnShip(own_adapter, own_cfg);
-
-  sim::AisEmitterConfig ais_cfg;
-  ais_cfg.targets.push_back({1, 200000001u, true});
-  ais_cfg.targets.push_back({2, 200000002u, true});
-  bus.attachAis(ais_adapter, ais_cfg);
-
-  sim::ArpaEmitterConfig arpa_emitter_cfg;
-  arpa_emitter_cfg.targets.push_back({1, 1});
-  arpa_emitter_cfg.targets.push_back({2, 2});
-  arpa_emitter_cfg.clutter_per_rotation = clutter_per_rotation;
-  bus.attachArpa(arpa_adapter, arpa_emitter_cfg);
-
-  sim::EoIrEmitterConfig eo_emitter_cfg;
-  eo_emitter_cfg.targets.push_back({1, 1});
-  eo_emitter_cfg.targets.push_back({2, 2});
-  eo_emitter_cfg.fov_deg = 360.0;
-  bus.attachEoIr(eo_adapter, eo_emitter_cfg);
-
-  return bus.run();
-}
-
-inline navtracker::Scenario runBusBearingOnlyMovingWithHeadingAndBias(
-    std::uint32_t seed, const HeadingSweepKnob& knob,
-    const navtracker::IHeadingBiasProvider* bias_provider) {
-  using namespace navtracker;
-  using navtracker::geo::Datum;
-  Datum datum({53.5, 8.0, 0.0});
-  OwnShipProvider provider;
-  OwnShipNmeaAdapter own_adapter(provider);
-
-  EoIrAdapterConfig eo_cfg_adapter;
-  if (knob.r_inflation_on) eo_cfg_adapter.heading_std_deg = knob.sigma_heading_deg;
-  EoIrAdapter eo_adapter(datum, provider, eo_cfg_adapter, bias_provider);
-
-  sim::SimulatedSensorBusConfig cfg;
-  cfg.t0 = Timestamp::fromSeconds(0.0);
-  cfg.duration_s = 60.0;
-  cfg.dt_s = 0.1;
-  cfg.truth_sample_dt_s = 1.0;
-  cfg.seed = seed;
-  cfg.datum = datum;
-  sim::SimulatedSensorBus bus(cfg);
-
-  bus.setOwnShip(std::make_shared<sim::ConstantVelocityTrajectory>(
-      Eigen::Vector2d(0.0, -300.0), Eigen::Vector2d(0.0, 10.0),
-      Timestamp::fromSeconds(0.0)));
-  bus.addTarget(1, std::make_shared<sim::ConstantVelocityTrajectory>(
-      Eigen::Vector2d(1500.0, 0.0), Eigen::Vector2d::Zero(),
-      Timestamp::fromSeconds(0.0)));
-
-  sim::OwnShipEmitterConfig own_cfg;
-  own_cfg.heading_bias_deg = knob.bias_deg;
-  own_cfg.heading_drift_deg_per_s = knob.drift_deg_per_s;
-  own_cfg.heading_noise_std_deg = knob.sigma_heading_deg;
-  bus.attachOwnShip(own_adapter, own_cfg);
-
-  sim::EoIrEmitterConfig eo_emitter_cfg;
-  eo_emitter_cfg.targets.push_back({1, 1});
-  eo_emitter_cfg.fov_deg = 360.0;
-  eo_emitter_cfg.range_mode = sim::EoIrEmitterConfig::RangeMode::BearingOnly;
-  eo_emitter_cfg.bearing_std_deg = 1.5;
-  eo_emitter_cfg.dt_s = 1.0;
-  bus.attachEoIr(eo_adapter, eo_emitter_cfg);
-
-  return bus.run();
-}
-
-inline navtracker::Scenario runBusManeuveringWithHeadingAndBias(
-    std::uint32_t seed, const HeadingSweepKnob& knob,
-    const navtracker::IHeadingBiasProvider* bias_provider) {
-  using namespace navtracker;
-  using navtracker::geo::Datum;
-  Datum datum({53.5, 8.0, 0.0});
-  OwnShipProvider provider;
-  OwnShipNmeaAdapter own_adapter(provider);
-  AisAdapter ais_adapter(datum);
-
-  ArpaAdapterConfig arpa_cfg_adapter;
-  EoIrAdapterConfig eo_cfg_adapter;
-  if (knob.r_inflation_on) {
-    arpa_cfg_adapter.heading_std_deg = knob.sigma_heading_deg;
-    eo_cfg_adapter.heading_std_deg   = knob.sigma_heading_deg;
-  }
-  ArpaAdapter arpa_adapter(datum, provider, arpa_cfg_adapter, bias_provider);
-  EoIrAdapter eo_adapter (datum, provider, eo_cfg_adapter,   bias_provider);
-
-  sim::SimulatedSensorBusConfig cfg;
-  cfg.t0 = Timestamp::fromSeconds(0.0);
-  cfg.duration_s = 15.0;
-  cfg.dt_s = 0.1;
-  cfg.truth_sample_dt_s = 1.0;
-  cfg.seed = seed;
-  cfg.datum = datum;
-  sim::SimulatedSensorBus bus(cfg);
-
-  bus.setOwnShip(std::make_shared<sim::ConstantVelocityTrajectory>(
-      Eigen::Vector2d::Zero(), Eigen::Vector2d::Zero(),
-      Timestamp::fromSeconds(0.0)));
-  bus.addTarget(1, std::make_shared<sim::ManeuveringTrajectory>(
-      Eigen::Vector2d(0.0, 0.0),
-      Eigen::Vector2d(10.0, 0.0),
-      /*straight=*/5.0, /*turn=*/5.0, /*omega=*/0.2,
-      Timestamp::fromSeconds(0.0)));
-
-  sim::OwnShipEmitterConfig own_cfg;
-  own_cfg.heading_bias_deg = knob.bias_deg;
-  own_cfg.heading_drift_deg_per_s = knob.drift_deg_per_s;
-  own_cfg.heading_noise_std_deg = knob.sigma_heading_deg;
-  bus.attachOwnShip(own_adapter, own_cfg);
-
-  sim::AisEmitterConfig ais_cfg;
-  ais_cfg.targets.push_back({1, 200000001u, true});
-  bus.attachAis(ais_adapter, ais_cfg);
-
-  sim::ArpaEmitterConfig arpa_emitter_cfg;
-  arpa_emitter_cfg.targets.push_back({1, 1});
-  bus.attachArpa(arpa_adapter, arpa_emitter_cfg);
-
-  sim::EoIrEmitterConfig eo_emitter_cfg;
-  eo_emitter_cfg.targets.push_back({1, 1});
-  eo_emitter_cfg.fov_deg = 360.0;
-  bus.attachEoIr(eo_adapter, eo_emitter_cfg);
-
-  return bus.run();
+  const PerWindowOspa pw = computePerWindowOspa(
+      result, navtracker::Timestamp::fromSeconds(0.0), kWindowDtS);
+  return RunStats{pw.mean, pw.stddev, countIdSwitches(result.steps, ospa_cutoff)};
 }
 
 }  // namespace navtracker_test
