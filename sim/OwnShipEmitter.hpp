@@ -12,6 +12,12 @@ namespace navtracker::sim {
 struct OwnShipEmitterConfig {
   double dt_s{1.0};
   double gps_pos_std_m{5.0};
+  // When true, the emitter advertises gps_pos_std_m on the published
+  // OwnShipPose so ARPA/EO/IR adapters R-inflate accordingly. Default
+  // false preserves pre-2026-06-03 behaviour where the noise was
+  // injected on lat/lon but the adapter did not budget for it. New
+  // tests that want closed-loop GPS-uncertainty modelling opt in.
+  bool report_gps_std{false};
   double heading_true_deg{0.0};
   // §14.9 hooks (default zero — deferred per spec).
   double heading_bias_deg{0.0};

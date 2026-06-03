@@ -28,10 +28,10 @@ void OwnShipEmitter::emit(const EmitContext& ctx) {
   }
   while (next_emit_ <= ctx.now) {
     // Report the configured GPS position std on every published pose so the
-    // adapter stages (ARPA / EO/IR) can budget R-inflation for it. The NMEA
-    // path itself carries no native channel for this — Task 3 will derive it
-    // from GGA HDOP in production; in sim we plumb the cfg value directly.
-    adapter_.setPositionStd(cfg_.gps_pos_std_m);
+    // adapter stages (ARPA / EO/IR) can budget R-inflation for it — but only
+    // when explicitly opted in. Default-off preserves pre-2026-06-03 test
+    // behaviour where noise was injected on lat/lon without R modelling it.
+    adapter_.setPositionStd(cfg_.report_gps_std ? cfg_.gps_pos_std_m : 0.0);
 
     const TruthState truth = trajectory_.eval(next_emit_);
     const double nx = cfg_.gps_pos_std_m > 0.0 ? noise_(rng_) : 0.0;
@@ -51,7 +51,9 @@ void OwnShipEmitter::emit(const EmitContext& ctx) {
       body += formatLonDdmm(g.lon_deg);
       body += ',';
       body += lonHemisphere(g.lon_deg);
-      body += ",1,08,1.0,0.0,M,0.0,M,,";
+      // HDOP field left empty — sim does not model dilution; sigma is
+      // carried via the sticky setter above when report_gps_std is true.
+      body += ",1,08,,0.0,M,0.0,M,,";
       const std::string sentence = wrapWithChecksum(body);
       adapter_.ingest(sentence, next_emit_);
     }

@@ -151,7 +151,7 @@ TEST(OwnShipEmitter, HeadingNoiseShowsUpAsExpectedStddev) {
   EXPECT_NEAR(stddev, 2.0, 0.3);        // empirical stddev near σ
 }
 
-TEST(OwnShipEmitter, EmittedPoseCarriesGpsStd) {
+TEST(OwnShipEmitter, EmittedPoseCarriesGpsStdWhenReportOptedIn) {
   Datum datum({53.5, 8.0, 0.0});
   OwnShipProvider provider;
   OwnShipNmeaAdapter adapter(provider);
@@ -164,6 +164,7 @@ TEST(OwnShipEmitter, EmittedPoseCarriesGpsStd) {
   sim::OwnShipEmitterConfig cfg;
   cfg.dt_s = 1.0;
   cfg.gps_pos_std_m = 5.0;
+  cfg.report_gps_std = true;
   cfg.heading_true_deg = 0.0;
 
   sim::OwnShipEmitter emitter(adapter, datum, *traj, cfg, /*seed=*/7);
@@ -174,4 +175,31 @@ TEST(OwnShipEmitter, EmittedPoseCarriesGpsStd) {
 
   ASSERT_TRUE(provider.latest().has_value());
   EXPECT_DOUBLE_EQ(provider.latest()->position_std_m, 5.0);
+}
+
+TEST(OwnShipEmitter, DefaultDoesNotReportGpsStd) {
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+
+  auto traj = std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d::Zero(),
+      Eigen::Vector2d::Zero(),
+      Timestamp::fromSeconds(0.0));
+
+  sim::OwnShipEmitterConfig cfg;
+  cfg.dt_s = 1.0;
+  cfg.gps_pos_std_m = 5.0;
+  // report_gps_std defaults to false — preserves pre-2026-06-03 behaviour
+  // where lat/lon was jittered but the adapter did not budget for it.
+  cfg.heading_true_deg = 0.0;
+
+  sim::OwnShipEmitter emitter(adapter, datum, *traj, cfg, /*seed=*/7);
+
+  sim::EmitContext ctx;
+  ctx.now = Timestamp::fromSeconds(0.0);
+  emitter.emit(ctx);
+
+  ASSERT_TRUE(provider.latest().has_value());
+  EXPECT_DOUBLE_EQ(provider.latest()->position_std_m, 0.0);
 }
