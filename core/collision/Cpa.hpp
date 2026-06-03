@@ -60,4 +60,36 @@ struct CpaResult {
 // track.state.size() >= 4 for both tracks (px, py, vx, vy).
 CpaResult computeCpa(const Track& a, const Track& b, Timestamp t_ref);
 
+// Linear (Jacobian-based) uncertainty propagation through the CPA
+// closed-form. Inputs:
+//   a, b              — tracks; each must have 4D state [px, py, vx, vy]
+//                       and 4x4 covariance.
+//   t_ref             — reference time (e.g. now); each track is
+//                       extrapolated from its own last_update.
+//   d_threshold_m     — collision-alarm distance; output probability is
+//                       P(CPA < d_threshold_m) under 1D Gaussian on CPA.
+//
+// Outputs (mean values match computeCpa byte-for-byte):
+//   cpa_distance_m / sigma_cpa_m / tcpa_seconds / sigma_tcpa_seconds
+//   probability_below_threshold ∈ [0, 1]
+//   is_diverging — same semantics as computeCpa
+//
+// Singularity branches mirror computeCpa: parallel velocities and past
+// CPA fall back to current-distance with σ from dp covariance and
+// σ_tcpa = +infinity (sentinel). Head-on near-zero CPA uses an isotropic
+// fallback for σ_cpa.
+struct CpaPrediction {
+  double cpa_distance_m;
+  double sigma_cpa_m;
+  double tcpa_seconds;
+  double sigma_tcpa_seconds;
+  double probability_below_threshold;
+  double d_threshold_m;
+  bool is_diverging;
+};
+
+CpaPrediction computeCpaWithUncertainty(const Track& a, const Track& b,
+                                        Timestamp t_ref,
+                                        double d_threshold_m);
+
 }  // namespace navtracker

@@ -79,6 +79,7 @@ add_executable(navtracker_tests
   tests/estimation/test_resampling.cpp
   tests/estimation/test_particle_filter_estimator.cpp
   tests/collision/test_cpa.cpp
+  tests/collision/test_cpa_uncertainty.cpp
   tests/association/test_gating.cpp
   tests/association/test_gnn_associator.cpp
   tests/association/test_joint_events.cpp
