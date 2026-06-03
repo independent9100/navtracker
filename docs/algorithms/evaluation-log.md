@@ -788,3 +788,116 @@ noise rather than signal. The truth-tick clock is the standard convention
 in the OSPA literature and matches the cadence at which real ground-truth
 (GPS) is typically available; we should not have used the per-measurement
 clock in the first place.
+
+## Heading error sweep (2026-06-02)
+
+§14.9 wired end-to-end. Own-ship HDT now carries injected bias / drift /
+white noise; `ArpaAdapter` and `EoIrAdapter` accept a `heading_std_deg`
+that propagates through `projectRangeBearingToEnu` into the bearing
+variance (combined in quadrature with the sensor's intrinsic σ).
+
+Sweep: EKF + GNN, 20 seeds (201..220), σ_h ∈ {0°, 0.5°, 1°, 2°},
+R-inflation off vs on. Three scenarios re-used from the bus comparison
+helpers.
+
+### ClutterCrossing (targets at ~200 m range)
+
+```
+[Bus Heading Sweep on ClutterCrossing, 20 seeds]
+  sigma_h_deg | R_inflate | per-window OSPA mean   | id_sw_mean
+        0.00  | off       | 48.2740 +/- 0.2852 m | 20.40
+        0.00  | on        | 48.2740 +/- 0.2852 m | 20.40
+        0.50  | off       | 48.2445 +/- 0.2891 m | 20.60
+        0.50  | on        | 48.1917 +/- 0.3046 m | 17.90
+        1.00  | off       | 48.2469 +/- 0.3038 m | 20.60
+        1.00  | on        | 48.1492 +/- 0.3313 m | 16.40
+        2.00  | off       | 48.2896 +/- 0.2940 m | 19.60
+        2.00  | on        | 48.1067 +/- 0.3379 m | 12.05
+```
+
+### BearingOnlyMoving (target at 1.5 km range — headline)
+
+```
+[Bus Heading Sweep on BearingOnlyMoving, 20 seeds]
+  sigma_h_deg | R_inflate | per-window OSPA mean   | id_sw_mean
+        0.00  | off       | 387.5510 +/- 51.4886 m | 0.00
+        0.00  | on        | 387.5510 +/- 51.4886 m | 0.00
+        0.50  | off       | 419.0032 +/- 47.6722 m | 0.00
+        0.50  | on        | 397.6000 +/- 51.9899 m | 0.00
+        1.00  | off       | 457.0521 +/- 32.7441 m | 0.00
+        1.00  | on        | 402.9367 +/- 52.3337 m | 0.00
+        2.00  | off       | 482.6076 +/- 12.0074 m | 0.00
+        2.00  | on        | 408.8005 +/- 47.1020 m | 0.00
+```
+
+### Maneuvering (single target, 15 s scenario)
+
+```
+[Bus Heading Sweep on Maneuvering, 20 seeds]
+  sigma_h_deg | R_inflate | per-window OSPA mean   | id_sw_mean
+        0.00  | off       | 81.6523 +/- 2.0179 m | 6.15
+        0.00  | on        | 81.6523 +/- 2.0179 m | 6.15
+        0.50  | off       | 81.0586 +/- 2.2462 m | 6.55
+        0.50  | on        | 79.5049 +/- 2.8731 m | 5.55
+        1.00  | off       | 81.1884 +/- 2.4011 m | 6.60
+        1.00  | on        | 77.5293 +/- 4.0335 m | 4.90
+        2.00  | off       | 81.0962 +/- 2.3672 m | 6.55
+        2.00  | on        | 74.5369 +/- 4.9032 m | 3.45
+```
+
+### Bias / drift propagation probe
+
+Single-seed probe to confirm bias and drift propagate. Plan called for
+1° bias / 0.01 deg/s drift; bumped to 3° / 0.03 deg/s after the smaller
+magnitudes were too close to the single-seed noise floor on the
+1.5 km bearing-only scenario.
+
+```
+[Bus Heading Probe: BearingOnlyMoving, seed=201]
+  no error   : per-window OSPA mean = 329.4629 m
+  bias 3 deg : per-window OSPA mean = 333.5720 m
+
+[Bus Heading Probe: BearingOnlyMoving, seed=201]
+  no error     : per-window OSPA mean = 329.4629 m
+  drift 0.03/s : per-window OSPA mean = 329.7823 m
+```
+
+### Verdict
+
+The BearingOnlyMoving scenario (1.5 km range) is the headline result and
+shows the §14.9 failure mode sharply: with R-inflation off, per-window
+OSPA climbs monotonically with σ_h (387.55 → 419.00 → 457.05 → 482.61 m),
+while R-on stays nearly flat (387.55 → 397.60 → 402.94 → 408.80 m),
+recovering roughly 74 m of the ~95 m saturation cliff at σ_h = 2°. This
+is exactly the "tracker over-trusts long-range relative bearings when
+heading is uncertain" pathology the spec predicted. Maneuvering shows a
+smaller but consistent effect: OSPA R-off is flat at ~81 m across σ_h
+while R-on drops to 74.5 m at σ_h = 2°, and the ID-switch signal is
+cleaner still — R-off ~6.5 across the sweep, R-on falling 6.15 → 5.55 →
+4.90 → 3.45 as σ_h grows, indicating R-inflation calms data-association
+overreactions. ClutterCrossing (200 m range) shows the expected weak
+OSPA response — differences sit below the ~0.2 m stddev noise floor —
+but ID-switches still drop materially under R-on (20.40 → 17.90 → 16.40
+→ 12.05), so even at short range a heading-aware R reshapes which
+scan-to-track associations win. The single-seed bias/drift probe
+confirms both error modes propagate end-to-end (drift contributes
+~0.3 m of OSPA over a 60 s window at 0.03 deg/s, i.e. a 1.8° final
+offset). The overall pattern matches the `range × σ_h` rule the spec
+called out: R-inflation is essentially free at small σ_h (the increment
+is dominated by intrinsic sensor noise) and progressively saves the
+tracker as σ_h grows, with the dramatic gains at long range. Practical
+implication: maritime trackers consuming relative bearings should
+accept a `heading_std_deg` configuration and propagate it through their
+projections — this work makes that path real in navtracker.
+
+### Methodology notes
+
+- Per-window OSPA at 1 s windows (truth-tick clock).
+- Heading noise is white (per-tick i.i.d. Gaussian). No process model.
+- Bias and drift held at 0 during the sweep; they get a separate probe.
+- Sweep uses one canonical tracker per scenario (EKF + GNN). The
+  comparison vs other estimators / associators is intentionally not
+  re-run; the question here is the error model, not the algorithm.
+- Determinism: each seed produces a byte-identical Scenario.
+- Tests live at `tests/sim/test_bus_heading_sweep.cpp` and
+  `tests/sim/test_bus_heading_bias_drift_probe.cpp`.
