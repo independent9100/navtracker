@@ -33,6 +33,8 @@ struct AisArpaPairObservation {
   double arpa_bearing_std_rad{1.0 * 3.14159265358979323846 / 180.0};
   // 1-sigma isotropic position noise on the AIS report, m.
   double ais_position_std_m{10.0};
+  // 1-sigma own-ship GPS position noise at observation time, m.
+  double own_position_std_m{0.0};
 };
 
 class HeadingBiasEstimator : public IHeadingBiasProvider {

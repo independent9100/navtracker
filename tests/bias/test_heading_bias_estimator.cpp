@@ -111,6 +111,29 @@ TEST(HeadingBiasEstimatorTest, GatingDelaysPublicationUntilTightEnough) {
   EXPECT_TRUE(est.current().is_published);
 }
 
+TEST(HeadingBiasEstimatorTest, GpsFloorPreventsOverConvergence) {
+  // With identical seeds/inputs but different own_position_std_m, the
+  // estimator with a non-zero GPS floor must end up with a larger P_b
+  // than the estimator without the floor. At r=1500 m and sigma_gps=13 m,
+  // the angular floor is ~0.5 deg per update — comparable to the existing
+  // ARPA bearing std (0.5 deg), so the asymptotic variance roughly doubles.
+  HeadingBiasEstimator est_no_floor{};
+  HeadingBiasEstimator est_with_floor{};
+  const double true_bias = 1.0 * kDeg2Rad;
+  for (int i = 0; i < 100; ++i) {
+    auto pair_a = makePair(tAt(i * 1.0), (i * 17.0) * kDeg2Rad, true_bias);
+    pair_a.own_position_std_m = 0.0;
+    est_no_floor.observe(pair_a);
+
+    auto pair_b = makePair(tAt(i * 1.0), (i * 17.0) * kDeg2Rad, true_bias);
+    pair_b.own_position_std_m = 13.0;
+    est_with_floor.observe(pair_b);
+  }
+  const double p_no_floor = est_no_floor.varianceRad2();
+  const double p_with_floor = est_with_floor.varianceRad2();
+  EXPECT_GT(p_with_floor, p_no_floor * 1.5);
+}
+
 TEST(HeadingBiasEstimatorTest, HandlesWrapAroundInnovation) {
   HeadingBiasEstimator est{};
   // True bias near +pi - epsilon so beta_arpa wraps.

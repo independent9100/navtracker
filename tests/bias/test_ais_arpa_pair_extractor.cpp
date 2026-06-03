@@ -53,6 +53,19 @@ TEST(AisArpaPairExtractorTest, IgnoresContributionsOutsideCycleWindow) {
   EXPECT_TRUE(extractPairs({tr}, tAt(10.0)).empty());
 }
 
+TEST(AisArpaPairExtractorTest, PropagatesOwnPositionStdFromTouch) {
+  Track tr;
+  auto ais = makeTouch(SensorKind::Ais, tAt(10.0), Eigen::Vector2d(1000.0, 0.0));
+  auto arpa =
+      makeTouch(SensorKind::ArpaTtm, tAt(10.0), Eigen::Vector2d(995.0, 87.0));
+  arpa.own_position_std_m = 3.0;
+  tr.recent_contributions.push_back(ais);
+  tr.recent_contributions.push_back(arpa);
+  const auto pairs = extractPairs({tr}, tAt(10.0));
+  ASSERT_EQ(pairs.size(), 1u);
+  EXPECT_DOUBLE_EQ(pairs[0].own_position_std_m, 3.0);
+}
+
 TEST(AisArpaPairExtractorTest, MultipleTracksEmitMultiplePairs) {
   Track a;
   a.recent_contributions.push_back(

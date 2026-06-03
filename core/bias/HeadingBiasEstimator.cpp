@@ -49,9 +49,17 @@ void HeadingBiasEstimator::observe(const AisArpaPairObservation& obs) {
   // the bearing is undefined — skip.
   if (r_ais < 1.0) return;
 
-  const double sigma_v2 =
+  double sigma_v2 =
       obs.arpa_bearing_std_rad * obs.arpa_bearing_std_rad
       + (obs.ais_position_std_m * obs.ais_position_std_m) / (r_ais * r_ais);
+  // GPS position-uncertainty floor on the measurement noise: a σ_GPS
+  // error at the own-ship origin translates to a (σ_GPS / r_arpa) angular
+  // floor on the ARPA-derived bearing.
+  const double r_arpa = arpa_rel.norm();
+  if (r_arpa > 1.0) {
+    const double term = obs.own_position_std_m / r_arpa;
+    sigma_v2 += term * term;
+  }
 
   const double y = wrapToPi(z - b_hat_);
   const double s = p_b_ + sigma_v2;

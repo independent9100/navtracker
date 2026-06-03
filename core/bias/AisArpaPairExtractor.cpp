@@ -51,6 +51,7 @@ std::vector<AisArpaPairObservation> extractPairs(
     obs.ais_position_std_m =
         sigmaFromCov2D(ais->covariance, cfg.ais_position_std_fallback_m);
     obs.arpa_bearing_std_rad = cfg.arpa_bearing_std_fallback_rad;
+    obs.own_position_std_m = arpa->own_position_std_m;
     out.push_back(std::move(obs));
   }
   return out;
