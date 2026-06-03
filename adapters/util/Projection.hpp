@@ -14,6 +14,7 @@ PointAndCov2D projectRangeBearingToEnu(double range_m,
                                        double range_std_m,
                                        double bearing_std_rad,
                                        double sigma_heading_rad,
+                                       double sigma_gps_pos_m,
                                        const Eigen::Vector2d& own_ship_pos_enu);
 
 }  // namespace navtracker

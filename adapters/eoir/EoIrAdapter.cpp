@@ -45,6 +45,7 @@ void EoIrAdapter::ingest(const CameraDetection& d) {
       d.range_m, bearing_true_rad_corrected,
       d.range_std_m, d.bearing_std_deg * kDeg2Rad,
       sigma_heading_eff,
+      0.0,
       own_xy);
 
   Measurement m;

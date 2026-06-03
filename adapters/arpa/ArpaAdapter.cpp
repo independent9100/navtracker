@@ -101,6 +101,7 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
         projectRangeBearingToEnu(range_m, bearing_true_rad_corrected,
                                  50.0, 1.0 * kDeg2Rad,
                                  sigma_heading_eff,
+                                 0.0,
                                  own_xy);
 
     Measurement m;
