@@ -47,6 +47,19 @@ struct Track {
   Eigen::MatrixXd imm_means;
   std::vector<Eigen::MatrixXd> imm_covariances;
   Eigen::VectorXd imm_mode_probabilities;
+
+  // Per-cycle provenance for downstream components (e.g. bias estimator).
+  // Populated by Tracker when a measurement updates this track. Consumers
+  // read after a cycle completes; they are responsible for clearing.
+  struct SourceTouch {
+    SensorKind sensor{SensorKind::Unknown};
+    std::string source_id;
+    Timestamp time;
+    Eigen::Vector2d value_enu{Eigen::Vector2d::Zero()};
+    Eigen::Matrix2d covariance{Eigen::Matrix2d::Identity()};
+    Eigen::Vector2d sensor_position_enu{Eigen::Vector2d::Zero()};
+  };
+  std::vector<SourceTouch> recent_contributions;
 };
 
 }  // namespace navtracker

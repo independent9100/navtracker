@@ -27,6 +27,20 @@ void Tracker::process(const Measurement& z) {
     const std::size_t ti = result.matches.front().first;
     Track& tr = manager_.mutableTracks()[ti];
     estimator_.update(tr, z);
+    {
+      Track::SourceTouch touch;
+      touch.sensor = z.sensor;
+      touch.source_id = z.source_id;
+      touch.time = z.time;
+      if (z.model == MeasurementModel::Position2D && z.value.size() >= 2) {
+        touch.value_enu = z.value.head<2>();
+        if (z.covariance.rows() >= 2 && z.covariance.cols() >= 2) {
+          touch.covariance = z.covariance.topLeftCorner<2, 2>();
+        }
+      }
+      touch.sensor_position_enu = z.sensor_position_enu;
+      tr.recent_contributions.push_back(std::move(touch));
+    }
     bool has_src = false;
     for (const auto& s : tr.contributing_sources) {
       if (s == z.source_id) {
@@ -85,6 +99,20 @@ void Tracker::processBatch(const std::vector<Measurement>& scan) {
         betas_eig(k) = betas_vec[k];
       Track& tr = manager_.mutableTracks()[ti];
       estimator_.softUpdate(tr, gated, betas_eig, result.beta_0(ti));
+      for (const auto& gz : gated) {
+        Track::SourceTouch touch;
+        touch.sensor = gz.sensor;
+        touch.source_id = gz.source_id;
+        touch.time = gz.time;
+        if (gz.model == MeasurementModel::Position2D && gz.value.size() >= 2) {
+          touch.value_enu = gz.value.head<2>();
+          if (gz.covariance.rows() >= 2 && gz.covariance.cols() >= 2) {
+            touch.covariance = gz.covariance.topLeftCorner<2, 2>();
+          }
+        }
+        touch.sensor_position_enu = gz.sensor_position_enu;
+        tr.recent_contributions.push_back(std::move(touch));
+      }
       const TrackId id = tr.id;
       manager_.recordHit(id);
       manager_.noteObservation(id, t);
@@ -95,6 +123,21 @@ void Tracker::processBatch(const std::vector<Measurement>& scan) {
       const std::size_t mi = m.second;
       Track& tr = manager_.mutableTracks()[ti];
       estimator_.update(tr, scan[mi]);
+      {
+        const Measurement& z = scan[mi];
+        Track::SourceTouch touch;
+        touch.sensor = z.sensor;
+        touch.source_id = z.source_id;
+        touch.time = z.time;
+        if (z.model == MeasurementModel::Position2D && z.value.size() >= 2) {
+          touch.value_enu = z.value.head<2>();
+          if (z.covariance.rows() >= 2 && z.covariance.cols() >= 2) {
+            touch.covariance = z.covariance.topLeftCorner<2, 2>();
+          }
+        }
+        touch.sensor_position_enu = z.sensor_position_enu;
+        tr.recent_contributions.push_back(std::move(touch));
+      }
       bool has_src = false;
       for (const auto& s : tr.contributing_sources) {
         if (s == scan[mi].source_id) { has_src = true; break; }

@@ -1,4 +1,6 @@
 #include <memory>
+#include <set>
+#include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -7,12 +9,14 @@
 #include "core/estimation/EkfEstimator.hpp"
 #include "core/pipeline/Tracker.hpp"
 #include "core/tracking/TrackManager.hpp"
+#include "core/types/Ids.hpp"
 
 using navtracker::ConstantVelocity2D;
 using navtracker::EkfEstimator;
 using navtracker::GnnAssociator;
 using navtracker::Measurement;
 using navtracker::MeasurementModel;
+using navtracker::SensorKind;
 using navtracker::Timestamp;
 using navtracker::Track;
 using navtracker::Tracker;
@@ -83,6 +87,51 @@ TEST(Tracker, ProcessBatchHandlesMultipleMeasurementsAtSameTime) {
   tr.processBatch({z1, z2});
   // Two distinct measurements far apart -> two new tracks initiated.
   EXPECT_EQ(mgr.size(), 2u);
+}
+
+TEST(Tracker, RecordsRecentContributionsOnFusion) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator estimator(motion, 10.0);
+  const GnnAssociator associator(50.0);
+  TrackManager manager(1, 3);
+  Tracker tracker(estimator, associator, manager, 10.0);
+
+  // Seed a track with an AIS measurement so a track exists.
+  Measurement ais;
+  ais.time = Timestamp::fromSeconds(0.0);
+  ais.sensor = SensorKind::Ais;
+  ais.source_id = "ais";
+  ais.model = MeasurementModel::Position2D;
+  ais.value = Eigen::Vector2d(100.0, 0.0);
+  ais.covariance = Eigen::Matrix2d::Identity();
+  tracker.process(ais);
+
+  // Now feed an AIS and ARPA measurement at the same time, both within
+  // the gate of the existing track. They should fuse into it.
+  Measurement ais2 = ais;
+  ais2.time = Timestamp::fromSeconds(1.0);
+  ais2.value = Eigen::Vector2d(100.5, 0.0);
+
+  Measurement arpa;
+  arpa.time = Timestamp::fromSeconds(1.0);
+  arpa.sensor = SensorKind::ArpaTtm;
+  arpa.source_id = "arpa";
+  arpa.model = MeasurementModel::Position2D;
+  arpa.value = Eigen::Vector2d(100.6, 0.1);
+  arpa.covariance = Eigen::Matrix2d::Identity();
+
+  tracker.process(ais2);
+  tracker.process(arpa);
+
+  ASSERT_EQ(manager.size(), 1u);
+  const auto& tr = manager.tracks()[0];
+  ASSERT_GE(tr.recent_contributions.size(), 2u);
+  std::set<std::string> source_ids;
+  for (const auto& t : tr.recent_contributions) {
+    source_ids.insert(t.source_id);
+  }
+  EXPECT_TRUE(source_ids.count("ais") > 0);
+  EXPECT_TRUE(source_ids.count("arpa") > 0);
 }
 
 TEST(Tracker, ReplayIsDeterministic) {
