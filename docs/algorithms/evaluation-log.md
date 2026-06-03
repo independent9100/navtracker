@@ -1093,3 +1093,83 @@ the cooperative tracker.
 - ClutterCrossing uses `clutter_per_rotation = 8`; BearingOnlyMoving is
   EOIR-only and still picks up `σ_GPS` through `projectRangeBearingToEnu`
   when R-on.
+
+## Adaptive UERE (2026-06-03)
+
+**Setup.** Online σ_pos estimator runs over GGA-derived local-meter
+positions in a sliding 8-sample window (`core/own_ship/UereEstimator`).
+The estimator does a least-squares constant-velocity fit on each axis
+and uses the residual variance as a direct σ_pos estimate. A two-halves
+velocity check (|Δv| > 0.5 m/s) suppresses publication during maneuvers
+so transient kinematics do not pollute the noise estimate. When the
+estimator publishes, its σ overrides the static `HDOP × UERE` path in
+`OwnShipNmeaAdapter`; otherwise the static path applies. Adaptive mode
+is default off; sweep tests opt in via
+`OwnShipNmeaAdapterConfig::enable_adaptive_uere = true` and turn the
+sticky sim-side setter off (`report_gps_std = false`) so the estimator
+must observe the noise it then advertises.
+
+### Tracking σ across injected levels (ClutterCrossing, 20 seeds)
+
+Stationary own-ship; `OwnShipEmitter` injects N(0, σ_inj²) lat/lon noise
+on each GGA fix; bus runs 30 s → ~30 GGA fixes; we read the provider's
+`position_std_m` at end-of-run as the estimator's most recent verdict.
+
+| sigma_injected (m) | mean published sigma (m) | within ±50%? |
+|---|---|---|
+| 0.10 | 0.0910 | yes |
+| 1.00 | 0.9158 | yes |
+| 5.00 | 4.5777 | yes |
+
+### Sweep comparison (ClutterCrossing, 20 seeds, EKF + GNN)
+
+Same scenario as G8's `BusGpsSweep.ClutterCrossing`. Three rows per σ
+cell: R-off (no inflation), R-on static (HDOP×UERE via sticky setter,
+adaptive off), R-on adaptive (estimator publishes, sticky off).
+
+| sigma_gps | row             | per-window OSPA       | id_sw |
+|-----------|-----------------|-----------------------|-------|
+| 0.00      | R-off           | 48.6067 ± 0.2158      | 10.20 |
+| 0.00      | R-on static     | 48.6067 ± 0.2158      | 10.20 |
+| 0.00      | R-on adaptive   | 48.6063 ± 0.2159      |  9.90 |
+| 0.10      | R-off           | 48.6073 ± 0.2141      |  9.85 |
+| 0.10      | R-on static     | 48.6064 ± 0.2149      |  9.05 |
+| 0.10      | R-on adaptive   | 48.6072 ± 0.2147      |  9.05 |
+| 1.00      | R-off           | 48.6122 ± 0.2163      | 14.80 |
+| 1.00      | R-on static     | 48.6087 ± 0.2145      |  9.05 |
+| 1.00      | R-on adaptive   | 48.6075 ± 0.2152      | 10.20 |
+| 5.00      | R-off           | 48.7099 ± 0.2069      | 21.40 |
+| 5.00      | R-on static     | 48.6223 ± 0.2150      |  7.75 |
+| 5.00      | R-on adaptive   | 48.6750 ± 0.2172      | 12.05 |
+
+### Verdict
+
+The estimator tracks the injected σ within ±50 % across two decades
+(0.1 → 5 m), confirming the sliding-window residual-variance design as a
+viable online observer of own-ship GPS noise. In the bus sweep, the
+adaptive R-on row matches the static R-on row in OSPA to within
+statistical noise at all four σ levels (mean OSPA spreads of < 0.06 m
+across rows), and recovers most of static's id-switch advantage at
+moderate σ (≤ 1 m). At σ = 5 m, adaptive's id-switch count is slightly
+worse than static (12.05 vs 7.75) — expected, since static is
+calibrated to truth while adaptive must estimate σ from 8 samples per
+window, and σ̂ is undershooting truth by ~10 % on average. Adaptive's
+value here is not numerical improvement (it cannot beat a path that
+already knows the answer) but elimination of the static UERE knob:
+deployment scenarios where σ is not known a priori (degraded GNSS,
+multipath, RAIM-without-augmentation) now have a closed-loop story
+analogous to the heading bias estimator (2026-06-03) on the heading side.
+
+### Methodology notes
+
+- Two TESTs in `tests/sim/test_bus_adaptive_uere.cpp`:
+  `AdaptiveTracksSimInjectedSigma` (asserts ±50 % tracking, EXPECT_GE/LE)
+  and `AdaptiveSweepClutterCrossing` (SUCCEED-only sweep, prints the table).
+- The sweep reuses `runBusClutterCrossingWithGps` from
+  `tests/sim/BusComparisonHelpers.hpp` with a new `adaptive_uere` flag on
+  `GpsSweepKnob`; default false preserves all pre-existing sweeps and
+  matches the byte-identical regression contract.
+- `OwnShipNmeaAdapter` now leaves `pose.position_std_m` untouched in the
+  HDT branch — only GGA messages update position uncertainty. This fixes
+  a Task-2-era oversight where an interleaved HDT would clobber the
+  adaptive σ between GGA fixes.

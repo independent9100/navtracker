@@ -372,6 +372,7 @@ inline navtracker::Scenario runBusManeuveringWithHeading(
 struct GpsSweepKnob {
   double sigma_gps_m{0.0};       // injected lat/lon noise std (m)
   bool   r_inflation_on{false};  // when true, pose advertises position_std_m
+  bool   adaptive_uere{false};   // when true, adapter runs UereEstimator
 };
 
 inline navtracker::Scenario runBusClutterCrossingWithGps(
@@ -380,7 +381,9 @@ inline navtracker::Scenario runBusClutterCrossingWithGps(
   using navtracker::geo::Datum;
   Datum datum({53.5, 8.0, 0.0});
   OwnShipProvider provider;
-  OwnShipNmeaAdapter own_adapter(provider);
+  OwnShipNmeaAdapterConfig own_adapter_cfg;
+  own_adapter_cfg.enable_adaptive_uere = knob.adaptive_uere;
+  OwnShipNmeaAdapter own_adapter(provider, own_adapter_cfg);
   AisAdapter ais_adapter(datum);
   ArpaAdapter arpa_adapter(datum, provider);
   EoIrAdapter eo_adapter(datum, provider);
@@ -435,7 +438,9 @@ inline navtracker::Scenario runBusBearingOnlyMovingWithGps(
   using navtracker::geo::Datum;
   Datum datum({53.5, 8.0, 0.0});
   OwnShipProvider provider;
-  OwnShipNmeaAdapter own_adapter(provider);
+  OwnShipNmeaAdapterConfig own_adapter_cfg;
+  own_adapter_cfg.enable_adaptive_uere = knob.adaptive_uere;
+  OwnShipNmeaAdapter own_adapter(provider, own_adapter_cfg);
   EoIrAdapter eo_adapter(datum, provider);
 
   sim::SimulatedSensorBusConfig cfg;

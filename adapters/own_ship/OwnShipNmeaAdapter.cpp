@@ -45,9 +45,14 @@ bool OwnShipNmeaAdapter::ingest(std::string_view line, Timestamp t) {
   if (!parsed) return false;
   OwnShipPose pose = provider_.latest().value_or(OwnShipPose{});
   pose.time = t;
-  pose.position_std_m = position_std_m_;
 
   if (parsed->formatter == "GGA") {
+    // GGA is the only message that updates position uncertainty: clear
+    // before reapplying via the precedence rule below. Note: HDT messages
+    // intentionally DO NOT touch position_std_m — they preserve whatever
+    // the most recent GGA established, so an adaptive estimate is not
+    // clobbered by an interleaved HDT.
+    pose.position_std_m = position_std_m_;
     if (parsed->fields.size() < 5) return false;
     double lat = parseDdmm(parsed->fields[1]);
     if (parsed->fields[2] == "S") lat = -lat;
