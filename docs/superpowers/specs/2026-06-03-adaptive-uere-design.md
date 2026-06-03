@@ -82,7 +82,18 @@ v_2 = (b_x_H2, b_y_H2)
 Δv = ||v_2 − v_1||
 ```
 
-If `Δv > Δv_threshold` (config, default 0.5 m/s), the window contains a velocity change too large to attribute to GPS noise — suppress publication this window. Publication resumes when subsequent windows pass the check.
+A fixed `Δv > Δv_threshold` rule misfires under noisy windows: the LS slope of each half itself has standard error `σ_v_half = σ̂_pos / √Σ(dt_i − dt̄)²`, so at σ̂_pos = 2 m and N/2 = 4 samples at 1 Hz spacing, Δv can hit ~1.5 m/s from noise alone even with no true maneuver. The gate must be noise-aware.
+
+Define the velocity-difference noise envelope as:
+
+```
+σ_Δv = √2 · σ_v_half        (independent halves)
+gate = Δv_threshold + 3·σ_Δv
+```
+
+Suppress publication when `Δv > gate`. The configurable `Δv_threshold` (default 0.5 m/s) is then the velocity-change-over-noise margin that distinguishes a real maneuver from a noisy steady-state, not an absolute Δv cutoff.
+
+Publication resumes once a window passes the noise-aware gate. σ̂_pos used in the gate computation is the same as the value the estimator publishes when the gate is open — no chicken-and-egg, since the LS fit is well-defined whether or not we eventually publish.
 
 ### 4.5 Publish rule
 
