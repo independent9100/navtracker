@@ -1,7 +1,7 @@
 #include <cmath>
 
 #include <gtest/gtest.h>
-#include "adapters/util/Projection.hpp"
+#include "core/projection/Projection.hpp"
 
 using navtracker::projectRangeBearingToEnu;
 

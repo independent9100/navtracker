@@ -3,7 +3,7 @@
 #include <cmath>
 #include <utility>
 
-#include "adapters/util/Projection.hpp"
+#include "core/projection/Projection.hpp"
 
 namespace navtracker {
 namespace {

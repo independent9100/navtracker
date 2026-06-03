@@ -5,7 +5,7 @@
 #include <utility>
 
 #include "adapters/util/Nmea.hpp"
-#include "adapters/util/Projection.hpp"
+#include "core/projection/Projection.hpp"
 
 namespace navtracker {
 namespace {

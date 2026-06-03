@@ -40,7 +40,7 @@ add_library(navtracker_core
   core/pipeline/Tracker.cpp
   core/pipeline/MhtTracker.cpp
   adapters/own_ship/OwnShipProvider.cpp
-  adapters/util/Projection.cpp
+  core/projection/Projection.cpp
   adapters/util/Nmea.cpp
   adapters/ais/AisAdapter.cpp
   adapters/own_ship/OwnShipNmeaAdapter.cpp
