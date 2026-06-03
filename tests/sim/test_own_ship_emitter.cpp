@@ -150,3 +150,28 @@ TEST(OwnShipEmitter, HeadingNoiseShowsUpAsExpectedStddev) {
   EXPECT_NEAR(mean, 0.0, 0.3);          // sample mean near 0 with N=400
   EXPECT_NEAR(stddev, 2.0, 0.3);        // empirical stddev near σ
 }
+
+TEST(OwnShipEmitter, EmittedPoseCarriesGpsStd) {
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+
+  auto traj = std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d::Zero(),
+      Eigen::Vector2d::Zero(),
+      Timestamp::fromSeconds(0.0));
+
+  sim::OwnShipEmitterConfig cfg;
+  cfg.dt_s = 1.0;
+  cfg.gps_pos_std_m = 5.0;
+  cfg.heading_true_deg = 0.0;
+
+  sim::OwnShipEmitter emitter(adapter, datum, *traj, cfg, /*seed=*/7);
+
+  sim::EmitContext ctx;
+  ctx.now = Timestamp::fromSeconds(0.0);
+  emitter.emit(ctx);
+
+  ASSERT_TRUE(provider.latest().has_value());
+  EXPECT_DOUBLE_EQ(provider.latest()->position_std_m, 5.0);
+}

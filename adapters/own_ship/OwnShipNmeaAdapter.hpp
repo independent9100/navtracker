@@ -15,8 +15,14 @@ class OwnShipNmeaAdapter {
 
   bool ingest(std::string_view line, Timestamp t);
 
+  // Sim hook: sets the position uncertainty applied to every subsequently
+  // published pose. Sticky until overwritten. Real NMEA paths (Task 3) will
+  // derive this internally from GGA HDOP × UERE.
+  void setPositionStd(double sigma_m);
+
  private:
   OwnShipProvider& provider_;
+  double position_std_m_{0.0};
 };
 
 }  // namespace navtracker

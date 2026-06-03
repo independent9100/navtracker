@@ -23,11 +23,16 @@ double parseDdmm(const std::string& s) {
 OwnShipNmeaAdapter::OwnShipNmeaAdapter(OwnShipProvider& provider)
     : provider_(provider) {}
 
+void OwnShipNmeaAdapter::setPositionStd(double sigma_m) {
+  position_std_m_ = sigma_m;
+}
+
 bool OwnShipNmeaAdapter::ingest(std::string_view line, Timestamp t) {
   const auto parsed = parseNmea(line);
   if (!parsed) return false;
   OwnShipPose pose = provider_.latest().value_or(OwnShipPose{});
   pose.time = t;
+  pose.position_std_m = position_std_m_;
 
   if (parsed->formatter == "GGA") {
     if (parsed->fields.size() < 5) return false;

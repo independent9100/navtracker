@@ -27,6 +27,12 @@ void OwnShipEmitter::emit(const EmitContext& ctx) {
     initialised_ = true;
   }
   while (next_emit_ <= ctx.now) {
+    // Report the configured GPS position std on every published pose so the
+    // adapter stages (ARPA / EO/IR) can budget R-inflation for it. The NMEA
+    // path itself carries no native channel for this — Task 3 will derive it
+    // from GGA HDOP in production; in sim we plumb the cfg value directly.
+    adapter_.setPositionStd(cfg_.gps_pos_std_m);
+
     const TruthState truth = trajectory_.eval(next_emit_);
     const double nx = cfg_.gps_pos_std_m > 0.0 ? noise_(rng_) : 0.0;
     const double ny = cfg_.gps_pos_std_m > 0.0 ? noise_(rng_) : 0.0;

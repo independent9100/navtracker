@@ -12,6 +12,7 @@ struct OwnShipPose {
   double lon_deg{0.0};
   double alt_m{0.0};
   double heading_true_deg{0.0};
+  double position_std_m{0.0};
 };
 
 class OwnShipProvider {
