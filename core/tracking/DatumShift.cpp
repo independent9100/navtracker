@@ -1,26 +1,6 @@
 #include "core/tracking/DatumShift.hpp"
 
-#include <cmath>
-
 namespace navtracker {
-
-namespace {
-constexpr double kDeg2Rad = 3.14159265358979323846 / 180.0;
-}
-
-Eigen::Matrix2d datumAxisRotation(const geo::Datum& old_datum,
-                                  const geo::Datum& new_datum) {
-  const auto& o = old_datum.origin();
-  const auto& n = new_datum.origin();
-  const double delta_lon_rad = (n.lon_deg - o.lon_deg) * kDeg2Rad;
-  const double mean_lat_rad = 0.5 * (o.lat_deg + n.lat_deg) * kDeg2Rad;
-  const double gamma = delta_lon_rad * std::sin(mean_lat_rad);
-  const double c = std::cos(gamma), s = std::sin(gamma);
-  Eigen::Matrix2d R;
-  R << c, -s,
-       s,  c;
-  return R;
-}
 
 namespace {
 void shiftPosition(double& px, double& py,
@@ -53,7 +33,7 @@ void rotateCovarianceInPlace(Eigen::MatrixXd& cov,
 void shiftTracksOnDatumChange(TrackManager& mgr,
                               const geo::Datum& old_datum,
                               const geo::Datum& new_datum) {
-  const Eigen::Matrix2d R = datumAxisRotation(old_datum, new_datum);
+  const Eigen::Matrix2d R = geo::datumAxisRotation(old_datum, new_datum);
   for (auto& t : mgr.mutableTracks()) {
     if (t.state.size() >= 2) {
       shiftPosition(t.state(0), t.state(1), old_datum, new_datum);

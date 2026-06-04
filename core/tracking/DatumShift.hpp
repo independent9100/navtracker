@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/geo/Datum.hpp"
+#include "core/geo/AxisRotation.hpp"
 #include "core/tracking/TrackManager.hpp"
 
 namespace navtracker {
@@ -14,10 +15,5 @@ namespace navtracker {
 void shiftTracksOnDatumChange(TrackManager& mgr,
                               const geo::Datum& old_datum,
                               const geo::Datum& new_datum);
-
-// Internal helper, exposed for testing. Computes the 2x2 ENU-axis
-// rotation matrix between two datums per spec §4.3.
-Eigen::Matrix2d datumAxisRotation(const geo::Datum& old_datum,
-                                  const geo::Datum& new_datum);
 
 }  // namespace navtracker

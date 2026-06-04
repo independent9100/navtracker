@@ -15,6 +15,7 @@ add_library(navtracker_core
   core/types/MeasurementBuilders.cpp
   core/geo/Wgs84.cpp
   core/geo/Datum.cpp
+  core/geo/AxisRotation.cpp
   core/projection/Projection.cpp
   core/estimation/ConstantVelocity2D.cpp
   core/estimation/ConstantVelocity5State.cpp
