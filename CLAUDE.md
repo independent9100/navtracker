@@ -32,6 +32,30 @@ tests/     gtest unit + scenario/replay tests, metrics harness
 docs/      specs/, sensors/, algorithm docs
 ```
 
+## Library use
+
+navtracker is designed as a hexagonal-architecture library. The contract a consumer plugs against is two concrete types and two methods:
+
+- `core/types/Measurement.hpp` — what you feed in (per sensor reading).
+- `adapters/own_ship/OwnShipProvider.hpp` — `OwnShipPose` (per GPS fix).
+- `Tracker::process(Measurement)` / `OwnShipProvider::update(pose)` — the entry points.
+
+You construct Measurements directly from your parsed sensor data. The NMEA adapters in `adapters/` are one optional implementation for consumers whose input is NMEA strings — they're not the canonical path. Skip them if you have your own pipeline.
+
+Common patterns:
+
+- Range/bearing sensor (radar, EO-IR, sonar): `makeMeasurementFromRelativeBearing(...)` — adds heading, projects to ENU, composes GPS and heading covariance.
+- Absolute-position sensor (AIS, GPS-equipped target): `makeMeasurementFromEnuPosition(...)` — direct ENU input.
+- No uncertainty info from the sensor: leave covariance empty, call `applyDefaultsIfEmpty(m, pessimisticSensorDefaults())`.
+
+See `app/example.cpp` for a complete end-to-end example.
+
+### CMake targets for library consumers
+
+- `navtracker_core` — pure domain + ports + helpers. No I/O. Link this alone if you supply pre-parsed Measurements.
+- `navtracker_nmea` — NMEA-format adapters. Link this in addition when your input is NMEA strings.
+- `navtracker_sim` — synthetic measurement emitters. Tests only.
+
 ## Documentation standard (REQUIRED for every non-trivial algorithm)
 
 Document each algorithmic component with these four parts — no exceptions:

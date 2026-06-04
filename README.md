@@ -72,6 +72,20 @@ the adapter (AIVDM 6-bit decoding, raw radar protocols, image-frame
 transport) and decisions above it (COLREGS, maneuver planning, display
 rendering) live in the host program.
 
+### Library use
+
+Pre-parsed `Measurement` and `OwnShipPose` are the canonical contract. The
+NMEA adapters in `adapters/` are one optional implementation — if your
+pipeline produces parsed sensor data, skip them.
+
+See `app/example.cpp` for a complete end-to-end example. CMake targets:
+
+- `navtracker_core` — domain + ports + helpers. No I/O. Link this alone.
+- `navtracker_nmea` — NMEA-format adapters. Link when you consume NMEA.
+- `navtracker_sim` — synthetic generators. Tests only.
+
+For more details, see `CLAUDE.md`.
+
 ## The processing chain
 
 ```
@@ -147,3 +161,12 @@ math, assumptions, why-this-over-the-alternatives rationale, and a concrete
 the change via OSPA — that's how the deferred alternatives (UKF, IMM,
 particle filter, JPDA, MHT, MMSI-hint locking, OOSM retrodiction, …) become
 *evaluable* rather than just hypothesized.
+
+## Build
+
+```bash
+conan install . --build=missing --output-folder=build/ -s build_type=Release
+cmake --preset conan-release
+cmake --build build/Release --target navtracker_tests
+ctest --test-dir build/Release --output-on-failure
+```
