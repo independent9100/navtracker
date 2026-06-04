@@ -3,9 +3,12 @@
 #include <cstddef>
 #include <deque>
 #include <optional>
+#include <stdexcept>
+#include <vector>
 
 #include <Eigen/Core>
 
+#include "core/geo/Datum.hpp"
 #include "core/types/Timestamp.hpp"
 
 namespace navtracker {
@@ -22,9 +25,34 @@ struct OwnShipPose {
   bool velocity_is_valid{false};
 };
 
+// Notified when OwnShipProvider replaces its working datum (e.g. when
+// the ship has moved far enough that the local tangent plane needs to
+// be re-anchored). Consumers that hold state in ENU coordinates should
+// react to this event to keep their state consistent with the new frame.
+class IDatumChangeSink {
+ public:
+  virtual ~IDatumChangeSink() = default;
+  virtual void onDatumRecentered(const geo::Datum& old_datum,
+                                 const geo::Datum& new_datum) = 0;
+};
+
+// Policy controlling when OwnShipProvider auto-recenters its working
+// datum onto the current own-ship position.
+struct DatumRecenterPolicy {
+  bool enable_auto_recenter{true};
+  double recenter_threshold_km{30.0};
+};
+
 class OwnShipProvider {
  public:
-  explicit OwnShipProvider(std::size_t history_size = 16);
+  // Library-friendly: no datum. Lazy-init from the first update().
+  explicit OwnShipProvider(std::size_t history_size = 16,
+                           DatumRecenterPolicy policy = {});
+
+  // Backward-compat: pin the datum explicitly.
+  explicit OwnShipProvider(geo::Datum initial_datum,
+                           std::size_t history_size = 16,
+                           DatumRecenterPolicy policy = {});
 
   void update(const OwnShipPose& pose);
 
@@ -38,9 +66,24 @@ class OwnShipProvider {
   // Diagnostic: how many poses are currently stored.
   std::size_t historySize() const { return history_.size(); }
 
+  // Current working datum. Throws std::runtime_error if no datum has
+  // been established yet (no pose pushed and no explicit datum passed
+  // to the constructor).
+  const geo::Datum& datum() const;
+  bool hasDatum() const noexcept;
+
+  // Register/unregister a sink notified on datum recenter events.
+  // Lifetime of the sink is the caller's responsibility; the provider
+  // stores only the raw pointer.
+  void registerDatumSink(IDatumChangeSink* sink);
+  void unregisterDatumSink(IDatumChangeSink* sink);
+
  private:
   std::deque<OwnShipPose> history_;
   std::size_t history_size_limit_;
+  std::optional<geo::Datum> current_datum_;
+  DatumRecenterPolicy policy_;
+  std::vector<IDatumChangeSink*> sinks_;
 };
 
 }  // namespace navtracker

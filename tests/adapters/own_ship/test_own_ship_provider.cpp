@@ -1,9 +1,16 @@
 #include <gtest/gtest.h>
-#include "adapters/own_ship/OwnShipProvider.hpp"
+#include <stdexcept>
 
+#include "adapters/own_ship/OwnShipProvider.hpp"
+#include "core/geo/Datum.hpp"
+
+using navtracker::DatumRecenterPolicy;
+using navtracker::IDatumChangeSink;
 using navtracker::OwnShipPose;
 using navtracker::OwnShipProvider;
 using navtracker::Timestamp;
+using navtracker::geo::Datum;
+using navtracker::geo::Geodetic;
 
 TEST(OwnShipProvider, StartsEmptyThenReturnsLatest) {
   OwnShipProvider p;
@@ -79,4 +86,123 @@ TEST(OwnShipPoseTest, VelocityFieldsDefaultUnset) {
   EXPECT_DOUBLE_EQ(p.velocity_enu.y(), 0.0);
   EXPECT_DOUBLE_EQ(p.velocity_std_m_per_s, 0.0);
   EXPECT_FALSE(p.velocity_is_valid);
+}
+
+namespace {
+class CountingSink : public IDatumChangeSink {
+ public:
+  int call_count{0};
+  Datum last_old{Geodetic{0.0, 0.0, 0.0}};
+  Datum last_new{Geodetic{0.0, 0.0, 0.0}};
+  void onDatumRecentered(const Datum& o, const Datum& n) override {
+    ++call_count;
+    last_old = o;
+    last_new = n;
+  }
+};
+}  // namespace
+
+TEST(OwnShipProviderTest, NoDatumBeforeFirstUpdate) {
+  OwnShipProvider p;
+  EXPECT_FALSE(p.hasDatum());
+  EXPECT_THROW((void)p.datum(), std::runtime_error);
+}
+
+TEST(OwnShipProviderTest, DatumInitialisesFromFirstUpdate) {
+  OwnShipProvider p;
+  OwnShipPose pose;
+  pose.lat_deg = 53.5;
+  pose.lon_deg = 8.0;
+  p.update(pose);
+  ASSERT_TRUE(p.hasDatum());
+  // Datum at the pose -> ENU origin is (0,0).
+  const auto enu = p.datum().toEnu(Geodetic{53.5, 8.0, 0.0});
+  EXPECT_NEAR(enu.x(), 0.0, 1e-3);
+  EXPECT_NEAR(enu.y(), 0.0, 1e-3);
+}
+
+TEST(OwnShipProviderTest, DatumStaysFixedBelowThreshold) {
+  OwnShipProvider p;
+  CountingSink sink;
+  p.registerDatumSink(&sink);
+  OwnShipPose a;
+  a.lat_deg = 53.5;
+  a.lon_deg = 8.0;
+  p.update(a);
+  // Move ~10 km east at 53.5°N: 1° lon ~= 66 km, so +0.15° ~= 10 km.
+  OwnShipPose b = a;
+  b.lon_deg += 0.15;
+  p.update(b);
+  EXPECT_EQ(sink.call_count, 0);
+}
+
+TEST(OwnShipProviderTest, RecenterFiresAtThreshold) {
+  OwnShipProvider p;
+  CountingSink sink;
+  p.registerDatumSink(&sink);
+  OwnShipPose a;
+  a.lat_deg = 53.5;
+  a.lon_deg = 8.0;
+  p.update(a);
+  // Move ~50 km east: well past 30 km threshold.
+  OwnShipPose b = a;
+  b.lon_deg += 0.75;
+  p.update(b);
+  EXPECT_EQ(sink.call_count, 1);
+  const auto enu_b_in_new = p.datum().toEnu(Geodetic{b.lat_deg, b.lon_deg, 0.0});
+  // After recenter, b is at the new origin.
+  EXPECT_NEAR(enu_b_in_new.x(), 0.0, 1e-3);
+}
+
+TEST(OwnShipProviderTest, RecenterDisabledByPolicy) {
+  DatumRecenterPolicy policy;
+  policy.enable_auto_recenter = false;
+  OwnShipProvider p(16, policy);
+  CountingSink sink;
+  p.registerDatumSink(&sink);
+  OwnShipPose a;
+  a.lat_deg = 53.5;
+  a.lon_deg = 8.0;
+  OwnShipPose b = a;
+  b.lon_deg += 1.5;  // ~100 km
+  p.update(a);
+  p.update(b);
+  EXPECT_EQ(sink.call_count, 0);
+}
+
+TEST(OwnShipProviderTest, MultipleSinksAllFire) {
+  OwnShipProvider p;
+  CountingSink s1, s2;
+  p.registerDatumSink(&s1);
+  p.registerDatumSink(&s2);
+  OwnShipPose a;
+  a.lat_deg = 53.5;
+  a.lon_deg = 8.0;
+  OwnShipPose b = a;
+  b.lon_deg += 0.75;
+  p.update(a);
+  p.update(b);
+  EXPECT_EQ(s1.call_count, 1);
+  EXPECT_EQ(s2.call_count, 1);
+}
+
+TEST(OwnShipProviderTest, UnregisteredSinkDoesNotFire) {
+  OwnShipProvider p;
+  CountingSink sink;
+  p.registerDatumSink(&sink);
+  p.unregisterDatumSink(&sink);
+  OwnShipPose a;
+  a.lat_deg = 53.5;
+  a.lon_deg = 8.0;
+  OwnShipPose b = a;
+  b.lon_deg += 0.75;
+  p.update(a);
+  p.update(b);
+  EXPECT_EQ(sink.call_count, 0);
+}
+
+TEST(OwnShipProviderTest, ExplicitDatumConstructorHasDatumImmediately) {
+  Datum d(Geodetic{53.5, 8.0, 0.0});
+  OwnShipProvider p(d);
+  EXPECT_TRUE(p.hasDatum());
 }
