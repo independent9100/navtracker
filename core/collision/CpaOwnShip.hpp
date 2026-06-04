@@ -1,7 +1,5 @@
 #pragma once
 
-#include <Eigen/Core>
-
 #include "adapters/own_ship/OwnShipProvider.hpp"
 #include "core/geo/Datum.hpp"
 #include "core/types/Timestamp.hpp"
@@ -10,11 +8,12 @@
 namespace navtracker {
 
 // Build a Track from own-ship state for use with computeCpaWithUncertainty.
-// state = [ex, ey, vx, vy] in ENU; covariance = diag(σ_pos², σ_pos², 0, 0).
+// state = [ex, ey, vx, vy] in ENU; covariance = diag(sigma_pos^2, sigma_pos^2,
+// sigma_v^2, sigma_v^2), where sigma_pos is taken from pose.position_std_m and
+// sigma_v is pose.velocity_std_m_per_s when pose.velocity_is_valid is true, or
+// zero otherwise. Velocity is read from pose.velocity_enu.
 // id is the reserved sentinel TrackId{0}; not entered into TrackManager.
 Track synthesizeOwnShipTrack(const OwnShipPose& pose,
-                             const Eigen::Vector2d& velocity_enu,
-                             double sigma_pos_m,
                              Timestamp t,
                              const geo::Datum& datum);
 

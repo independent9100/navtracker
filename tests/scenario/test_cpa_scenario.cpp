@@ -101,9 +101,11 @@ TEST(CpaScenario, PerpendicularPassTwoSigmaBandContainsTruth) {
   pose.time = Timestamp::fromSeconds(kTRefSeconds);
   pose.lat_deg = 53.5;
   pose.lon_deg = 8.0;
+  pose.position_std_m = 1.0;
+  pose.velocity_enu = Eigen::Vector2d::Zero();
+  pose.velocity_is_valid = false;
   const Track own_ship = synthesizeOwnShipTrack(
-      pose, Eigen::Vector2d::Zero(), /*sigma_pos_m=*/1.0,
-      Timestamp::fromSeconds(kTRefSeconds), datum);
+      pose, Timestamp::fromSeconds(kTRefSeconds), datum);
 
   // Run CPA with uncertainty at t_ref = 10 s.
   const CpaPrediction p = computeCpaWithUncertainty(
@@ -166,9 +168,11 @@ TEST(CpaScenario, PerpendicularPassNoiseSweepReport) {
           r.sigma_pos_meas, r.sigma_own_pos);
       continue;
     }
+    pose.position_std_m = r.sigma_own_pos;
+    pose.velocity_enu = Eigen::Vector2d::Zero();
+    pose.velocity_is_valid = false;
     const Track own_ship = synthesizeOwnShipTrack(
-        pose, Eigen::Vector2d::Zero(), r.sigma_own_pos,
-        Timestamp::fromSeconds(kTRefSeconds), datum);
+        pose, Timestamp::fromSeconds(kTRefSeconds), datum);
     const CpaPrediction p = computeCpaWithUncertainty(
         own_ship, target_track, Timestamp::fromSeconds(kTRefSeconds),
         kDThresholdM);
@@ -181,4 +185,56 @@ TEST(CpaScenario, PerpendicularPassNoiseSweepReport) {
         in_2sigma ? "yes" : "no ");
   }
   SUCCEED();
+}
+
+// With a non-zero own-ship velocity uncertainty, sigma_cpa must grow versus
+// the sigma_v = 0 baseline; the predicted CPA mean is unchanged. Uses a
+// future-CPA geometry so that the Jacobian's velocity-uncertainty terms enter
+// sigma_cpa (the past-CPA branch only projects position covariance).
+TEST(CpaScenario, PerpendicularPassVelocityUncertaintyGrowsSigmaCpa) {
+  // Target at (-1000, 1000) m moving east at 10 m/s; reference time t_ref = 0.
+  // Target's CPA wrt a stationary own-ship at origin occurs at t = 100 s,
+  // CPA distance = 1000 m. So CPA is in the future and the general-case
+  // branch of computeCpaWithUncertainty runs.
+  Track target;
+  target.id = TrackId{1};
+  target.status = TrackStatus::Confirmed;
+  target.last_update = Timestamp::fromSeconds(0.0);
+  target.state.resize(4);
+  target.state << -1000.0, 1000.0, 10.0, 0.0;
+  target.covariance = Eigen::Matrix4d::Zero();
+  target.covariance(0, 0) = 1.0;
+  target.covariance(1, 1) = 1.0;
+  target.covariance(2, 2) = 0.01;
+  target.covariance(3, 3) = 0.01;
+
+  geo::Datum datum({53.5, 8.0, 0.0});
+  OwnShipPose pose_baseline;
+  pose_baseline.time = Timestamp::fromSeconds(0.0);
+  pose_baseline.lat_deg = 53.5;
+  pose_baseline.lon_deg = 8.0;
+  pose_baseline.position_std_m = 1.0;
+  pose_baseline.velocity_enu = Eigen::Vector2d::Zero();
+  pose_baseline.velocity_std_m_per_s = 0.0;
+  pose_baseline.velocity_is_valid = false;
+  const Track own_baseline = synthesizeOwnShipTrack(
+      pose_baseline, Timestamp::fromSeconds(0.0), datum);
+  const CpaPrediction p_baseline = computeCpaWithUncertainty(
+      own_baseline, target, Timestamp::fromSeconds(0.0), kDThresholdM);
+
+  OwnShipPose pose_v = pose_baseline;
+  pose_v.velocity_std_m_per_s = 1.0;
+  pose_v.velocity_is_valid = true;
+  const Track own_v = synthesizeOwnShipTrack(
+      pose_v, Timestamp::fromSeconds(0.0), datum);
+  const CpaPrediction p_v = computeCpaWithUncertainty(
+      own_v, target, Timestamp::fromSeconds(0.0), kDThresholdM);
+
+  // Both predictions hit the future-CPA branch.
+  ASSERT_GT(p_baseline.tcpa_seconds, 0.0);
+  ASSERT_GT(p_v.tcpa_seconds, 0.0);
+  // CPA mean unchanged by velocity uncertainty.
+  EXPECT_NEAR(p_v.cpa_distance_m, p_baseline.cpa_distance_m, 1e-9);
+  // sigma_cpa is strictly larger when velocity uncertainty is non-zero.
+  EXPECT_GT(p_v.sigma_cpa_m, p_baseline.sigma_cpa_m);
 }
