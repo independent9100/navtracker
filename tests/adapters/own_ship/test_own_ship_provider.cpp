@@ -72,3 +72,11 @@ TEST(OwnShipProviderTest, LatestSemanticsPreserved) {
   ASSERT_TRUE(latest.has_value());
   EXPECT_DOUBLE_EQ(latest->lat_deg, 2.0);
 }
+
+TEST(OwnShipPoseTest, VelocityFieldsDefaultUnset) {
+  OwnShipPose p;
+  EXPECT_DOUBLE_EQ(p.velocity_enu.x(), 0.0);
+  EXPECT_DOUBLE_EQ(p.velocity_enu.y(), 0.0);
+  EXPECT_DOUBLE_EQ(p.velocity_std_m_per_s, 0.0);
+  EXPECT_FALSE(p.velocity_is_valid);
+}

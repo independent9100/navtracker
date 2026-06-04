@@ -4,6 +4,8 @@
 #include <deque>
 #include <optional>
 
+#include <Eigen/Core>
+
 #include "core/types/Timestamp.hpp"
 
 namespace navtracker {
@@ -15,6 +17,9 @@ struct OwnShipPose {
   double alt_m{0.0};
   double heading_true_deg{0.0};
   double position_std_m{0.0};
+  Eigen::Vector2d velocity_enu{Eigen::Vector2d::Zero()};
+  double velocity_std_m_per_s{0.0};
+  bool velocity_is_valid{false};
 };
 
 class OwnShipProvider {
