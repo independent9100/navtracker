@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <deque>
 #include <optional>
@@ -23,6 +24,13 @@ struct OwnShipPose {
   Eigen::Vector2d velocity_enu{Eigen::Vector2d::Zero()};
   double velocity_std_m_per_s{0.0};
   bool velocity_is_valid{false};
+
+  // Multi-heading-source fields (v3 NMEA wiring). NaN = not present.
+  double gps_true_heading_deg{std::nan("")};
+  double gps_true_heading_std_deg{0.0};
+  double magnetic_heading_deg{std::nan("")};
+  double magnetic_heading_std_deg{0.0};
+  double magnetic_variation_deg{std::nan("")};
 };
 
 // Notified when OwnShipProvider replaces its working datum (e.g. when

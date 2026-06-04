@@ -34,6 +34,7 @@ add_library(navtracker_core
   core/own_ship/OwnShipVelocityEstimator.cpp
   core/collision/Cpa.cpp
   core/collision/CpaOwnShip.cpp
+  core/collision/CpaEvaluator.cpp
   core/association/Gating.cpp
   core/association/GnnAssociator.cpp
   core/association/JointEvents.cpp
@@ -74,6 +75,7 @@ add_library(navtracker_sim
   sim/ArpaEmitter.cpp
   sim/EoIrEmitter.cpp
   sim/SimulatedSensorBus.cpp
+  sim/SkewInjector.cpp
 )
 target_include_directories(navtracker_sim PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_sim PUBLIC navtracker_nmea Eigen3::Eigen)
@@ -100,16 +102,19 @@ add_executable(navtracker_tests
   tests/collision/test_cpa.cpp
   tests/collision/test_cpa_uncertainty.cpp
   tests/collision/test_cpa_synthesize_own_ship.cpp
+  tests/collision/test_cpa_evaluator.cpp
   tests/association/test_gating.cpp
   tests/association/test_gnn_associator.cpp
   tests/association/test_joint_events.cpp
   tests/association/test_jpda_associator.cpp
   tests/tracking/test_track_manager.cpp
+  tests/tracking/test_track_sink.cpp
   tests/tracking/test_track_tree.cpp
   tests/tracking/test_datum_shift.cpp
   tests/pipeline/test_reorder_buffer.cpp
   tests/ports/test_edge_ports.cpp
   tests/pipeline/test_tracker.cpp
+  tests/pipeline/test_tracker_bearing_innovation_emit.cpp
   tests/pipeline/test_mht_tracker.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
@@ -118,6 +123,8 @@ add_executable(navtracker_tests
   tests/adapters/util/test_nmea.cpp
   tests/adapters/ais/test_ais_adapter.cpp
   tests/adapters/own_ship/test_own_ship_nmea.cpp
+  tests/adapters/own_ship/test_own_ship_nmea_multi_heading.cpp
+  tests/adapters/own_ship/test_own_ship_nmea_bias_dispatch.cpp
   tests/adapters/arpa/test_arpa_adapter.cpp
   tests/adapters/eoir/test_eoir_adapter.cpp
   tests/adapters/test_end_to_end.cpp
@@ -130,6 +137,9 @@ add_executable(navtracker_tests
   tests/scenario/test_crossing.cpp
   tests/scenario/test_overtaking.cpp
   tests/scenario/test_ais_dropout.cpp
+  tests/scenario/test_reorder_buffer_e2e.cpp
+  tests/scenario/test_bearing_bias_convergence.cpp
+  tests/integration/test_full_stack_pipeline.cpp
   tests/scenario/test_filter_comparison.cpp
   tests/scenario/test_cpa_scenario.cpp
   tests/scenario/test_jpda_comparison.cpp
@@ -141,6 +151,7 @@ add_executable(navtracker_tests
   tests/sim/test_maneuvering_trajectory.cpp
   tests/sim/test_nmea_encode.cpp
   tests/sim/test_own_ship_emitter.cpp
+  tests/sim/test_skew_injector.cpp
   tests/sim/test_ais_emitter.cpp
   tests/sim/test_arpa_emitter.cpp
   tests/sim/test_arpa_clutter.cpp
@@ -161,6 +172,9 @@ add_executable(navtracker_tests
   tests/sim/test_bus_anchor_loss.cpp
   tests/sim/test_bus_cpa_uncertainty.cpp
   tests/bias/test_heading_bias_estimator.cpp
+  tests/bias/test_heading_bias_bearing_innovation.cpp
+  tests/bias/test_heading_bias_multi_source.cpp
+  tests/bias/test_heading_bias_permutations.cpp
   tests/bias/test_ais_arpa_pair_extractor.cpp
   tests/own_ship/test_uere_estimator.cpp
   tests/own_ship/test_own_ship_velocity_estimator.cpp

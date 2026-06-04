@@ -5,6 +5,8 @@
 #include <limits>
 
 #include "adapters/util/Nmea.hpp"
+#include "core/bias/HeadingBiasEstimator.hpp"
+#include "core/bias/HeadingBiasObservations.hpp"
 
 namespace navtracker {
 namespace {
@@ -29,6 +31,20 @@ double parseDdmm(const std::string& s) {
 constexpr double kEarthRadiusM = 6378137.0;
 constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
 
+double signedFromDir(double magnitude, const std::string& dir) {
+  if (dir == "E") return magnitude;
+  if (dir == "W") return -magnitude;
+  return std::nan("");
+}
+
+double wrapDegToPi(double a) {
+  double rad = a * kDegToRad;
+  constexpr double kPi = 3.14159265358979323846;
+  while (rad > kPi) rad -= 2.0 * kPi;
+  while (rad <= -kPi) rad += 2.0 * kPi;
+  return rad;
+}
+
 }  // namespace
 
 OwnShipNmeaAdapter::OwnShipNmeaAdapter(OwnShipProvider& provider,
@@ -40,6 +56,51 @@ OwnShipNmeaAdapter::OwnShipNmeaAdapter(OwnShipProvider& provider,
 
 void OwnShipNmeaAdapter::setPositionStd(double sigma_m) {
   position_std_m_ = sigma_m;
+}
+
+void OwnShipNmeaAdapter::pushGyroSample(Timestamp t, double heading_deg) {
+  if (gyro_history_count_ < gyro_history_.size()) {
+    const std::size_t idx =
+        (gyro_history_head_ + gyro_history_count_) % gyro_history_.size();
+    gyro_history_[idx].t = t;
+    gyro_history_[idx].heading_rad = wrapDegToPi(heading_deg);
+    ++gyro_history_count_;
+  } else {
+    gyro_history_[gyro_history_head_].t = t;
+    gyro_history_[gyro_history_head_].heading_rad = wrapDegToPi(heading_deg);
+    gyro_history_head_ = (gyro_history_head_ + 1) % gyro_history_.size();
+  }
+}
+
+std::optional<double> OwnShipNmeaAdapter::latestGyroRad(
+    Timestamp t, double max_age_s) const {
+  if (gyro_history_count_ == 0) return std::nullopt;
+  const std::size_t last_idx =
+      (gyro_history_head_ + gyro_history_count_ - 1) % gyro_history_.size();
+  const auto& s = gyro_history_[last_idx];
+  const double age = t.secondsSince(s.t);
+  if (age < 0.0 || age > max_age_s) return std::nullopt;
+  return s.heading_rad;
+}
+
+double OwnShipNmeaAdapter::gyroRateRadPerSec(Timestamp t,
+                                             double max_dt_s) const {
+  (void)t;
+  if (gyro_history_count_ < 2) return 0.0;
+  const std::size_t n = gyro_history_count_;
+  const std::size_t last_idx =
+      (gyro_history_head_ + n - 1) % gyro_history_.size();
+  const std::size_t prev_idx =
+      (gyro_history_head_ + n - 2) % gyro_history_.size();
+  const auto& a = gyro_history_[prev_idx];
+  const auto& b = gyro_history_[last_idx];
+  const double dt = b.t.secondsSince(a.t);
+  if (dt <= 0.0 || dt > max_dt_s) return 0.0;
+  constexpr double kPi = 3.14159265358979323846;
+  double dh = b.heading_rad - a.heading_rad;
+  while (dh > kPi) dh -= 2.0 * kPi;
+  while (dh < -kPi) dh += 2.0 * kPi;
+  return dh / dt;
 }
 
 bool OwnShipNmeaAdapter::ingest(std::string_view line, Timestamp t) {
@@ -153,12 +214,114 @@ bool OwnShipNmeaAdapter::ingest(std::string_view line, Timestamp t) {
         cfg_.sigma_sog_m_per_s * cfg_.sigma_sog_m_per_s
         + (sog_m_per_s * sigma_cog_rad) * (sog_m_per_s * sigma_cog_rad));
     rmc_buffer_.has_value = true;
+
+    // Forward magnetic variation if present (fields 9, 10).
+    if (parsed->fields.size() > 10 && !parsed->fields[9].empty()
+                                   && !parsed->fields[10].empty()) {
+      const double var_mag = std::strtod(parsed->fields[9].c_str(), nullptr);
+      const double var_signed = signedFromDir(var_mag, parsed->fields[10]);
+      if (!std::isnan(var_signed)) cached_variation_deg_ = var_signed;
+    }
+
+    if (bias_estimator_ != nullptr) {
+      const auto gyro_rad = latestGyroRad(t, cfg_.gyro_max_age_s);
+      if (!gyro_rad.has_value()) {
+        ++skip_stale_;
+      } else {
+        GyroVsGpsCogObservation obs;
+        obs.time = t;
+        obs.gyro_rad = *gyro_rad;
+        obs.gps_cog_rad = wrapDegToPi(cog_deg);
+        obs.gps_cog_std_rad = cfg_.gps_cog_sigma_deg * kDegToRad;
+        obs.sog_mps = sog_m_per_s;
+        obs.gyro_rate_rad_per_s = gyroRateRadPerSec(t, cfg_.gyro_max_age_s);
+        bias_estimator_->observe(obs);
+        ++d_cog_;
+      }
+    }
     return true;
   }
   if (parsed->formatter == "HDT") {
     if (parsed->fields.empty()) return false;
-    pose.heading_true_deg = std::strtod(parsed->fields[0].c_str(), nullptr);
+    const double heading_deg = std::strtod(parsed->fields[0].c_str(), nullptr);
+    const bool routed_gps =
+        cfg_.gps_heading_talkers.count(parsed->talker) > 0;
+    if (routed_gps) {
+      pose.gps_true_heading_deg = heading_deg;
+      pose.gps_true_heading_std_deg = cfg_.gps_heading_sigma_deg;
+      provider_.update(pose);
+      if (bias_estimator_ != nullptr) {
+        const auto gyro_rad = latestGyroRad(t, cfg_.gyro_max_age_s);
+        if (gyro_rad.has_value()) {
+          GyroVsGpsHeadingObservation obs;
+          obs.time = t;
+          obs.gyro_rad = *gyro_rad;
+          obs.gps_true_heading_rad = wrapDegToPi(heading_deg);
+          obs.gps_true_heading_std_rad =
+              cfg_.gps_heading_sigma_deg * kDegToRad;
+          bias_estimator_->observe(obs);
+          ++d_gps_hdg_;
+        } else {
+          ++skip_stale_;
+        }
+      }
+    } else {
+      pose.heading_true_deg = heading_deg;
+      pushGyroSample(t, heading_deg);
+      provider_.update(pose);
+    }
+    return true;
+  }
+  if (parsed->formatter == "HDG") {
+    if (parsed->fields.empty()) return false;
+    const double mag_raw_deg = std::strtod(parsed->fields[0].c_str(), nullptr);
+    double dev_deg = 0.0;
+    if (parsed->fields.size() > 2 && !parsed->fields[1].empty()) {
+      const double dev_mag = std::strtod(parsed->fields[1].c_str(), nullptr);
+      const double dev_signed = signedFromDir(dev_mag, parsed->fields[2]);
+      if (!std::isnan(dev_signed)) dev_deg = dev_signed;
+    }
+    const double mag_corr_deg = mag_raw_deg + dev_deg;
+    pose.magnetic_heading_deg = mag_corr_deg;
+    pose.magnetic_heading_std_deg = cfg_.magnetic_heading_sigma_deg;
+
+    double variation_deg = std::nan("");
+    if (parsed->fields.size() > 4 && !parsed->fields[3].empty()
+                                  && !parsed->fields[4].empty()) {
+      const double var_mag = std::strtod(parsed->fields[3].c_str(), nullptr);
+      variation_deg = signedFromDir(var_mag, parsed->fields[4]);
+    }
+    if (!std::isnan(variation_deg)) {
+      pose.magnetic_variation_deg = variation_deg;
+      cached_variation_deg_ = variation_deg;
+    }
     provider_.update(pose);
+
+    if (bias_estimator_ != nullptr) {
+      const auto gyro_rad = latestGyroRad(t, cfg_.gyro_max_age_s);
+      if (!gyro_rad.has_value()) {
+        ++skip_stale_;
+      } else {
+        double var_use_deg = variation_deg;
+        if (std::isnan(var_use_deg)) var_use_deg = cached_variation_deg_;
+        if (std::isnan(var_use_deg)) {
+          var_use_deg = cfg_.magnetic_variation_fallback_deg;
+        }
+        if (std::isnan(var_use_deg)) {
+          ++skip_mag_var_;
+        } else {
+          GyroVsMagneticObservation obs;
+          obs.time = t;
+          obs.gyro_rad = *gyro_rad;
+          obs.magnetic_heading_rad = wrapDegToPi(mag_corr_deg);
+          obs.magnetic_heading_std_rad =
+              cfg_.magnetic_heading_sigma_deg * kDegToRad;
+          obs.magnetic_variation_rad = var_use_deg * kDegToRad;
+          bias_estimator_->observe(obs);
+          ++d_mag_;
+        }
+      }
+    }
     return true;
   }
   return false;

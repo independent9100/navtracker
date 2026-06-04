@@ -65,6 +65,14 @@ A typical live setup:
    and feed them into `tracker.process(z)`.
 4. Read the current track set from `TrackManager::tracks()` whenever a
    downstream consumer needs it — display, collision avoidance, logging.
+   For push-based consumption, register an `ITrackSink` on the
+   `TrackManager` for lifecycle events and an `ICollisionRiskSink` on a
+   `CpaEvaluator` for CPA-derived collision alarms.
+5. Optional: wire a `HeadingBiasEstimator` to absorb heading-source
+   disagreement (gyro vs. GPS multi-antenna vs. GPS COG vs. magnetic
+   compass) into a continuously-published bias estimate; the NMEA
+   adapter dispatches the relevant observation kinds automatically when
+   `setHeadingBiasEstimator(&est)` is wired.
 
 Replay is the same code with a log reader in place of the live feeds and the
 original message timestamps preserved.
@@ -80,7 +88,11 @@ Pre-parsed `Measurement` and `OwnShipPose` are the canonical contract. The
 NMEA adapters in `adapters/` are one optional implementation — if your
 pipeline produces parsed sensor data, skip them.
 
-See `app/example.cpp` for a complete end-to-end example. For output format, see `docs/output-contract.md`. CMake targets:
+See `app/example.cpp` for the canonical drain pattern and
+`tests/integration/test_full_stack_pipeline.cpp` for the assembled
+library exercised end-to-end (NMEA in, lifecycle events + collision
+alerts out, multi-source heading-bias estimation). For output format,
+see `docs/output-contract.md`. CMake targets:
 
 - `navtracker_core` — domain + ports + helpers. No I/O. Link this alone.
 - `navtracker_nmea` — NMEA-format adapters. Link when you consume NMEA.

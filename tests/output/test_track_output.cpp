@@ -259,7 +259,35 @@ TEST(TrackOutputTest, TrackOutputFor4DTrack) {
   // σ_vel = 0.5 → v_cov = 0.25 * I. σ_sog = sqrt(0.25) = 0.5.
   EXPECT_NEAR(out.velocity.sigma_sog_m_per_s, 0.5, 1e-12);
 
-  // covariance_is_default is the v1 default (false until forwarded).
+  // No SourceTouch with the flag set → false.
+  EXPECT_FALSE(out.covariance_is_default);
+}
+
+TEST(TrackOutputTest, CovarianceIsDefaultForwardedFromRecentContributions) {
+  const Datum datum(Geodetic{53.5, 8.0, 0.0});
+  Track t = makeTrack(1000.0, 500.0, 5.0, 0.0, /*sigma_pos_m=*/5.0,
+                      /*sigma_vel_m_per_s=*/0.5);
+  Track::SourceTouch clean;
+  clean.covariance_is_default = false;
+  Track::SourceTouch dirty;
+  dirty.covariance_is_default = true;
+  t.recent_contributions.push_back(clean);
+  t.recent_contributions.push_back(dirty);
+
+  const TrackOutput out = toTrackOutput(t, datum);
+  EXPECT_TRUE(out.covariance_is_default);
+}
+
+TEST(TrackOutputTest, CovarianceIsDefaultFalseWhenAllContributionsAreReal) {
+  const Datum datum(Geodetic{53.5, 8.0, 0.0});
+  Track t = makeTrack(1000.0, 500.0, 5.0, 0.0, 5.0, 0.5);
+  Track::SourceTouch a, b;
+  a.covariance_is_default = false;
+  b.covariance_is_default = false;
+  t.recent_contributions.push_back(a);
+  t.recent_contributions.push_back(b);
+
+  const TrackOutput out = toTrackOutput(t, datum);
   EXPECT_FALSE(out.covariance_is_default);
 }
 

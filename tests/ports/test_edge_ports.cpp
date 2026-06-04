@@ -2,14 +2,14 @@
 
 #include <gtest/gtest.h>
 #include "ports/ISensorAdapter.hpp"
-#include "ports/ITrackSink.hpp"
+#include "ports/ITrackSnapshotSink.hpp"
 
 namespace {
 class FakeAdapter : public navtracker::ISensorAdapter {
  public:
   std::vector<navtracker::Measurement> poll() override { return {}; }
 };
-class FakeSink : public navtracker::ITrackSink {
+class FakeSink : public navtracker::ITrackSnapshotSink {
  public:
   void onTracks(const std::vector<navtracker::Track>&,
                 navtracker::Timestamp) override {
@@ -25,7 +25,7 @@ TEST(EdgePorts, FakesImplementAndDispatch) {
   EXPECT_TRUE(ar.poll().empty());
 
   FakeSink s;
-  navtracker::ITrackSink& sr = s;
+  navtracker::ITrackSnapshotSink& sr = s;
   sr.onTracks({}, navtracker::Timestamp::fromSeconds(1.0));
   EXPECT_EQ(s.calls, 1);
 }

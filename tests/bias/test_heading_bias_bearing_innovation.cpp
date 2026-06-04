@@ -1,0 +1,117 @@
+#include <cmath>
+#include <cstdint>
+#include <random>
+
+#include <gtest/gtest.h>
+
+#include "core/bias/HeadingBiasEstimator.hpp"
+#include "core/types/Ids.hpp"
+#include "core/types/Timestamp.hpp"
+#include "ports/IBearingInnovationSink.hpp"
+
+using namespace navtracker;
+
+namespace {
+
+BearingInnovation makeBI(double t_s, double r_rad, double state_var_rad2,
+                         double R_rad2, double range_m,
+                         std::uint64_t tid = 1) {
+  BearingInnovation obs;
+  obs.time = Timestamp::fromSeconds(t_s);
+  obs.track_id = TrackId{tid};
+  obs.innovation_rad = r_rad;
+  obs.predicted_state_var_rad2 = state_var_rad2;
+  obs.variance_rad2 = state_var_rad2 + R_rad2;
+  obs.range_m = range_m;
+  return obs;
+}
+
+constexpr double kBiasTrue = 0.0349;  // ~2 deg
+
+}  // namespace
+
+TEST(BiasObsBearingInnovation, SingleObservationAppliesScalarKfUpdate) {
+  HeadingBiasEstimatorConfig cfg;
+  cfg.initial_bias_rad = 0.0;
+  HeadingBiasEstimator est(cfg);
+  const double r = 0.02;
+  const double R = 1e-4;
+  const double state_var = 1e-5;
+  const auto obs = makeBI(1.0, r, state_var, R, 200.0);
+
+  const double p0 = est.varianceRad2();
+  est.observe(obs);
+
+  const double S = state_var + R;
+  const double s_full = S + p0;
+  const double K_expected = p0 / s_full;
+  EXPECT_NEAR(est.biasRad(), K_expected * r, 1e-9);
+  EXPECT_NEAR(est.varianceRad2(), (1.0 - K_expected) * p0, 1e-9);
+  EXPECT_EQ(est.acceptedBearingObs(), 1u);
+}
+
+TEST(BiasObsBearingInnovation, ManyDrawsConvergeToTruthWithin3Sigma) {
+  HeadingBiasEstimatorConfig cfg;
+  HeadingBiasEstimator est(cfg);
+  std::mt19937_64 rng(1234);
+  const double R = 1e-4;
+  const double state_var = 1e-5;
+  std::normal_distribution<double> noise(0.0, std::sqrt(state_var + R));
+  const int N = 200;
+  for (int i = 0; i < N; ++i) {
+    const double r = kBiasTrue + noise(rng);
+    est.observe(makeBI(static_cast<double>(i + 1) * 0.1,
+                       r, state_var, R, 500.0));
+  }
+  EXPECT_LT(std::abs(est.biasRad() - kBiasTrue),
+            3.0 * std::sqrt(est.varianceRad2()));
+  EXPECT_LT(est.varianceRad2(), cfg.initial_variance_rad2);
+  EXPECT_GT(est.acceptedBearingObs(), 0u);
+}
+
+TEST(BiasObsBearingInnovation, RangeGateRejectsShortRange) {
+  HeadingBiasEstimatorConfig cfg;
+  HeadingBiasEstimator est(cfg);
+  const double b_before = est.biasRad();
+  est.observe(makeBI(1.0, 0.05, 1e-5, 1e-4, /*range=*/10.0));
+  EXPECT_EQ(est.biasRad(), b_before);
+  EXPECT_EQ(est.acceptedBearingObs(), 0u);
+  EXPECT_EQ(est.rejectedByRange(), 1u);
+}
+
+TEST(BiasObsBearingInnovation, StateVarGateRejectsStateDominated) {
+  HeadingBiasEstimatorConfig cfg;
+  HeadingBiasEstimator est(cfg);
+  const double R = 1e-4;
+  const double state_var = 10.0 * R;
+  est.observe(makeBI(1.0, 0.02, state_var, R, 500.0));
+  EXPECT_EQ(est.acceptedBearingObs(), 0u);
+  EXPECT_EQ(est.rejectedByStateVar(), 1u);
+}
+
+TEST(BiasObsBearingInnovation, OutlierGateRejectsHugeInnovation) {
+  HeadingBiasEstimatorConfig cfg;
+  HeadingBiasEstimator est(cfg);
+  const double R = 1e-4;
+  const double state_var = 1e-5;
+  const double S = state_var + R;
+  const double sigma = std::sqrt(S + est.varianceRad2());
+  const double r = 10.0 * sigma;
+  est.observe(makeBI(1.0, r, state_var, R, 500.0));
+  EXPECT_EQ(est.acceptedBearingObs(), 0u);
+  EXPECT_EQ(est.rejectedByOutlier(), 1u);
+}
+
+TEST(BiasObsBearingInnovation, LargeInnovationAppliesUnderLooseGate) {
+  // Bias estimator should treat the wrapped value linearly (no further
+  // wrap inside observe()) — pass r close to but inside (-π, π].
+  HeadingBiasEstimatorConfig cfg;
+  cfg.initial_bias_rad = 0.0;
+  cfg.initial_variance_rad2 = 1.0;  // wide prior so K~1, easy to detect
+  cfg.bi_outlier_sigma = 1000.0;    // disable outlier gate for this case
+  HeadingBiasEstimator est(cfg);
+  const double r_in = 3.0;          // < π, would be rejected at default 5σ
+  est.observe(makeBI(1.0, r_in, 1e-5, 1e-4, 500.0));
+  EXPECT_GT(est.biasRad(), 0.5);    // moved substantially toward r_in
+  EXPECT_EQ(est.acceptedBearingObs(), 1u);
+}

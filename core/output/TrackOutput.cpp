@@ -71,7 +71,13 @@ TrackOutput toTrackOutput(const Track& track,
   out.last_update = track.last_update;
   out.attributes = track.attributes;
   out.contributing_sources = track.contributing_sources;
-  out.covariance_is_default = false;  // v1: forwarding from recent_contributions deferred
+  out.covariance_is_default = false;
+  for (const auto& touch : track.recent_contributions) {
+    if (touch.covariance_is_default) {
+      out.covariance_is_default = true;
+      break;
+    }
+  }
 
   Eigen::Vector2d pos_enu = Eigen::Vector2d::Zero();
   Eigen::Matrix2d pos_cov = Eigen::Matrix2d::Zero();

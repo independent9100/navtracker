@@ -70,6 +70,38 @@ void HeadingBiasEstimator::observe(const AisArpaPairObservation& obs) {
   has_any_update_ = true;
 }
 
+void HeadingBiasEstimator::observe(const BearingInnovation& obs) {
+  predictTo(obs.time);
+
+  if (obs.range_m < cfg_.bi_min_range_m) {
+    ++rej_range_;
+    return;
+  }
+
+  // S = state_var + R, so R = variance_rad2 - predicted_state_var_rad2.
+  const double R = obs.variance_rad2 - obs.predicted_state_var_rad2;
+  if (R <= 0.0 ||
+      obs.predicted_state_var_rad2 > cfg_.bi_state_var_ratio_max * R) {
+    ++rej_state_var_;
+    return;
+  }
+
+  const double s = obs.variance_rad2 + p_b_;
+  const double sigma = std::sqrt(s);
+  if (std::abs(obs.innovation_rad) > cfg_.bi_outlier_sigma * sigma) {
+    ++rej_outlier_;
+    return;
+  }
+
+  const double y = wrapToPi(obs.innovation_rad - b_hat_);
+  const double k = p_b_ / s;
+  b_hat_ += k * y;
+  p_b_ = (1.0 - k) * p_b_;
+  last_update_ = obs.time;
+  has_any_update_ = true;
+  ++accepted_bi_;
+}
+
 HeadingBiasEstimate HeadingBiasEstimator::current() const {
   HeadingBiasEstimate est;
   est.bias_rad = b_hat_;
@@ -83,6 +115,77 @@ HeadingBiasEstimate HeadingBiasEstimator::current() const {
   const bool fresh = age_s <= cfg_.stale_seconds;
   est.is_published = tight && fresh;
   return est;
+}
+
+namespace {
+
+bool applyScalarUpdate(double& b_hat, double& p_b,
+                       double measurement, double R,
+                       double outlier_sigma,
+                       std::size_t& rej_outlier) {
+  const double s = R + p_b;
+  const double sigma = std::sqrt(s);
+  const double y = wrapToPi(measurement - b_hat);
+  if (std::abs(y) > outlier_sigma * sigma) {
+    ++rej_outlier;
+    return false;
+  }
+  const double k = p_b / s;
+  b_hat += k * y;
+  p_b = (1.0 - k) * p_b;
+  return true;
+}
+
+}  // namespace
+
+void HeadingBiasEstimator::observe(const GyroVsGpsHeadingObservation& obs) {
+  predictTo(obs.time);
+  const double measurement =
+      wrapToPi(obs.gyro_rad - obs.gps_true_heading_rad);
+  const double R = obs.gps_true_heading_std_rad * obs.gps_true_heading_std_rad;
+  if (applyScalarUpdate(b_hat_, p_b_, measurement, R,
+                        cfg_.mhs_outlier_sigma, rej_mhs_outlier_)) {
+    last_update_ = obs.time;
+    has_any_update_ = true;
+    ++acc_gps_hdg_;
+  }
+}
+
+void HeadingBiasEstimator::observe(const GyroVsGpsCogObservation& obs) {
+  predictTo(obs.time);
+  if (obs.sog_mps < cfg_.cog_min_sog_mps) {
+    ++rej_cog_sog_;
+    return;
+  }
+  if (std::abs(obs.gyro_rate_rad_per_s) > cfg_.cog_max_gyro_rate_rad_per_s) {
+    ++rej_cog_rate_;
+    return;
+  }
+  const double measurement = wrapToPi(obs.gyro_rad - obs.gps_cog_rad);
+  const double R = obs.gps_cog_std_rad * obs.gps_cog_std_rad
+                 + cfg_.cog_crab_budget_rad * cfg_.cog_crab_budget_rad;
+  if (applyScalarUpdate(b_hat_, p_b_, measurement, R,
+                        cfg_.mhs_outlier_sigma, rej_mhs_outlier_)) {
+    last_update_ = obs.time;
+    has_any_update_ = true;
+    ++acc_cog_;
+  }
+}
+
+void HeadingBiasEstimator::observe(const GyroVsMagneticObservation& obs) {
+  predictTo(obs.time);
+  if (!obs.magnetic_variation_rad.has_value()) return;
+  const double mag_corrected =
+      obs.magnetic_heading_rad + *obs.magnetic_variation_rad;
+  const double measurement = wrapToPi(obs.gyro_rad - mag_corrected);
+  const double R = obs.magnetic_heading_std_rad * obs.magnetic_heading_std_rad
+                 + cfg_.mag_deviation_budget_rad * cfg_.mag_deviation_budget_rad;
+  if (applyScalarUpdate(b_hat_, p_b_, measurement, R,
+                        cfg_.mhs_outlier_sigma, rej_mhs_outlier_)) {
+    last_update_ = obs.time;
+    has_any_update_ = true;
+    ++acc_mag_;
+  }
 }
 
 }  // namespace navtracker

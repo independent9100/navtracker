@@ -86,6 +86,55 @@ See `docs/output-contract.md` for unit semantics, validity rules,
 and a worked example. See `app/example.cpp` for the canonical
 drain pattern.
 
+### Push-based events (lifecycle and collision risk)
+
+Two optional sinks turn the library from pull to push for the two
+operator-facing concerns:
+
+- `ITrackSink` (`ports/ITrackSink.hpp`) — `onTrackInitiated`,
+  `onTrackConfirmed`, `onTrackUpdated`, `onTrackDeleted`. Registered
+  via `TrackManager::setTrackSink(...)`. Lifecycle events fire from
+  the manager; updates flow through `recordUpdated`, which the Tracker
+  calls after each successful `estimator.update`.
+- `ICollisionRiskSink` (`ports/ICollisionRiskSink.hpp`) — receives
+  `CollisionRiskEvent {Entered/Exited/Updated}` per (own-ship × track)
+  pair, with the full `CpaPrediction` payload. Emitted by
+  `CpaEvaluator` (`core/collision/CpaEvaluator.hpp`) walking pairs
+  each `evaluate(t)` call with hysteresis (`enter_probability`,
+  `exit_probability`).
+
+Both sinks are nullable; null = today's behavior, no overhead.
+Pull-based access via `mgr.tracks()` / `toTrackOutput(...)` stays
+fully supported alongside.
+
+### Heading-bias estimator (multi-source)
+
+`HeadingBiasEstimator` (`core/bias/HeadingBiasEstimator.hpp`) is a
+scalar KF on a single gyro-bias state `b` with random-walk dynamics.
+It accepts five observation kinds, any subset can be wired:
+
+| Kind | Source | Math |
+|---|---|---|
+| `AisArpaPairObservation` | v1 AIS↔ARPA bearing pair | direct b measurement at the pair's range |
+| `BearingInnovation` | v2 Tracker emission via `IBearingInnovationSink` | r = wrap(β_obs − β_pred); R = HᵀPH + R_meas; needs an anchor |
+| `GyroVsGpsHeadingObservation` | v3 multi-antenna GPS | r = gyro − gps_hdg; R = σ_gps² |
+| `GyroVsGpsCogObservation` | v3 GPS COG | r = gyro − cog; R = σ_cog² + σ_crab²; SOG and turn-rate gates |
+| `GyroVsMagneticObservation` | v3 magnetic compass | r = gyro − (mag + variation); R = σ_mag² + σ_deviation² |
+
+`OwnShipNmeaAdapter` dispatches the three v3 kinds automatically when
+wired via `setHeadingBiasEstimator(&est)` and `gps_heading_talkers`
+config. v1 AIS-pair flow is via `AisArpaPairExtractor`. v2 bearing
+innovation flow is via `Tracker::setBearingInnovationSink(&est)`. Any
+combination works; sources can come and go mid-mission.
+
+### End-to-end example
+
+`tests/integration/test_full_stack_pipeline.cpp` is the canonical
+assembled example: synthetic NMEA stream + AIS-style target
+measurements → adapter → bias estimator → Tracker → CPA evaluator
+→ recording sinks. Asserts lifecycle, bias convergence, CPA
+Entered/Exited transitions across a head-on passing scenario.
+
 ### CMake targets for library consumers
 
 - `navtracker_core` — pure domain + ports + helpers. No I/O. Link this alone if you supply pre-parsed Measurements.

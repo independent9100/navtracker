@@ -1,11 +1,60 @@
 #include "core/pipeline/Tracker.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
+#include "core/estimation/MeasurementModels.hpp"
 #include "core/tracking/TrackManager.hpp"
 
 namespace navtracker {
+namespace {
+
+// `weight` is the JPDA β for this measurement (1.0 for hard matches). The
+// effective observation variance is scaled by 1/weight to encode "this
+// measurement only β-likely came from this track" — small β means the
+// estimator's KF gain is small, equivalent to under-weighting the
+// observation. Both state_var and R are scaled identically so the
+// state-dominance gate ratio (and hence acceptance) is preserved.
+void emitBearingInnovationIfApplicable(IBearingInnovationSink* sink,
+                                       const Track& tr_pred,
+                                       const Measurement& z,
+                                       double weight = 1.0) {
+  if (sink == nullptr) return;
+  if (weight <= 0.0) return;
+  if (z.model != MeasurementModel::Bearing2D &&
+      z.model != MeasurementModel::RangeBearing2D) {
+    return;
+  }
+  const int bidx = (z.model == MeasurementModel::Bearing2D) ? 0 : 1;
+  if (z.value.size() <= bidx) return;
+  const auto pred = predictMeasurement(z.model, tr_pred.state,
+                                       z.sensor_position_enu);
+  if (pred.H.rows() <= bidx) return;
+  const double beta_pred = pred.z_pred(bidx);
+  const double beta_obs  = z.value(bidx);
+  const double r = wrapAngle(beta_obs - beta_pred);
+  const Eigen::RowVectorXd Hb = pred.H.row(bidx);
+  const double state_var =
+      (Hb * tr_pred.covariance * Hb.transpose())(0, 0);
+  const double R_bb =
+      (z.covariance.rows() > bidx && z.covariance.cols() > bidx)
+          ? z.covariance(bidx, bidx)
+          : 0.0;
+  const double S = (state_var + R_bb) / weight;
+  const double dx = tr_pred.state(0) - z.sensor_position_enu.x();
+  const double dy = tr_pred.state(1) - z.sensor_position_enu.y();
+  BearingInnovation obs;
+  obs.time = z.time;
+  obs.track_id = tr_pred.id;
+  obs.innovation_rad = r;
+  obs.variance_rad2 = S;
+  obs.predicted_state_var_rad2 = state_var / weight;
+  obs.range_m = std::hypot(dx, dy);
+  sink->onBearingInnovation(obs);
+}
+
+}  // namespace
 
 Tracker::Tracker(const IEstimator& estimator,
                  const IDataAssociator& associator,
@@ -26,6 +75,7 @@ void Tracker::process(const Measurement& z) {
   if (!result.matches.empty()) {
     const std::size_t ti = result.matches.front().first;
     Track& tr = manager_.mutableTracks()[ti];
+    emitBearingInnovationIfApplicable(bearing_innov_sink_, tr, z);
     estimator_.update(tr, z);
     {
       Track::SourceTouch touch;
@@ -40,6 +90,7 @@ void Tracker::process(const Measurement& z) {
       }
       touch.sensor_position_enu = z.sensor_position_enu;
       touch.own_position_std_m = z.sensor_position_std_m;
+      touch.covariance_is_default = z.covariance_is_default;
       tr.recent_contributions.push_back(std::move(touch));
     }
     bool has_src = false;
@@ -53,6 +104,7 @@ void Tracker::process(const Measurement& z) {
     const TrackId id = tr.id;
     manager_.recordHit(id);
     manager_.noteObservation(id, z.time);
+    manager_.recordUpdated(id, z.time);
   } else {
     Track seed = estimator_.initiate(z);
     manager_.add(seed, z.time);
@@ -99,6 +151,10 @@ void Tracker::processBatch(const std::vector<Measurement>& scan) {
       for (std::size_t k = 0; k < betas_vec.size(); ++k)
         betas_eig(k) = betas_vec[k];
       Track& tr = manager_.mutableTracks()[ti];
+      for (std::size_t k = 0; k < gated.size(); ++k) {
+        emitBearingInnovationIfApplicable(bearing_innov_sink_, tr,
+                                          gated[k], betas_vec[k]);
+      }
       estimator_.softUpdate(tr, gated, betas_eig, result.beta_0(ti));
       for (const auto& gz : gated) {
         Track::SourceTouch touch;
@@ -113,17 +169,20 @@ void Tracker::processBatch(const std::vector<Measurement>& scan) {
         }
         touch.sensor_position_enu = gz.sensor_position_enu;
         touch.own_position_std_m = gz.sensor_position_std_m;
+        touch.covariance_is_default = gz.covariance_is_default;
         tr.recent_contributions.push_back(std::move(touch));
       }
       const TrackId id = tr.id;
       manager_.recordHit(id);
       manager_.noteObservation(id, t);
+      manager_.recordUpdated(id, t);
     }
   } else {
     for (const auto& m : result.matches) {
       const std::size_t ti = m.first;
       const std::size_t mi = m.second;
       Track& tr = manager_.mutableTracks()[ti];
+      emitBearingInnovationIfApplicable(bearing_innov_sink_, tr, scan[mi]);
       estimator_.update(tr, scan[mi]);
       {
         const Measurement& z = scan[mi];
@@ -149,6 +208,7 @@ void Tracker::processBatch(const std::vector<Measurement>& scan) {
       const TrackId id = tr.id;
       manager_.recordHit(id);
       manager_.noteObservation(id, t);
+      manager_.recordUpdated(id, t);
       meas_used[mi] = true;
     }
   }

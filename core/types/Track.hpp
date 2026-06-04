@@ -59,6 +59,7 @@ struct Track {
     Eigen::Matrix2d covariance{Eigen::Matrix2d::Identity()};
     Eigen::Vector2d sensor_position_enu{Eigen::Vector2d::Zero()};
     double own_position_std_m{0.0};
+    bool covariance_is_default{false};
   };
   std::vector<SourceTouch> recent_contributions;
 };

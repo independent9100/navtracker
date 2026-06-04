@@ -21,7 +21,7 @@ In scope:
 - Validation via extended §14.9 sweep scenarios with an added AIS anchor.
 
 Out of scope (deferred):
-- **Multi-track bearing-innovation observer** (Option 2 from brainstorming). The `IHeadingBiasProvider` interface is forward-compatible so a future estimator can plug in without adapter changes.
+- **Multi-track bearing-innovation observer** (Option 2 from brainstorming) — **landed 2026-06-04 as v2; see `2026-06-04-multi-track-bearing-bias-observer-design.md`**. Plugged in via a sibling `observe(BearingInnovation)` on the same `HeadingBiasEstimator` (single fused estimator), exactly as the v1 interface anticipated.
 - **Per-sensor / per-gyro bias**. Single global `b` for now.
 - **AIS-vs-EOIR** as an independent anchor. EOIR shares `b`, so it isn't independent.
 
@@ -241,13 +241,18 @@ Single scenario: AIS active 0–60 s, drops 60–120 s. Verify:
 
 Append "Heading bias estimator (2026-06-03)" section with sweep tables and verdict paragraph quantifying recovered accuracy beyond R-inflation-only.
 
+## Landed (post-v1)
+
+- **Multi-track bearing-innovation observer** (Option 2 from brainstorming) — landed 2026-06-04 as v2. The same `HeadingBiasEstimator` grew `observe(BearingInnovation)`; `Tracker` emits innovations via a new `IBearingInnovationSink` after each Bearing2D / RangeBearing2D hard-match update. Three observability gates (range, state-variance dominance, outlier) protect against state-error contamination. See `2026-06-04-multi-track-bearing-bias-observer-design.md`. NB the headline test surfaced a known degeneracy: with single-target bearing-only sensing the EKF state absorbs the bias and innovations vanish — the v2 estimator still needs *some* unbiased anchor source (Position2D from any non-bearing-affected sensor) in the scene to converge. The eval-log "zero-AIS" gap closes when any non-bearing-bias source (GPS, lidar, AIS) is present; pure bearing-only remains structurally unobservable.
+- **Multi-heading-source bias observations** — landed 2026-06-04 as v3. `HeadingBiasEstimator` grew three new `observe()` overloads (GPS multi-antenna heading, GPS COG, magnetic compass) with per-source gates and inflated noise budgets. Each source is optional; the estimator handles any subset of {none, GPS-hdg, COG, mag} including hot-swap mid-mission. Single scalar `b` retained; per-source offsets (crab, variation, deviation) modeled as inflated R. See `2026-06-04-multi-heading-sources-bias-design.md`. NMEA wiring (HDG parser, talker-ID-based HDT routing, RMC variation forwarding) is deferred to a follow-up.
+
 ## 11. Ways to improve / what to test next
 
-1. **Multi-track bearing-innovation observer** (Option 2 from brainstorming). Sits in the same `HeadingBiasEstimator` or alongside; consumes ARPA bearing innovations from all tracks, gated by an observability check on track-bearing geometry. Earns its keep in zero-AIS scenes.
-2. **First-order Gauss-Markov dynamics** instead of random walk — bounded excursions, one extra hyperparameter α. Probably small win unless drift is large and mean-reverting in practice.
-3. **Per-sensor bias** — separate b for the navigation gyro versus a stabilized camera pedestal. Likely only matters if EO/IR is mounted independently with its own IMU.
-4. **Cross-validate against GPS-derived heading-over-ground** when own-ship is moving — independent check on `b̂` without needing target AIS at all.
-5. **Sensitivity sweep** on `Q_b` and `P_b_publish_threshold` — verify default doesn't over-trust or over-discount real-world drift rates.
+1. **First-order Gauss-Markov dynamics** instead of random walk — bounded excursions, one extra hyperparameter α. Probably small win unless drift is large and mean-reverting in practice.
+2. **Per-sensor bias** — separate b for the navigation gyro versus a stabilized camera pedestal. Likely only matters if EO/IR is mounted independently with its own IMU.
+3. **Cross-validate against GPS-derived heading-over-ground** when own-ship is moving — independent check on `b̂` without needing target AIS at all.
+4. **Sensitivity sweep** on `Q_b` and `P_b_publish_threshold` — verify default doesn't over-trust or over-discount real-world drift rates.
+5. **Joint bias-state EKF augmentation** — make `b` a state in the EKF rather than a separate scalar filter, so single-target bearing-only scenes become observable. Heavy: invasive to `IEstimator` and breaks the v2 sink interface.
 
 ## 12. Decision summary
 

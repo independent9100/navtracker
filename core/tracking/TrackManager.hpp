@@ -6,6 +6,7 @@
 
 #include "core/types/Timestamp.hpp"
 #include "core/types/Track.hpp"
+#include "ports/ITrackSink.hpp"
 
 namespace navtracker {
 
@@ -31,6 +32,14 @@ class TrackManager {
   // Advance every active track to `to` via the estimator.
   void predictAll(const IEstimator& estimator, Timestamp to);
 
+  // Optional lifecycle event sink. Null = no-op (today's behavior).
+  void setTrackSink(ITrackSink* sink) { sink_ = sink; }
+
+  // Notify the sink (if any) that a track's kinematic state has changed.
+  // Called by Tracker after a successful estimator.update. Pure event
+  // fire — no state mutation here.
+  void recordUpdated(TrackId id, Timestamp t);
+
   const std::vector<Track>& tracks() const { return tracks_; }
   std::vector<Track>& mutableTracks() { return tracks_; }
   std::size_t size() const { return tracks_.size(); }
@@ -48,6 +57,7 @@ class TrackManager {
   std::vector<Track> tracks_;
   std::vector<Counters> counters_;
   std::vector<Timestamp> last_observation_;
+  ITrackSink* sink_{nullptr};
 };
 
 }  // namespace navtracker

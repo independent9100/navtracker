@@ -14,6 +14,9 @@ TrackId TrackManager::add(const Track& track, Timestamp first_observation) {
   tracks_.push_back(t);
   counters_.push_back(Counters{1, 0});
   last_observation_.push_back(first_observation);
+  if (sink_ != nullptr) {
+    sink_->onTrackInitiated({t.id, first_observation, t.status});
+  }
   return t.id;
 }
 
@@ -29,8 +32,12 @@ void TrackManager::recordHit(TrackId id) {
   if (i < 0) return;
   counters_[i].hits += 1;
   counters_[i].misses = 0;
+  const bool was_unconfirmed = tracks_[i].status != TrackStatus::Confirmed;
   if (counters_[i].hits >= confirm_hits_) {
     tracks_[i].status = TrackStatus::Confirmed;
+    if (was_unconfirmed && sink_ != nullptr) {
+      sink_->onTrackConfirmed({id, last_observation_[i], tracks_[i].status});
+    }
   }
 }
 
@@ -40,6 +47,9 @@ void TrackManager::recordMiss(TrackId id) {
   counters_[i].misses += 1;
   counters_[i].hits = 0;
   if (counters_[i].misses >= delete_misses_) {
+    if (sink_ != nullptr) {
+      sink_->onTrackDeleted({id, last_observation_[i], tracks_[i].status});
+    }
     tracks_.erase(tracks_.begin() + i);
     counters_.erase(counters_.begin() + i);
     last_observation_.erase(last_observation_.begin() + i);
@@ -64,6 +74,13 @@ void TrackManager::predictAll(const IEstimator& estimator, Timestamp to) {
   for (auto& t : tracks_) {
     estimator.predict(t, to);
   }
+}
+
+void TrackManager::recordUpdated(TrackId id, Timestamp t) {
+  if (sink_ == nullptr) return;
+  const int i = index(id);
+  if (i < 0) return;
+  sink_->onTrackUpdated({id, t, tracks_[i].status});
 }
 
 }  // namespace navtracker
