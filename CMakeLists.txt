@@ -50,6 +50,7 @@ add_library(navtracker_core
   core/scenario/HarnessBatched.cpp
   core/scenario/HarnessBatchedMht.cpp
   core/scenario/Metrics.cpp
+  core/output/TrackOutput.cpp
   adapters/own_ship/OwnShipProvider.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
