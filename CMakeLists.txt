@@ -164,6 +164,7 @@ add_executable(navtracker_tests
   tests/bias/test_ais_arpa_pair_extractor.cpp
   tests/own_ship/test_uere_estimator.cpp
   tests/own_ship/test_own_ship_velocity_estimator.cpp
+  tests/output/test_track_output.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
