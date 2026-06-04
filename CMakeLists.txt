@@ -134,6 +134,7 @@ add_executable(navtracker_tests
   tests/scenario/test_mht_comparison.cpp
   tests/scenario/test_multi_seed_sweep.cpp
   tests/scenario/test_truth_tick_ospa.cpp
+  tests/scenario/test_datum_recenter_scenario.cpp
   tests/sim/test_truth_trajectory.cpp
   tests/sim/test_maneuvering_trajectory.cpp
   tests/sim/test_nmea_encode.cpp
