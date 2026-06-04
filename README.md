@@ -52,15 +52,17 @@ the pieces it wants and feeds measurements through.
 
 A typical live setup:
 
-1. Construct a `Datum` for the operating area, a motion model
-   (`ConstantVelocity2D`), an estimator (`EkfEstimator`), an associator
-   (`GnnAssociator`), a `TrackManager`, and a `Tracker` that wires them
-   together.
-2. Construct the sensor adapters (`AisAdapter`, `ArpaAdapter`, `EoIrAdapter`,
-   `OwnShipNmeaAdapter`) pointing at the same `Datum` / `OwnShipProvider`.
-3. As raw input arrives, hand each item to its adapter, drain the adapter's
-   `poll()` into a `ReorderBuffer`, then feed the buffer's released
-   measurements into `tracker.process(z)`.
+1. Construct a motion model (`ConstantVelocity2D`), an estimator
+   (`EkfEstimator`), an associator (`GnnAssociator`), an `OwnShipProvider`, a
+   `TrackManager`, and a `Tracker` that wires them together. The `OwnShipProvider`
+   automatically manages the working datum (local tangent plane origin), initializing
+   it from the first own-ship pose and auto-recentering when the vessel moves > 30 km.
+2. Wire an `IDatumChangeSink` that calls `shiftTracksOnDatumChange(...)` to
+   keep your track state consistent if the datum recenters.
+3. As raw input arrives, parse it and push an `OwnShipPose` to the provider,
+   then construct `Measurement` objects (via builders like
+   `makeMeasurementFromRelativeBearing` or direct `makeMeasurementFromEnuPosition`)
+   and feed them into `tracker.process(z)`.
 4. Read the current track set from `TrackManager::tracks()` whenever a
    downstream consumer needs it — display, collision avoidance, logging.
 

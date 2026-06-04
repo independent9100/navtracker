@@ -42,7 +42,26 @@ navtracker is designed as a hexagonal-architecture library. The contract a consu
 
 You construct Measurements directly from your parsed sensor data. The NMEA adapters in `adapters/` are one optional implementation for consumers whose input is NMEA strings — they're not the canonical path. Skip them if you have your own pipeline.
 
-Common patterns:
+### Auto-datum pattern
+
+The `OwnShipProvider` owns and manages the working datum (local tangent plane origin). Construct it with no arguments; it auto-initializes from the first `update(pose)` call and auto-recenters (replaces the datum) when own-ship moves > 30 km. This eliminates the need to pass a `Datum` object through the measurement builders.
+
+When the datum shifts, the provider fires an `IDatumChangeSink` event. Wire a sink that calls `shiftTracksOnDatumChange(TrackManager&, old_datum, new_datum)` to keep your track state consistent with the new ENU frame:
+
+```cpp
+struct TrackShifterSink : IDatumChangeSink {
+  TrackManager* mgr;
+  void onDatumRecentered(const geo::Datum& o, const geo::Datum& n) override {
+    shiftTracksOnDatumChange(*mgr, o, n);
+  }
+};
+TrackShifterSink mgr_sink{&mgr};
+provider.registerDatumSink(&mgr_sink);
+```
+
+Push at least one `OwnShipPose` via `provider.update()` before constructing measurements — this initializes the datum.
+
+### Common patterns
 
 - Range/bearing sensor (radar, EO-IR, sonar): `makeMeasurementFromRelativeBearing(...)` — adds heading, projects to ENU, composes GPS and heading covariance.
 - Absolute-position sensor (AIS, GPS-equipped target): `makeMeasurementFromEnuPosition(...)` — direct ENU input.

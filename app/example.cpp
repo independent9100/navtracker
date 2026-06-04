@@ -21,24 +21,49 @@
 #include "core/estimation/ConstantVelocity2D.hpp"
 #include "core/association/GnnAssociator.hpp"
 #include "core/tracking/TrackManager.hpp"
+#include "core/tracking/DatumShift.hpp"
 #include "core/geo/Datum.hpp"
 #include "adapters/own_ship/OwnShipProvider.hpp"
 
 int main() {
   using namespace navtracker;
-  using navtracker::geo::Datum;
 
   // ---- Composition root (build once at startup) -----------------------
 
-  Datum datum({53.5, 8.0, 0.0});                // your operating datum
-  OwnShipProvider provider;
+  OwnShipProvider provider;  // library handles datum automatically
   auto motion = std::make_shared<ConstantVelocity2D>(/*q=*/0.1);
   EkfEstimator ekf(motion, /*init_pos_std_m=*/5.0);
   GnnAssociator gnn(/*chi2_gate=*/20.0);
   TrackManager mgr(/*confirm_hits=*/2, /*delete_misses=*/3);
   Tracker tracker(ekf, gnn, mgr, /*miss_timeout_seconds=*/30.0);
 
+  // Wire datum-recenter event so tracks stay in the current ENU frame.
+  struct TrackShifterSink : IDatumChangeSink {
+    TrackManager* mgr;
+    explicit TrackShifterSink(TrackManager* m) : mgr(m) {}
+    void onDatumRecentered(const geo::Datum& o, const geo::Datum& n) override {
+      shiftTracksOnDatumChange(*mgr, o, n);
+    }
+  };
+  TrackShifterSink mgr_sink{&mgr};
+  provider.registerDatumSink(&mgr_sink);
+
   const SensorDefaults defaults = pessimisticSensorDefaults();
+
+  // ---- Initialize the datum with an own-ship pose FIRST ---------------
+  //
+  // The provider auto-initializes its working datum from the first pose.
+  // Push a pose before constructing any measurements so the datum is set.
+
+  {
+    OwnShipPose pose;
+    pose.time = Timestamp::fromSeconds(123.0);
+    pose.lat_deg = 53.500;
+    pose.lon_deg = 8.000;
+    pose.heading_true_deg = 45.0;
+    pose.position_std_m = 5.0;    // from your GPS receiver, or 0 + defaults
+    provider.update(pose);
+  }
 
   // ---- Each time YOUR pipeline emits a parsed AIS report --------------
   //
@@ -47,7 +72,7 @@ int main() {
 
   {
     const double lat = 53.55, lon = 8.05;
-    const auto enu = datum.toEnu({lat, lon, 0.0});
+    const auto enu = provider.datum().toEnu({lat, lon, 0.0});
 
     Measurement m = makeMeasurementFromEnuPosition(
         SensorKind::Ais, "my_ais_feed",
@@ -81,18 +106,6 @@ int main() {
     if (m.value.size() > 0) {
       tracker.process(m);
     }
-  }
-
-  // ---- Each time YOUR pipeline gets an own-ship pose ------------------
-
-  {
-    OwnShipPose pose;
-    pose.time = Timestamp::fromSeconds(123.0);
-    pose.lat_deg = 53.500;
-    pose.lon_deg = 8.000;
-    pose.heading_true_deg = 45.0;
-    pose.position_std_m = 5.0;    // from your GPS receiver, or 0 + defaults
-    provider.update(pose);
   }
 
   // ---- Drain the current track snapshot whenever your sink wants it ---
