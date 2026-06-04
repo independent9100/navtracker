@@ -30,6 +30,7 @@ add_library(navtracker_core
   core/bias/HeadingBiasEstimator.cpp
   core/bias/AisArpaPairExtractor.cpp
   core/own_ship/UereEstimator.cpp
+  core/own_ship/OwnShipVelocityEstimator.cpp
   core/collision/Cpa.cpp
   core/collision/CpaOwnShip.cpp
   core/association/Gating.cpp
@@ -157,6 +158,7 @@ add_executable(navtracker_tests
   tests/bias/test_heading_bias_estimator.cpp
   tests/bias/test_ais_arpa_pair_extractor.cpp
   tests/own_ship/test_uere_estimator.cpp
+  tests/own_ship/test_own_ship_velocity_estimator.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
