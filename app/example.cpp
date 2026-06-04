@@ -75,7 +75,7 @@ int main() {
         Timestamp::fromSeconds(123.0),
         range_m, rel_bearing_rad,
         range_std_m, bearing_std_rad,
-        provider, datum);
+        provider);
     // If your radar didn't report std values, leave them 0 and call:
     // applyDefaultsIfEmpty(m, defaults);
     if (m.value.size() > 0) {

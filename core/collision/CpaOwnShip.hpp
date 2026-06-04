@@ -15,6 +15,6 @@ namespace navtracker {
 // id is the reserved sentinel TrackId{0}; not entered into TrackManager.
 Track synthesizeOwnShipTrack(const OwnShipPose& pose,
                              Timestamp t,
-                             const geo::Datum& datum);
+                             const OwnShipProvider& provider);
 
 }  // namespace navtracker

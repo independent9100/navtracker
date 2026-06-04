@@ -106,13 +106,14 @@ void runCellAndAggregate(navtracker::Scenario&& s, double cutoff, int confirm,
   }
 
   geo::Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider(datum);
   OwnShipPose pose;
   pose.lat_deg = 53.5;
   pose.lon_deg = 8.0;
   pose.position_std_m = 1.0;
   pose.velocity_enu = own_velocity;
   pose.velocity_is_valid = false;
-  const Track own_ship = synthesizeOwnShipTrack(pose, t_ref, datum);
+  const Track own_ship = synthesizeOwnShipTrack(pose, t_ref, provider);
 
   for (const Track& tr : mgr.tracks()) {
     if (tr.status != TrackStatus::Confirmed || tr.state.size() < 4) continue;

@@ -97,6 +97,7 @@ TEST(CpaScenario, PerpendicularPassTwoSigmaBandContainsTruth) {
   // Synthesise own-ship via Task-2 helper. The datum origin places lat/lon
   // pose at the ENU origin; velocity is zero; sigma_pos = 1 m.
   geo::Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider(datum);
   OwnShipPose pose;
   pose.time = Timestamp::fromSeconds(kTRefSeconds);
   pose.lat_deg = 53.5;
@@ -105,7 +106,7 @@ TEST(CpaScenario, PerpendicularPassTwoSigmaBandContainsTruth) {
   pose.velocity_enu = Eigen::Vector2d::Zero();
   pose.velocity_is_valid = false;
   const Track own_ship = synthesizeOwnShipTrack(
-      pose, Timestamp::fromSeconds(kTRefSeconds), datum);
+      pose, Timestamp::fromSeconds(kTRefSeconds), provider);
 
   // Run CPA with uncertainty at t_ref = 10 s.
   const CpaPrediction p = computeCpaWithUncertainty(
@@ -140,6 +141,7 @@ TEST(CpaScenario, PerpendicularPassTwoSigmaBandContainsTruth) {
 // the values are captured by the eval-log.
 TEST(CpaScenario, PerpendicularPassNoiseSweepReport) {
   geo::Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider(datum);
   OwnShipPose pose;
   pose.lat_deg = 53.5;
   pose.lon_deg = 8.0;
@@ -172,7 +174,7 @@ TEST(CpaScenario, PerpendicularPassNoiseSweepReport) {
     pose.velocity_enu = Eigen::Vector2d::Zero();
     pose.velocity_is_valid = false;
     const Track own_ship = synthesizeOwnShipTrack(
-        pose, Timestamp::fromSeconds(kTRefSeconds), datum);
+        pose, Timestamp::fromSeconds(kTRefSeconds), provider);
     const CpaPrediction p = computeCpaWithUncertainty(
         own_ship, target_track, Timestamp::fromSeconds(kTRefSeconds),
         kDThresholdM);
@@ -209,6 +211,7 @@ TEST(CpaScenario, PerpendicularPassVelocityUncertaintyGrowsSigmaCpa) {
   target.covariance(3, 3) = 0.01;
 
   geo::Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider(datum);
   OwnShipPose pose_baseline;
   pose_baseline.time = Timestamp::fromSeconds(0.0);
   pose_baseline.lat_deg = 53.5;
@@ -218,7 +221,7 @@ TEST(CpaScenario, PerpendicularPassVelocityUncertaintyGrowsSigmaCpa) {
   pose_baseline.velocity_std_m_per_s = 0.0;
   pose_baseline.velocity_is_valid = false;
   const Track own_baseline = synthesizeOwnShipTrack(
-      pose_baseline, Timestamp::fromSeconds(0.0), datum);
+      pose_baseline, Timestamp::fromSeconds(0.0), provider);
   const CpaPrediction p_baseline = computeCpaWithUncertainty(
       own_baseline, target, Timestamp::fromSeconds(0.0), kDThresholdM);
 
@@ -226,7 +229,7 @@ TEST(CpaScenario, PerpendicularPassVelocityUncertaintyGrowsSigmaCpa) {
   pose_v.velocity_std_m_per_s = 1.0;
   pose_v.velocity_is_valid = true;
   const Track own_v = synthesizeOwnShipTrack(
-      pose_v, Timestamp::fromSeconds(0.0), datum);
+      pose_v, Timestamp::fromSeconds(0.0), provider);
   const CpaPrediction p_v = computeCpaWithUncertainty(
       own_v, target, Timestamp::fromSeconds(0.0), kDThresholdM);
 
@@ -256,6 +259,7 @@ TEST(CpaScenario, PerpendicularPassVelocityUncertaintySweepReport) {
   target.covariance(3, 3) = 0.01;
 
   geo::Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider(datum);
   OwnShipPose pose;
   pose.time = Timestamp::fromSeconds(0.0);
   pose.lat_deg = 53.5;
@@ -288,7 +292,7 @@ TEST(CpaScenario, PerpendicularPassVelocityUncertaintySweepReport) {
       pose.velocity_is_valid = false;
     }
     const Track own_ship = synthesizeOwnShipTrack(
-        pose, Timestamp::fromSeconds(0.0), datum);
+        pose, Timestamp::fromSeconds(0.0), provider);
     const CpaPrediction p = computeCpaWithUncertainty(
         own_ship, target, Timestamp::fromSeconds(0.0), 200.0);
     std::fprintf(stderr,

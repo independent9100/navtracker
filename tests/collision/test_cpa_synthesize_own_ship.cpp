@@ -10,6 +10,7 @@ namespace navtracker {
 
 TEST(SynthesizeOwnShipTrack, PlacesPoseAtCorrectEnu) {
   geo::Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider(datum);
   OwnShipPose pose;
   pose.time = Timestamp::fromSeconds(0.0);
   pose.lat_deg = 53.5;
@@ -20,7 +21,7 @@ TEST(SynthesizeOwnShipTrack, PlacesPoseAtCorrectEnu) {
 
   const Track t = synthesizeOwnShipTrack(pose,
                                          Timestamp::fromSeconds(0.0),
-                                         datum);
+                                         provider);
   EXPECT_NEAR(t.state(0), 0.0, 1e-3);
   EXPECT_NEAR(t.state(1), 0.0, 1e-3);
   EXPECT_DOUBLE_EQ(t.state(2), 5.0);
@@ -29,6 +30,7 @@ TEST(SynthesizeOwnShipTrack, PlacesPoseAtCorrectEnu) {
 
 TEST(SynthesizeOwnShipTrack, CovarianceMatchesSigmaPos) {
   geo::Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider(datum);
   OwnShipPose pose;
   pose.lat_deg = 53.5;
   pose.lon_deg = 8.0;
@@ -37,7 +39,7 @@ TEST(SynthesizeOwnShipTrack, CovarianceMatchesSigmaPos) {
   pose.velocity_is_valid = false;
   const Track t = synthesizeOwnShipTrack(pose,
                                          Timestamp::fromSeconds(0.0),
-                                         datum);
+                                         provider);
   EXPECT_DOUBLE_EQ(t.covariance(0, 0), 25.0);
   EXPECT_DOUBLE_EQ(t.covariance(1, 1), 25.0);
   EXPECT_DOUBLE_EQ(t.covariance(2, 2),  0.0);
@@ -48,6 +50,7 @@ TEST(SynthesizeOwnShipTrack, CovarianceMatchesSigmaPos) {
 
 TEST(SynthesizeOwnShipTrack, SynthesizedTrackCarriesVelocityCovariance) {
   geo::Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider(datum);
   OwnShipPose pose;
   pose.lat_deg = 53.5;
   pose.lon_deg = 8.0;
@@ -57,7 +60,7 @@ TEST(SynthesizeOwnShipTrack, SynthesizedTrackCarriesVelocityCovariance) {
   pose.velocity_is_valid = true;
   const Track t = synthesizeOwnShipTrack(pose,
                                          Timestamp::fromSeconds(0.0),
-                                         datum);
+                                         provider);
   EXPECT_DOUBLE_EQ(t.state(2), 5.0);
   EXPECT_DOUBLE_EQ(t.state(3), 3.0);
   EXPECT_DOUBLE_EQ(t.covariance(2, 2), 1.0);
@@ -68,6 +71,7 @@ TEST(SynthesizeOwnShipTrack, SynthesizedTrackCarriesVelocityCovariance) {
 
 TEST(SynthesizeOwnShipTrack, InvalidVelocityProducesZeroVelocityCovariance) {
   geo::Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider(datum);
   OwnShipPose pose;
   pose.lat_deg = 53.5;
   pose.lon_deg = 8.0;
@@ -77,7 +81,7 @@ TEST(SynthesizeOwnShipTrack, InvalidVelocityProducesZeroVelocityCovariance) {
   pose.velocity_is_valid = false;
   const Track t = synthesizeOwnShipTrack(pose,
                                          Timestamp::fromSeconds(0.0),
-                                         datum);
+                                         provider);
   EXPECT_DOUBLE_EQ(t.covariance(2, 2), 0.0);
   EXPECT_DOUBLE_EQ(t.covariance(3, 3), 0.0);
   EXPECT_DOUBLE_EQ(t.covariance(2, 3), 0.0);

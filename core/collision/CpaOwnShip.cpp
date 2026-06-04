@@ -4,13 +4,13 @@ namespace navtracker {
 
 Track synthesizeOwnShipTrack(const OwnShipPose& pose,
                              Timestamp t,
-                             const geo::Datum& datum) {
+                             const OwnShipProvider& provider) {
   Track tr;
   tr.id = TrackId{0};
   tr.last_update = t;
   tr.status = TrackStatus::Confirmed;
 
-  const Eigen::Vector3d enu = datum.toEnu({pose.lat_deg, pose.lon_deg, 0.0});
+  const Eigen::Vector3d enu = provider.datum().toEnu({pose.lat_deg, pose.lon_deg, 0.0});
   tr.state.resize(4);
   tr.state << enu.x(), enu.y(), pose.velocity_enu.x(), pose.velocity_enu.y();
 
