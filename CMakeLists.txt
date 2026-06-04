@@ -39,6 +39,7 @@ add_library(navtracker_core
   core/association/JpdaAssociator.cpp
   core/tracking/TrackManager.cpp
   core/tracking/TrackTree.cpp
+  core/tracking/DatumShift.cpp
   core/pipeline/ReorderBuffer.cpp
   core/pipeline/Tracker.cpp
   core/pipeline/MhtTracker.cpp
@@ -103,6 +104,7 @@ add_executable(navtracker_tests
   tests/association/test_jpda_associator.cpp
   tests/tracking/test_track_manager.cpp
   tests/tracking/test_track_tree.cpp
+  tests/tracking/test_datum_shift.cpp
   tests/pipeline/test_reorder_buffer.cpp
   tests/ports/test_edge_ports.cpp
   tests/pipeline/test_tracker.cpp
