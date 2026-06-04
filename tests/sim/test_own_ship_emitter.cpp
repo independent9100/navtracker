@@ -177,6 +177,76 @@ TEST(OwnShipEmitter, EmittedPoseCarriesGpsStdWhenReportOptedIn) {
   EXPECT_DOUBLE_EQ(provider.latest()->position_std_m, 5.0);
 }
 
+TEST(OwnShipEmitter, EmittedRmcParsesBackToVelocity) {
+  // emit_rmc = true: the emitter pushes a $GPRMC each cycle carrying truth
+  // SOG/COG, and the adapter's GGA-handler picks up the fresh RMC buffer
+  // when composing the pose's velocity fields. With sigma_*_emit = 0 the
+  // recovered velocity is bit-tight against the truth (modulo knots and
+  // deg↔rad round-trip).
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+
+  // ENU velocity (east=5, north=3) — speed ≈5.83 m/s, COG ≈59.0° true.
+  auto traj = std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d::Zero(),
+      Eigen::Vector2d(5.0, 3.0),
+      Timestamp::fromSeconds(0.0));
+
+  sim::OwnShipEmitterConfig cfg;
+  cfg.dt_s = 1.0;
+  cfg.gps_pos_std_m = 0.0;
+  cfg.heading_true_deg = 0.0;
+  cfg.emit_rmc = true;
+  cfg.sigma_sog_emit_m_per_s = 0.0;  // noise-free for a clean round-trip
+  cfg.sigma_cog_emit_deg = 0.0;
+
+  sim::OwnShipEmitter emitter(adapter, datum, *traj, cfg, /*seed=*/11);
+
+  sim::EmitContext ctx;
+  ctx.now = Timestamp::fromSeconds(0.0);
+  emitter.emit(ctx);
+
+  ASSERT_TRUE(provider.latest().has_value());
+  EXPECT_TRUE(provider.latest()->velocity_is_valid);
+  // RMC carries SOG (knots) and COG (deg). The round-trip through
+  // knots↔m/s and deg↔rad introduces some rounding; allow 1e-2 m/s.
+  EXPECT_NEAR(provider.latest()->velocity_enu.x(), 5.0, 1e-2);
+  EXPECT_NEAR(provider.latest()->velocity_enu.y(), 3.0, 1e-2);
+}
+
+TEST(OwnShipEmitter, DefaultDoesNotReportVelocity) {
+  // emit_rmc defaults to false — backward compat. Without RMC and without
+  // the velocity-estimator's warmup window, pose.velocity_is_valid must
+  // stay false on the very first GGA tick. This guards against a margin-
+  // flip regression where flipping the default would propagate velocity
+  // covariance into every existing sim test (cf. ce61b65 for report_gps_std).
+  Datum datum({53.5, 8.0, 0.0});
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+
+  auto traj = std::make_shared<sim::ConstantVelocityTrajectory>(
+      Eigen::Vector2d::Zero(),
+      Eigen::Vector2d(5.0, 3.0),
+      Timestamp::fromSeconds(0.0));
+
+  sim::OwnShipEmitterConfig cfg;
+  cfg.dt_s = 1.0;
+  cfg.gps_pos_std_m = 0.0;
+  cfg.heading_true_deg = 0.0;
+  // emit_rmc default = false.
+
+  sim::OwnShipEmitter emitter(adapter, datum, *traj, cfg, /*seed=*/11);
+
+  sim::EmitContext ctx;
+  ctx.now = Timestamp::fromSeconds(0.0);
+  emitter.emit(ctx);
+
+  ASSERT_TRUE(provider.latest().has_value());
+  EXPECT_FALSE(provider.latest()->velocity_is_valid);
+  EXPECT_DOUBLE_EQ(provider.latest()->velocity_std_m_per_s, 0.0);
+}
+
 TEST(OwnShipEmitter, DefaultDoesNotReportGpsStd) {
   Datum datum({53.5, 8.0, 0.0});
   OwnShipProvider provider;

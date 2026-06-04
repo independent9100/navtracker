@@ -41,6 +41,75 @@ void OwnShipEmitter::emit(const EmitContext& ctx) {
                               0.0);
     const geo::Geodetic g = datum_.toGeodetic(enu);
 
+    // RMC — emitted only when opted in. Carries truth SOG/COG (m/s → knots,
+    // ENU velocity → COG-from-true-north) optionally perturbed by the
+    // sim's emit-side noise floors. Default OFF preserves pre-RMC sim
+    // behaviour where pose.velocity_is_valid stayed false on the first
+    // GGA tick.
+    //
+    // RMC is pushed BEFORE GGA so the adapter's rmc_buffer_ is fresh when
+    // the GGA-handler composes the pose's velocity fields (precedence
+    // rule lives in OwnShipNmeaAdapter::ingest's GGA branch).
+    if (cfg_.emit_rmc) {
+      Eigen::Vector2d v_truth = truth.velocity;
+      if (cfg_.sigma_sog_emit_m_per_s > 0.0 ||
+          cfg_.sigma_cog_emit_deg > 0.0) {
+        const double sog_truth = v_truth.norm();
+        const double cog_truth_rad = std::atan2(v_truth.x(), v_truth.y());
+        double sog = sog_truth;
+        double cog_rad = cog_truth_rad;
+        if (cfg_.sigma_sog_emit_m_per_s > 0.0) {
+          std::normal_distribution<double> sog_noise(
+              0.0, cfg_.sigma_sog_emit_m_per_s);
+          sog += sog_noise(rng_);
+          if (sog < 0.0) sog = 0.0;  // SOG is non-negative by definition
+        }
+        if (cfg_.sigma_cog_emit_deg > 0.0) {
+          std::normal_distribution<double> cog_noise(
+              0.0, cfg_.sigma_cog_emit_deg * M_PI / 180.0);
+          cog_rad += cog_noise(rng_);
+        }
+        v_truth = Eigen::Vector2d(sog * std::sin(cog_rad),
+                                  sog * std::cos(cog_rad));
+      }
+      const double sog_m_per_s = v_truth.norm();
+      const double sog_knots = sog_m_per_s / 0.514444;
+      // COG: angle clockwise from true north. ENU east = sin(COG),
+      // north = cos(COG), so COG = atan2(east, north). Wrap to [0, 360).
+      double cog_deg = std::atan2(v_truth.x(), v_truth.y()) * 180.0 / M_PI;
+      cog_deg = std::fmod(cog_deg, 360.0);
+      if (cog_deg < 0.0) cog_deg += 360.0;
+      // Format SOG/COG via integer arithmetic to avoid locale issues with
+      // %f (mirrors the GPHDT path).
+      const long long sog_milli =
+          static_cast<long long>(std::llround(sog_knots * 1000.0));
+      long long cog_milli =
+          static_cast<long long>(std::llround(cog_deg * 1000.0));
+      if (cog_milli >= 360000LL) cog_milli -= 360000LL;
+      char sog_buf[24];
+      std::snprintf(sog_buf, sizeof(sog_buf), "%lld.%03lld",
+                    sog_milli / 1000LL, std::abs(sog_milli % 1000LL));
+      char cog_buf[24];
+      std::snprintf(cog_buf, sizeof(cog_buf), "%lld.%03lld",
+                    cog_milli / 1000LL, cog_milli % 1000LL);
+
+      std::string body = "GPRMC,000000.00,A,";
+      body += formatLatDdmm(g.lat_deg);
+      body += ',';
+      body += latHemisphere(g.lat_deg);
+      body += ',';
+      body += formatLonDdmm(g.lon_deg);
+      body += ',';
+      body += lonHemisphere(g.lon_deg);
+      body += ',';
+      body += sog_buf;
+      body += ',';
+      body += cog_buf;
+      body += ",010100,,,";  // date (DDMMYY), magvar, E/W, mode all empty/stub
+      const std::string sentence = wrapWithChecksum(body);
+      adapter_.ingest(sentence, next_emit_);
+    }
+
     // GGA
     {
       std::string body = "GPGGA,000000.00,";
