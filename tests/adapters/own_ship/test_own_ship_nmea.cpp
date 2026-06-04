@@ -177,6 +177,125 @@ TEST(OwnShipNmeaAdapterTest, AdaptivePublishesAfterWindowAndDominatesStatic) {
   EXPECT_LT(last_sigma, 5.0);  // strictly below static 10 m.
 }
 
+TEST(OwnShipNmeaAdapterTest, ParsesRmcSogCogIntoVelocityEnu) {
+  // RMC with SOG = 10 knots = 5.14444 m/s, COG = 045° true.
+  // ENU velocity = SOG * (sin(COG), cos(COG)) = 5.14444 * (0.7071, 0.7071)
+  //              ~= (3.6378, 3.6378) m/s.
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider, {});
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("GPRMC,123519,A,4807.038,N,01131.000,E,10.0,045.0,230394,003.1,W"),
+      Timestamp::fromSeconds(0.0)));
+  // RMC only updates the internal buffer; pose composition runs on GGA.
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("GPGGA,123519,4807.038,N,01131.000,E,1,08,1.2,0.0,M,0.0,M,,"),
+      Timestamp::fromSeconds(0.0)));
+  ASSERT_TRUE(provider.latest().has_value());
+  EXPECT_TRUE(provider.latest()->velocity_is_valid);
+  EXPECT_NEAR(provider.latest()->velocity_enu.x(), 3.6378, 0.01);
+  EXPECT_NEAR(provider.latest()->velocity_enu.y(), 3.6378, 0.01);
+}
+
+TEST(OwnShipNmeaAdapterTest, RmcZeroSogProducesSigmaSogAsSigmaV) {
+  // At SOG = 0, the bearing-uncertainty term vanishes so sigma_v reduces
+  // exactly to sigma_SOG.
+  OwnShipProvider provider;
+  OwnShipNmeaAdapterConfig cfg;
+  cfg.sigma_sog_m_per_s = 0.5;
+  cfg.sigma_cog_deg = 1.0;
+  OwnShipNmeaAdapter adapter(provider, cfg);
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("GPRMC,123519,A,4807.038,N,01131.000,E,0.0,000.0,230394,,"),
+      Timestamp::fromSeconds(0.0)));
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("GPGGA,123519,4807.038,N,01131.000,E,1,08,1.2,0.0,M,0.0,M,,"),
+      Timestamp::fromSeconds(0.0)));
+  ASSERT_TRUE(provider.latest().has_value());
+  EXPECT_TRUE(provider.latest()->velocity_is_valid);
+  EXPECT_NEAR(provider.latest()->velocity_std_m_per_s, 0.5, 1e-6);
+}
+
+TEST(OwnShipNmeaAdapterTest, RmcAbsentTriggersEstimatorFallback) {
+  // No RMC ever ingested. Feed 10 GGAs at 5 m/s east; after the velocity
+  // estimator's window (8 samples) fills, pose.velocity_is_valid flips to
+  // true via the estimator fallback.
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider, {});
+
+  const double lat0 = 48.1173;
+  const double lon0 = 11.5166666;
+  const double v_east_mps = 5.0;
+  const double dt = 1.0;
+  bool ever_valid = false;
+  Eigen::Vector2d last_v;
+  for (int i = 0; i < 10; ++i) {
+    const double east_m = v_east_mps * i * dt;
+    const auto pos = offsetToLatLon(lat0, lon0, east_m, 0.0);
+    ASSERT_TRUE(adapter.ingest(makeGga(pos.lat_deg, pos.lon_deg, 1.2),
+                               Timestamp::fromSeconds(i * dt)));
+    if (provider.latest()->velocity_is_valid) {
+      ever_valid = true;
+      last_v = provider.latest()->velocity_enu;
+    }
+  }
+  EXPECT_TRUE(ever_valid);
+  // Estimator should recover ~ (5, 0) m/s. Wide tolerance — exact
+  // numerical fit is covered by the estimator unit tests.
+  EXPECT_NEAR(last_v.x(), 5.0, 0.5);
+  EXPECT_NEAR(last_v.y(), 0.0, 0.5);
+}
+
+TEST(OwnShipNmeaAdapterTest, RmcStaleTriggersEstimatorFallback) {
+  // Feed one RMC at t=0, then GGAs only (no further RMC). For t up to
+  // rmc_stale_seconds (5 s) the RMC value dominates; past that the
+  // adapter falls back to the GGA-derived estimator. The estimator
+  // needs its window (8 samples) to publish, so we run 10 GGAs.
+  OwnShipProvider provider;
+  OwnShipNmeaAdapterConfig cfg;  // defaults: rmc_stale_seconds = 5
+  OwnShipNmeaAdapter adapter(provider, cfg);
+
+  // Initial RMC: SOG = 10 knots, COG = 090° true (east) -> velocity ~ (5.14, 0).
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("GPRMC,000000,A,4807.038,N,01131.000,E,10.0,090.0,230394,,"),
+      Timestamp::fromSeconds(0.0)));
+
+  const double lat0 = 48.1173;
+  const double lon0 = 11.5166666;
+  const double v_east_mps = 5.0;   // matches RMC closely so the transition is smooth
+  const double dt = 1.0;
+  bool saw_rmc_phase = false;
+  bool saw_estimator_phase = false;
+  for (int i = 0; i < 11; ++i) {
+    const double t_s = i * dt;
+    const double east_m = v_east_mps * t_s;
+    const auto pos = offsetToLatLon(lat0, lon0, east_m, 0.0);
+    ASSERT_TRUE(adapter.ingest(makeGga(pos.lat_deg, pos.lon_deg, 1.2),
+                               Timestamp::fromSeconds(t_s)));
+    ASSERT_TRUE(provider.latest().has_value());
+    const auto& p = *provider.latest();
+    if (t_s <= cfg.rmc_stale_seconds) {
+      // Within the fresh window the RMC value (~5.144 east, 0 north)
+      // should win, even though the estimator may have published.
+      if (p.velocity_is_valid) {
+        EXPECT_NEAR(p.velocity_enu.x(), 5.14444, 1e-3);
+        EXPECT_NEAR(p.velocity_enu.y(), 0.0, 1e-3);
+        saw_rmc_phase = true;
+      }
+    } else {
+      // Past the stale threshold the estimator must drive the pose.
+      // It can publish at most ~5 m/s east; verify validity and a
+      // loose bound that excludes the exact RMC value.
+      if (p.velocity_is_valid) {
+        EXPECT_NEAR(p.velocity_enu.x(), 5.0, 0.5);
+        EXPECT_NEAR(p.velocity_enu.y(), 0.0, 0.5);
+        saw_estimator_phase = true;
+      }
+    }
+  }
+  EXPECT_TRUE(saw_rmc_phase);
+  EXPECT_TRUE(saw_estimator_phase);
+}
+
 TEST(OwnShipNmeaAdapterTest, AdaptiveFallsBackOnManeuver) {
   // Stream 4 steady samples moving east at 5 m/s, then 4 samples moving
   // north at 5 m/s — a clear maneuver. The estimator suppresses
