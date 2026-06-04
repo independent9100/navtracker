@@ -1260,3 +1260,57 @@ remains documented for near-collision cases (spec §11).
   the geometry is consistent.
 - Suite size 286/286 green after this work (+3 over the 283 baseline:
   two `CpaScenario.*` tests plus one `BusCpaUncertainty.*` sweep).
+
+## RMC velocity + CPA σ (2026-06-04)
+
+**Setup.** Closes the v1 simplification σ_v_own = 0 from the CPA spec.
+RMC SOG/COG parsing in OwnShipNmeaAdapter, with a GGA-finite-difference
+fallback (OwnShipVelocityEstimator) when RMC is absent. The pose now
+carries velocity_enu + velocity_std_m_per_s + velocity_is_valid;
+synthesizeOwnShipTrack reads them directly; CPA's existing Jacobian
+propagates σ_v into σ_cpa.
+
+### Future-CPA perpendicular pass (truth CPA = 1000 m, TCPA = 100 s)
+
+Target at (-1000, 1000) m moving east at 10 m/s; own-ship stationary at
+origin. CPA in the future at t = 100 s. d_threshold = 200 m.
+
+| σ_pos (m) | σ_v (m/s) | predicted CPA | σ_cpa  | P(<200m)  |
+|-----------|-----------|---------------|--------|-----------|
+| 1.0       | 0.0       | 1000.000      | 10.0995| 0.000000  |
+| 1.0       | 0.5       | 1000.000      | 51.0098| 0.000000  |
+| 1.0       | 1.0       | 1000.000      | 100.5087| 0.000000 |
+| 1.0       | 2.0       | 1000.000      | 200.2548| 0.000032 |
+
+### Past-CPA scenario (v1 perpendicular pass)
+
+The original perpendicular-pass test (target at (0, 1000) m moving east
+at 10 m/s, t_ref = 10 s) sits in the past-CPA branch — at t_ref the
+target has moved east of the closest-approach point, so
+computeCpaWithUncertainty falls back to current-distance with σ from
+current dp covariance. Velocity uncertainty does not enter the σ_cpa
+computation in this branch. Documented limitation; the future-CPA test
+above is the one that exercises σ_v propagation.
+
+### Verdict
+
+The future-CPA perpendicular-pass geometry demonstrates the RMC velocity
+integration end-to-end. σ_cpa grows strictly with σ_v at fixed TCPA, with
+the growth scaling as O(σ_v · TCPA) — at TCPA = 100 s and σ_v = 1 m/s the
+contribution to σ_cpa is ~100 m, which is the dominant term when σ_pos = 1 m
+(σ_cpa baseline ≈ 10 m). This matches the predicted scaling from the
+Jacobian's velocity-uncertainty path. The mean CPA is unchanged by
+velocity uncertainty (no bias introduced). P(<200 m) grows accordingly: at
+σ_v = 0 the probability is zero (truth is 1000 m away), while at σ_v = 2 m/s
+it rises to 3.2 × 10⁻⁵ (the 200-m band now contains tail mass from the
+widened σ_cpa). The past-CPA fallback (original perpendicular-pass test)
+documented limitation that σ_v does not enter is acceptable for v1 — in
+practice, maritime operators care most about future-CPA risk where velocity
+uncertainty dominates; when targets are already in the past-CPA zone the
+vessel is already closest and risk is determined by current distance, not
+velocity derivatives.
+
+### Methodology notes
+
+- Sweep test: `tests/scenario/test_cpa_scenario.cpp::PerpendicularPassVelocityUncertaintySweepReport`.
+- Suite size 318/318 green (was 317; +1 new test).

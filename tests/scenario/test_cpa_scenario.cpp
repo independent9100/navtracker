@@ -238,3 +238,63 @@ TEST(CpaScenario, PerpendicularPassVelocityUncertaintyGrowsSigmaCpa) {
   // sigma_cpa is strictly larger when velocity uncertainty is non-zero.
   EXPECT_GT(p_v.sigma_cpa_m, p_baseline.sigma_cpa_m);
 }
+
+// Velocity uncertainty sweep report: future-CPA geometry with σ_v in
+// {0, 0.5, 1.0, 2.0} m/s. SUCCEED-only; table captured by eval-log.
+// Target at (-1000, 1000) m moving east at 10 m/s; TCPA = 100 s, CPA = 1000 m.
+TEST(CpaScenario, PerpendicularPassVelocityUncertaintySweepReport) {
+  Track target;
+  target.id = TrackId{1};
+  target.status = TrackStatus::Confirmed;
+  target.last_update = Timestamp::fromSeconds(0.0);
+  target.state.resize(4);
+  target.state << -1000.0, 1000.0, 10.0, 0.0;
+  target.covariance = Eigen::Matrix4d::Zero();
+  target.covariance(0, 0) = 1.0;
+  target.covariance(1, 1) = 1.0;
+  target.covariance(2, 2) = 0.01;
+  target.covariance(3, 3) = 0.01;
+
+  geo::Datum datum({53.5, 8.0, 0.0});
+  OwnShipPose pose;
+  pose.time = Timestamp::fromSeconds(0.0);
+  pose.lat_deg = 53.5;
+  pose.lon_deg = 8.0;
+  pose.position_std_m = 1.0;
+  pose.velocity_enu = Eigen::Vector2d::Zero();
+
+  struct Row {
+    double sigma_pos_m;
+    double sigma_v_m_per_s;
+  };
+  const Row rows[] = {
+      {1.0, 0.0},
+      {1.0, 0.5},
+      {1.0, 1.0},
+      {1.0, 2.0},
+  };
+
+  std::fprintf(stderr,
+      "\n[CpaScenario PerpendicularPassVelocityUncertaintySweep] future-CPA\n"
+      "  sigma_pos_m | sigma_v (m/s) | predicted CPA | sigma_cpa | P(<200m)\n");
+
+  for (const Row& r : rows) {
+    pose.position_std_m = r.sigma_pos_m;
+    if (r.sigma_v_m_per_s > 0.0) {
+      pose.velocity_std_m_per_s = r.sigma_v_m_per_s;
+      pose.velocity_is_valid = true;
+    } else {
+      pose.velocity_std_m_per_s = 0.0;
+      pose.velocity_is_valid = false;
+    }
+    const Track own_ship = synthesizeOwnShipTrack(
+        pose, Timestamp::fromSeconds(0.0), datum);
+    const CpaPrediction p = computeCpaWithUncertainty(
+        own_ship, target, Timestamp::fromSeconds(0.0), 200.0);
+    std::fprintf(stderr,
+        "  %10.1f  | %13.1f  |   %9.3f   | %9.4f  | %.6f\n",
+        r.sigma_pos_m, r.sigma_v_m_per_s,
+        p.cpa_distance_m, p.sigma_cpa_m, p.probability_below_threshold);
+  }
+  SUCCEED();
+}
