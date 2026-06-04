@@ -80,7 +80,7 @@ Pre-parsed `Measurement` and `OwnShipPose` are the canonical contract. The
 NMEA adapters in `adapters/` are one optional implementation — if your
 pipeline produces parsed sensor data, skip them.
 
-See `app/example.cpp` for a complete end-to-end example. CMake targets:
+See `app/example.cpp` for a complete end-to-end example. For output format, see `docs/output-contract.md`. CMake targets:
 
 - `navtracker_core` — domain + ports + helpers. No I/O. Link this alone.
 - `navtracker_nmea` — NMEA-format adapters. Link when you consume NMEA.

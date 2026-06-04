@@ -23,6 +23,7 @@
 #include "core/tracking/TrackManager.hpp"
 #include "core/tracking/DatumShift.hpp"
 #include "core/geo/Datum.hpp"
+#include "core/output/TrackOutput.hpp"
 #include "adapters/own_ship/OwnShipProvider.hpp"
 
 int main() {
@@ -108,13 +109,23 @@ int main() {
     }
   }
 
-  // ---- Drain the current track snapshot whenever your sink wants it ---
+  // ---- Drain the current track snapshot in operator-friendly form ----
 
   for (const Track& t : mgr.tracks()) {
     if (t.status != TrackStatus::Confirmed) continue;
-    std::cout << "Track id=" << t.id.value
-              << " pos=" << t.state(0) << ", " << t.state(1)
-              << " status=" << static_cast<int>(t.status) << "\n";
+    const TrackOutput out = toTrackOutput(t, provider.datum());
+    // out.position.lat_deg / lon_deg in WGS84 degrees
+    // out.position.position_covariance_m2 in m^2 (north, east)
+    // out.velocity.sog_m_per_s, .cog_deg, .sigma_*, .is_valid
+    // out.id, out.status, out.attributes, out.contributing_sources
+    std::cout << "Track id=" << out.id.value
+              << "  lat=" << out.position.lat_deg
+              << "  lon=" << out.position.lon_deg;
+    if (out.velocity.is_valid) {
+      std::cout << "  sog=" << out.velocity.sog_m_per_s
+                << "  cog=" << out.velocity.cog_deg;
+    }
+    std::cout << "\n";
   }
 
   return 0;

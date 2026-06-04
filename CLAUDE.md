@@ -69,6 +69,23 @@ Push at least one `OwnShipPose` via `provider.update()` before constructing meas
 
 See `app/example.cpp` for a complete end-to-end example.
 
+### Output contract
+
+The canonical drain is `toTrackOutput(track, datum)` (in
+`core/output/TrackOutput.hpp`). It returns a `TrackOutput` with:
+
+- position in lat/lon (WGS84 degrees);
+- position covariance in m² in the target's local NED frame;
+- velocity in SOG (m/s) / COG (degrees true) with derived σ
+  values and an `is_valid` flag;
+- track metadata (stable id, lifecycle status, last_update,
+  attributes, contributing_sources);
+- a `covariance_is_default` diagnostic flag.
+
+See `docs/output-contract.md` for unit semantics, validity rules,
+and a worked example. See `app/example.cpp` for the canonical
+drain pattern.
+
 ### CMake targets for library consumers
 
 - `navtracker_core` — pure domain + ports + helpers. No I/O. Link this alone if you supply pre-parsed Measurements.
