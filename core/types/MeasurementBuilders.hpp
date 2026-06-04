@@ -34,7 +34,6 @@ Measurement makeMeasurementFromRelativeBearing(
     double range_std_m,
     double bearing_std_rad,
     const OwnShipProvider& provider,
-    const geo::Datum& datum,
     AssociationHints hints = {});
 
 // Range + TRUE bearing (already-projected, world-frame). Useful when the
@@ -49,7 +48,6 @@ Measurement makeMeasurementFromTrueBearing(
     double range_std_m,
     double bearing_std_rad,
     const OwnShipProvider& provider,
-    const geo::Datum& datum,
     AssociationHints hints = {});
 
 // Absolute ENU position (AIS-style). No pose lookup or projection — the

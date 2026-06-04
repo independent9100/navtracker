@@ -41,7 +41,6 @@ OwnShipPose makePose(Timestamp t,
 }  // namespace
 
 TEST(MeasurementBuildersTest, RelativeBearingProducesEnuConsistentWithDirectProjection) {
-  const geo::Datum datum = makeTestDatum();
   OwnShipProvider provider;
   const Timestamp t = Timestamp::fromSeconds(10.0);
   const double heading_deg = 45.0;
@@ -57,9 +56,10 @@ TEST(MeasurementBuildersTest, RelativeBearingProducesEnuConsistentWithDirectProj
 
   const Measurement m = makeMeasurementFromRelativeBearing(
       SensorKind::ArpaTtm, "TTM-A", t, range_m, rel_bearing_rad,
-      range_std_m, bearing_std_rad, provider, datum);
+      range_std_m, bearing_std_rad, provider);
 
   // Reference: compute exactly what the builder should produce.
+  const geo::Datum& datum = provider.datum();
   const Eigen::Vector3d own_3 =
       datum.toEnu(geo::Geodetic{pose.lat_deg, pose.lon_deg, 0.0});
   const Eigen::Vector2d own_xy(own_3.x(), own_3.y());
@@ -90,7 +90,6 @@ TEST(MeasurementBuildersTest, RelativeBearingProducesEnuConsistentWithDirectProj
 }
 
 TEST(MeasurementBuildersTest, RelativeBearingUsesPoseFromHistoryAtTimestamp) {
-  const geo::Datum datum = makeTestDatum();
   OwnShipProvider provider;
 
   const Timestamp t1 = Timestamp::fromSeconds(1.0);
@@ -108,7 +107,7 @@ TEST(MeasurementBuildersTest, RelativeBearingUsesPoseFromHistoryAtTimestamp) {
 
   const Measurement m = makeMeasurementFromRelativeBearing(
       SensorKind::ArpaTtm, "TTM", t2, range_m, rel_bearing_rad,
-      /*range_std_m=*/0.0, /*bearing_std_rad=*/0.0, provider, datum);
+      /*range_std_m=*/0.0, /*bearing_std_rad=*/0.0, provider);
 
   ASSERT_EQ(m.value.size(), 2);
   // Bearing-true used by builder should equal heading_a (since rel = 0).
@@ -127,7 +126,6 @@ TEST(MeasurementBuildersTest, RelativeBearingUsesPoseFromHistoryAtTimestamp) {
 }
 
 TEST(MeasurementBuildersTest, TrueBearingSkipsHeadingCombo) {
-  const geo::Datum datum = makeTestDatum();
   OwnShipProvider provider;
 
   const Timestamp t1 = Timestamp::fromSeconds(1.0);
@@ -144,7 +142,7 @@ TEST(MeasurementBuildersTest, TrueBearingSkipsHeadingCombo) {
 
   const Measurement m = makeMeasurementFromTrueBearing(
       SensorKind::EoIr, "EOIR", t2, range_m, true_bearing_rad,
-      /*range_std_m=*/0.0, /*bearing_std_rad=*/0.0, provider, datum);
+      /*range_std_m=*/0.0, /*bearing_std_rad=*/0.0, provider);
 
   ASSERT_EQ(m.value.size(), 2);
   // Own ship is at datum origin (lat/lon match), so own_xy = (0,0).
@@ -205,6 +203,17 @@ TEST(MeasurementBuildersTest, EnuPositionEmptyCovariancePlaysWithDefaults) {
   EXPECT_DOUBLE_EQ(m.covariance(0, 0), 900.0);
   EXPECT_DOUBLE_EQ(m.covariance(1, 1), 900.0);
   EXPECT_TRUE(m.covariance_is_default);
+}
+
+TEST(MeasurementBuildersTest, EmptyWhenProviderHasNoDatum) {
+  OwnShipProvider provider;  // no pose pushed -> no datum
+  // No registerDatumSink / update calls.
+  Measurement m = makeMeasurementFromRelativeBearing(
+      SensorKind::ArpaTtm, "test", Timestamp::fromSeconds(0.0),
+      1500.0, 0.5, 50.0, 1.0 * 3.14159265358979 / 180.0,
+      provider);
+  EXPECT_EQ(m.value.size(), 0);
+  EXPECT_EQ(m.covariance.size(), 0);
 }
 
 }  // namespace navtracker

@@ -24,7 +24,6 @@ Measurement buildBearingMeasurement(SensorKind sensor,
                                     double bearing_std_rad,
                                     BearingKind kind,
                                     const OwnShipProvider& provider,
-                                    const geo::Datum& datum,
                                     AssociationHints hints) {
   Measurement m;
   m.time = t;
@@ -42,13 +41,18 @@ Measurement buildBearingMeasurement(SensorKind sensor,
   }
   const OwnShipPose& pose = *pose_opt;
 
+  // Check if the provider has a datum. If not, return empty measurement.
+  if (!provider.hasDatum()) {
+    return m;
+  }
+
   const double bearing_true_rad =
       (kind == BearingKind::Relative)
           ? bearing_in_rad + pose.heading_true_deg * kDeg2Rad
           : bearing_in_rad;
 
   const Eigen::Vector3d own_enu_3 =
-      datum.toEnu(geo::Geodetic{pose.lat_deg, pose.lon_deg, 0.0});
+      provider.datum().toEnu(geo::Geodetic{pose.lat_deg, pose.lon_deg, 0.0});
   const Eigen::Vector2d own_xy(own_enu_3.x(), own_enu_3.y());
 
   const PointAndCov2D proj = projectRangeBearingToEnu(
@@ -78,7 +82,6 @@ Measurement makeMeasurementFromRelativeBearing(
     double range_std_m,
     double bearing_std_rad,
     const OwnShipProvider& provider,
-    const geo::Datum& datum,
     AssociationHints hints) {
   return buildBearingMeasurement(sensor,
                                  std::move(source_id),
@@ -89,7 +92,6 @@ Measurement makeMeasurementFromRelativeBearing(
                                  bearing_std_rad,
                                  BearingKind::Relative,
                                  provider,
-                                 datum,
                                  std::move(hints));
 }
 
@@ -102,7 +104,6 @@ Measurement makeMeasurementFromTrueBearing(
     double range_std_m,
     double bearing_std_rad,
     const OwnShipProvider& provider,
-    const geo::Datum& datum,
     AssociationHints hints) {
   return buildBearingMeasurement(sensor,
                                  std::move(source_id),
@@ -113,7 +114,6 @@ Measurement makeMeasurementFromTrueBearing(
                                  bearing_std_rad,
                                  BearingKind::True,
                                  provider,
-                                 datum,
                                  std::move(hints));
 }
 
