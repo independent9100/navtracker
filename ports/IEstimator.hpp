@@ -9,6 +9,19 @@
 
 namespace navtracker {
 
+// Context for PDAF/JPDA soft updates. Carries the same parameters the
+// associator used to compute the betas, so the estimator can build the
+// textbook per-mode mixture likelihood
+//   Λ = β₀ + (1−β₀)/(V·P_D) · Σ_m β_m N(y_m; 0, S)
+// where V is the (per-mode) gate volume derived from `gate_threshold` and
+// the mode's innovation covariance S. If `p_d` ≤ 0 the estimator falls
+// back to the unnormalized proxy `Λ ∝ β₀ + Σ_m β_m N(...)` — relative
+// mode ordering is preserved, only absolute magnitudes change.
+struct PdaContext {
+  double p_d{0.0};              // detection probability used by the associator
+  double gate_threshold{0.0};   // chi-square gate threshold (squared Mahalanobis)
+};
+
 // Recursive state estimator strategy. Implementations advance and correct a
 // track's kinematic state/covariance.
 class IEstimator {
@@ -29,11 +42,15 @@ class IEstimator {
   // is no-op; estimators that support soft updates override this.
   // `betas(j)` = P(measurement j came from this track | data),
   // `beta_0` = P(no measurement assigned to this track this scan).
-  // sum_j betas(j) + beta_0 == 1.
+  // sum_j betas(j) + beta_0 == 1. `ctx` carries P_D and the gate
+  // threshold so multi-mode estimators can normalize the per-mode
+  // mixture likelihood properly; a default-constructed ctx selects
+  // the unnormalized proxy.
   virtual void softUpdate(Track& /*track*/,
                           const std::vector<Measurement>& /*gated_measurements*/,
                           const Eigen::VectorXd& /*betas*/,
-                          double /*beta_0*/) const {}
+                          double /*beta_0*/,
+                          const PdaContext& /*ctx*/ = {}) const {}
 };
 
 }  // namespace navtracker

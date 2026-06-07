@@ -1,5 +1,6 @@
 #include "core/estimation/EkfEstimator.hpp"
 
+#include <cassert>
 #include <utility>
 #include <vector>
 
@@ -30,9 +31,13 @@ void EkfEstimator::update(Track& track, const Measurement& z) const {
   const Eigen::MatrixXd s = h * track.covariance * h.transpose() + z.covariance;
   const Eigen::MatrixXd k = track.covariance * h.transpose() * s.inverse();
   track.state += k * y;
+  // Joseph form: symmetric and PD-preserving even when (I-KH)P leaks
+  // negative eigenvalues through rounding. P = (I-KH) P (I-KH)' + K R K'.
   const auto n = track.state.size();
   const Eigen::MatrixXd id = Eigen::MatrixXd::Identity(n, n);
-  track.covariance = (id - k * h) * track.covariance;
+  const Eigen::MatrixXd ikh = id - k * h;
+  track.covariance = ikh * track.covariance * ikh.transpose() +
+                     k * z.covariance * k.transpose();
   track.last_update = z.time;
 }
 
@@ -66,10 +71,26 @@ Track EkfEstimator::initiate(const Measurement& z) const {
 void EkfEstimator::softUpdate(Track& track,
                               const std::vector<Measurement>& gated_measurements,
                               const Eigen::VectorXd& betas,
-                              double beta_0) const {
+                              double beta_0,
+                              const PdaContext& /*ctx*/) const {
+  // Single-mode EKF does not need PdaContext for its covariance update;
+  // it is consumed by multi-mode estimators (ImmEstimator) to normalize
+  // per-mode mixture likelihoods.
   const int M = static_cast<int>(gated_measurements.size());
   if (M == 0 || betas.size() != M) return;
   const Measurement& z0 = gated_measurements[0];
+  // PDAF assumes H, R, and sensor pose are common across the gated
+  // batch (linearization point is the predicted state, not the measured
+  // value). Loud failure beats silent miscompute if an upstream change
+  // ever mixes sensors into one JPDA scan.
+  for (int m = 1; m < M; ++m) {
+    assert(gated_measurements[m].model == z0.model &&
+           "EkfEstimator::softUpdate: gated measurements must share "
+           "MeasurementModel");
+    assert(gated_measurements[m].sensor_position_enu == z0.sensor_position_enu &&
+           "EkfEstimator::softUpdate: gated measurements must share "
+           "sensor_position_enu");
+  }
   const MeasurementPrediction pred = predictMeasurement(z0.model, track.state, z0.sensor_position_enu);
   const Eigen::MatrixXd& H = pred.H;
   const Eigen::MatrixXd S = H * track.covariance * H.transpose() + z0.covariance;
@@ -89,7 +110,11 @@ void EkfEstimator::softUpdate(Track& track,
 
   const Eigen::MatrixXd I =
       Eigen::MatrixXd::Identity(track.state.size(), track.state.size());
-  const Eigen::MatrixXd P_post_full = (I - K * H) * track.covariance;
+  // Joseph form for the "all-correct" arm: (I-KH) P (I-KH)' + K R K'.
+  const Eigen::MatrixXd IKH = I - K * H;
+  const Eigen::MatrixXd P_post_full =
+      IKH * track.covariance * IKH.transpose() +
+      K * z0.covariance * K.transpose();
   track.state += K * y_combined;
   track.covariance = beta_0 * track.covariance +
                      (1.0 - beta_0) * P_post_full +

@@ -25,6 +25,13 @@ struct AssociationResult {
   // scan). Empty if the associator returned hard matches instead.
   Eigen::MatrixXd betas;       // shape M x T, rows = measurements
   Eigen::VectorXd beta_0;      // shape T,    per-track no-detection prob
+
+  // PDA parameters the associator used. Forwarded into the estimator's
+  // soft update so multi-mode estimators can compute the textbook
+  // mixture likelihood with proper V·P_D normalization. Zero on
+  // hard-association results.
+  double p_d{0.0};
+  double gate_threshold{0.0};
 };
 
 // Data-association strategy: assign measurements to tracks.

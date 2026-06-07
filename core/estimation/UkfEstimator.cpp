@@ -23,14 +23,18 @@ UkfEstimator::UkfEstimator(std::shared_ptr<const IMotionModel> motion,
 void UkfEstimator::predict(Track& track, Timestamp to) const {
   const double dt = to.secondsSince(track.last_update);
   if (dt <= 0.0) return;
-  const Eigen::MatrixXd F = motion_->transitionMatrix(dt);
   const Eigen::MatrixXd Q = motion_->processNoise(dt);
 
+  // True UKF: propagate each sigma point through the nonlinear motion
+  // model f(x, dt). For linear models the default IMotionModel::propagate
+  // collapses to F(dt)·x; for CT the per-sigma-point omega is used to
+  // build its own F. This is what makes UKF prediction more accurate
+  // than EKF on the CT mode.
   const SigmaPoints sp =
       computeSigmaPoints(track.state, track.covariance, alpha_, beta_, kappa_);
   Eigen::MatrixXd prop(sp.points.rows(), sp.points.cols());
   for (int i = 0; i < sp.points.cols(); ++i) {
-    prop.col(i) = F * sp.points.col(i);
+    prop.col(i) = motion_->propagate(sp.points.col(i), dt);
   }
 
   Eigen::VectorXd mean = Eigen::VectorXd::Zero(track.state.size());
@@ -50,6 +54,12 @@ void UkfEstimator::predict(Track& track, Timestamp to) const {
 }
 
 void UkfEstimator::update(Track& track, const Measurement& z) const {
+  // Standard-form UKF update: re-draw sigma points from the predicted
+  // (state, covariance) — predict() left them there. That is why the
+  // cross-covariance below uses xd = sp.points[i] - track.state: the
+  // sigma points are *centered on* track.state, so this difference is
+  // the per-sigma-point deviation. Stone Soup follows the same form
+  // in its `unscented_transform`.
   const SigmaPoints sp =
       computeSigmaPoints(track.state, track.covariance, alpha_, beta_, kappa_);
   const int nz = static_cast<int>(z.value.size());

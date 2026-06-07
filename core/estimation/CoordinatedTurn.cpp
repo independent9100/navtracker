@@ -7,26 +7,39 @@ namespace navtracker {
 CoordinatedTurn::CoordinatedTurn(double accel_psd, double omega_psd)
     : q_a_(accel_psd), q_omega_(omega_psd) {}
 
-Eigen::MatrixXd CoordinatedTurn::transitionMatrix(double dt) const {
+Eigen::MatrixXd CoordinatedTurn::transitionMatrixAt(double omega,
+                                                    double dt) const {
   Eigen::MatrixXd F = Eigen::MatrixXd::Identity(5, 5);
-  const double w = omega_;
-  if (std::abs(w) < 1e-6) {
+  if (std::abs(omega) < 1e-6) {
     F(0, 2) = dt;
     F(1, 3) = dt;
     return F;
   }
-  const double wdt = w * dt;
+  const double wdt = omega * dt;
   const double s = std::sin(wdt);
   const double c = std::cos(wdt);
-  F(0, 2) =  s / w;
-  F(0, 3) = -(1.0 - c) / w;
-  F(1, 2) =  (1.0 - c) / w;
-  F(1, 3) =  s / w;
+  F(0, 2) =  s / omega;
+  F(0, 3) = -(1.0 - c) / omega;
+  F(1, 2) =  (1.0 - c) / omega;
+  F(1, 3) =  s / omega;
   F(2, 2) =  c;
   F(2, 3) = -s;
   F(3, 2) =  s;
   F(3, 3) =  c;
   return F;
+}
+
+Eigen::MatrixXd CoordinatedTurn::transitionMatrix(double dt) const {
+  // CV-limit F at omega=0. The accurate path is propagate(x, dt); this
+  // exists only to satisfy IMotionModel for callers that ignore state.
+  return transitionMatrixAt(0.0, dt);
+}
+
+Eigen::VectorXd CoordinatedTurn::propagate(const Eigen::VectorXd& x,
+                                           double dt) const {
+  // Reads omega from x(4) and applies the closed-form CT step.
+  const double omega = x(4);
+  return transitionMatrixAt(omega, dt) * x;
 }
 
 Eigen::MatrixXd CoordinatedTurn::processNoise(double dt) const {

@@ -31,7 +31,8 @@ class ImmEstimator : public IEstimator {
   void softUpdate(Track& track,
                   const std::vector<Measurement>& gated_measurements,
                   const Eigen::VectorXd& betas,
-                  double beta_0) const override;
+                  double beta_0,
+                  const PdaContext& ctx = {}) const override;
   Track initiate(const Measurement& z) const override;
 
  private:

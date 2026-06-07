@@ -22,6 +22,8 @@ AssociationResult JpdaAssociator::associate(
     const std::vector<Track>& tracks,
     const std::vector<Measurement>& measurements) const {
   AssociationResult out;
+  out.p_d = p_d_;
+  out.gate_threshold = gate_threshold_;
   const int M = static_cast<int>(measurements.size());
   const int T = static_cast<int>(tracks.size());
   if (M == 0 || T == 0) {

@@ -24,7 +24,8 @@ class EkfEstimator : public IEstimator {
   void softUpdate(Track& track,
                   const std::vector<Measurement>& gated_measurements,
                   const Eigen::VectorXd& betas,
-                  double beta_0) const override;
+                  double beta_0,
+                  const PdaContext& ctx = {}) const override;
 
  private:
   std::shared_ptr<const IMotionModel> motion_;

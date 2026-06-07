@@ -1,5 +1,6 @@
 #include "core/estimation/ImmEstimator.hpp"
 
+#include <cassert>
 #include <cmath>
 #include <utility>
 
@@ -78,14 +79,20 @@ void ImmEstimator::predict(Track& track, Timestamp to) const {
     }
   }
 
-  // Per-mode prediction.
+  // Per-mode prediction. For nonlinear motion models (CT with state-
+  // driven omega) we linearize F at the mode's mixed-prior omega for the
+  // covariance update, then apply the true nonlinear step to the mean.
+  // Linear models hit the default propagate() == F·x; the two paths
+  // coincide.
   for (int j = 0; j < K; ++j) {
+    Eigen::MatrixXd F;
     if (auto* ct = dynamic_cast<CoordinatedTurn*>(motions_[j].get())) {
-      ct->setOmega(x_mix(4, j));
+      F = ct->transitionMatrixAt(x_mix(4, j), dt);
+    } else {
+      F = motions_[j]->transitionMatrix(dt);
     }
-    const Eigen::MatrixXd F = motions_[j]->transitionMatrix(dt);
     const Eigen::MatrixXd Q = motions_[j]->processNoise(dt);
-    track.imm_means.col(j) = F * x_mix.col(j);
+    track.imm_means.col(j) = motions_[j]->propagate(x_mix.col(j), dt);
     track.imm_covariances[j] = F * P_mix[j] * F.transpose() + Q;
   }
 
@@ -123,7 +130,11 @@ void ImmEstimator::update(Track& track, const Measurement& z) const {
     const Eigen::MatrixXd K_gain = P_j * H.transpose() * S_inv;
     const Eigen::VectorXd x_new = x_j + K_gain * y;
     const Eigen::MatrixXd I = Eigen::MatrixXd::Identity(n, n);
-    const Eigen::MatrixXd P_new = (I - K_gain * H) * P_j;
+    // Joseph form: P = (I-KH) P (I-KH)' + K R K'.
+    const Eigen::MatrixXd IKH = I - K_gain * H;
+    const Eigen::MatrixXd P_new =
+        IKH * P_j * IKH.transpose() +
+        K_gain * z.covariance * K_gain.transpose();
     track.imm_means.col(j) = x_new;
     track.imm_covariances[j] = P_new;
 
@@ -201,12 +212,24 @@ void ImmEstimator::update(Track& track, const Measurement& z) const {
 void ImmEstimator::softUpdate(Track& track,
                               const std::vector<Measurement>& gated_measurements,
                               const Eigen::VectorXd& betas,
-                              double beta_0) const {
+                              double beta_0,
+                              const PdaContext& ctx) const {
   const int M = static_cast<int>(gated_measurements.size());
   if (M == 0 || betas.size() != M || track.imm_means.cols() == 0) return;
   const int K = static_cast<int>(track.imm_means.cols());
   const int n = static_cast<int>(track.imm_means.rows());
   const Measurement& z0 = gated_measurements[0];
+  // PDAF requires H, R, and sensor pose to be common across the gated
+  // batch (we linearize once at the predicted state). Loud assert
+  // beats silent miscompute if a sensor mix-up creeps in.
+  for (int m = 1; m < M; ++m) {
+    assert(gated_measurements[m].model == z0.model &&
+           "ImmEstimator::softUpdate: gated measurements must share "
+           "MeasurementModel");
+    assert(gated_measurements[m].sensor_position_enu == z0.sensor_position_enu &&
+           "ImmEstimator::softUpdate: gated measurements must share "
+           "sensor_position_enu");
+  }
 
   // Mode prior c_j = sum_i pi(i,j) mu_i — same as update().
   Eigen::VectorXd c(K);
@@ -247,14 +270,39 @@ void ImmEstimator::softUpdate(Track& track,
     }
     spread_sum -= y_combined * y_combined.transpose();
 
+    // Per-mode gate volume V_j = c_d · γ^d · √|S_j| where γ² is the
+    // chi-square gate threshold and c_d the unit-ball constant
+    // (c_1=2, c_2=π). The full PDAF mixture likelihood
+    //   Λ_j = β₀ + (1−β₀)/(V_j·P_D) · Σ_m β_m N(...)
+    // restores absolute scale across modes. If `ctx.p_d` ≤ 0 we fall
+    // back to the unnormalized proxy `Λ_j ∝ β₀ + Σ_m β_m N(...)`.
+    double lambda_j;
+    if (ctx.p_d > 0.0 && ctx.gate_threshold > 0.0) {
+      const double gamma = std::sqrt(ctx.gate_threshold);
+      const double c_d = (d == 1) ? 2.0 : ((d == 2) ? M_PI : 0.0);
+      // c_d == 0 for unsupported dim → fall through to proxy below.
+      if (c_d > 0.0) {
+        const double V_j = c_d * std::pow(gamma, d) * std::sqrt(safe_det);
+        const double denom = V_j * ctx.p_d;
+        lambda_j = beta_0 + (1.0 - beta_0) / std::max(denom, 1e-300) * f_sum;
+      } else {
+        lambda_j = beta_0 + f_sum;
+      }
+    } else {
+      lambda_j = beta_0 + f_sum;
+    }
+
     const Eigen::MatrixXd I = Eigen::MatrixXd::Identity(n, n);
-    const Eigen::MatrixXd P_post_full = (I - K_gain * H) * P_j;
+    // Joseph form for the "all-correct" arm.
+    const Eigen::MatrixXd IKH = I - K_gain * H;
+    const Eigen::MatrixXd P_post_full =
+        IKH * P_j * IKH.transpose() +
+        K_gain * z0.covariance * K_gain.transpose();
     track.imm_means.col(j) = x_j + K_gain * y_combined;
     track.imm_covariances[j] = beta_0 * P_j +
                                (1.0 - beta_0) * P_post_full +
                                K_gain * spread_sum * K_gain.transpose();
 
-    const double lambda_j = beta_0 + f_sum;
     log_lambda(j) = std::log(std::max(lambda_j, 1e-300));
   }
 

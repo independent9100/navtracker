@@ -21,6 +21,11 @@ coordinated-turn (premature) for the first cut.
 
 **Ways to improve / test next.** IMM mixing CV + coordinated-turn for
 maneuvering vessels; tune/learn `q` per vessel class; extend to 3D if needed.
+**Planned next: noisy-CV third mode for the production IMM** — same CV5State
+state vector, accel PSD inflated 10×–100× to absorb unmodelled motion that
+CV+CT can't explain. This is the standard Mazor-1998 maritime recipe and
+the principled alternative to a CA mode (see
+[algorithm-review-2026-06-07.md](algorithm-review-2026-06-07.md)).
 
 ## 2. Measurement models (`MeasurementModels`)
 

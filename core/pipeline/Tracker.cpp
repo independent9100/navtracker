@@ -155,7 +155,8 @@ void Tracker::processBatch(const std::vector<Measurement>& scan) {
         emitBearingInnovationIfApplicable(bearing_innov_sink_, tr,
                                           gated[k], betas_vec[k]);
       }
-      estimator_.softUpdate(tr, gated, betas_eig, result.beta_0(ti));
+      const PdaContext ctx{result.p_d, result.gate_threshold};
+      estimator_.softUpdate(tr, gated, betas_eig, result.beta_0(ti), ctx);
       for (const auto& gz : gated) {
         Track::SourceTouch touch;
         touch.sensor = gz.sensor;

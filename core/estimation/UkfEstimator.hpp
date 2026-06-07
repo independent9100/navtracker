@@ -7,10 +7,12 @@
 
 namespace navtracker {
 
-// Unscented Kalman Filter behind IEstimator. Predict uses the supplied
-// motion model linearly (F(dt)·x for each sigma point); update propagates
-// sigma points through h(x) and reconstructs mean / covariance via the
-// unscented weighted sums.
+// Unscented Kalman Filter behind IEstimator. Predict propagates each
+// sigma point through the motion model's nonlinear `propagate(x, dt)`
+// (which falls back to F(dt)·x for linear models), then reconstructs the
+// predicted mean/covariance via the unscented weighted sums + Q(dt).
+// Update propagates sigma points through h(x) and reconstructs mean /
+// covariance via the unscented weighted sums + R.
 class UkfEstimator : public IEstimator {
  public:
   UkfEstimator(std::shared_ptr<const IMotionModel> motion,
