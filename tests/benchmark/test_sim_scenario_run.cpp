@@ -7,9 +7,9 @@
 using namespace navtracker;
 using namespace navtracker::benchmark;
 
-TEST(SimScenarioRun, ProducesSevenScenariosWithExpectedLabels) {
+TEST(SimScenarioRun, ProducesExpectedDefaultScenarios) {
   const auto scenarios = defaultSimScenarios();
-  ASSERT_EQ(scenarios.size(), 7u);
+  ASSERT_EQ(scenarios.size(), 8u);
   std::set<std::string> labels;
   for (const auto& s : scenarios) labels.insert(s->descriptor().label);
   EXPECT_EQ(labels.count("crossing"), 1u);
@@ -18,6 +18,7 @@ TEST(SimScenarioRun, ProducesSevenScenariosWithExpectedLabels) {
   EXPECT_EQ(labels.count("parallel_targets"), 1u);
   EXPECT_EQ(labels.count("ais_dropout"), 1u);
   EXPECT_EQ(labels.count("clock_skew"), 1u);
+  EXPECT_EQ(labels.count("speed_change"), 1u);
   EXPECT_EQ(labels.count("non_cooperative"), 1u);
 }
 

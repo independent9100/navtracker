@@ -38,6 +38,15 @@ struct TrackTreeNode {
                             // kNoMeasurement for miss / root. Used by the
                             // global-hypothesis solver to enforce
                             // "each detection used at most once across trees".
+
+  // Optional IMM ensemble carrier (parallel to Track::imm_means etc.).
+  // Empty for single-mode estimators (EKF/UKF/PF). Required for IMM:
+  // ImmEstimator::predict/update bail out when imm_means.cols()==0,
+  // so without this the IMM mode mixture would not propagate across
+  // scans and tracks would freeze at their seed velocity.
+  Eigen::MatrixXd imm_means;
+  std::vector<Eigen::MatrixXd> imm_covariances;
+  Eigen::VectorXd imm_mode_probabilities;
 };
 
 // A per-track hypothesis tree.

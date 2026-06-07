@@ -124,6 +124,28 @@ Scenario buildCrossingDropoutScenario(
     double dropout_end_s,
     std::uint32_t seed = 0);
 
+// Along-track speed-change scenario: a target on constant heading that
+// suddenly accelerates ("engine surge") and then decelerates ("drift
+// after thrust loss"). Truth phases:
+//   [0, surge_start)        : constant velocity (initial_velocity)
+//   [surge_start, surge_end): constant acceleration surge_accel_mps2
+//   [surge_end, end]        : constant deceleration drift_decel_mps2
+// No heading change anywhere — this is the niche CV and CT both miss.
+// The noisy-CV mode (high accel PSD, no rotational state) is the right
+// model for the surge and drift segments. Position2D measurements at
+// every truth tick with isotropic Gaussian noise.
+Scenario buildSpeedChangeScenario(
+    const Eigen::Vector2d& start,
+    const Eigen::Vector2d& initial_velocity,
+    double surge_start_s,
+    double surge_duration_s,
+    double surge_accel_mps2,
+    double drift_decel_mps2,
+    const std::vector<double>& sample_times_seconds,
+    double pos_noise_std_m,
+    std::uint32_t seed = 0,
+    std::uint64_t truth_id = 1);
+
 // Stationary target observed by a bearing-only sensor on a moving platform.
 // Sensor starts at sensor_start and moves with sensor_velocity; target sits
 // at target_position. Initial sample emits a wide Position2D seed at the

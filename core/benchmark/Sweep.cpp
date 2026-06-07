@@ -70,12 +70,21 @@ std::vector<MetricRow> runSweep(
       for (std::uint32_t seed = 0; seed < seeds; ++seed) {
         const Scenario scen = scenario_ptr->generate(seed);
         auto est = config.build_estimator();
-        auto asc = config.build_associator();
-        TrackManager mgr(static_cast<int>(params.track_manager_min_misses),
-                         static_cast<int>(params.track_manager_max_misses));
-        Tracker tracker(*est, *asc, mgr, params.tracker_init_gate_m);
-        BenchSink sink;
-        const auto result = runBench(scen, tracker, mgr, sink);
+        BenchResult result;
+        if (config.tracker_kind == TrackerKind::Mht) {
+          const MhtTracker::Config cfg =
+              config.mht_config ? config.mht_config() : MhtTracker::Config{};
+          MhtTracker tracker(*est, cfg);
+          result = runBenchMht(scen, tracker);
+        } else {
+          auto asc = config.build_associator();
+          TrackManager mgr(
+              static_cast<int>(params.track_manager_min_misses),
+              static_cast<int>(params.track_manager_max_misses));
+          Tracker tracker(*est, *asc, mgr, params.tracker_init_gate_m);
+          BenchSink sink;
+          result = runBench(scen, tracker, mgr, sink);
+        }
         const auto m = computeMetrics(result, params.metrics);
         emit(rows, params, config.label, desc.label,
              static_cast<std::uint64_t>(seed), m);

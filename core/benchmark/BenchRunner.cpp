@@ -149,5 +149,63 @@ BenchResult runBench(const Scenario& scenario,
   return result;
 }
 
+namespace {
+
+// Snapshot all Confirmed tracks emitted by MhtTracker. Identical layout
+// rules to snapshotAt (CV2D state slice). MhtTracker reports one Track
+// per surviving tree from its solveGlobalHypothesis-selected leaf, so
+// tracks() is already the per-scan canonical view.
+BenchStep snapshotAtMht(const MhtTracker& tracker, const TruthGroup& g) {
+  BenchStep step;
+  step.time = g.time;
+  step.truth = g.snapshots;
+  for (const Track& tr : tracker.tracks()) {
+    if (tr.status != TrackStatus::Confirmed) continue;
+    if (tr.state.size() < 2) continue;
+    Eigen::Vector2d pos(tr.state(0), tr.state(1));
+    const Eigen::Vector2d vel = tr.state.size() >= 4
+        ? Eigen::Vector2d(tr.state(2), tr.state(3))
+        : Eigen::Vector2d::Zero();
+    step.tracks.push_back(TrackStateSnapshot{tr.id, pos, vel});
+  }
+  return step;
+}
+
+}  // namespace
+
+BenchResult runBenchMht(const Scenario& scenario, MhtTracker& tracker) {
+  BenchResult result;
+  const auto truth_groups = groupTruth(scenario.truth);
+  const auto& meas = scenario.measurements;
+  const auto flushScansUpTo = [&](const Timestamp& upto, std::size_t& mi) {
+    while (mi < meas.size() && !(upto < meas[mi].time)) {
+      const Timestamp scan_t = meas[mi].time;
+      std::vector<Measurement> scan;
+      while (mi < meas.size() && meas[mi].time == scan_t) {
+        scan.push_back(meas[mi]);
+        ++mi;
+      }
+      tracker.processBatch(scan);
+    }
+  };
+
+  std::size_t mi = 0;
+  for (const auto& g : truth_groups) {
+    flushScansUpTo(g.time, mi);
+    result.steps.push_back(snapshotAtMht(tracker, g));
+  }
+  while (mi < meas.size()) {
+    const Timestamp scan_t = meas[mi].time;
+    std::vector<Measurement> scan;
+    while (mi < meas.size() && meas[mi].time == scan_t) {
+      scan.push_back(meas[mi]);
+      ++mi;
+    }
+    tracker.processBatch(scan);
+  }
+  // sink_events intentionally empty: MhtTracker has no sink today.
+  return result;
+}
+
 }  // namespace benchmark
 }  // namespace navtracker

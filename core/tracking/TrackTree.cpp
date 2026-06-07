@@ -48,6 +48,10 @@ void TrackTree::branch(const IEstimator& estimator,
     Track tmp_predicted;
     tmp_predicted.state = nodes_[leaf_idx].state;
     tmp_predicted.covariance = nodes_[leaf_idx].covariance;
+    tmp_predicted.imm_means = nodes_[leaf_idx].imm_means;
+    tmp_predicted.imm_covariances = nodes_[leaf_idx].imm_covariances;
+    tmp_predicted.imm_mode_probabilities =
+        nodes_[leaf_idx].imm_mode_probabilities;
     tmp_predicted.last_update = nodes_[leaf_idx].time;
     estimator.predict(tmp_predicted, scan_time);
 
@@ -57,6 +61,9 @@ void TrackTree::branch(const IEstimator& estimator,
       miss.scan_idx = nodes_[leaf_idx].scan_idx + 1;
       miss.state = tmp_predicted.state;
       miss.covariance = tmp_predicted.covariance;
+      miss.imm_means = tmp_predicted.imm_means;
+      miss.imm_covariances = tmp_predicted.imm_covariances;
+      miss.imm_mode_probabilities = tmp_predicted.imm_mode_probabilities;
       miss.time = scan_time;
       miss.score = nodes_[leaf_idx].score +
                    std::log(1.0 - params.probability_of_detection);
@@ -84,6 +91,9 @@ void TrackTree::branch(const IEstimator& estimator,
       hit.scan_idx = nodes_[leaf_idx].scan_idx + 1;
       hit.state = child_tr.state;
       hit.covariance = child_tr.covariance;
+      hit.imm_means = child_tr.imm_means;
+      hit.imm_covariances = child_tr.imm_covariances;
+      hit.imm_mode_probabilities = child_tr.imm_mode_probabilities;
       hit.time = scan_time;
       hit.score = nodes_[leaf_idx].score +
                   std::log(params.probability_of_detection) +

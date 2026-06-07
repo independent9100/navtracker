@@ -393,4 +393,81 @@ Scenario buildBearingOnlyMovingSensorScenario(
   return s;
 }
 
+Scenario buildSpeedChangeScenario(const Eigen::Vector2d& start,
+                                  const Eigen::Vector2d& initial_velocity,
+                                  double surge_start_s,
+                                  double surge_duration_s,
+                                  double surge_accel_mps2,
+                                  double drift_decel_mps2,
+                                  const std::vector<double>& times,
+                                  double pos_noise_std_m,
+                                  std::uint32_t seed,
+                                  std::uint64_t truth_id) {
+  // Three-phase along-track motion:
+  //  [0, surge_start)        : constant velocity (initial_velocity)
+  //  [surge_start, surge_end): constant acceleration `surge_accel_mps2`
+  //                            along the initial heading (engine spool-up)
+  //  [surge_end, end]        : constant deceleration `drift_decel_mps2`
+  //                            along the initial heading (drift after
+  //                            thrust loss). Speed clamped at zero.
+  //
+  // No heading change anywhere — this is the niche CV and CT both miss:
+  // CV mis-models the speed change; CT only tracks rotational motion.
+  // The noisy-CV mode (high accel PSD, no heading rotation) is exactly
+  // the right model for this segment.
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> noise(0.0, pos_noise_std_m);
+
+  const double speed0 = initial_velocity.norm();
+  Eigen::Vector2d heading = initial_velocity;
+  if (speed0 > 1e-9) heading /= speed0;
+  else heading = Eigen::Vector2d(1.0, 0.0);  // safe default
+
+  const double surge_end_s = surge_start_s + surge_duration_s;
+  const auto positionAt = [&](double t) -> std::pair<Eigen::Vector2d, Eigen::Vector2d> {
+    double s;        // speed at t
+    double dist;     // along-track distance at t
+    if (t < surge_start_s) {
+      s = speed0;
+      dist = speed0 * t;
+    } else if (t < surge_end_s) {
+      const double dt = t - surge_start_s;
+      s = speed0 + surge_accel_mps2 * dt;
+      dist = speed0 * surge_start_s
+           + speed0 * dt + 0.5 * surge_accel_mps2 * dt * dt;
+    } else {
+      const double s_end = speed0 + surge_accel_mps2 * surge_duration_s;
+      const double dt = t - surge_end_s;
+      // Decelerate; clamp at zero so the target doesn't run backwards.
+      const double s_raw = s_end - drift_decel_mps2 * dt;
+      s = std::max(0.0, s_raw);
+      const double t_stop = (drift_decel_mps2 > 1e-9)
+          ? s_end / drift_decel_mps2 : std::numeric_limits<double>::infinity();
+      double dist_drift;
+      if (dt < t_stop) {
+        dist_drift = s_end * dt - 0.5 * drift_decel_mps2 * dt * dt;
+      } else {
+        dist_drift = 0.5 * s_end * t_stop;  // distance until stop
+      }
+      const double surge_dist =
+          speed0 * surge_duration_s
+        + 0.5 * surge_accel_mps2 * surge_duration_s * surge_duration_s;
+      dist = speed0 * surge_start_s + surge_dist + dist_drift;
+    }
+    Eigen::Vector2d pos = start + heading * dist;
+    Eigen::Vector2d vel = heading * s;
+    return {pos, vel};
+  };
+
+  Scenario s;
+  for (double t : times) {
+    const auto [pos, vel] = positionAt(t);
+    s.truth.push_back(makeTruth(pos, vel, t, truth_id));
+    const Eigen::Vector2d noisy(pos.x() + noise(rng),
+                                pos.y() + noise(rng));
+    s.measurements.push_back(makeMeasurement(noisy, t, pos_noise_std_m));
+  }
+  return s;
+}
+
 }  // namespace navtracker

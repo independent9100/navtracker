@@ -6,6 +6,7 @@
 #include <Eigen/Core>
 
 #include "core/benchmark/BenchSink.hpp"
+#include "core/pipeline/MhtTracker.hpp"
 #include "core/pipeline/Tracker.hpp"
 #include "core/scenario/Truth.hpp"
 #include "core/tracking/TrackManager.hpp"
@@ -53,6 +54,15 @@ BenchResult runBench(const Scenario& scenario,
                      Tracker& tracker,
                      TrackManager& manager,
                      BenchSink& sink);
+
+// MHT-pipeline overload. Drives the scenario through MhtTracker (which
+// owns its own track-tree forest and emits Confirmed/Tentative tracks
+// directly via tracks()). No TrackManager, no BenchSink lifecycle stream
+// — MhtTracker doesn't have sink wiring today. BenchResult::sink_events
+// stays empty; the kinematic snapshots in BenchStep::tracks are still
+// the load-bearing input to the metrics, so OSPA / RMSE / continuity
+// all work for like-for-like comparison with the JpdaStyle pipeline.
+BenchResult runBenchMht(const Scenario& scenario, MhtTracker& tracker);
 
 }  // namespace benchmark
 }  // namespace navtracker

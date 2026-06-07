@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "core/pipeline/MhtTracker.hpp"
 #include "ports/IDataAssociator.hpp"
 #include "ports/IEstimator.hpp"
 
@@ -18,13 +19,29 @@ using EstimatorFactory = std::function<std::shared_ptr<IEstimator>()>;
 // Factory for a fresh associator instance. Each call must return a new object.
 using AssociatorFactory = std::function<std::shared_ptr<IDataAssociator>()>;
 
-// A single labelled (estimator, associator) baseline configuration. The
-// label is the canonical identifier emitted by Sweep into result CSVs;
-// the factories construct the components on demand per (scenario × seed).
+// Which tracker pipeline drives this config:
+//   - JpdaStyle: `Tracker` + `TrackManager` (GNN/JPDA/JIPDA — i.e. per-
+//     scan hard or soft association with an external M-of-N manager).
+//   - Mht:       `MhtTracker` (track-tree hypothesis MHT with internal
+//     branching, K=1 Hungarian global hypothesis, and M-of-N
+//     confirmation inside the tracker). Does not use TrackManager; the
+//     associator factory is ignored.
+enum class TrackerKind {
+  JpdaStyle,
+  Mht,
+};
+
+// A single labelled baseline configuration. The label is the canonical
+// identifier emitted by Sweep into result CSVs; the factories construct
+// the components on demand per (scenario × seed).
 struct Config {
   std::string label;
   EstimatorFactory build_estimator;
-  AssociatorFactory build_associator;
+  AssociatorFactory build_associator;          // ignored if tracker_kind == Mht
+  TrackerKind tracker_kind{TrackerKind::JpdaStyle};
+  // Optional MHT configuration override. Used only when
+  // tracker_kind == Mht; nullptr → default-constructed MhtTracker::Config.
+  std::function<MhtTracker::Config()> mht_config{};
 };
 
 // Returns the five baseline configurations in fixed order:

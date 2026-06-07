@@ -22,6 +22,12 @@ TrackTreeNode rootFromMeasurement(const IEstimator& estimator,
   root.scan_idx = 0;
   root.state = seed.state;
   root.covariance = seed.covariance;
+  // Carry IMM ensemble through to the tree so subsequent predicts
+  // don't bail out on imm_means.cols()==0. Empty for single-mode
+  // estimators (EKF/UKF/PF) — no-op.
+  root.imm_means = seed.imm_means;
+  root.imm_covariances = seed.imm_covariances;
+  root.imm_mode_probabilities = seed.imm_mode_probabilities;
   root.time = z.time;
   root.score = 0.0;
   root.is_leaf = true;
@@ -201,6 +207,10 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     view.id = trees_[ti].externalId();
     view.state = trees_[ti].nodes()[leaf].state;
     view.covariance = trees_[ti].nodes()[leaf].covariance;
+    view.imm_means = trees_[ti].nodes()[leaf].imm_means;
+    view.imm_covariances = trees_[ti].nodes()[leaf].imm_covariances;
+    view.imm_mode_probabilities =
+        trees_[ti].nodes()[leaf].imm_mode_probabilities;
     view.last_update = trees_[ti].nodes()[leaf].time;
     view.status = status;
     tracks_.push_back(std::move(view));

@@ -130,15 +130,42 @@ std::shared_ptr<IDataAssociator> makeJpda() {
 
 }  // namespace
 
+namespace {
+
+// MHT tracker defaults. gate_threshold matches kJpdaGate (20.0) so MHT
+// branches see the same gate volume the soft associator uses; the rest
+// are the MhtTracker::Config defaults. Bhattacharyya merging at 1.0
+// (Mahalanobis-like), 2-of-3 confirmation, N-scan = 3.
+MhtTracker::Config makeMhtConfig() {
+  MhtTracker::Config cfg;
+  cfg.gate_threshold = kJpdaGate;
+  cfg.probability_of_detection = kJpdaPd;
+  cfg.clutter_density = kJpdaClutterDensity;
+  return cfg;
+}
+
+}  // namespace
+
 std::vector<Config> defaultConfigs() {
   std::vector<Config> configs;
-  configs.reserve(6);
+  configs.reserve(9);
+  // JPDA/GNN-style configs (current Tracker pipeline).
   configs.push_back({"ekf_cv_gnn", &makeEkfCv, &makeGnn});
   configs.push_back({"ekf_cv_jpda", &makeEkfCv, &makeJpda});
   configs.push_back({"ukf_cv_gnn", &makeUkfCv, &makeGnn});
   configs.push_back({"ukf_ct_gnn", &makeUkfCt, &makeGnn});
   configs.push_back({"imm_cv_ct_jpda", &makeImmCvCt, &makeJpda});
   configs.push_back({"imm_cv_ct_noisy_jpda", &makeImmCvCtNoisy, &makeJpda});
+  // MHT configs (MhtTracker pipeline). associator factory unused; we
+  // still pass it because the Config struct ergonomics expect it
+  // populated. The MhtTracker constructs its own gating + association
+  // via TrackTree::branch internally.
+  configs.push_back({"ekf_cv_mht", &makeEkfCv, &makeJpda,
+                     TrackerKind::Mht, &makeMhtConfig});
+  configs.push_back({"imm_cv_ct_mht", &makeImmCvCt, &makeJpda,
+                     TrackerKind::Mht, &makeMhtConfig});
+  configs.push_back({"imm_cv_ct_noisy_mht", &makeImmCvCtNoisy, &makeJpda,
+                     TrackerKind::Mht, &makeMhtConfig});
   return configs;
 }
 

@@ -135,6 +135,30 @@ class ClockSkewScenarioRun : public ScenarioRun {
   }
 };
 
+class SpeedChangeScenarioRun : public ScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return {"speed_change", true, kSeedCount};
+  }
+  Scenario generate(std::uint64_t seed) override {
+    // 40-second run, 1-second cadence. Target cruising east at 8 m/s
+    // (~15 kt), then a 5-second engine surge at 2 m/s² (CV can't fit,
+    // CT has no heading change to track), then a 10-second drift
+    // decelerating at 1 m/s² (engine cut). The noisy-CV mode is what's
+    // designed to absorb both surge and drift.
+    return buildSpeedChangeScenario(
+        /*start=*/Eigen::Vector2d(0.0, 0.0),
+        /*initial_velocity=*/Eigen::Vector2d(8.0, 0.0),
+        /*surge_start_s=*/10.0,
+        /*surge_duration_s=*/5.0,
+        /*surge_accel_mps2=*/2.0,
+        /*drift_decel_mps2=*/1.0,
+        linearSeconds(1, 40),
+        /*pos_noise_std_m=*/5.0,
+        static_cast<std::uint32_t>(seed));
+  }
+};
+
 class NonCooperativeScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
@@ -160,13 +184,14 @@ class NonCooperativeScenarioRun : public ScenarioRun {
 
 std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   std::vector<std::unique_ptr<ScenarioRun>> out;
-  out.reserve(7);
+  out.reserve(8);
   out.push_back(std::make_unique<CrossingScenarioRun>());
   out.push_back(std::make_unique<OvertakingScenarioRun>());
   out.push_back(std::make_unique<HeadOnScenarioRun>());
   out.push_back(std::make_unique<ParallelTargetsScenarioRun>());
   out.push_back(std::make_unique<AisDropoutScenarioRun>());
   out.push_back(std::make_unique<ClockSkewScenarioRun>());
+  out.push_back(std::make_unique<SpeedChangeScenarioRun>());
   out.push_back(std::make_unique<NonCooperativeScenarioRun>());
   return out;
 }
