@@ -51,6 +51,15 @@ constexpr double kImmCtOmegaPsd = 0.1;
 constexpr double kImmInitSpeedStd = 10.0;
 constexpr double kImmInitOmegaStd = 0.1;
 
+// Noisy-CV third mode for the 3-mode IMM (CV + CT + noisy-CV). Same
+// CV5State motion model with the accel PSD inflated 50× — the
+// standard Mazor 1998 maritime recipe for "the target is doing
+// something neither CV nor CT can explain" (e.g. sudden speed change
+// without a heading turn, drifting under thrust loss). 10×–100× is
+// the conventional range; 50× is a midpoint we'll tune from data.
+constexpr double kImmCv5NoisyAccelPsd = 25.0;
+constexpr double kImmCv5NoisyOmegaPsd = 0.01;
+
 constexpr double kGnnGate = 50.0;
 constexpr double kJpdaGate = 20.0;
 constexpr double kJpdaPd = 0.9;
@@ -85,6 +94,31 @@ std::shared_ptr<IEstimator> makeImmCvCt() {
                                         kImmInitSpeedStd, kImmInitOmegaStd);
 }
 
+// 3-mode IMM: CV5State (cruising), CoordinatedTurn (turning),
+// noisy CV5State (unmodelled motion). The standard Mazor 1998
+// maritime recipe — see docs/algorithms/algorithm-review-2026-06-07.md
+// and the "Planned: noisy-CV third mode" note in estimation.md.
+// Transition matrix is a symmetric "escape-hatch" topology: each
+// mode is dominant (0.90 self-stay) and equally likely to switch to
+// either of the other two.
+std::shared_ptr<IEstimator> makeImmCvCtNoisy() {
+  std::vector<std::shared_ptr<IMotionModel>> motions = {
+      std::make_shared<ConstantVelocity5State>(kImmCv5AccelPsd,
+                                               kImmCv5OmegaPsd),
+      std::make_shared<CoordinatedTurn>(kImmCtAccelPsd, kImmCtOmegaPsd),
+      std::make_shared<ConstantVelocity5State>(kImmCv5NoisyAccelPsd,
+                                               kImmCv5NoisyOmegaPsd)};
+  Eigen::MatrixXd pi(3, 3);
+  pi << 0.90, 0.05, 0.05,
+        0.05, 0.90, 0.05,
+        0.05, 0.05, 0.90;
+  Eigen::VectorXd mu0(3);
+  mu0 << 0.45, 0.45, 0.10;  // bias prior toward CV/CT; noisy is the
+                            // fallback, not the default expectation.
+  return std::make_shared<ImmEstimator>(motions, pi, mu0,
+                                        kImmInitSpeedStd, kImmInitOmegaStd);
+}
+
 std::shared_ptr<IDataAssociator> makeGnn() {
   return std::make_shared<GnnAssociator>(kGnnGate);
 }
@@ -98,12 +132,13 @@ std::shared_ptr<IDataAssociator> makeJpda() {
 
 std::vector<Config> defaultConfigs() {
   std::vector<Config> configs;
-  configs.reserve(5);
+  configs.reserve(6);
   configs.push_back({"ekf_cv_gnn", &makeEkfCv, &makeGnn});
   configs.push_back({"ekf_cv_jpda", &makeEkfCv, &makeJpda});
   configs.push_back({"ukf_cv_gnn", &makeUkfCv, &makeGnn});
   configs.push_back({"ukf_ct_gnn", &makeUkfCt, &makeGnn});
   configs.push_back({"imm_cv_ct_jpda", &makeImmCvCt, &makeJpda});
+  configs.push_back({"imm_cv_ct_noisy_jpda", &makeImmCvCtNoisy, &makeJpda});
   return configs;
 }
 

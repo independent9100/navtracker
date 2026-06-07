@@ -8,21 +8,22 @@
 using navtracker::benchmark::Config;
 using navtracker::benchmark::defaultConfigs;
 
-TEST(Config, FiveDefaultConfigsWithUniqueLabels) {
+TEST(Config, DefaultConfigsHaveUniqueLabels) {
   const auto configs = defaultConfigs();
-  ASSERT_EQ(configs.size(), 5u);
+  ASSERT_EQ(configs.size(), 6u);
   std::set<std::string> labels;
   for (const auto& c : configs) {
     labels.insert(c.label);
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 5u);
+  EXPECT_EQ(labels.size(), 6u);
   EXPECT_EQ(labels.count("ekf_cv_gnn"), 1u);
   EXPECT_EQ(labels.count("ekf_cv_jpda"), 1u);
   EXPECT_EQ(labels.count("ukf_cv_gnn"), 1u);
   EXPECT_EQ(labels.count("ukf_ct_gnn"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_jpda"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_noisy_jpda"), 1u);
 }
 
 TEST(Config, FactoriesProduceUsableObjects) {
