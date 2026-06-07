@@ -205,6 +205,17 @@ factored into how you read a comparison.
    header. Wire it in if you need the field populated for traceability;
    the schema is ready.
 
+7. **The first committed baseline (`2026-06-07_baseline.csv`) runs only
+   the 7 synthetic scenarios** (5 × 7 × 10 × 8 = 2800 rows). The
+   replays (`philos`, `haxr`) were skipped because the full sweep
+   doesn't complete within a reasonable wall-clock budget when each of
+   the 5 configs re-loads both replays from disk. The unit tests load
+   them in ~360 ms, but the per-config repeat in the sweep multiplies
+   that. A follow-up should cache the replay `Scenario` per scenario
+   instance (load once, replay-by-reference into each config) and then
+   re-baseline with replays included. Until that lands, the
+   `--skip-replays` flag is the recommended default.
+
 ## File layout
 
 ```
