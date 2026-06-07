@@ -5,3 +5,6 @@ target_link_libraries(navtracker_bench_baseline
 add_executable(navtracker_bench_render render_markdown.cpp)
 target_link_libraries(navtracker_bench_render
   PRIVATE navtracker_benchmark)
+
+add_executable(navtracker_bench_compare compare.cpp)
+target_link_libraries(navtracker_bench_compare PRIVATE navtracker_benchmark)
