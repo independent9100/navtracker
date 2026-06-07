@@ -1,6 +1,42 @@
 #include "core/benchmark/BenchRunner.hpp"
 
-#include <utility>
+// BenchRunner — drives a Scenario through a Tracker, snapshotting full
+// truth + track state at each truth timestamp.
+//
+// Math:
+//   For each truth tick t_k, the runner first processes every
+//   measurement m with m.time <= t_k via Tracker::process(m), then
+//   snapshots:
+//     - the truth samples at t_k (position + velocity from TruthSample);
+//     - every Confirmed track from TrackManager::tracks(), pulling
+//       (px, py) from state(0..1) and (vx, vy) from state(2..3).
+//
+// Assumptions:
+//   - scenario.truth and scenario.measurements are both sorted by time.
+//   - The estimator's state layout begins [px, py, vx, vy, ...]; this
+//     holds for ConstantVelocity2D and any wrapper (UKF, EKF) that does
+//     not reorder. For CoordinatedTurn / IMM with a different state
+//     packing, velocity slicing falls back to zero when state.size() < 4
+//     and is otherwise reported in the CV2D convention — known to be
+//     unreliable for those configs; documented in
+//     docs/baselines/README.md.
+//   - Only Confirmed tracks contribute to BenchStep::tracks; tentative
+//     tracks are excluded so downstream RMSE is not polluted by tracks
+//     that may be deleted.
+//
+// Rationale:
+//   The truth-tick-outer loop (vs. measurement-outer in the tentative
+//   plan sketch) mirrors core/scenario/Harness.cpp::runScenario so OSPA
+//   values from BenchResult are directly comparable to those from
+//   runScenario. Snapshot-before-process at each tick gives a "state
+//   used to compute prediction" view, consistent with the existing
+//   harness.
+//
+// Improve next:
+//   - Add a kinematic-projection accessor on Track (or per-estimator
+//     extractor) so non-CV2D state layouts produce correct velocities.
+//   - Optional flag to include tentative tracks for full parity with
+//     runScenario when needed for like-for-like comparison.
 
 namespace navtracker {
 namespace benchmark {
@@ -11,6 +47,18 @@ struct TruthGroup {
   std::vector<TruthStateSnapshot> snapshots;
 };
 
+// RAII guard that ensures the manager's track sink is cleared even if a
+// downstream call (Tracker::process, etc.) throws. Without this the
+// manager would retain a dangling pointer to the stack-allocated
+// BenchSink on the exception path.
+struct SinkGuard {
+  TrackManager& m;
+  ~SinkGuard() { m.setTrackSink(nullptr); }
+};
+
+// precondition: `truth` is sorted by non-decreasing time. We only open a
+// new bucket when `t.time` differs from the previous one, so out-of-order
+// input (e.g. t=1, t=2, t=1) would silently produce duplicate groups.
 std::vector<TruthGroup> groupTruth(const std::vector<TruthSample>& truth) {
   std::vector<TruthGroup> out;
   for (const auto& t : truth) {
@@ -34,10 +82,9 @@ BenchStep snapshotAt(const TrackManager& manager, const TruthGroup& g) {
     if (tr.status != TrackStatus::Confirmed) continue;
     if (tr.state.size() < 2) continue;
     Eigen::Vector2d pos(tr.state(0), tr.state(1));
-    Eigen::Vector2d vel = Eigen::Vector2d::Zero();
-    if (tr.state.size() >= 4) {
-      vel = Eigen::Vector2d(tr.state(2), tr.state(3));
-    }
+    const Eigen::Vector2d vel = tr.state.size() >= 4
+        ? Eigen::Vector2d(tr.state(2), tr.state(3))  // CV2D layout [px,py,vx,vy]
+        : Eigen::Vector2d::Zero();
     step.tracks.push_back(TrackStateSnapshot{tr.id, pos, vel});
   }
   return step;
@@ -50,6 +97,7 @@ BenchResult runBench(const Scenario& scenario,
                      TrackManager& manager,
                      BenchSink& sink) {
   manager.setTrackSink(&sink);
+  SinkGuard guard{manager};
 
   BenchResult result;
   const auto truth_groups = groupTruth(scenario.truth);
@@ -74,7 +122,6 @@ BenchResult runBench(const Scenario& scenario,
     ++mi;
   }
 
-  manager.setTrackSink(nullptr);
   result.sink_events = sink.events();
   return result;
 }

@@ -45,6 +45,10 @@ struct BenchResult {
 // timestamp order. After each truth timestamp is reached, snapshot truth
 // and confirmed tracks. The supplied BenchSink is registered with the
 // manager for the duration of the run.
+//
+// Only Confirmed tracks populate BenchStep::tracks; tentative tracks
+// are filtered to keep downstream RMSE from being polluted by tracks
+// that may later be deleted.
 BenchResult runBench(const Scenario& scenario,
                      Tracker& tracker,
                      TrackManager& manager,
