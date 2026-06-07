@@ -23,6 +23,7 @@ add_library(navtracker_core
   core/estimation/PrescribedTurn.cpp
   core/estimation/ImmEstimator.cpp
   core/estimation/MeasurementModels.cpp
+  core/estimation/EstimatorDefaults.cpp
   core/estimation/EkfEstimator.cpp
   core/estimation/SigmaPoints.cpp
   core/estimation/UkfEstimator.cpp

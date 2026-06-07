@@ -359,4 +359,71 @@ Track ImmEstimator::initiate(const Measurement& z) const {
   return t;
 }
 
+// Any-mode gating (Mazor 1998 §V). For each mode j compute the
+// per-mode innovation (yⱼ, Sⱼ); pass if any d²ⱼ = yⱼᵀ Sⱼ⁻¹ yⱼ ≤ γ.
+// Falls back to the single-Gaussian gate (via the IEstimator default)
+// for tracks that have not yet acquired imm_means (e.g., during the
+// brief window before the first IMM predict populates them).
+bool ImmEstimator::gate(const Track& track,
+                        const Measurement& z,
+                        double gate_threshold) const {
+  if (track.imm_means.cols() == 0) {
+    return IEstimator::gate(track, z, gate_threshold);
+  }
+  const int K = static_cast<int>(track.imm_means.cols());
+  for (int j = 0; j < K; ++j) {
+    const Eigen::VectorXd x_j = track.imm_means.col(j);
+    const Eigen::MatrixXd& P_j = track.imm_covariances[j];
+    const MeasurementPrediction pred =
+        predictMeasurement(z.model, x_j, z.sensor_position_enu);
+    const Eigen::VectorXd y =
+        measurementResidual(z.model, z.value, pred.z_pred);
+    const Eigen::MatrixXd S =
+        pred.H * P_j * pred.H.transpose() + z.covariance;
+    const double d2 = y.transpose() * S.inverse() * y;
+    if (d2 <= gate_threshold) return true;
+  }
+  return false;
+}
+
+// Mode-weighted mixture log-likelihood:
+//   log Σⱼ μⱼ · N(z; ẑⱼ, Sⱼ)
+//        = max_j logℓⱼ + log Σⱼ μⱼ · exp(logℓⱼ - max_j logℓⱼ)
+// where logℓⱼ = -½ d log(2π) - ½ log|Sⱼ| - ½ yⱼᵀ Sⱼ⁻¹ yⱼ. Computed
+// via log-sum-exp to avoid underflow when one mode dominates by
+// many orders of magnitude (common during a maneuver).
+double ImmEstimator::logLikelihood(const Track& track,
+                                   const Measurement& z) const {
+  if (track.imm_means.cols() == 0) {
+    return IEstimator::logLikelihood(track, z);
+  }
+  const int K = static_cast<int>(track.imm_means.cols());
+  const int d = static_cast<int>(z.value.size());
+  const double log_2pi_term =
+      -0.5 * static_cast<double>(d) * std::log(2.0 * M_PI);
+  Eigen::VectorXd log_ell(K);
+  for (int j = 0; j < K; ++j) {
+    const Eigen::VectorXd x_j = track.imm_means.col(j);
+    const Eigen::MatrixXd& P_j = track.imm_covariances[j];
+    const MeasurementPrediction pred =
+        predictMeasurement(z.model, x_j, z.sensor_position_enu);
+    const Eigen::VectorXd y =
+        measurementResidual(z.model, z.value, pred.z_pred);
+    const Eigen::MatrixXd S =
+        pred.H * P_j * pred.H.transpose() + z.covariance;
+    const double det = S.determinant();
+    const double safe_det = (det > 0.0 && std::isfinite(det)) ? det : 1e-300;
+    const double mahal = y.transpose() * S.inverse() * y;
+    log_ell(j) = log_2pi_term - 0.5 * std::log(safe_det) - 0.5 * mahal;
+  }
+  // log Σⱼ μⱼ exp(log_ell_j) via log-sum-exp.
+  const Eigen::VectorXd& mu = track.imm_mode_probabilities;
+  const double max_log = log_ell.maxCoeff();
+  double sum = 0.0;
+  for (int j = 0; j < K; ++j) {
+    sum += mu(j) * std::exp(log_ell(j) - max_log);
+  }
+  return max_log + std::log(std::max(sum, 1e-300));
+}
+
 }  // namespace navtracker

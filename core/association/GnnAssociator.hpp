@@ -12,7 +12,8 @@ class GnnAssociator : public IDataAssociator {
 
   AssociationResult associate(
       const std::vector<Track>& tracks,
-      const std::vector<Measurement>& measurements) const override;
+      const std::vector<Measurement>& measurements,
+      const IEstimator* estimator = nullptr) const override;
 
  private:
   double gate_threshold_;  // chi-square gate on squared Mahalanobis distance

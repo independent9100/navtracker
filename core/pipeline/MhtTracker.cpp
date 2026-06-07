@@ -142,8 +142,15 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
       gate_tr.state = tt.nodes()[best].state;
       gate_tr.covariance = tt.nodes()[best].covariance;
       gate_tr.last_update = tt.nodes()[best].time;
-      const double d2 = mahalanobisDistance(gate_tr, scan[j]);
-      if (d2 <= cfg_.gate_threshold) { gated_to_any = true; break; }
+      // NB: this gate uses the moment-matched single-Gaussian path —
+      // we don't have the IMM per-mode means/covariances on a
+      // TrackTreeNode (only on the Track during branch()). For birth
+      // gating that's acceptable; the per-tree branch loop above uses
+      // estimator.gate() with the full IMM state.
+      if (estimator_.gate(gate_tr, scan[j], cfg_.gate_threshold)) {
+        gated_to_any = true;
+        break;
+      }
     }
     measurement_explained[j] = gated_to_any;
   }

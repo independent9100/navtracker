@@ -70,7 +70,7 @@ void Tracker::process(const Measurement& z) {
 
   const std::vector<Measurement> batch{z};
   const AssociationResult result =
-      associator_.associate(manager_.tracks(), batch);
+      associator_.associate(manager_.tracks(), batch, &estimator_);
 
   if (!result.matches.empty()) {
     const std::size_t ti = result.matches.front().first;
@@ -127,7 +127,7 @@ void Tracker::processBatch(const std::vector<Measurement>& scan) {
   manager_.predictAll(estimator_, t);
 
   const AssociationResult result =
-      associator_.associate(manager_.tracks(), scan);
+      associator_.associate(manager_.tracks(), scan, &estimator_);
 
   const bool soft = result.betas.size() > 0 && result.beta_0.size() > 0;
   std::vector<bool> meas_used(scan.size(), false);

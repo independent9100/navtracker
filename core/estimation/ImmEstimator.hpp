@@ -35,6 +35,20 @@ class ImmEstimator : public IEstimator {
                   const PdaContext& ctx = {}) const override;
   Track initiate(const Measurement& z) const override;
 
+  // Any-mode gate (Mazor 1998 §V): true iff ANY mode's per-mode
+  // innovation gate passes. Tighter than the moment-matched gate in
+  // maneuvering regimes; looser than most-likely-mode gating.
+  bool gate(const Track& track,
+            const Measurement& z,
+            double gate_threshold) const override;
+
+  // Mode-weighted log-likelihood:
+  //   log Σⱼ μⱼ · N(z; h(x_j), H_j P_j H_j' + R).
+  // Computed via log-sum-exp. Strictly more honest than the
+  // moment-matched log N when modes disagree.
+  double logLikelihood(const Track& track,
+                       const Measurement& z) const override;
+
  private:
   void projectMixtureToTrack(Track& track) const;
 

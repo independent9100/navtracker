@@ -183,3 +183,99 @@ TEST(ImmEstimator, SoftUpdateActuallyMovesStateTowardMeasurement) {
          "softUpdate is the no-op default again.";
   EXPECT_NEAR(t.imm_mode_probabilities.sum(), 1.0, 1e-9);
 }
+
+TEST(ImmEstimator, LogLikelihoodIsModeWeightedMixtureNotMomentMatched) {
+  // The bug task #1 was supposed to fix: gating/scoring through the
+  // moment-matched track.covariance double-counts inter-mode mean
+  // separation when modes disagree, making the surrogate covariance
+  // strictly larger than any individual mode's S. The proper
+  // logLikelihood is the mode-weighted mixture log Σⱼ μⱼ · N(z; ẑⱼ, Sⱼ).
+  // Construct a track whose two modes have visibly different means;
+  // compare the IMM logLikelihood against the moment-matched
+  // single-Gaussian baseline. The mixture must beat the baseline at a
+  // point that lies near one mode (not at the mixture mean).
+  auto cv = std::make_shared<ConstantVelocity5State>(0.5, 0.01);
+  auto ct = std::make_shared<CoordinatedTurn>(0.5, 0.1);
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {cv, ct};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05,
+        0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 0.5, 0.5;
+  ImmEstimator imm(motions, pi, mu0, 10.0, 0.1);
+
+  navtracker::Track t = imm.initiate(positionMeas(0.0, 0.0, 5.0, 0.0));
+  // Force the two modes' means apart by hand. Mode 0 sits at (10, 0),
+  // mode 1 sits at (-10, 0); both with unit covariance. Equal mixing
+  // weights.
+  t.imm_means.resize(5, 2);
+  t.imm_means.col(0) << 10.0, 0.0, 0.0, 0.0, 0.0;
+  t.imm_means.col(1) << -10.0, 0.0, 0.0, 0.0, 0.0;
+  Eigen::MatrixXd P = Eigen::MatrixXd::Identity(5, 5);
+  t.imm_covariances = {P, P};
+  t.imm_mode_probabilities = Eigen::Vector2d(0.5, 0.5);
+
+  // A measurement at (10, 0) — exactly on mode 0's mean.
+  const auto z = positionMeas(10.0, 0.0, 1.0, 1.0);
+
+  // For comparison: project the mixture to a single Gaussian
+  // (what the OLD code did) and score that.
+  Eigen::VectorXd x_proj = 0.5 * t.imm_means.col(0) + 0.5 * t.imm_means.col(1);
+  Eigen::MatrixXd P_proj = Eigen::MatrixXd::Zero(5, 5);
+  for (int j = 0; j < 2; ++j) {
+    const Eigen::VectorXd d = t.imm_means.col(j) - x_proj;
+    P_proj += 0.5 * (t.imm_covariances[j] + d * d.transpose());
+  }
+  navtracker::Track t_proj = t;
+  t_proj.imm_means.resize(0, 0);
+  t_proj.imm_covariances.clear();
+  t_proj.state = x_proj;
+  t_proj.covariance = P_proj;
+
+  const double mixture_ll = imm.logLikelihood(t, z);
+  const double moment_matched_ll = imm.logLikelihood(t_proj, z);
+
+  // The mixture likelihood at (10, 0) is dominated by mode 0
+  // (unit covariance, μ=0.5), so it should significantly beat the
+  // moment-matched score (wide projected covariance that includes the
+  // 20m spread between modes).
+  EXPECT_GT(mixture_ll, moment_matched_ll)
+      << "Mixture log-likelihood should beat moment-matched at a "
+         "near-mode point; mixture=" << mixture_ll
+      << " moment_matched=" << moment_matched_ll;
+}
+
+TEST(ImmEstimator, AnyModeGateAcceptsNearAnyMode) {
+  // Mazor 1998 §V: IMM gate passes iff any mode's per-mode gate
+  // passes. Construct the same two-mode track as above, then verify
+  // a measurement near mode 0 passes the gate AND a measurement near
+  // mode 1 passes the gate, even though both lie *outside* a
+  // moment-matched single-Gaussian gate centered on the projected
+  // mean (0, 0).
+  auto cv = std::make_shared<ConstantVelocity5State>(0.5, 0.01);
+  auto ct = std::make_shared<CoordinatedTurn>(0.5, 0.1);
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {cv, ct};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05, 0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 0.5, 0.5;
+  ImmEstimator imm(motions, pi, mu0, 10.0, 0.1);
+
+  navtracker::Track t = imm.initiate(positionMeas(0.0, 0.0, 5.0, 0.0));
+  t.imm_means.resize(5, 2);
+  t.imm_means.col(0) << 10.0, 0.0, 0.0, 0.0, 0.0;
+  t.imm_means.col(1) << -10.0, 0.0, 0.0, 0.0, 0.0;
+  Eigen::MatrixXd P = Eigen::MatrixXd::Identity(5, 5);
+  t.imm_covariances = {P, P};
+  t.imm_mode_probabilities = Eigen::Vector2d(0.5, 0.5);
+
+  const auto z_near_mode0 = positionMeas(10.5, 0.0, 1.0, 1.0);
+  const auto z_near_mode1 = positionMeas(-10.5, 0.0, 1.0, 1.0);
+  const auto z_in_no_mode = positionMeas(0.0, 0.0, 1.0, 1.0);
+
+  EXPECT_TRUE(imm.gate(t, z_near_mode0, 9.0));
+  EXPECT_TRUE(imm.gate(t, z_near_mode1, 9.0));
+  // (0, 0) is at the moment-matched centre but 10σ away from each
+  // individual mode mean — must be REJECTED by any-mode gating.
+  EXPECT_FALSE(imm.gate(t, z_in_no_mode, 9.0));
+}

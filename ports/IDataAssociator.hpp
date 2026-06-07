@@ -34,13 +34,26 @@ struct AssociationResult {
   double gate_threshold{0.0};
 };
 
+class IEstimator;
+
 // Data-association strategy: assign measurements to tracks.
+//
+// `estimator` is optional; when non-null the associator routes gate
+// and log-likelihood through it (`estimator->gate(...)` and
+// `estimator->logLikelihood(...)`). This is what makes the IMM/JPDA
+// and IMM/MHT combinations honest — multi-mode estimators expose
+// any-mode gating and mode-mixture likelihoods that no single-Gaussian
+// surrogate can reproduce. When null, the associator falls back to
+// the single-Gaussian path computed from `track.state, track.covariance`
+// directly — same behaviour as before this parameter existed, suitable
+// for unit tests and EKF/UKF/PF callers.
 class IDataAssociator {
  public:
   virtual ~IDataAssociator() = default;
   virtual AssociationResult associate(
       const std::vector<Track>& tracks,
-      const std::vector<Measurement>& measurements) const = 0;
+      const std::vector<Measurement>& measurements,
+      const IEstimator* estimator = nullptr) const = 0;
 };
 
 }  // namespace navtracker

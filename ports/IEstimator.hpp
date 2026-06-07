@@ -51,6 +51,33 @@ class IEstimator {
                           const Eigen::VectorXd& /*betas*/,
                           double /*beta_0*/,
                           const PdaContext& /*ctx*/ = {}) const {}
+
+  // Gate test: is `z` plausible enough to be a real association
+  // candidate for `track`? `gate_threshold` is the squared-Mahalanobis
+  // chi-square cutoff (caller passes the same value it uses elsewhere
+  // — e.g., associator's gate_threshold_).
+  //
+  // For single-mode estimators this is the standard Mahalanobis gate.
+  // For IMM, the default implementation (any-mode gating, Mazor 1998
+  // §V) returns true iff *any* mode's per-mode innovation gate passes
+  // — which is what the textbook recommends, since the dominant mode
+  // determines which spread is operationally correct.
+  //
+  // Default implementation works through track.state / track.covariance
+  // (the moment-matched projection) — correct for EKF/UKF/PF, biased
+  // loose for IMM. IMM overrides to compute per-mode gates.
+  virtual bool gate(const Track& track,
+                    const Measurement& z,
+                    double gate_threshold) const;
+
+  // Scalar log-likelihood log p(z | track) used by data associators
+  // (JPDA hypothesis weighting, MHT branch scoring). For single-mode
+  // estimators this is the standard Gaussian log N(z; h(x), H P H' + R).
+  // For IMM, the default implementation returns the mode-mixture
+  // log Σⱼ μⱼ · N(z; h(xⱼ), Sⱼ) — strictly more honest than the
+  // moment-matched log N which double-counts inter-mode spread.
+  virtual double logLikelihood(const Track& track,
+                               const Measurement& z) const;
 };
 
 }  // namespace navtracker

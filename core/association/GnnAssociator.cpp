@@ -3,6 +3,7 @@
 #include <limits>
 
 #include "core/association/Gating.hpp"
+#include "ports/IEstimator.hpp"
 
 namespace navtracker {
 
@@ -11,13 +12,19 @@ GnnAssociator::GnnAssociator(double gate_threshold)
 
 AssociationResult GnnAssociator::associate(
     const std::vector<Track>& tracks,
-    const std::vector<Measurement>& measurements) const {
+    const std::vector<Measurement>& measurements,
+    const IEstimator* estimator) const {
   const std::size_t nt = tracks.size();
   const std::size_t nm = measurements.size();
   std::vector<bool> track_used(nt, false);
   std::vector<bool> meas_used(nm, false);
   AssociationResult result;
 
+  // Cost minimization. Without an estimator we minimize squared
+  // Mahalanobis distance (today's GNN semantics). With an estimator
+  // we minimize -logLikelihood — equivalent for single-mode Gaussians
+  // up to the |S| term, and the right thing for IMM where the
+  // mixture-likelihood can't be reduced to a scalar Mahalanobis.
   while (true) {
     double best = std::numeric_limits<double>::infinity();
     std::size_t best_t = 0;
@@ -27,9 +34,18 @@ AssociationResult GnnAssociator::associate(
       if (track_used[ti]) continue;
       for (std::size_t mi = 0; mi < nm; ++mi) {
         if (meas_used[mi]) continue;
-        const double d2 = mahalanobisDistance(tracks[ti], measurements[mi]);
-        if (d2 <= gate_threshold_ && d2 < best) {
-          best = d2;
+        double cost;
+        if (estimator) {
+          if (!estimator->gate(tracks[ti], measurements[mi], gate_threshold_))
+            continue;
+          cost = -estimator->logLikelihood(tracks[ti], measurements[mi]);
+        } else {
+          const double d2 = mahalanobisDistance(tracks[ti], measurements[mi]);
+          if (d2 > gate_threshold_) continue;
+          cost = d2;
+        }
+        if (cost < best) {
+          best = cost;
           best_t = ti;
           best_m = mi;
           found = true;

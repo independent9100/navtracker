@@ -68,23 +68,13 @@ void TrackTree::branch(const IEstimator& estimator,
 
     for (std::size_t mi = 0; mi < scan.size(); ++mi) {
       const Measurement& z = scan[mi];
-      Track gate_tr;
-      gate_tr.state = tmp_predicted.state;
-      gate_tr.covariance = tmp_predicted.covariance;
-      const double d2 = mahalanobisDistance(gate_tr, z);
-      if (d2 > params.gate_threshold) continue;
-
-      const MeasurementPrediction pred =
-          predictMeasurement(z.model, tmp_predicted.state, z.sensor_position_enu);
-      const Eigen::MatrixXd S =
-          pred.H * tmp_predicted.covariance * pred.H.transpose() + z.covariance;
-      const int d = static_cast<int>(z.value.size());
-      const double det = S.determinant();
-      const double safe_det = (det > 0.0 && std::isfinite(det)) ? det : 1e-300;
-      const double log_norm =
-          -0.5 * static_cast<double>(d) * std::log(2.0 * M_PI) -
-          0.5 * std::log(safe_det);
-      const double log_likelihood = log_norm - 0.5 * d2;
+      // Gate + likelihood through IEstimator. For EKF/UKF/PF this is
+      // the textbook Mahalanobis + log-N. For IMM the gate is
+      // any-mode (Mazor 1998) and the likelihood is the mode-weighted
+      // mixture — strictly more honest than the moment-matched
+      // projection that this loop used to compute inline.
+      if (!estimator.gate(tmp_predicted, z, params.gate_threshold)) continue;
+      const double log_likelihood = estimator.logLikelihood(tmp_predicted, z);
 
       Track child_tr = tmp_predicted;
       estimator.update(child_tr, z);

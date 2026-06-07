@@ -8,6 +8,7 @@
 #include "core/association/Gating.hpp"
 #include "core/association/JointEvents.hpp"
 #include "core/estimation/MeasurementModels.hpp"
+#include "ports/IEstimator.hpp"
 
 namespace navtracker {
 
@@ -20,7 +21,8 @@ JpdaAssociator::JpdaAssociator(double gate_threshold,
 
 AssociationResult JpdaAssociator::associate(
     const std::vector<Track>& tracks,
-    const std::vector<Measurement>& measurements) const {
+    const std::vector<Measurement>& measurements,
+    const IEstimator* estimator) const {
   AssociationResult out;
   out.p_d = p_d_;
   out.gate_threshold = gate_threshold_;
@@ -32,24 +34,36 @@ AssociationResult JpdaAssociator::associate(
     return out;
   }
 
+  // Per-pair gate + density. With an estimator, route both through it
+  // (any-mode gating + mode-weighted mixture likelihood for IMM).
+  // Without, fall back to the single-Gaussian inline path.
   Eigen::MatrixXi V(M, T);
   Eigen::MatrixXd g(M, T);
   for (int t = 0; t < T; ++t) {
     for (int j = 0; j < M; ++j) {
-      const double d2 = mahalanobisDistance(tracks[t], measurements[j]);
-      V(j, t) = (d2 <= gate_threshold_) ? 1 : 0;
-      const MeasurementPrediction pred =
-          predictMeasurement(measurements[j].model, tracks[t].state,
-                             measurements[j].sensor_position_enu);
-      const Eigen::MatrixXd S =
-          pred.H * tracks[t].covariance * pred.H.transpose() +
-          measurements[j].covariance;
-      const int d = static_cast<int>(measurements[j].value.size());
-      const double det = S.determinant();
-      const double safe_det = (det > 0.0 && std::isfinite(det)) ? det : 1e-300;
-      const double norm =
-          1.0 / std::sqrt(std::pow(2.0 * M_PI, d) * safe_det);
-      g(j, t) = norm * std::exp(-0.5 * d2);
+      bool in_gate;
+      double density;
+      if (estimator) {
+        in_gate = estimator->gate(tracks[t], measurements[j], gate_threshold_);
+        density = std::exp(estimator->logLikelihood(tracks[t], measurements[j]));
+      } else {
+        const double d2 = mahalanobisDistance(tracks[t], measurements[j]);
+        in_gate = (d2 <= gate_threshold_);
+        const MeasurementPrediction pred =
+            predictMeasurement(measurements[j].model, tracks[t].state,
+                               measurements[j].sensor_position_enu);
+        const Eigen::MatrixXd S =
+            pred.H * tracks[t].covariance * pred.H.transpose() +
+            measurements[j].covariance;
+        const int d = static_cast<int>(measurements[j].value.size());
+        const double det = S.determinant();
+        const double safe_det = (det > 0.0 && std::isfinite(det)) ? det : 1e-300;
+        const double norm =
+            1.0 / std::sqrt(std::pow(2.0 * M_PI, d) * safe_det);
+        density = norm * std::exp(-0.5 * d2);
+      }
+      V(j, t) = in_gate ? 1 : 0;
+      g(j, t) = density;
     }
   }
 

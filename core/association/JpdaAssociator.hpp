@@ -15,7 +15,8 @@ class JpdaAssociator : public IDataAssociator {
 
   AssociationResult associate(
       const std::vector<Track>& tracks,
-      const std::vector<Measurement>& measurements) const override;
+      const std::vector<Measurement>& measurements,
+      const IEstimator* estimator = nullptr) const override;
 
  private:
   double gate_threshold_;
