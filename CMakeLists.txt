@@ -198,6 +198,7 @@ add_executable(navtracker_tests
   tests/replay/test_haxr_ospa.cpp
   tests/replay/test_philos_ospa.cpp
   tests/benchmark/test_smoke.cpp
+  tests/benchmark/test_scenario_run_port.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
