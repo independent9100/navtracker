@@ -100,6 +100,13 @@ add_library(navtracker_sim
 target_include_directories(navtracker_sim PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_sim PUBLIC navtracker_nmea Eigen3::Eigen)
 
+add_library(navtracker_benchmark_adapters
+  adapters/benchmark/SimScenarioRun.cpp
+)
+target_include_directories(navtracker_benchmark_adapters PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(navtracker_benchmark_adapters
+  PUBLIC navtracker_benchmark navtracker_core navtracker_sim Eigen3::Eigen)
+
 add_executable(navtracker_tests
   tests/smoke_test.cpp
   tests/types/test_timestamp.cpp
@@ -207,10 +214,12 @@ add_executable(navtracker_tests
   tests/benchmark/test_bench_runner.cpp
   tests/benchmark/test_metrics.cpp
   tests/benchmark/test_config.cpp
+  tests/benchmark/test_sim_scenario_run.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
     navtracker_core navtracker_nmea navtracker_sim navtracker_replay navtracker_benchmark
+    navtracker_benchmark_adapters
     GTest::gtest_main Eigen3::Eigen)
 
 include(GoogleTest)
