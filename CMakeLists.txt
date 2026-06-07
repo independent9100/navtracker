@@ -82,6 +82,7 @@ add_library(navtracker_benchmark
   core/benchmark/BenchRunner.cpp
   core/benchmark/Metrics.cpp
   core/benchmark/Config.cpp
+  core/benchmark/Sweep.cpp
 )
 set_target_properties(navtracker_benchmark PROPERTIES LINKER_LANGUAGE CXX)
 target_include_directories(navtracker_benchmark PUBLIC ${CMAKE_SOURCE_DIR})
@@ -217,6 +218,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_config.cpp
   tests/benchmark/test_sim_scenario_run.cpp
   tests/benchmark/test_replay_scenario_run.cpp
+  tests/benchmark/test_sweep.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
