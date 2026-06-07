@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include <Eigen/LU>
 
@@ -60,10 +61,13 @@ void TrackTree::branch(const IEstimator& estimator,
       miss.score = nodes_[leaf_idx].score +
                    std::log(1.0 - params.probability_of_detection);
       miss.is_leaf = true;
+      miss.is_hit = false;
+      miss.scan_meas_idx = TrackTreeNode::kNoMeasurement;
       nodes_.push_back(miss);
     }
 
-    for (const Measurement& z : scan) {
+    for (std::size_t mi = 0; mi < scan.size(); ++mi) {
+      const Measurement& z = scan[mi];
       Track gate_tr;
       gate_tr.state = tmp_predicted.state;
       gate_tr.covariance = tmp_predicted.covariance;
@@ -96,11 +100,52 @@ void TrackTree::branch(const IEstimator& estimator,
                   log_likelihood -
                   std::log(params.clutter_density);
       hit.is_leaf = true;
+      hit.is_hit = true;
+      hit.scan_meas_idx = mi;
       nodes_.push_back(hit);
     }
 
     nodes_[leaf_idx].is_leaf = false;
   }
+}
+
+namespace {
+
+// Bhattacharyya distance between two Gaussians evaluated on the
+// position block of the kinematic state (rows/cols 0..1). Same-position
+// covariances → 0; well-separated → grows. Returns +∞ if Σ is singular.
+double bhattacharyya2d(const Eigen::VectorXd& mu_a,
+                       const Eigen::MatrixXd& Sa,
+                       const Eigen::VectorXd& mu_b,
+                       const Eigen::MatrixXd& Sb) {
+  const Eigen::Vector2d d = mu_a.head<2>() - mu_b.head<2>();
+  const Eigen::Matrix2d Pa = Sa.topLeftCorner<2, 2>();
+  const Eigen::Matrix2d Pb = Sb.topLeftCorner<2, 2>();
+  const Eigen::Matrix2d P = 0.5 * (Pa + Pb);
+  const double det_P = P.determinant();
+  const double det_a = Pa.determinant();
+  const double det_b = Pb.determinant();
+  if (!(det_P > 0.0) || !(det_a > 0.0) || !(det_b > 0.0)) {
+    return std::numeric_limits<double>::infinity();
+  }
+  const double mahal = d.transpose() * P.inverse() * d;
+  return 0.125 * mahal +
+         0.5 * std::log(det_P / std::sqrt(det_a * det_b));
+}
+
+}  // namespace
+
+int TrackTree::countHitsInWindow(std::size_t leaf, int window) const {
+  if (window <= 0) return 0;
+  int count = 0;
+  std::size_t cur = leaf;
+  int steps = 0;
+  while (cur != TrackTreeNode::kNoParent && steps < window) {
+    if (nodes_[cur].is_hit) ++count;
+    cur = nodes_[cur].parent;
+    ++steps;
+  }
+  return count;
 }
 
 std::size_t TrackTree::pruneNScan(int n_scan) {
@@ -196,6 +241,35 @@ std::size_t TrackTree::pruneKLocal(std::size_t k) {
   for (std::size_t i = k; i < leaves.size(); ++i) {
     nodes_[leaves[i]].is_leaf = false;
     ++dropped;
+  }
+  return dropped;
+}
+
+std::size_t TrackTree::mergeBranches(double threshold) {
+  if (!(threshold > 0.0)) return 0;
+  std::vector<std::size_t> leaves = leafIndices();
+  if (leaves.size() < 2) return 0;
+  // Order leaves by score descending so the higher-scoring leaf wins
+  // any merge contest (its slot survives).
+  std::sort(leaves.begin(), leaves.end(),
+            [this](std::size_t a, std::size_t b) {
+              return nodes_[a].score > nodes_[b].score;
+            });
+  std::size_t dropped = 0;
+  for (std::size_t i = 0; i < leaves.size(); ++i) {
+    if (!nodes_[leaves[i]].is_leaf) continue;  // already dropped
+    for (std::size_t j = i + 1; j < leaves.size(); ++j) {
+      if (!nodes_[leaves[j]].is_leaf) continue;
+      const double b =
+          bhattacharyya2d(nodes_[leaves[i]].state,
+                          nodes_[leaves[i]].covariance,
+                          nodes_[leaves[j]].state,
+                          nodes_[leaves[j]].covariance);
+      if (b < threshold) {
+        nodes_[leaves[j]].is_leaf = false;
+        ++dropped;
+      }
+    }
   }
   return dropped;
 }

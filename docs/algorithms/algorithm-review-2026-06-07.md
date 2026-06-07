@@ -153,28 +153,56 @@ notes this in its docstring. Nothing asserts the homogeneity.
 all gated measurements. Loud failure beats silent miscompute when an
 adapter starts mixing sensors into one JPDA call.
 
-### 6. MhtTracker is partial TOMHT (DOCUMENT, THEN CLOSE GAPS)
+### 6. MhtTracker textbook gaps — CLOSED (Hungarian K=1; Murty K>1 deferred)
 
-What `MhtTracker::processBatch` does:
+What `MhtTracker::processBatch` did before:
 
 - Per-tree: branch, k-local prune, N-scan prune (correct).
 - New track if a measurement gates to no existing best-leaf.
 - Emits one Confirmed track per tree from its own best leaf.
 
-Missing relative to textbook TOMHT:
+What it does now (post-fix):
 
-- **No global hypothesis solve.** Same detection can be the highest-
-  scoring child of multiple trees; nothing enforces "each detection
-  used at most once across trees." Murty's K-best assignment over the
-  per-tree leaf-score matrix is the canonical fix (Blackman 2004 §V).
-- **No M-of-N confirmation.** All tracks are stamped `Confirmed`
-  immediately. Blackman §III.A.
-- **No branch merging.** Near-identical branches (e.g. via Bhattacharyya
-  / Hellinger distance ≤ threshold) are kept separately, so the leaf
-  set grows even under k-local pruning.
+- **6a. M-of-N confirmation.** `TrackTreeNode` carries `is_hit`
+  (true for measurement-derived nodes, false for missed-detection
+  branches). `TrackTree::countHitsInWindow(leaf, window)` walks back
+  the ancestry chain counting hits. The emitted Track's status is
+  `Confirmed` iff `countHitsInWindow(chosen_leaf, confirm_hits_window)
+  ≥ confirm_hits_needed`. Default 2-of-3. Blackman §III.A.
+- **6b. K=1 global hypothesis via Hungarian.** `TrackTreeNode` carries
+  `scan_meas_idx`, the index of the scan measurement the node consumed
+  (or `kNoMeasurement` for misses). At report time `solveGlobalHypothesis`
+  builds a T × (M+T) cost matrix (rows = trees, cols = scan measurements
+  ∪ tree-specific miss slots), enters `-best_leaf_score` for each
+  feasible (tree, action) cell, forbids cross-tree miss-slots, and
+  solves the LSAP. The Hungarian solver (`core/association/Hungarian.cpp`)
+  is a rectangular Jonker-Volgenant variant with a BIG_M
+  ∞-replacement so degenerate all-infeasible rows can't hang or UB.
+  Each tree's reported state comes from its globally-selected leaf —
+  no measurement is consumed by more than one tree at report time.
+  Murty K=>1 deferred: when the solver had to pick a forbidden cell
+  (no feasible assignment), the caller falls back to the tree's local
+  best leaf so we never silently drop a track.
+- **6c. Branch merging by Bhattacharyya.** `TrackTree::mergeBranches`
+  iterates leaf pairs in score-descending order; for each pair with
+  `B(p, q) < threshold` on the 2-D position block of the Gaussian,
+  the lower-scoring leaf is dropped. Default threshold 1.0 (Mahalanobis-
+  like; 0 = disabled). Runs between `pruneKLocal` and `pruneNScan` so
+  trunk merging sees a deduped leaf set.
 
-**Fix.** Tracked separately as Fix #6. Start with M-of-N (cheapest),
-then Murty global hypothesis, then branch merging.
+New tests:
+
+- `tests/association/test_hungarian.cpp` — 6 unit tests covering
+  square / rectangular / forbidden / degenerate / empty inputs.
+- `tests/tracking/test_track_tree.cpp` — `CountHitsInWindow*`,
+  `MergeBranches*`.
+
+Remaining gap: **K>1 (Murty) deferred.** True deferred-commitment MHT
+maintains the K best global hypotheses across scans and only collapses
+them at N-scan trunk merge time. K=1 already enforces the cross-tree
+detection-uniqueness constraint, which was the main correctness
+deficiency; K>1 is a quality-of-tracking win for ambiguous scenes that
+we can add later without restructuring the data flow.
 
 ### 7. `CoordinatedTurn::setOmega` mutates a `const`-shared model
 

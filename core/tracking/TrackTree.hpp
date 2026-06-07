@@ -20,6 +20,8 @@ class IEstimator;
 struct TrackTreeNode {
   static constexpr std::size_t kNoParent =
       std::numeric_limits<std::size_t>::max();
+  static constexpr std::size_t kNoMeasurement =
+      std::numeric_limits<std::size_t>::max();
 
   std::size_t parent;       // index into nodes vector; kNoParent for root
   int scan_idx;             // 0 at root, +1 per scan
@@ -28,6 +30,14 @@ struct TrackTreeNode {
   Timestamp time;
   double score;             // cumulative log-likelihood-ratio
   bool is_leaf;             // true if current leaf (not yet branched)
+  bool is_hit{true};        // true if this node was created by a measurement
+                            // (false = missed-detection branch). Roots count
+                            // as hits since they were spawned from a meas.
+  std::size_t scan_meas_idx{kNoMeasurement};
+                            // index into the scan that created this node;
+                            // kNoMeasurement for miss / root. Used by the
+                            // global-hypothesis solver to enforce
+                            // "each detection used at most once across trees".
 };
 
 // A per-track hypothesis tree.
@@ -71,6 +81,23 @@ class TrackTree {
               const std::vector<Measurement>& scan,
               Timestamp scan_time,
               const BranchParams& params);
+
+  // Count how many nodes on the ancestry chain of `leaf` (inclusive) are
+  // hits (created from a measurement, not a missed-detection branch),
+  // walking back at most `window` levels. Used by M-of-N confirmation
+  // gating on the MhtTracker.
+  int countHitsInWindow(std::size_t leaf, int window) const;
+
+  // Merge near-identical leaves within this tree by Bhattacharyya
+  // distance between their (state, covariance) Gaussians (position
+  // block only — kinematic similarity, not score similarity). For each
+  // pair with B(p,q) < `threshold`, the lower-scoring leaf is marked
+  // is_leaf = false. Returns the number of leaves dropped.
+  // Bhattacharyya for two Gaussians (μ_a, Σ_a), (μ_b, Σ_b):
+  //   B = 1/8 (μ_a − μ_b)ᵀ Σ^{-1} (μ_a − μ_b)
+  //       + 1/2 ln(|Σ| / √(|Σ_a||Σ_b|)),  Σ = (Σ_a + Σ_b)/2.
+  // Smaller B = more similar. Typical threshold 0.5–2.0.
+  std::size_t mergeBranches(double threshold);
 
  private:
   TrackId external_id_;
