@@ -5,7 +5,8 @@
 //
 // Math:
 //   For each truth tick t_k, the runner first processes every
-//   measurement m with m.time <= t_k via Tracker::process(m), then
+//   measurement m with m.time <= t_k via Tracker::processBatch(scan),
+//   where `scan` = consecutive measurements sharing a timestamp. Then
 //   snapshots:
 //     - the truth samples at t_k (position + velocity from TruthSample);
 //     - every Confirmed track from TrackManager::tracks(), pulling
@@ -25,12 +26,16 @@
 //     that may be deleted.
 //
 // Rationale:
-//   The truth-tick-outer loop (vs. measurement-outer in the tentative
-//   plan sketch) mirrors core/scenario/Harness.cpp::runScenario so OSPA
-//   values from BenchResult are directly comparable to those from
-//   runScenario. Snapshot-before-process at each tick gives a "state
-//   used to compute prediction" view, consistent with the existing
-//   harness.
+//   The truth-tick-outer loop mirrors core/scenario/HarnessBatched.cpp::
+//   runScenarioBatched so OSPA values from BenchResult are directly
+//   comparable. Using processBatch (rather than process per-measurement)
+//   is required for JPDA-style soft associators to function at all:
+//   Tracker::process only consults AssociationResult::matches (hard
+//   path), and JpdaAssociator only populates betas/beta_0 (soft path).
+//   processBatch dispatches on which path is populated, so a single
+//   loop here works for both GNN and JPDA configs. For single-
+//   measurement scans (most synthetics), processBatch degenerates to
+//   the same logic as process — no regression for hard associators.
 //
 // Improve next:
 //   - Add a kinematic-projection accessor on Track (or per-estimator
@@ -102,24 +107,42 @@ BenchResult runBench(const Scenario& scenario,
   BenchResult result;
   const auto truth_groups = groupTruth(scenario.truth);
 
-  // Mirror runScenario: walk truth ticks in order; for each tick, process every
-  // measurement whose timestamp is <= tick, then snapshot truth + Confirmed
-  // tracks for that tick.
+  // Walk truth ticks in order. For each tick, process every measurement
+  // whose timestamp is <= tick — grouped by shared timestamp into "scans"
+  // — via Tracker::processBatch, then snapshot truth + Confirmed tracks.
+  // Batching is required for JPDA; for single-measurement scans
+  // (most synthetics) processBatch degenerates to the same logic as
+  // process, so GNN configs are unaffected.
+  const auto& meas = scenario.measurements;
+  const auto flushScansUpTo = [&](const Timestamp& upto,
+                                  std::size_t& mi) {
+    while (mi < meas.size() && !(upto < meas[mi].time)) {
+      const Timestamp scan_t = meas[mi].time;
+      std::vector<Measurement> scan;
+      while (mi < meas.size() && meas[mi].time == scan_t) {
+        scan.push_back(meas[mi]);
+        ++mi;
+      }
+      tracker.processBatch(scan);
+    }
+  };
+
   std::size_t mi = 0;
   for (const auto& g : truth_groups) {
-    while (mi < scenario.measurements.size() &&
-           !(g.time < scenario.measurements[mi].time)) {
-      tracker.process(scenario.measurements[mi]);
-      ++mi;
-    }
+    flushScansUpTo(g.time, mi);
     result.steps.push_back(snapshotAt(manager, g));
   }
 
   // Drain any measurements after the last truth tick so the sink/lifecycle
   // stream remains complete, even though no further snapshot is taken.
-  while (mi < scenario.measurements.size()) {
-    tracker.process(scenario.measurements[mi]);
-    ++mi;
+  while (mi < meas.size()) {
+    const Timestamp scan_t = meas[mi].time;
+    std::vector<Measurement> scan;
+    while (mi < meas.size() && meas[mi].time == scan_t) {
+      scan.push_back(meas[mi]);
+      ++mi;
+    }
+    tracker.processBatch(scan);
   }
 
   result.sink_events = sink.events();
