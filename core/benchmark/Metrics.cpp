@@ -17,6 +17,19 @@
 namespace navtracker {
 namespace benchmark {
 
+namespace {
+constexpr double kPi = 3.14159265358979323846;
+double wrapDeg(double deg) {
+  while (deg > 180.0) deg -= 360.0;
+  while (deg <= -180.0) deg += 360.0;
+  return deg;
+}
+double cogDeg(const Eigen::Vector2d& v) {
+  // COG: clockwise from north (positive y).
+  return wrapDeg(std::atan2(v.x(), v.y()) * 180.0 / kPi);
+}
+}  // namespace
+
 // Math:        per-step OSPA via greedy assignment (existing repo impl).
 // Assumptions: result.steps[i].truth and .tracks are valid;
 //              cutoff_m > 0; positions in metres.
@@ -163,6 +176,73 @@ ContinuityCounts computeContinuity(const std::vector<StepAssignment>& assigns,
   c.track_breaks /= static_cast<double>(n_truths);
   c.id_switches /= static_cast<double>(n_truths);
   return c;
+}
+
+// Math:        for each truth i, walk timesteps assigned to a track tid.
+//              For each such (truth, track) pair, accumulate squared
+//              errors of position, SOG (= |v|), and wrapped COG. Per
+//              truth, take sqrt(mean). Final result is the mean across
+//              truths that contributed at least one sample.
+//                pos_rmse_m   = mean_i sqrt(mean_k ||pos_diff_k||^2)
+//                sog_rmse_mps = mean_i sqrt(mean_k (|v_i,k| - |v_truth,k|)^2)
+//                cog_rmse_deg = mean_i sqrt(mean_k wrap(cog_diff_k)^2)
+// Assumptions: assigns is the per-step output of assignPerStep so
+//              estimate/truth pairs agree across all three metrics;
+//              track velocity is in metres/second; COG convention is
+//              cog = atan2(vx, vy) (clockwise from north).
+// Rationale:   decomposes OSPA so an improvement's source (position
+//              fit / velocity / course) is visible. Shared assignment
+//              with continuity and id_switches keeps "which track
+//              represents which truth" consistent across all metrics.
+// Improve next: report NEES / NIS to check covariance calibration; add
+//               a velocity-vector RMSE (single number capturing both
+//               magnitude and direction) if downstream callers want it.
+RmseResult computeRmse(const BenchResult& result,
+                       const std::vector<StepAssignment>& assigns) {
+  if (result.steps.empty() || assigns.empty()) return {0, 0, 0};
+  const std::size_t n_truths = result.steps.front().truth.size();
+  if (n_truths == 0) return {0, 0, 0};
+
+  std::vector<double> pos_se(n_truths, 0.0);
+  std::vector<double> sog_se(n_truths, 0.0);
+  std::vector<double> cog_se(n_truths, 0.0);
+  std::vector<std::size_t> n(n_truths, 0);
+
+  for (std::size_t k = 0; k < result.steps.size(); ++k) {
+    const auto& step = result.steps[k];
+    const auto& assign = assigns[k];
+    for (std::size_t i = 0; i < std::min(n_truths, assign.size()); ++i) {
+      if (!assign[i].has_value()) continue;
+      const TrackId tid = *assign[i];
+      auto it = std::find_if(step.tracks.begin(), step.tracks.end(),
+                             [&](const TrackStateSnapshot& s) {
+                               return s.id.value == tid.value;
+                             });
+      if (it == step.tracks.end()) continue;
+      const Eigen::Vector2d dp = it->position - step.truth[i].position;
+      pos_se[i] += dp.squaredNorm();
+      const double ds = it->velocity.norm() - step.truth[i].velocity.norm();
+      sog_se[i] += ds * ds;
+      const double dc = wrapDeg(cogDeg(it->velocity) - cogDeg(step.truth[i].velocity));
+      cog_se[i] += dc * dc;
+      n[i] += 1;
+    }
+  }
+
+  RmseResult out{0, 0, 0};
+  std::size_t contributing = 0;
+  for (std::size_t i = 0; i < n_truths; ++i) {
+    if (n[i] == 0) continue;
+    out.pos_rmse_m += std::sqrt(pos_se[i] / static_cast<double>(n[i]));
+    out.sog_rmse_mps += std::sqrt(sog_se[i] / static_cast<double>(n[i]));
+    out.cog_rmse_deg += std::sqrt(cog_se[i] / static_cast<double>(n[i]));
+    ++contributing;
+  }
+  if (contributing == 0) return {0, 0, 0};
+  out.pos_rmse_m /= static_cast<double>(contributing);
+  out.sog_rmse_mps /= static_cast<double>(contributing);
+  out.cog_rmse_deg /= static_cast<double>(contributing);
+  return out;
 }
 
 }  // namespace benchmark

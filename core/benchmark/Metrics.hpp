@@ -51,5 +51,14 @@ struct ContinuityCounts {
 ContinuityCounts computeContinuity(const std::vector<StepAssignment>& assigns,
                                    std::size_t n_truths);
 
+struct RmseResult {
+  double pos_rmse_m;
+  double sog_rmse_mps;
+  double cog_rmse_deg;
+};
+
+RmseResult computeRmse(const BenchResult& result,
+                       const std::vector<StepAssignment>& assigns);
+
 }  // namespace benchmark
 }  // namespace navtracker

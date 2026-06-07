@@ -76,6 +76,40 @@ TEST(Metrics, AssignPerStepGreedyWithinGate) {
   EXPECT_FALSE(assigns[1][1].has_value());  // track 2 out of gate
 }
 
+TEST(Metrics, RmseLinearMotion) {
+  BenchResult r;
+  // 3 steps, truth at constant velocity (10, 0) m/s, no error in tracks.
+  for (int k = 0; k < 3; ++k) {
+    BenchStep s;
+    s.time = Timestamp::fromSeconds(k);
+    s.truth.push_back({1, {10.0 * k, 0}, {10, 0}});
+    s.tracks.push_back({TrackId{1}, {10.0 * k, 0}, {10, 0}});
+    r.steps.push_back(s);
+  }
+  const auto a = benchmark::assignPerStep(r, 100.0);
+  const auto rmse = benchmark::computeRmse(r, a);
+  EXPECT_NEAR(rmse.pos_rmse_m, 0.0, 1e-9);
+  EXPECT_NEAR(rmse.sog_rmse_mps, 0.0, 1e-9);
+  EXPECT_NEAR(rmse.cog_rmse_deg, 0.0, 1e-9);
+}
+
+TEST(Metrics, RmseConstantOffsets) {
+  BenchResult r;
+  for (int k = 0; k < 4; ++k) {
+    BenchStep s;
+    s.time = Timestamp::fromSeconds(k);
+    s.truth.push_back({1, {0, 0}, {10, 0}});
+    // 3m offset; SOG off by +1; COG rotated by 90 degrees (track velocity (0,11)).
+    s.tracks.push_back({TrackId{1}, {3, 0}, {0, 11}});
+    r.steps.push_back(s);
+  }
+  const auto a = benchmark::assignPerStep(r, 100.0);
+  const auto rmse = benchmark::computeRmse(r, a);
+  EXPECT_NEAR(rmse.pos_rmse_m, 3.0, 1e-6);
+  EXPECT_NEAR(rmse.sog_rmse_mps, 1.0, 1e-6);
+  EXPECT_NEAR(rmse.cog_rmse_deg, 90.0, 1e-6);
+}
+
 TEST(Metrics, ContinuityKnownPatterns) {
   // 1 truth, 6 steps, assignments: [1,1,_, _,1,2]
   std::vector<benchmark::StepAssignment> a;
