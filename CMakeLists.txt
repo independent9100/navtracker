@@ -67,6 +67,22 @@ add_library(navtracker_nmea
 target_include_directories(navtracker_nmea PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_nmea PUBLIC navtracker_core Eigen3::Eigen)
 
+add_library(navtracker_replay
+  adapters/replay/PlotCsvReplayAdapter.cpp
+  adapters/replay/HaxrTruthLoader.cpp
+  adapters/replay/AisCsvReplayAdapter.cpp
+  adapters/replay/OwnshipCsvReader.cpp
+)
+target_include_directories(navtracker_replay PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(navtracker_replay PUBLIC navtracker_core Eigen3::Eigen)
+
+add_library(navtracker_benchmark
+  core/benchmark/Placeholder.hpp  # header-only at this stage
+)
+set_target_properties(navtracker_benchmark PROPERTIES LINKER_LANGUAGE CXX)
+target_include_directories(navtracker_benchmark PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(navtracker_benchmark PUBLIC navtracker_core Eigen3::Eigen)
+
 add_library(navtracker_sim
   sim/TruthTrajectory.cpp
   sim/NmeaEncode.cpp
@@ -179,10 +195,13 @@ add_executable(navtracker_tests
   tests/own_ship/test_uere_estimator.cpp
   tests/own_ship/test_own_ship_velocity_estimator.cpp
   tests/output/test_track_output.cpp
+  tests/replay/test_haxr_ospa.cpp
+  tests/replay/test_philos_ospa.cpp
+  tests/benchmark/test_smoke.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
-    navtracker_core navtracker_nmea navtracker_sim
+    navtracker_core navtracker_nmea navtracker_sim navtracker_replay navtracker_benchmark
     GTest::gtest_main Eigen3::Eigen)
 
 include(GoogleTest)
