@@ -227,6 +227,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_csv_reader.cpp
   tests/benchmark/test_render_markdown.cpp
   tests/benchmark/test_compare.cpp
+  tests/benchmark/test_bench_determinism.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
