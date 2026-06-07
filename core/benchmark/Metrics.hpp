@@ -35,5 +35,13 @@ double mean(const std::vector<double>& v);
 // Linear-interpolated percentile, q in [0,1]. Sorts a copy of v.
 double percentile(std::vector<double> v, double q);
 
+// Per-step assignment: for each truth index in step.truth, the assigned
+// TrackId from step.tracks (or std::nullopt if no track within gate).
+// Greedy nearest-neighbour under the gate. Hungarian is equivalent for
+// the small target counts in our scenarios; swap if profiling flags it.
+using StepAssignment = std::vector<std::optional<TrackId>>;
+std::vector<StepAssignment> assignPerStep(const BenchResult& result,
+                                          double gate_m);
+
 }  // namespace benchmark
 }  // namespace navtracker

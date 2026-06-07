@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <unordered_set>
 
 #include "core/scenario/Ospa.hpp"
 
@@ -62,6 +63,48 @@ double percentile(std::vector<double> v, double q) {
   const std::size_t hi = static_cast<std::size_t>(std::ceil(idx));
   const double frac = idx - static_cast<double>(lo);
   return v[lo] * (1.0 - frac) + v[hi] * frac;
+}
+
+// Math:        per-truth greedy NN: for each truth index i, scan
+//              unclaimed tracks, pick the one minimising
+//              ||tr.position - truth[i].position|| strictly less than
+//              gate_m; mark it claimed.
+// Assumptions: truth and track positions are in the same ENU frame and
+//              metres; gate_m is the exclusive ceiling.
+// Rationale:   greedy NN matches the existing countIdSwitches behaviour
+//              and is O(N*M); for our small N,M (<= 10 typical) the
+//              difference vs. full Hungarian is below noise. Single
+//              shared assignment function across continuity, id
+//              switches, and per-track RMSE keeps metrics consistent.
+// Improve next: swap to full Hungarian via munkres if pathological
+//               crossing geometry causes assignment churn that affects
+//               ID-switch counts.
+std::vector<StepAssignment> assignPerStep(const BenchResult& result,
+                                          double gate_m) {
+  std::vector<StepAssignment> out;
+  out.reserve(result.steps.size());
+  for (const auto& step : result.steps) {
+    StepAssignment a(step.truth.size(), std::nullopt);
+    std::unordered_set<std::uint64_t> claimed;
+    for (std::size_t i = 0; i < step.truth.size(); ++i) {
+      double best = gate_m;
+      std::optional<TrackId> best_id;
+      for (const auto& tr : step.tracks) {
+        if (claimed.count(tr.id.value)) continue;
+        const double d = (tr.position - step.truth[i].position).norm();
+        if (d < best) {
+          best = d;
+          best_id = tr.id;
+        }
+      }
+      if (best_id) {
+        claimed.insert(best_id->value);
+        a[i] = best_id;
+      }
+    }
+    out.push_back(std::move(a));
+  }
+  return out;
 }
 
 }  // namespace benchmark

@@ -52,3 +52,26 @@ TEST(Metrics, MeanAndPercentile) {
   EXPECT_NEAR(benchmark::percentile(v, 1.0), 5.0, 1e-9);
   EXPECT_NEAR(benchmark::percentile(v, 0.5), 3.0, 1e-9);
 }
+
+TEST(Metrics, AssignPerStepGreedyWithinGate) {
+  BenchResult r;
+  // 2 truths, 2 tracks: track 1 next to truth 1, track 2 next to truth 2.
+  r.steps.push_back(makeStep(0.0,
+                             {{0, 0}, {100, 0}},
+                             {{1, 0}, {101, 0}}));
+  // Step 2: track 2 disappears (out of gate).
+  r.steps.push_back(makeStep(1.0,
+                             {{10, 0}, {110, 0}},
+                             {{11, 0}, {999, 0}}));
+
+  const auto assigns = benchmark::assignPerStep(r, /*gate=*/100.0);
+  ASSERT_EQ(assigns.size(), 2u);
+  ASSERT_EQ(assigns[0].size(), 2u);
+  ASSERT_TRUE(assigns[0][0].has_value());
+  ASSERT_TRUE(assigns[0][1].has_value());
+  EXPECT_EQ(assigns[0][0]->value, 1u);
+  EXPECT_EQ(assigns[0][1]->value, 2u);
+
+  ASSERT_TRUE(assigns[1][0].has_value());
+  EXPECT_FALSE(assigns[1][1].has_value());  // track 2 out of gate
+}
