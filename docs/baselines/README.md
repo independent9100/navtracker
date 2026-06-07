@@ -177,17 +177,16 @@ factored into how you read a comparison.
    — that's an honest reflection of current behaviour, not a harness
    bug. The IMM config (`imm_cv_ct_jpda`) drives CT correctly.
 
-3. **JPDA configs may underperform sharply in synthetic scenarios.**
-   In the first smoke run, both `ekf_cv_jpda` and `imm_cv_ct_jpda`
-   produced OSPA pinned at the cutoff (500 m) for several synthetic
-   scenarios — i.e. they failed to track at all. This is likely a
-   parameter mismatch between the JPDA constructor values and the
-   sensor characteristics of the synthetic builders (and / or a
-   degeneracy when measurements aren't scan-batched). It is *the*
-   first concrete finding the harness surfaces, and it's the kind of
-   thing future investigation should target. **Do not interpret a
-   future "JPDA improvement" as a real improvement unless that improvement
-   also moves the baseline numbers above the cutoff.**
+3. **`imm_cv_ct_jpda` is still degenerate in synthetic scenarios.**
+   After fixing the original "BenchRunner used `process()` not
+   `processBatch()`" bug (commit `7dbe9ae`), `ekf_cv_jpda` now lands
+   in the same ballpark as the GNN configs (~20 m OSPA on crossing,
+   versus 18.6 m for `ekf_cv_gnn`). But `imm_cv_ct_jpda` still scores
+   ~240 m OSPA with `lifetime_ratio ≈ 0.22` on crossing — i.e. it
+   tracks ~22% of the time and is off by hundreds of metres when it
+   does. Likely the IMM + JPDA combination needs different filter
+   constants or a different initialisation; treat this as a separate
+   open question, not a successful baseline number.
 
 4. **Philos replay uses AIS as both measurement *and* truth source.**
    The existing `tests/replay/test_philos_ospa.cpp` set this convention
