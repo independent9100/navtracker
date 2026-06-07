@@ -43,5 +43,13 @@ using StepAssignment = std::vector<std::optional<TrackId>>;
 std::vector<StepAssignment> assignPerStep(const BenchResult& result,
                                           double gate_m);
 
+struct ContinuityCounts {
+  double lifetime_ratio;  // mean across truths in [0, 1]
+  double track_breaks;    // mean count per truth
+  double id_switches;     // mean count per truth
+};
+ContinuityCounts computeContinuity(const std::vector<StepAssignment>& assigns,
+                                   std::size_t n_truths);
+
 }  // namespace benchmark
 }  // namespace navtracker

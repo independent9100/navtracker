@@ -75,3 +75,19 @@ TEST(Metrics, AssignPerStepGreedyWithinGate) {
   ASSERT_TRUE(assigns[1][0].has_value());
   EXPECT_FALSE(assigns[1][1].has_value());  // track 2 out of gate
 }
+
+TEST(Metrics, ContinuityKnownPatterns) {
+  // 1 truth, 6 steps, assignments: [1,1,_, _,1,2]
+  std::vector<benchmark::StepAssignment> a;
+  a.push_back({TrackId{1}});
+  a.push_back({TrackId{1}});
+  a.push_back({std::nullopt});
+  a.push_back({std::nullopt});
+  a.push_back({TrackId{1}});
+  a.push_back({TrackId{2}});  // <- 1 id switch
+
+  const auto c = benchmark::computeContinuity(a, /*n_truths=*/1);
+  EXPECT_NEAR(c.lifetime_ratio, 4.0 / 6.0, 1e-9);
+  EXPECT_NEAR(c.track_breaks, 1.0, 1e-9);  // one nullopt run
+  EXPECT_NEAR(c.id_switches, 1.0, 1e-9);
+}

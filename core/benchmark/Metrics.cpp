@@ -107,5 +107,63 @@ std::vector<StepAssignment> assignPerStep(const BenchResult& result,
   return out;
 }
 
+// Math:        per truth i, walk the time series of StepAssignment[i].
+//                - lifetime_ratio_i = (#steps where a[i] is Some) / total
+//                - track_breaks_i  = # of maximal Some -> None transitions
+//                - id_switches_i   = # of adjacent Some -> Some transitions
+//                  where the TrackId changes
+//              Reported as plain means across truths.
+// Assumptions: assigns is the output of assignPerStep; each entry's size
+//              matches n_truths; n_truths > 0. Bad inputs return zeros.
+// Rationale:   CLAUDE.md names ID stability as an architectural
+//              guarantee; OSPA alone wouldn't catch silent ID churn or
+//              brief drops that don't change cardinality. Sharing the
+//              assignment with assignPerStep keeps every metric in
+//              agreement about which track represents which truth.
+// Improve next: replace per-step assignment with a run-level longest
+//               common subsequence over (truth, track_id) — better at
+//               distinguishing brief swap-then-swap-back from real
+//               permanent ID churn.
+ContinuityCounts computeContinuity(const std::vector<StepAssignment>& assigns,
+                                   std::size_t n_truths) {
+  if (n_truths == 0 || assigns.empty()) return {0, 0, 0};
+  std::vector<double> life(n_truths, 0.0);
+  std::vector<double> breaks(n_truths, 0.0);
+  std::vector<double> switches(n_truths, 0.0);
+  std::vector<bool> in_gap(n_truths, true);
+  std::vector<std::optional<TrackId>> prev(n_truths, std::nullopt);
+
+  for (const auto& step : assigns) {
+    for (std::size_t i = 0; i < n_truths && i < step.size(); ++i) {
+      const auto& a = step[i];
+      if (a.has_value()) {
+        life[i] += 1.0;
+        if (in_gap[i]) in_gap[i] = false;
+        if (prev[i].has_value() && prev[i]->value != a->value) {
+          switches[i] += 1.0;
+        }
+        prev[i] = a;
+      } else {
+        if (!in_gap[i]) {
+          breaks[i] += 1.0;  // exited an assigned interval
+          in_gap[i] = true;
+        }
+        prev[i] = std::nullopt;
+      }
+    }
+  }
+
+  ContinuityCounts c{};
+  for (std::size_t i = 0; i < n_truths; ++i) {
+    c.lifetime_ratio += life[i] / static_cast<double>(assigns.size());
+    c.track_breaks += breaks[i];
+    c.id_switches += switches[i];
+  }
+  c.lifetime_ratio /= static_cast<double>(n_truths);
+  c.track_breaks /= static_cast<double>(n_truths);
+  c.id_switches /= static_cast<double>(n_truths);
+  return c;
+}
+
 }  // namespace benchmark
 }  // namespace navtracker
