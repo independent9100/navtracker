@@ -177,16 +177,18 @@ factored into how you read a comparison.
    — that's an honest reflection of current behaviour, not a harness
    bug. The IMM config (`imm_cv_ct_jpda`) drives CT correctly.
 
-3. **`imm_cv_ct_jpda` is still degenerate in synthetic scenarios.**
-   After fixing the original "BenchRunner used `process()` not
-   `processBatch()`" bug (commit `7dbe9ae`), `ekf_cv_jpda` now lands
-   in the same ballpark as the GNN configs (~20 m OSPA on crossing,
-   versus 18.6 m for `ekf_cv_gnn`). But `imm_cv_ct_jpda` still scores
-   ~240 m OSPA with `lifetime_ratio ≈ 0.22` on crossing — i.e. it
-   tracks ~22% of the time and is off by hundreds of metres when it
-   does. Likely the IMM + JPDA combination needs different filter
-   constants or a different initialisation; treat this as a separate
-   open question, not a successful baseline number.
+3. **JPDA configs now work end-to-end.** Two bugs surfaced and were
+   fixed during baseline construction:
+   - `BenchRunner` was using `Tracker::process()` (hard-match only)
+     instead of `processBatch()`. Fixed in commit `7dbe9ae`.
+   - `ImmEstimator` inherited the no-op `IEstimator::softUpdate`
+     default, so JPDA + IMM tracks never folded in any measurement.
+     Implemented standard IMM-PDA in commit `77ab6f4`.
+
+   After both fixes: `ekf_cv_jpda` lands close to the GNN baselines
+   (~20 m OSPA on crossing) and `imm_cv_ct_jpda` is the top-of-table
+   tracker on `ais_dropout` — exactly where its multi-model + soft-
+   association combination should pay off most.
 
 4. **Philos replay uses AIS as both measurement *and* truth source.**
    The existing `tests/replay/test_philos_ospa.cpp` set this convention
