@@ -78,6 +78,7 @@ target_link_libraries(navtracker_replay PUBLIC navtracker_core Eigen3::Eigen)
 
 add_library(navtracker_benchmark
   core/benchmark/Placeholder.hpp  # header-only at this stage
+  core/benchmark/BenchSink.cpp
 )
 set_target_properties(navtracker_benchmark PROPERTIES LINKER_LANGUAGE CXX)
 target_include_directories(navtracker_benchmark PUBLIC ${CMAKE_SOURCE_DIR})
@@ -199,6 +200,7 @@ add_executable(navtracker_tests
   tests/replay/test_philos_ospa.cpp
   tests/benchmark/test_smoke.cpp
   tests/benchmark/test_scenario_run_port.cpp
+  tests/benchmark/test_bench_sink.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
