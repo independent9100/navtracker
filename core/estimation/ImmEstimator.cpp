@@ -151,6 +151,131 @@ void ImmEstimator::update(Track& track, const Measurement& z) const {
   track.last_update = z.time;
 }
 
+// Math:
+//   Standard IMM-PDA. For each mode j:
+//     1. Compute the EKF gain K_j = P_j H_j^T S_j^{-1}, where
+//        S_j = H_j P_j H_j^T + R, evaluated at the prior (x_j, P_j).
+//     2. PDAF combined residual y_bar_j = sum_m β_m * y_{m,j}.
+//        Spread term Y_j = sum_m β_m y_{m,j} y_{m,j}^T - y_bar_j y_bar_j^T.
+//        Posterior state: x_j_new = x_j + K_j * y_bar_j.
+//        Posterior covariance:
+//          P_j_new = β_0 * P_j + (1-β_0) * (I - K_j H_j) P_j
+//                    + K_j Y_j K_j^T.
+//        (This is the canonical PDAF covariance update; the spread term
+//        widens the posterior to reflect data-association uncertainty.)
+//     3. Per-mode measurement-mixture likelihood:
+//          Λ_j = β_0 + (1-β_0) / (V * P_D) * Σ_m β_m * f_{m,j},
+//        where f_{m,j} = N(y_{m,j}; 0, S_j). Since V * P_D is not
+//        plumbed through here, we use the unnormalised proxy
+//          Λ_j ∝ β_0 + Σ_m β_m * f_{m,j}.
+//        Mode prior: c_j = Σ_i π_{i,j} μ_i (matches update()).
+//        Mode posterior: μ_j ∝ c_j * Λ_j (log-sum-exp normalised).
+//     4. Project the mixture to (track.state, track.covariance).
+//
+// Assumptions:
+//   - All gated measurements share the same measurement model and
+//     covariance R (we use gated_measurements[0] for H, R, sensor pose).
+//     True for any single-scan JPDA call from Tracker::processBatch.
+//   - betas.size() == gated_measurements.size().
+//   - 0 <= β_m, 0 <= β_0, sum β_m + β_0 == 1.
+//   - If M == 0 we no-op (no information to fold in).
+//
+// Rationale:
+//   Without softUpdate, the no-op default fired for every IMM+JPDA
+//   call: tracks initiated with zero velocity and predicted forward
+//   forever with no measurement correction. Per-mode PDAF + standard
+//   IMM mode-probability update mirrors what update() does for a
+//   single hard measurement, generalised to soft betas. Falls back
+//   cleanly to update()-equivalent behaviour when M == 1 and
+//   β_0 == 0 (single confident hard match).
+//
+// Improve next:
+//   - Plumb clutter density (lambda_C from JpdaAssociator) and
+//     P_D into the estimator so the Λ_j formula uses the proper
+//     V * P_D normalisation rather than the unnormalised proxy. The
+//     proxy still produces a valid relative ordering across modes;
+//     absolute mode-likelihood magnitudes (mostly used for
+//     diagnostics) will differ.
+//   - Track-level PG (gating probability) for the no-detection arm
+//     once gating becomes per-mode.
+void ImmEstimator::softUpdate(Track& track,
+                              const std::vector<Measurement>& gated_measurements,
+                              const Eigen::VectorXd& betas,
+                              double beta_0) const {
+  const int M = static_cast<int>(gated_measurements.size());
+  if (M == 0 || betas.size() != M || track.imm_means.cols() == 0) return;
+  const int K = static_cast<int>(track.imm_means.cols());
+  const int n = static_cast<int>(track.imm_means.rows());
+  const Measurement& z0 = gated_measurements[0];
+
+  // Mode prior c_j = sum_i pi(i,j) mu_i — same as update().
+  Eigen::VectorXd c(K);
+  for (int j = 0; j < K; ++j) {
+    double sum = 0.0;
+    for (int i = 0; i < K; ++i)
+      sum += pi_(i, j) * track.imm_mode_probabilities(i);
+    c(j) = sum;
+  }
+
+  Eigen::VectorXd log_lambda(K);
+  for (int j = 0; j < K; ++j) {
+    const Eigen::VectorXd x_j = track.imm_means.col(j);
+    const Eigen::MatrixXd P_j = track.imm_covariances[j];
+    const MeasurementPrediction pred =
+        predictMeasurement(z0.model, x_j, z0.sensor_position_enu);
+    const Eigen::MatrixXd& H = pred.H;
+    const Eigen::MatrixXd S = H * P_j * H.transpose() + z0.covariance;
+    const Eigen::MatrixXd S_inv = S.inverse();
+    const Eigen::MatrixXd K_gain = P_j * H.transpose() * S_inv;
+
+    Eigen::VectorXd y_combined = Eigen::VectorXd::Zero(z0.value.size());
+    Eigen::MatrixXd spread_sum =
+        Eigen::MatrixXd::Zero(z0.value.size(), z0.value.size());
+    double f_sum = 0.0;   // Σ_m β_m N(y_{m,j}; 0, S_j)
+    const double det = S.determinant();
+    const double safe_det = (det > 0.0 && std::isfinite(det)) ? det : 1e-300;
+    const int d = static_cast<int>(z0.value.size());
+    const double norm =
+        1.0 / std::sqrt(std::pow(2.0 * M_PI, d) * safe_det);
+    for (int m = 0; m < M; ++m) {
+      const Eigen::VectorXd y_m = measurementResidual(
+          z0.model, gated_measurements[m].value, pred.z_pred);
+      y_combined += betas(m) * y_m;
+      spread_sum += betas(m) * y_m * y_m.transpose();
+      const double q = y_m.transpose() * S_inv * y_m;
+      f_sum += betas(m) * norm * std::exp(-0.5 * q);
+    }
+    spread_sum -= y_combined * y_combined.transpose();
+
+    const Eigen::MatrixXd I = Eigen::MatrixXd::Identity(n, n);
+    const Eigen::MatrixXd P_post_full = (I - K_gain * H) * P_j;
+    track.imm_means.col(j) = x_j + K_gain * y_combined;
+    track.imm_covariances[j] = beta_0 * P_j +
+                               (1.0 - beta_0) * P_post_full +
+                               K_gain * spread_sum * K_gain.transpose();
+
+    const double lambda_j = beta_0 + f_sum;
+    log_lambda(j) = std::log(std::max(lambda_j, 1e-300));
+  }
+
+  // Mode-probability update (log-sum-exp).
+  Eigen::VectorXd log_w(K);
+  for (int j = 0; j < K; ++j)
+    log_w(j) = std::log(std::max(c(j), 1e-300)) + log_lambda(j);
+  const double max_lw = log_w.maxCoeff();
+  Eigen::VectorXd w = (log_w.array() - max_lw).exp();
+  const double sum = w.sum();
+  if (!std::isfinite(sum) || sum <= 0.0) {
+    w = Eigen::VectorXd::Constant(K, 1.0 / K);
+  } else {
+    w /= sum;
+  }
+  track.imm_mode_probabilities = w;
+
+  projectMixtureToTrack(track);
+  track.last_update = z0.time;
+}
+
 Track ImmEstimator::initiate(const Measurement& z) const {
   const int K = static_cast<int>(motions_.size());
   Track t;

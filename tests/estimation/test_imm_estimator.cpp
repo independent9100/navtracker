@@ -129,3 +129,57 @@ TEST(ImmEstimator, UpdateOnEmptyImmIsNoOp) {
   imm.update(t, positionMeas(0.0, 0.0, 1.0, 1.0));
   EXPECT_EQ(t.imm_means.cols(), 0);
 }
+
+TEST(ImmEstimator, SoftUpdateWithSingleConfidentMeasurementMatchesHardUpdate) {
+  // β = [1], β_0 = 0 should be exactly equivalent to a hard update().
+  auto cv = std::make_shared<ConstantVelocity5State>(0.5, 0.01);
+  auto ct = std::make_shared<CoordinatedTurn>(0.5, 0.1);
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {cv, ct};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05,
+        0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 0.5, 0.5;
+  ImmEstimator imm(motions, pi, mu0, 10.0, 0.1);
+
+  navtracker::Track hard = imm.initiate(positionMeas(0.0, 0.0, 5.0, 0.0));
+  navtracker::Track soft = hard;
+  const Measurement z = positionMeas(1.0, 0.5, 1.0, 0.0);
+
+  imm.update(hard, z);
+
+  Eigen::VectorXd betas(1);
+  betas << 1.0;
+  imm.softUpdate(soft, {z}, betas, /*beta_0=*/0.0);
+
+  for (int i = 0; i < hard.state.size(); ++i)
+    EXPECT_NEAR(soft.state(i), hard.state(i), 1e-9);
+  EXPECT_NEAR((soft.covariance - hard.covariance).norm(), 0.0, 1e-6);
+}
+
+TEST(ImmEstimator, SoftUpdateActuallyMovesStateTowardMeasurement) {
+  // The bug being regression-tested: ImmEstimator inherited the no-op
+  // softUpdate default, so JPDA-driven IMM tracks never folded in any
+  // measurement and their velocity stayed at the (0,0) initial seed.
+  auto cv = std::make_shared<ConstantVelocity5State>(0.5, 0.01);
+  auto ct = std::make_shared<CoordinatedTurn>(0.5, 0.1);
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {cv, ct};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05,
+        0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 0.5, 0.5;
+  ImmEstimator imm(motions, pi, mu0, 10.0, 0.1);
+
+  navtracker::Track t = imm.initiate(positionMeas(0.0, 0.0, 5.0, 0.0));
+  const auto before = t.state;
+  Eigen::VectorXd betas(1);
+  betas << 0.8;
+  imm.softUpdate(t, {positionMeas(10.0, 0.0, 1.0, 1.0)}, betas, /*beta_0=*/0.2);
+
+  // State must move toward the (10, 0) measurement.
+  EXPECT_GT(t.state(0), before(0) + 1.0)
+      << "softUpdate did not move x toward the measurement — IMM's "
+         "softUpdate is the no-op default again.";
+  EXPECT_NEAR(t.imm_mode_probabilities.sum(), 1.0, 1e-9);
+}

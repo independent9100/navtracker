@@ -28,6 +28,10 @@ class ImmEstimator : public IEstimator {
 
   void predict(Track& track, Timestamp to) const override;
   void update(Track& track, const Measurement& z) const override;
+  void softUpdate(Track& track,
+                  const std::vector<Measurement>& gated_measurements,
+                  const Eigen::VectorXd& betas,
+                  double beta_0) const override;
   Track initiate(const Measurement& z) const override;
 
  private:
