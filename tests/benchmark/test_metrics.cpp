@@ -125,3 +125,20 @@ TEST(Metrics, ContinuityKnownPatterns) {
   EXPECT_NEAR(c.track_breaks, 1.0, 1e-9);  // one nullopt run
   EXPECT_NEAR(c.id_switches, 1.0, 1e-9);
 }
+
+TEST(Metrics, ComputeMetricsBundlesAll) {
+  BenchResult r;
+  for (int k = 0; k < 3; ++k) {
+    BenchStep s;
+    s.time = Timestamp::fromSeconds(k);
+    s.truth.push_back({1, {10.0 * k, 0}, {10, 0}});
+    s.tracks.push_back({TrackId{1}, {10.0 * k + 1, 0}, {10, 0}});
+    r.steps.push_back(s);
+  }
+  const auto m = benchmark::computeMetrics(r, {});
+  EXPECT_NEAR(m.ospa_mean, 1.0, 1e-6);
+  EXPECT_NEAR(m.pos_rmse_m, 1.0, 1e-6);
+  EXPECT_NEAR(m.lifetime_ratio, 1.0, 1e-9);
+  EXPECT_NEAR(m.track_breaks, 0.0, 1e-9);
+  EXPECT_NEAR(m.id_switches, 0.0, 1e-9);
+}

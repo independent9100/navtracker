@@ -245,5 +245,37 @@ RmseResult computeRmse(const BenchResult& result,
   return out;
 }
 
+// Math:        composition; runs each metric in turn from the same
+//              BenchResult and the same per-step assignment so all
+//              fields of MetricsResult agree on which track represents
+//              which truth at each timestep.
+// Assumptions: params.ospa_cutoff_m > 0; params.assoc_gate_m > 0.
+//              n_truths is taken from the first step's truth count
+//              (constant across the run — see TruthTrajectory contract).
+// Rationale:   single entry point keeps the Sweep code in Task 13 trivial
+//              ("run, compute, emit") and prevents drift between
+//              individual metric callers.
+// Improve next: support time-varying truth cardinality if a future
+//               scenario emits targets that appear/disappear mid-run.
+MetricsResult computeMetrics(const BenchResult& result,
+                             const MetricsParams& params) {
+  MetricsResult m{};
+  const auto per_step = computeOspaPerStep(result, params.ospa_cutoff_m);
+  m.ospa_mean = mean(per_step);
+  m.ospa_p95 = percentile(per_step, 0.95);
+  const auto assigns = assignPerStep(result, params.assoc_gate_m);
+  const std::size_t n_truths =
+      result.steps.empty() ? 0 : result.steps.front().truth.size();
+  const auto cont = computeContinuity(assigns, n_truths);
+  m.lifetime_ratio = cont.lifetime_ratio;
+  m.track_breaks = cont.track_breaks;
+  m.id_switches = cont.id_switches;
+  const auto rmse = computeRmse(result, assigns);
+  m.pos_rmse_m = rmse.pos_rmse_m;
+  m.sog_rmse_mps = rmse.sog_rmse_mps;
+  m.cog_rmse_deg = rmse.cog_rmse_deg;
+  return m;
+}
+
 }  // namespace benchmark
 }  // namespace navtracker

@@ -60,5 +60,8 @@ struct RmseResult {
 RmseResult computeRmse(const BenchResult& result,
                        const std::vector<StepAssignment>& assigns);
 
+MetricsResult computeMetrics(const BenchResult& result,
+                             const MetricsParams& params);
+
 }  // namespace benchmark
 }  // namespace navtracker
