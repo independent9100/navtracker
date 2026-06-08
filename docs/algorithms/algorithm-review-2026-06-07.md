@@ -204,6 +204,33 @@ detection-uniqueness constraint, which was the main correctness
 deficiency; K>1 is a quality-of-tracking win for ambiguous scenes that
 we can add later without restructuring the data flow.
 
+**Update 2026-06-08: Murty K-best solver landed.** The K-best primitive
+is implemented at `core/association/Murty.{hpp,cpp}` (8 unit tests
+including all-permutations exhaustive check) and wired into
+`MhtTracker::solveGlobalHypothesis` with `k_best=3` default. See
+[`docs/superpowers/specs/2026-06-08-murty-k-best-design.md`](../superpowers/specs/2026-06-08-murty-k-best-design.md)
+and [its impl plan](../superpowers/plans/2026-06-08-murty-k-best-impl.md).
+
+The minimal-first-cut behaviour is: report comes from the best
+(K=1) assignment, identical to before; the K-1 alternative
+assignments are collected per tree (`top_k_leaves`) but NOT yet
+used to protect alternative-hypothesis leaves from pruning.
+`2026-06-08_murty-k3` benchmark vs `2026-06-07_with-mht`
+is bit-identical on every cooperative scenario, as expected.
+
+The *behavioural* win of K>1 requires the second step: have
+`pruneKLocal` (or a new pass between scans) honour the
+`top_k_leaves` set so alternative-hypothesis branches survive into
+N-scan trunk merge. Spec §3 calls this the "minimal first-cut" lever;
+it's a small change once we add a `protected` flag to
+`TrackTreeNode`. The bigger structural upgrade — a full global-
+hypothesis tree (Reid 1979 / Kurien 1990 layer 2) — remains the
+long-term direction.
+
+The Murty primitive is also the explicit Phase 0 dependency of the
+PMBM port; landing it here means PMBM Phase 1 can call into the same
+code path.
+
 ### 7. `CoordinatedTurn::setOmega` mutates a `const`-shared model
 
 `CoordinatedTurn` exposes `setOmega(...)` via `mutable double omega_`

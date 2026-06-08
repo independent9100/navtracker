@@ -6,6 +6,7 @@
 
 #include "core/association/Gating.hpp"
 #include "core/association/Hungarian.hpp"
+#include "core/association/Murty.hpp"
 
 namespace navtracker {
 
@@ -37,28 +38,39 @@ TrackTreeNode rootFromMeasurement(const IEstimator& estimator,
 }
 
 // Result of the global-hypothesis solve: per tree, the index of the
-// chosen leaf node (or kNoParent if no leaf could be selected).
+// chosen leaf node (or kNoParent if no leaf could be selected). For
+// k_best > 1, also reports the leaves participating in the
+// alternative top-K assignments so callers can protect them from
+// pruning across N-scan trunk merging (deferred-commitment TOMHT).
 struct GlobalAssignment {
   std::vector<std::size_t> chosen_leaf;
+  // For each tree, the leaves seen in any of the K best global
+  // assignments (including the best). Useful to protect alternative
+  // hypotheses across scans. Empty entries for trees with no leaves.
+  std::vector<std::vector<std::size_t>> top_k_leaves;
 };
 
-// Solve the K=1 global hypothesis. For each tree we pick one of its
-// current leaves; the constraint is that no two trees may pick leaves
-// that consumed the same scan measurement. We do this in cost-matrix
-// form so the Hungarian solver enforces the constraint exactly.
+// Solve the K-best global hypothesis via Murty (for K=1 collapses to
+// Hungarian — same behaviour as before). For each tree we pick one of
+// its current leaves; the constraint is that no two trees may pick
+// leaves that consumed the same scan measurement. Cost matrix:
 //
-// Cost matrix layout: T rows (trees) × (M + T) cols, where the first M
-// cols correspond to scan measurements 0..M-1 and the trailing T cols
-// are tree-specific "miss slots". For row t:
+//   T rows × (M + T) cols
+//   first M cols   = scan measurements
+//   trailing T cols = tree-specific "miss slots"
+//
+// For row t:
 //   cost[t, j ∈ [0,M)] = -best_leaf_score(t, meas j)  or +∞ if no such leaf
 //   cost[t, M + t]     = -best_leaf_score(t, miss)    or +∞ if no miss leaf
 //   cost[t, M + t' ≠ t] = +∞                          (forbid)
 GlobalAssignment solveGlobalHypothesis(
     const std::vector<TrackTree>& trees,
-    std::size_t scan_size) {
+    std::size_t scan_size,
+    int k_best) {
   GlobalAssignment out;
   const std::size_t T = trees.size();
   out.chosen_leaf.assign(T, TrackTreeNode::kNoParent);
+  out.top_k_leaves.assign(T, {});
   if (T == 0) return out;
 
   const std::size_t M = scan_size;
@@ -97,21 +109,44 @@ GlobalAssignment solveGlobalHypothesis(
       if (t2 != t) cost(t, M + t2) = kInf;
     }
     // If a tree has NO leaf at all (degenerate; pruned-empty), the row
-    // is all +∞ → Hungarian will leave it unassigned, and we set
+    // is all +∞ → solver will leave it unassigned, and we set
     // chosen_leaf[t] = kNoParent.
   }
 
-  const std::vector<int> assign = hungarianAssignment(cost);
+  // Murty K-best with k=1 reduces to plain Hungarian; we use Murty
+  // uniformly to keep one code path and rely on K=1 ≡ Hungarian by
+  // construction.
+  const int K = std::max(1, k_best);
+  const KBestResult kbest = murtyKBest(cost, K);
+  if (kbest.assignments.empty()) return out;
+
+  // K=1 (best) assignment → reported track per tree.
+  const std::vector<int>& assign0 = kbest.assignments[0];
   for (std::size_t t = 0; t < T; ++t) {
-    const int col = assign[t];
+    const int col = assign0[t];
     if (col < 0) continue;
-    // Reject "forced" assignments where the solver had to pick a
-    // forbidden (originally +∞) cell because no feasible alternative
-    // existed. The caller falls back to the tree's local best leaf.
     if (!std::isfinite(cost(t, col))) continue;
     const std::size_t leaf = best_leaf[t][static_cast<std::size_t>(col)];
     if (leaf == TrackTreeNode::kNoParent) continue;
     out.chosen_leaf[t] = leaf;
+  }
+
+  // Collect leaves participating in any of the K best assignments
+  // per tree. Duplicates across assignments are deduplicated. Used
+  // downstream as "protected from local pruning this scan" so
+  // deferred-commitment alternatives survive into N-scan trunk merge.
+  for (const auto& a : kbest.assignments) {
+    for (std::size_t t = 0; t < T; ++t) {
+      const int col = a[t];
+      if (col < 0) continue;
+      if (!std::isfinite(cost(t, col))) continue;
+      const std::size_t leaf = best_leaf[t][static_cast<std::size_t>(col)];
+      if (leaf == TrackTreeNode::kNoParent) continue;
+      auto& bucket = out.top_k_leaves[t];
+      if (std::find(bucket.begin(), bucket.end(), leaf) == bucket.end()) {
+        bucket.push_back(leaf);
+      }
+    }
   }
   return out;
 }
@@ -178,9 +213,12 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
   trees_ = std::move(kept);
 
   // Global hypothesis: pick one leaf per tree such that no scan
-  // measurement is consumed by more than one tree.
+  // measurement is consumed by more than one tree. K>1 also collects
+  // alternative-top-K leaves for downstream deferred-commitment
+  // (consumed by callers that want to protect those leaves from
+  // pruning; the reported track itself comes from the K=1 best).
   const GlobalAssignment assign =
-      solveGlobalHypothesis(trees_, scan.size());
+      solveGlobalHypothesis(trees_, scan.size(), cfg_.k_best);
 
   tracks_.clear();
   tracks_.reserve(trees_.size());

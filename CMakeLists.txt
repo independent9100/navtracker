@@ -41,6 +41,7 @@ add_library(navtracker_core
   core/association/JointEvents.cpp
   core/association/JpdaAssociator.cpp
   core/association/Hungarian.cpp
+  core/association/Murty.cpp
   core/tracking/TrackManager.cpp
   core/tracking/TrackTree.cpp
   core/tracking/DatumShift.cpp
@@ -143,6 +144,7 @@ add_executable(navtracker_tests
   tests/association/test_joint_events.cpp
   tests/association/test_jpda_associator.cpp
   tests/association/test_hungarian.cpp
+  tests/association/test_murty.cpp
   tests/tracking/test_track_manager.cpp
   tests/tracking/test_track_sink.cpp
   tests/tracking/test_track_tree.cpp

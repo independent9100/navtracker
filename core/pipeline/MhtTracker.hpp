@@ -53,6 +53,15 @@ class MhtTracker {
     // Set <= 0 to disable. Typical 0.5–2.0 (smaller = stricter, fewer
     // merges).
     double merge_bhattacharyya_threshold = 1.0;
+
+    // Murty K-best global hypothesis enumeration. The reported track
+    // per tree always comes from the best (K=1) assignment — K>1 only
+    // affects which alternative leaves are kept across scans for
+    // deferred-commitment TOMHT. Set k_best=1 to disable Murty and use
+    // the plain Hungarian K=1 path (bit-identical to behaviour before
+    // Murty was wired in). Default 3 follows Blackman 2004 §V's
+    // typical maritime/aerospace setting.
+    int k_best = 3;
   };
 
   MhtTracker(const IEstimator& estimator, Config cfg);

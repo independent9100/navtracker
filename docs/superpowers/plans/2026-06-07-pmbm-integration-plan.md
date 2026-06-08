@@ -31,10 +31,17 @@ prerequisite for PMBM's hypothesis enumeration. **Do task #1 first.**
 
 ## Phased plan
 
-### Phase 0: Murty K-best assignment solver — ~1 week
+### Phase 0: Murty K-best assignment solver — ✅ COMPLETE (2026-06-08)
 
 **Deliverable.** `core/association/Murty.{hpp,cpp}` — K-best assignment
 on top of the existing `Hungarian` solver (Murty 1968).
+
+**Status:** Solver implemented and wired into `MhtTracker`. 8 unit
+tests including all-permutations exhaustive check, K=1 ≡ Hungarian
+on randomised batches, ranked-cost monotonicity, +∞ honoring. See
+[`docs/superpowers/specs/2026-06-08-murty-k-best-design.md`](../specs/2026-06-08-murty-k-best-design.md)
+and [its impl plan](2026-06-08-murty-k-best-impl.md). Ready for PMBM
+Phase 1 to reuse.
 
 **Reuse.** Internally calls `hungarianAssignment` K times with
 partition constraints (forbid / require edges per iteration).
