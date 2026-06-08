@@ -1,2 +1,19 @@
 /build/
+/Testing/
 CMakeUserPresets.json
+
+# Sandbox shadow placeholders: 0-byte read-only bind-mounts the
+# Claude Code sandbox creates in the working tree to mask the
+# corresponding paths in $HOME. Not real repo content; can't be
+# rm'd while the sandbox holds them open.
+/.bash_profile
+/.bashrc
+/.gitconfig
+/.gitmodules
+/.idea
+/.mcp.json
+/.profile
+/.ripgreprc
+/.vscode
+/.zprofile
+/.zshrc
