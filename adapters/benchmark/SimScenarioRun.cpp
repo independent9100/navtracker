@@ -159,6 +159,63 @@ class SpeedChangeScenarioRun : public ScenarioRun {
   }
 };
 
+class DenseClutterScenarioRun : public ScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return {"dense_clutter", true, kSeedCount};
+  }
+  Scenario generate(std::uint64_t seed) override {
+    // Two crossing CV targets at the origin + 4 uniform false alarms
+    // per scan inside a 600x200 m box covering both target tracks.
+    // Forces multi-measurement gating per tree per scan — the canonical
+    // setting where Score-Δ K and protected K>1 alternatives differ
+    // from a Hungarian K=1 commit-to-best each scan. Targets are well
+    // separated in y (closest approach 20 m), so the difficulty is
+    // pure clutter-vs-target disambiguation, not target-vs-target.
+    // 4-per-scan keeps JPDA's hypothesis enumeration tractable while
+    // still creating real multi-gate ambiguity.
+    return buildClutterCrossingScenario(
+        Eigen::Vector2d(-500.0, 10.0),
+        Eigen::Vector2d(25.0, 0.0),
+        Eigen::Vector2d(500.0, -10.0),
+        Eigen::Vector2d(-25.0, 0.0),
+        linearSeconds(1, 40),
+        /*pos_noise_std_m=*/8.0,
+        /*n_clutter_per_scan=*/4,
+        /*clutter_min=*/Eigen::Vector2d(-300.0, -100.0),
+        /*clutter_max=*/Eigen::Vector2d( 300.0,  100.0),
+        static_cast<std::uint32_t>(seed));
+  }
+};
+
+class CrossingDropoutScenarioRun : public ScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return {"crossing_dropout", true, kSeedCount};
+  }
+  Scenario generate(std::uint64_t seed) override {
+    // Two CV targets crossing close to each other (6 m y-offset → 12 m
+    // closest approach) with a 4-second dropout straddling the crossing
+    // time. On the first post-dropout scan, both targets are near the
+    // origin and *which-was-which* is ambiguous from a single
+    // measurement pair. JPDA-style trackers can swap IDs here; MHT
+    // with protected K>1 keeps both interpretations alive a few scans
+    // until divergent motion disambiguates. Closer offsets (3 m) are
+    // genuinely degenerate for JPDA's hypothesis enumeration —
+    // hypothesis count grows combinatorially and OOMs the bench.
+    // 6 m is the sweet spot: ambiguous enough to exercise protected
+    // K>1, separable enough for JPDA to stay tractable.
+    return buildCrossingDropoutScenario(
+        /*velocity_x_mps=*/25.0,
+        /*y_offset_m=*/6.0,
+        linearSeconds(1, 40),
+        /*pos_noise_std_m=*/8.0,
+        /*dropout_start_s=*/18.0,
+        /*dropout_end_s=*/22.0,
+        static_cast<std::uint32_t>(seed));
+  }
+};
+
 class NonCooperativeScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
@@ -184,7 +241,7 @@ class NonCooperativeScenarioRun : public ScenarioRun {
 
 std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   std::vector<std::unique_ptr<ScenarioRun>> out;
-  out.reserve(8);
+  out.reserve(10);
   out.push_back(std::make_unique<CrossingScenarioRun>());
   out.push_back(std::make_unique<OvertakingScenarioRun>());
   out.push_back(std::make_unique<HeadOnScenarioRun>());
@@ -193,6 +250,8 @@ std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   out.push_back(std::make_unique<ClockSkewScenarioRun>());
   out.push_back(std::make_unique<SpeedChangeScenarioRun>());
   out.push_back(std::make_unique<NonCooperativeScenarioRun>());
+  out.push_back(std::make_unique<DenseClutterScenarioRun>());
+  out.push_back(std::make_unique<CrossingDropoutScenarioRun>());
   return out;
 }
 

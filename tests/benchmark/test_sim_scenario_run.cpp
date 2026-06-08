@@ -9,7 +9,7 @@ using namespace navtracker::benchmark;
 
 TEST(SimScenarioRun, ProducesExpectedDefaultScenarios) {
   const auto scenarios = defaultSimScenarios();
-  ASSERT_EQ(scenarios.size(), 8u);
+  ASSERT_EQ(scenarios.size(), 10u);
   std::set<std::string> labels;
   for (const auto& s : scenarios) labels.insert(s->descriptor().label);
   EXPECT_EQ(labels.count("crossing"), 1u);
@@ -20,6 +20,8 @@ TEST(SimScenarioRun, ProducesExpectedDefaultScenarios) {
   EXPECT_EQ(labels.count("clock_skew"), 1u);
   EXPECT_EQ(labels.count("speed_change"), 1u);
   EXPECT_EQ(labels.count("non_cooperative"), 1u);
+  EXPECT_EQ(labels.count("dense_clutter"), 1u);
+  EXPECT_EQ(labels.count("crossing_dropout"), 1u);
 }
 
 TEST(SimScenarioRun, GenerateIsDeterministicForSameSeed) {
