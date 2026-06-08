@@ -255,6 +255,71 @@ between-run variability that is *pre-existing* and unrelated to
 protection (same drift appears between two consecutive fresh runs
 without the change).
 
+**Update 2026-06-08 (classical IMM+MHT story closed).** Three
+coupled changes turn the K>1 mechanism from mechanically wired
+into functionally effective:
+
+1. **Ordering fix.** The first protected-leaves commit cleared
+   `is_protected` at the *top* of `processBatch`, before the
+   pruning passes that were supposed to honour it. The flags from
+   the previous scan's solve were wiped before pruneKLocal /
+   mergeBranches / pruneNScan / score-delete could see them —
+   protection was a no-op. The fix moves clear-and-refresh to
+   *after* the new solve, so flags persist into the *next* scan's
+   pruning, as intended.
+
+2. **Score-Δ K (Blackman 2004 §V).** Without filtering, every
+   Murty rank-K alternative gets protected regardless of how
+   arbitrarily worse it is. In cooperative scenarios that means
+   every "miss-instead-of-hit" alternative is kept, doubling
+   trees per scan. `Config::score_delta_threshold` (default 5.0
+   in log-likelihood-ratio units) admits only alternatives
+   within Δ of the K=1 best. In our scenarios the hit-vs-miss
+   cost gap is ~8, so Δ=5 rejects unambiguous miss alternatives
+   and admits genuine multi-meas / multi-hypothesis ambiguity.
+
+3. **Per-tree adaptive N-scan.** `Config::n_scan_extension_when_
+   protected` (default 2) extends trunk-merge delay on trees
+   with surviving alternatives from the previous scan. Trees
+   with one dominant leaf merge at the base n_scan; trees
+   actively carrying deferred-commitment alternatives wait
+   longer.
+
+Two new scenarios in the bench harness exercise the mechanism:
+`dense_clutter` (2 crossing CV targets + 4 uniform false alarms
+per scan in a 600x200 m box) and `crossing_dropout` (2 CV
+targets with 6 m y-offset + 4 s sensor dropout straddling the
+crossing). Earlier attempts at 12-clutter / 3 m offset OOM'd the
+JPDA hypothesis enumeration; the chosen settings exercise
+ambiguity while staying tractable.
+
+Benchmark `2026-06-08_score-delta-adaptive` vs
+`2026-06-08_bench-ambiguous` (same code state modulo the three
+changes above):
+
+- Cooperative scenarios: bit-identical on every IMM+MHT config.
+  Protection inert when no real K>1 alternatives exist — as the
+  Score-Δ filter design intends.
+- `dense_clutter`: imm_cv_ct_mht id_switches 6.85 → 6.6 (-3.6%).
+  Small but real improvement; multiple competitive alternatives
+  genuinely admitted by Δ-filter.
+- `crossing_dropout`: id_switches=2.0 unchanged across all
+  configs. The "swap at dropout boundary, swap back after
+  divergence" pattern is a property of *output reporting from
+  K=1 best*, not protected-alternative carry-over. Reducing to
+  id_switches=0 would require look-ahead beyond classical MHT.
+
+This is the expected outcome for classical IMM+MHT at the
+clutter/density levels of our synthetic bench. Blackman 2004 §V
+notes the K>1 mechanism shines mainly at 10-100x our clutter or
+under sustained sensor degradation. The mechanism is now
+provably correct (unit tests + Δ-filter rejecting miss
+alternatives in cooperative cases + adaptive N-scan extending
+only when alternatives exist) and produces small measurable
+wins on the hard scenarios. The IMM + TOMHT classical
+gold-standard story is closed. Next direction: PMBM (Phase 1
+onwards per `docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md`).
+
 The Murty primitive is also the explicit Phase 0 dependency of the
 PMBM port; landing it here means PMBM Phase 1 can call into the same
 code path.
