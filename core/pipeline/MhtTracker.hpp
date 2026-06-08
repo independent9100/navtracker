@@ -62,6 +62,33 @@ class MhtTracker {
     // Murty was wired in). Default 3 follows Blackman 2004 §V's
     // typical maritime/aerospace setting.
     int k_best = 3;
+
+    // Score-Δ window for protected alternatives (Blackman 2004 §V).
+    // After Murty returns the K best assignments in non-decreasing
+    // cost order, only the K=1 best plus any alternative whose cost
+    // exceeds the best by less than `score_delta_threshold` contribute
+    // to `top_k_leaves` and therefore to protected-leaves carry-over.
+    // Without this filter, K>1 protects every rank-K alternative
+    // regardless of how arbitrarily worse it is — in cooperative
+    // scenarios that's every miss-vs-hit pair, and trees grow ~2x per
+    // scan. Set <= 0 to disable the filter (legacy behaviour).
+    //
+    // Units: same as branch score (cumulative log-likelihood-ratio).
+    // A delta of 5.0 admits alternatives within ~e^5 ≈ 150x posterior
+    // probability of the best — broad enough for genuine ambiguity,
+    // tight enough to reject arbitrarily-worse rank-3 alternatives in
+    // unambiguous scenarios.
+    double score_delta_threshold = 5.0;
+
+    // Per-tree adaptive N-scan: when a tree had more than one protected
+    // alternative on the previous scan, extend its trunk-merge delay
+    // by this many scans. Trees with one dominant leaf merge at the
+    // base `n_scan`; trees with surviving deferred-commitment
+    // alternatives wait `n_scan + n_scan_extension_when_protected`
+    // scans before trunk merge, giving the alternative more time to
+    // accumulate evidence (or be discarded as non-competitive). Set 0
+    // to disable adaptation.
+    int n_scan_extension_when_protected = 2;
   };
 
   MhtTracker(const IEstimator& estimator, Config cfg);

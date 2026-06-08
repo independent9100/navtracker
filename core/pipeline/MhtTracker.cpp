@@ -63,10 +63,19 @@ struct GlobalAssignment {
 //   cost[t, j ∈ [0,M)] = -best_leaf_score(t, meas j)  or +∞ if no such leaf
 //   cost[t, M + t]     = -best_leaf_score(t, miss)    or +∞ if no miss leaf
 //   cost[t, M + t' ≠ t] = +∞                          (forbid)
+//
+// `score_delta_threshold` (Blackman 2004 §V): an alternative
+// assignment (k ≥ 1) contributes to `top_k_leaves` only if its total
+// cost exceeds the K=1 best by less than this delta. Without this
+// filter, every Murty alternative gets protected regardless of how
+// arbitrarily worse it is — in cooperative cases that means every
+// "miss instead of hit" alternative is kept, doubling tree size each
+// scan. <= 0 disables the filter (every K alternative protected).
 GlobalAssignment solveGlobalHypothesis(
     const std::vector<TrackTree>& trees,
     std::size_t scan_size,
-    int k_best) {
+    int k_best,
+    double score_delta_threshold) {
   GlobalAssignment out;
   const std::size_t T = trees.size();
   out.chosen_leaf.assign(T, TrackTreeNode::kNoParent);
@@ -132,10 +141,21 @@ GlobalAssignment solveGlobalHypothesis(
   }
 
   // Collect leaves participating in any of the K best assignments
-  // per tree. Duplicates across assignments are deduplicated. Used
-  // downstream as "protected from local pruning this scan" so
-  // deferred-commitment alternatives survive into N-scan trunk merge.
-  for (const auto& a : kbest.assignments) {
+  // per tree, subject to the Score-Δ window. Duplicates across
+  // assignments are deduplicated. Used downstream as "protected from
+  // local pruning this scan" so deferred-commitment alternatives
+  // survive into N-scan trunk merge. The K=1 best is always included
+  // (its leaves are what we just selected as chosen_leaf); higher-K
+  // alternatives are admitted only if cost - best_cost < delta.
+  const double best_cost = kbest.costs.empty() ? 0.0 : kbest.costs[0];
+  for (std::size_t k = 0; k < kbest.assignments.size(); ++k) {
+    if (k > 0 && score_delta_threshold > 0.0 &&
+        kbest.costs[k] - best_cost > score_delta_threshold) {
+      // Murty returns costs in non-decreasing order, so once we cross
+      // the delta we're done.
+      break;
+    }
+    const auto& a = kbest.assignments[k];
     for (std::size_t t = 0; t < T; ++t) {
       const int col = a[t];
       if (col < 0) continue;
@@ -157,13 +177,10 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
   if (scan.empty()) return;
   const Timestamp t = scan.front().time;
 
-  // Clear last scan's protection markers. Protection is exactly one
-  // scan deep: leaves flagged after the previous global solve survive
-  // this scan's pruning, then start unprotected so this scan's solve
-  // can re-flag a fresh set. See TrackTreeNode::is_protected.
-  for (TrackTree& tt : trees_) {
-    for (TrackTreeNode& n : tt.mutableNodes()) n.is_protected = false;
-  }
+  // NB: do NOT clear is_protected here. The pruning passes below need
+  // to see the flags set by the PREVIOUS scan's solveGlobalHypothesis.
+  // Protection is cleared and refreshed at the end of this method,
+  // after the new solve has identified this scan's top-K leaves.
 
   TrackTree::BranchParams bp{
       cfg_.probability_of_detection,
@@ -175,7 +192,16 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     if (cfg_.merge_bhattacharyya_threshold > 0.0) {
       tt.mergeBranches(cfg_.merge_bhattacharyya_threshold);
     }
-    tt.pruneNScan(cfg_.n_scan);
+    // Per-tree adaptive N-scan: trees that had multiple protected
+    // alternatives on the previous scan (i.e., genuine deferred-
+    // commitment ambiguity) get an extended trunk-merge delay so the
+    // alternatives have more time to accumulate evidence. Trees with
+    // a single dominant leaf use the base n_scan.
+    const int n_eff =
+        (tt.protectedAlternativesLastScan() > 1)
+            ? cfg_.n_scan + cfg_.n_scan_extension_when_protected
+            : cfg_.n_scan;
+    tt.pruneNScan(n_eff);
   }
 
   // Spawn new tentative trees from measurements that didn't gate to any
@@ -237,15 +263,23 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
   // alternative-top-K leaves for downstream deferred-commitment
   // (consumed by callers that want to protect those leaves from
   // pruning; the reported track itself comes from the K=1 best).
-  const GlobalAssignment assign =
-      solveGlobalHypothesis(trees_, scan.size(), cfg_.k_best);
+  const GlobalAssignment assign = solveGlobalHypothesis(
+      trees_, scan.size(), cfg_.k_best, cfg_.score_delta_threshold);
 
-  // Mark all leaves participating in any of the K best global hypotheses
-  // (and their ancestor chain up to the root) as protected. They survive
-  // the *next* scan's pruneKLocal/mergeBranches/pruneNScan and the
-  // score-delete sweep, giving deferred-commitment evidence one more
-  // chance to elevate an alternative past the K=1 best. Protection is
-  // cleared at the top of the next processBatch.
+  // Clear all stale is_protected flags from the previous scan, then
+  // set them fresh on this scan's top-K leaves and their ancestor
+  // chain. Doing both here (post-solve) is the correctness fix: an
+  // earlier version cleared at the top of processBatch, which meant
+  // the prune passes above never actually saw the flags. With this
+  // ordering, the flags set in this block survive into the NEXT
+  // scan's pruneKLocal/mergeBranches/pruneNScan and the score-delete
+  // sweep — exactly the deferred-commitment carry-over we want.
+  //
+  // Also record per-tree |top_k_leaves| for the adaptive-N-scan
+  // signal used at the top of the next processBatch.
+  for (TrackTree& tt : trees_) {
+    for (TrackTreeNode& n : tt.mutableNodes()) n.is_protected = false;
+  }
   for (std::size_t ti = 0; ti < trees_.size(); ++ti) {
     auto& nodes = trees_[ti].mutableNodes();
     for (std::size_t li : assign.top_k_leaves[ti]) {
@@ -255,6 +289,8 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
         cur = nodes[cur].parent;
       }
     }
+    trees_[ti].setProtectedAlternativesLastScan(
+        assign.top_k_leaves[ti].size());
   }
 
   tracks_.clear();

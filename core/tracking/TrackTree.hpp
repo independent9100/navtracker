@@ -118,9 +118,23 @@ class TrackTree {
   // Smaller B = more similar. Typical threshold 0.5–2.0.
   std::size_t mergeBranches(double threshold);
 
+  // Number of distinct alternative-hypothesis leaves protected on the
+  // previous scan (== |top_k_leaves[this_tree]| from the last
+  // solveGlobalHypothesis call, after the Score-Δ filter). Used by
+  // adaptive N-scan to delay trunk merging on trees with surviving
+  // alternatives. >1 means "more than just the K=1 best was protected"
+  // — extend n_scan.
+  std::size_t protectedAlternativesLastScan() const {
+    return protected_alternatives_last_scan_;
+  }
+  void setProtectedAlternativesLastScan(std::size_t n) {
+    protected_alternatives_last_scan_ = n;
+  }
+
  private:
   TrackId external_id_;
   std::vector<TrackTreeNode> nodes_;
+  std::size_t protected_alternatives_last_scan_ = 0;
 };
 
 }  // namespace navtracker
