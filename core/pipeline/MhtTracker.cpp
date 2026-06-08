@@ -157,6 +157,14 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
   if (scan.empty()) return;
   const Timestamp t = scan.front().time;
 
+  // Clear last scan's protection markers. Protection is exactly one
+  // scan deep: leaves flagged after the previous global solve survive
+  // this scan's pruning, then start unprotected so this scan's solve
+  // can re-flag a fresh set. See TrackTreeNode::is_protected.
+  for (TrackTree& tt : trees_) {
+    for (TrackTreeNode& n : tt.mutableNodes()) n.is_protected = false;
+  }
+
   TrackTree::BranchParams bp{
       cfg_.probability_of_detection,
       cfg_.clutter_density,
@@ -201,13 +209,25 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     trees_.emplace_back(id, rootFromMeasurement(estimator_, scan[j]));
   }
 
-  // Drop trees whose best-leaf score is below the delete threshold.
+  // Drop trees whose best-leaf score is below the delete threshold,
+  // UNLESS any leaf in the tree is protected — in which case an
+  // alternative hypothesis (flagged on the previous scan's global
+  // solve) is still in play and deserves one more scan to either
+  // recover or genuinely fall below threshold. Protection is cleared
+  // each scan so this is bounded: a tree can survive at most one
+  // below-threshold scan via protection alone.
   std::vector<TrackTree> kept;
   kept.reserve(trees_.size());
   for (TrackTree& tt : trees_) {
     const std::size_t best = tt.bestLeafIndex();
     if (best == TrackTreeNode::kNoParent) continue;
-    if (tt.nodes()[best].score < cfg_.score_delete_threshold) continue;
+    if (tt.nodes()[best].score < cfg_.score_delete_threshold) {
+      bool any_protected = false;
+      for (const TrackTreeNode& n : tt.nodes()) {
+        if (n.is_leaf && n.is_protected) { any_protected = true; break; }
+      }
+      if (!any_protected) continue;
+    }
     kept.push_back(std::move(tt));
   }
   trees_ = std::move(kept);
@@ -219,6 +239,23 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
   // pruning; the reported track itself comes from the K=1 best).
   const GlobalAssignment assign =
       solveGlobalHypothesis(trees_, scan.size(), cfg_.k_best);
+
+  // Mark all leaves participating in any of the K best global hypotheses
+  // (and their ancestor chain up to the root) as protected. They survive
+  // the *next* scan's pruneKLocal/mergeBranches/pruneNScan and the
+  // score-delete sweep, giving deferred-commitment evidence one more
+  // chance to elevate an alternative past the K=1 best. Protection is
+  // cleared at the top of the next processBatch.
+  for (std::size_t ti = 0; ti < trees_.size(); ++ti) {
+    auto& nodes = trees_[ti].mutableNodes();
+    for (std::size_t li : assign.top_k_leaves[ti]) {
+      std::size_t cur = li;
+      while (cur != TrackTreeNode::kNoParent) {
+        nodes[cur].is_protected = true;
+        cur = nodes[cur].parent;
+      }
+    }
+  }
 
   tracks_.clear();
   tracks_.reserve(trees_.size());

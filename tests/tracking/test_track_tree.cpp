@@ -215,6 +215,100 @@ TEST(TrackTree, MergeBranchesDropsBhattacharyyaDuplicates) {
   EXPECT_TRUE(tt.nodes()[c].is_leaf);
 }
 
+TEST(TrackTree, PruneKLocalKeepsProtectedLeavesBelowThreshold) {
+  TrackTree tt(TrackId{20}, rootNode(0.0, 0.0));
+  tt.mutableNodes()[0].is_leaf = false;
+  auto add_leaf = [&](double score, bool prot) -> std::size_t {
+    TrackTreeNode n;
+    n.parent = 0; n.scan_idx = 1; n.score = score;
+    n.state = Eigen::Vector4d::Zero();
+    n.covariance = Eigen::Matrix4d::Identity();
+    n.time = navtracker::Timestamp::fromSeconds(1.0);
+    n.is_leaf = true;
+    n.is_protected = prot;
+    tt.mutableNodes().push_back(n);
+    return tt.nodes().size() - 1;
+  };
+  const std::size_t hi  = add_leaf(10.0, false);
+  const std::size_t mid = add_leaf(5.0,  false);
+  const std::size_t lo  = add_leaf(1.0,  true);   // protected
+  // pruneKLocal(1): top-1 by score is `hi`. Without protection, `mid`
+  // and `lo` would both be demoted. With protection, `lo` survives;
+  // only `mid` is demoted.
+  const std::size_t dropped = tt.pruneKLocal(1);
+  EXPECT_EQ(dropped, 1u);
+  EXPECT_TRUE(tt.nodes()[hi].is_leaf);
+  EXPECT_FALSE(tt.nodes()[mid].is_leaf);
+  EXPECT_TRUE(tt.nodes()[lo].is_leaf);
+}
+
+TEST(TrackTree, PruneNScanPreservesProtectedAncestorChain) {
+  TrackTree tt(TrackId{21}, rootNode(0.0, 0.0));
+  tt.mutableNodes()[0].is_leaf = false;
+  auto add_node = [&](std::size_t parent, int sc, double score) -> std::size_t {
+    TrackTreeNode n;
+    n.parent = parent; n.scan_idx = sc; n.score = score;
+    n.state = Eigen::Vector4d::Zero(); n.covariance = Eigen::Matrix4d::Identity();
+    n.time = navtracker::Timestamp::fromSeconds(static_cast<double>(sc));
+    n.is_leaf = false;
+    tt.mutableNodes().push_back(n);
+    return tt.nodes().size() - 1;
+  };
+  const std::size_t a  = add_node(0, 1, 1.0);
+  const std::size_t b  = add_node(0, 1, 0.5);
+  const std::size_t a1 = add_node(a, 2, 5.0);
+  const std::size_t b1 = add_node(b, 2, 2.0);
+  tt.mutableNodes()[a1].is_leaf = true;
+  tt.mutableNodes()[b1].is_leaf = true;
+  // Mark the loser chain (b → b1) as protected — simulating what the
+  // global solve would do for an alternative top-K leaf.
+  tt.mutableNodes()[b].is_protected = true;
+  tt.mutableNodes()[b1].is_protected = true;
+
+  const std::size_t removed = tt.pruneNScan(1);
+  EXPECT_EQ(removed, 0u);
+  // Both leaves survive: a1 as the winner-chain leaf, b1 via protection.
+  const auto leaves = tt.leafIndices();
+  EXPECT_EQ(leaves.size(), 2u);
+  std::vector<double> scores;
+  for (std::size_t li : leaves) scores.push_back(tt.nodes()[li].score);
+  std::sort(scores.begin(), scores.end());
+  EXPECT_DOUBLE_EQ(scores[0], 2.0);
+  EXPECT_DOUBLE_EQ(scores[1], 5.0);
+  // Parent indices must still be valid after the (no-op here) compaction.
+  for (const TrackTreeNode& n : tt.nodes()) {
+    if (n.parent != TrackTreeNode::kNoParent) {
+      EXPECT_LT(n.parent, tt.nodes().size());
+    }
+  }
+}
+
+TEST(TrackTree, MergeBranchesSpotsProtectedLeaf) {
+  TrackTree tt(TrackId{22}, rootNode(0.0, 0.0));
+  tt.mutableNodes()[0].is_leaf = false;
+  auto add_leaf = [&](double px, double py, double score, bool prot) {
+    TrackTreeNode n;
+    n.parent = 0; n.scan_idx = 1; n.score = score;
+    n.state = Eigen::VectorXd(4);
+    n.state << px, py, 0.0, 0.0;
+    n.covariance = Eigen::Matrix4d::Identity();
+    n.time = navtracker::Timestamp::fromSeconds(1.0);
+    n.is_leaf = true;
+    n.is_hit = true;
+    n.is_protected = prot;
+    tt.mutableNodes().push_back(n);
+    return tt.nodes().size() - 1;
+  };
+  // a and b are near-duplicates; b is the lower-scoring one but is
+  // protected. mergeBranches must NOT eliminate b.
+  const std::size_t a = add_leaf(0.0, 0.0,    5.0, false);
+  const std::size_t b = add_leaf(0.01, 0.01,  3.0, true);
+  const std::size_t dropped = tt.mergeBranches(0.5);
+  EXPECT_EQ(dropped, 0u);
+  EXPECT_TRUE(tt.nodes()[a].is_leaf);
+  EXPECT_TRUE(tt.nodes()[b].is_leaf);
+}
+
 TEST(TrackTree, MergeBranchesDisabledWhenThresholdZero) {
   TrackTree tt(TrackId{10}, rootNode(0.0, 0.0));
   tt.mutableNodes()[0].is_leaf = false;

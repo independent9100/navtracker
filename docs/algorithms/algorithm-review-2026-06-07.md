@@ -227,6 +227,34 @@ it's a small change once we add a `protected` flag to
 hypothesis tree (Reid 1979 / Kurien 1990 layer 2) — remains the
 long-term direction.
 
+**Update 2026-06-08 (protected leaves): mechanism wired.** Added
+`TrackTreeNode::is_protected` (one-scan-deep). After each
+`solveGlobalHypothesis` call, every leaf in `assign.top_k_leaves[t]`
+and its ancestor chain back to the root is flagged. `pruneKLocal`
+skips protected leaves when demoting, `mergeBranches` refuses to
+merge a protected leaf away, and `pruneNScan` keeps protected nodes
+in addition to the winner chain (the load-bearing piece — without it
+the trunk merge would kill alternative branches before they affected
+the next scan). The score-delete sweep also defers a tree's drop
+when any leaf is protected. Three new unit tests cover the three
+pruning paths; all pass. Spec/impl plan referenced above; implementation
+plan at `~/.claude/plans/jaunty-wobbling-pascal.md`.
+
+Benchmark `2026-06-08_protected-leaves` vs `2026-06-08_murty-k3`
+(both freshly regenerated at the same HEAD modulo this change):
+**every MHT config is bit-identical on every available scenario**
+(`0 ·`). This is consistent with the mechanism being correct: in
+the current bench set (cooperative crossings/overtakings/head-on +
+non_cooperative single-target + speed_change + ais_dropout + clock_skew
++ parallel_targets), Murty's K=2/3 alternatives mostly coincide with
+the K=1 best — there's no genuine assignment ambiguity for protection
+to defer. The behavioural win needs scenarios with dense clutter or
+crossing+dropout-style ambiguity, not yet in the synthetic harness;
+adding them is a follow-up. The non-MHT `ukf_ct_gnn` row shows
+between-run variability that is *pre-existing* and unrelated to
+protection (same drift appears between two consecutive fresh runs
+without the change).
+
 The Murty primitive is also the explicit Phase 0 dependency of the
 PMBM port; landing it here means PMBM Phase 1 can call into the same
 code path.

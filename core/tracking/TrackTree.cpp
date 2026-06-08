@@ -213,6 +213,16 @@ std::size_t TrackTree::pruneNScan(int n_scan) {
       }
     }
   }
+  // Protected nodes survive N-scan even when their ancestor lost the
+  // score competition. The global solve has marked them (and their
+  // ancestor chain back to the root) on the previous scan, so the
+  // chain is already connected when we walk parent pointers below.
+  // This is the load-bearing piece for deferred-commitment TOMHT:
+  // without it, an alternative branch is killed at the trunk merge
+  // before it ever gets a chance to overtake the K=1 best.
+  for (std::size_t i = 0; i < nodes_.size(); ++i) {
+    if (nodes_[i].is_protected) keep[i] = true;
+  }
 
   std::vector<std::size_t> new_index(nodes_.size(), TrackTreeNode::kNoParent);
   std::vector<TrackTreeNode> new_nodes;
@@ -237,8 +247,13 @@ std::size_t TrackTree::pruneKLocal(std::size_t k) {
             [this](std::size_t a, std::size_t b) {
               return nodes_[a].score > nodes_[b].score;
             });
+  // Skip protected leaves when demoting — they are alternative-hypothesis
+  // leaves the global solve flagged for one-scan deferred commitment.
+  // If all bottom-k are protected, k is effectively raised this scan;
+  // self-limits since protection is cleared at the next branch().
   std::size_t dropped = 0;
   for (std::size_t i = k; i < leaves.size(); ++i) {
+    if (nodes_[leaves[i]].is_protected) continue;
     nodes_[leaves[i]].is_leaf = false;
     ++dropped;
   }
@@ -266,6 +281,13 @@ std::size_t TrackTree::mergeBranches(double threshold) {
                           nodes_[leaves[j]].state,
                           nodes_[leaves[j]].covariance);
       if (b < threshold) {
+        // Don't merge away a protected leaf — it's an explicit "keep this
+        // alternative alive one more scan" signal from the global solve.
+        // The outer loop visits in score order, so leaves[i] is always
+        // the higher-scoring of the pair; if either side is protected,
+        // we leave both untouched.
+        if (nodes_[leaves[i]].is_protected ||
+            nodes_[leaves[j]].is_protected) continue;
         nodes_[leaves[j]].is_leaf = false;
         ++dropped;
       }

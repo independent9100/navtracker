@@ -47,6 +47,16 @@ struct TrackTreeNode {
   Eigen::MatrixXd imm_means;
   std::vector<Eigen::MatrixXd> imm_covariances;
   Eigen::VectorXd imm_mode_probabilities;
+
+  // One-scan-deep guard against pruning. Set by MhtTracker on leaves
+  // participating in any of the Murty top-K global hypotheses (and
+  // their ancestor chain up to the root) after solveGlobalHypothesis;
+  // cleared at the top of the next processBatch. Honoured by
+  // pruneKLocal (won't demote), mergeBranches (won't merge away), and
+  // pruneNScan (won't delete). Implements deferred-commitment TOMHT:
+  // alternative hypotheses survive one more scan so evidence has a
+  // chance to elevate them past the current K=1 best.
+  bool is_protected{false};
 };
 
 // A per-track hypothesis tree.
