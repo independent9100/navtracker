@@ -58,6 +58,23 @@ struct TrackTreeNode {
   // alternative hypotheses survive one more scan so evidence has a
   // chance to elevate them past the current K=1 best.
   bool is_protected{false};
+
+  // Existence probability r_k ∈ [0,1] (IPDA / Musicki-Evans-Stankovic
+  // 1994). Carried per leaf so MHT can read a calibrated lifecycle
+  // signal instead of the raw cumulative LLR score (which is dominated
+  // by measurement-fit, not the target-vs-clutter ratio). Updated in
+  // TrackTree::branch when BranchParams::update_existence is on; left
+  // at 1.0 otherwise (a "no information" sentinel that makes IPDA-off
+  // behaviour bit-identical to the legacy code path).
+  double existence_probability{1.0};
+
+  // Visibility-given-exists v_k ∈ [0,1] (Brekke & Wilthil 2019,
+  // VIMM-JIPDA). Separates "track is gone" (existence drops) from
+  // "track is currently obscured" (visibility drops, existence stable).
+  // Updated in TrackTree::branch when BranchParams::update_visibility
+  // is on. Default 1.0 = "fully visible" so VIMM-off math collapses
+  // back to plain IPDA.
+  double visibility_given_exists{1.0};
 };
 
 // A per-track hypothesis tree.
@@ -82,10 +99,30 @@ class TrackTree {
   // have detected" the track would require multi-sensor footprint
   // accounting that we don't carry yet. The default is the configured
   // global P_D — equivalent to today.
+  //
+  // IPDA / VIMM lifecycle: when `update_existence` is set, each new
+  // child node carries an existence_probability updated by a Bayes
+  // recursion using (P_D, λ_C) from the detection model + the
+  // estimator's measurement likelihood. When `update_visibility` is
+  // also set, the joint (existence, visibility) update of Brekke &
+  // Wilthil 2019 (VIMM-JIPDA) applies — missed detections under
+  // obscuration decay visibility rather than existence. Both default
+  // to false → tree-node existence/visibility stay at their 1.0
+  // sentinels and lifecycle math is a no-op (bit-identical to legacy).
   struct BranchParams {
     const ISensorDetectionModel* detection_model;
     double miss_probability_of_detection;
     double gate_threshold;
+    // IPDA / VIMM controls. The `existence_persistence` and
+    // `visibility_*` knobs are only consulted when the corresponding
+    // update flag is on.
+    bool update_existence{false};
+    bool update_visibility{false};
+    double existence_persistence{0.99};       // P(e_k=1 | e_{k-1}=1)
+    double gate_probability_mass{0.99};       // P_G — gate-captured mass
+                                              // under target-present
+    double visibility_persistence{0.95};      // P(v_k=1 | v_{k-1}=1)
+    double visibility_recovery{0.3};          // P(v_k=1 | v_{k-1}=0)
   };
 
   // N-scan pruning. For each current leaf, walk back N steps via parent

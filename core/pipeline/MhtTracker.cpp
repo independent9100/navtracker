@@ -201,7 +201,13 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
   TrackTree::BranchParams bp{
       detection_model_.get(),
       cfg_.probability_of_detection,
-      cfg_.gate_threshold};
+      cfg_.gate_threshold,
+      cfg_.use_ipda_lifecycle,
+      cfg_.use_visibility && cfg_.use_ipda_lifecycle,
+      cfg_.ipda_persistence,
+      cfg_.ipda_gate_probability_mass,
+      cfg_.visibility_persistence,
+      cfg_.visibility_recovery};
   for (TrackTree& tt : trees_) {
     tt.branch(estimator_, scan, t, bp);
     tt.pruneKLocal(cfg_.k_max_leaves);
@@ -252,7 +258,17 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     // unassociated ones — see canInitiateTrack.
     if (!canInitiateTrack(scan[j].model)) continue;
     const TrackId id{next_external_id_++};
-    trees_.emplace_back(id, rootFromMeasurement(estimator_, scan[j]));
+    TrackTreeNode root = rootFromMeasurement(estimator_, scan[j]);
+    // Seed IPDA / VIMM state on birth. Off → defaults (1.0, 1.0) =
+    // no-op sentinel. On → ipda_init_existence as the prior r₀ (a
+    // single detection is weak evidence; default 0.5) and
+    // visibility_init as v₀ (default 1.0 = just detected so visible).
+    if (cfg_.use_ipda_lifecycle) {
+      root.existence_probability = cfg_.ipda_init_existence;
+      root.visibility_given_exists =
+          cfg_.use_visibility ? cfg_.visibility_init : 1.0;
+    }
+    trees_.emplace_back(id, std::move(root));
   }
 
   // Feed the scan outcome to the detection model, bucketed per
@@ -298,7 +314,24 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
   for (TrackTree& tt : trees_) {
     const std::size_t best = tt.bestLeafIndex();
     if (best == TrackTreeNode::kNoParent) continue;
-    if (tt.nodes()[best].score < cfg_.score_delete_threshold) {
+    const bool score_dead =
+        tt.nodes()[best].score < cfg_.score_delete_threshold;
+    // IPDA-existence delete gate (active only when use_ipda_lifecycle):
+    // if every leaf's existence has decayed below ipda_delete_threshold
+    // the tree is unrecoverable. We require *every* leaf to be below
+    // — a single high-existence leaf is enough to keep the tree, since
+    // it represents a still-viable hypothesis (mirrors the bestLeaf
+    // pattern used for the score gate).
+    bool existence_dead = false;
+    if (cfg_.use_ipda_lifecycle) {
+      double max_r = 0.0;
+      for (const TrackTreeNode& n : tt.nodes()) {
+        if (n.is_leaf && n.existence_probability > max_r)
+          max_r = n.existence_probability;
+      }
+      existence_dead = max_r < cfg_.ipda_delete_threshold;
+    }
+    if (score_dead || existence_dead) {
       bool any_protected = false;
       for (const TrackTreeNode& n : tt.nodes()) {
         if (n.is_leaf && n.is_protected) { any_protected = true; break; }
@@ -358,10 +391,15 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     }
     if (leaf == TrackTreeNode::kNoParent) continue;
 
-    // Confirmation gate: SPRT on the leaf LLR score (default) or legacy
-    // M-of-N hit count.
+    // Confirmation gate. Precedence: IPDA-existence (when enabled) →
+    // SPRT (when enabled) → M-of-N (default).
     TrackStatus status;
-    if (cfg_.use_sprt_confirm) {
+    if (cfg_.use_ipda_lifecycle) {
+      status = (trees_[ti].nodes()[leaf].existence_probability >=
+                cfg_.ipda_confirm_threshold)
+                   ? TrackStatus::Confirmed
+                   : TrackStatus::Tentative;
+    } else if (cfg_.use_sprt_confirm) {
       const double t_confirm = std::log(
           (1.0 - cfg_.sprt_beta) / std::max(cfg_.sprt_alpha, 1e-12));
       status = (trees_[ti].nodes()[leaf].score >= t_confirm)
@@ -384,6 +422,10 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
         trees_[ti].nodes()[leaf].imm_mode_probabilities;
     view.last_update = trees_[ti].nodes()[leaf].time;
     view.status = status;
+    view.existence_probability =
+        trees_[ti].nodes()[leaf].existence_probability;
+    view.visibility_given_exists =
+        trees_[ti].nodes()[leaf].visibility_given_exists;
     tracks_.push_back(std::move(view));
   }
 }

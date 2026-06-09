@@ -164,6 +164,39 @@ MhtTracker::Config makeMhtConfig() {
   return cfg;
 }
 
+// IPDA lifecycle ablation: same as makeMhtConfig but reads existence
+// probability per leaf for confirm/delete instead of M-of-N + raw
+// score. ipda_init_existence=0.5 is a deliberately weak birth prior
+// (single detection is weak evidence — Musicki 1994's typical
+// recommendation). ipda_confirm_threshold=0.9 ≈ "we're 9× more
+// confident in target than clutter," ipda_delete_threshold=0.05
+// catches sustained miss decay. Persistence 0.99 = ~100-scan target
+// lifetime under perfect detection.
+MhtTracker::Config makeMhtIpdaConfig() {
+  MhtTracker::Config cfg = makeMhtConfig();
+  cfg.use_ipda_lifecycle = true;
+  cfg.ipda_init_existence = 0.5;
+  cfg.ipda_confirm_threshold = 0.9;
+  cfg.ipda_delete_threshold = 0.05;
+  cfg.ipda_persistence = 0.99;
+  cfg.ipda_gate_probability_mass = 0.99;
+  return cfg;
+}
+
+// VIMM ablation: IPDA + visibility-given-exists. visibility_init=1.0
+// (just-born tracks are visible by definition; the seed detection
+// proves it). visibility_persistence=0.95 + visibility_recovery=0.3
+// give ~20-scan obscured stretches that still recover — calibrated to
+// the AutoFerry scenarios where Gunnerus shadows Havfruen for ~10 s.
+MhtTracker::Config makeMhtVimmConfig() {
+  MhtTracker::Config cfg = makeMhtIpdaConfig();
+  cfg.use_visibility = true;
+  cfg.visibility_init = 1.0;
+  cfg.visibility_persistence = 0.95;
+  cfg.visibility_recovery = 0.3;
+  return cfg;
+}
+
 }  // namespace
 
 std::vector<Config> defaultConfigs() {
@@ -180,6 +213,15 @@ std::vector<Config> defaultConfigs() {
   // that isolates the heavy-tailed-measurement (EO/IR clutter) axis.
   configs.push_back({"imm_cv_ct_mht_robust", &makeImmCvCtRobust, &makeJpda,
                      TrackerKind::Mht, &makeMhtConfig});
+  // Canonical estimator + IPDA lifecycle — ablation that isolates the
+  // confirm/delete axis (calibrated existence vs M-of-N score gates).
+  configs.push_back({"imm_cv_ct_mht_ipda", &makeImmCvCt, &makeJpda,
+                     TrackerKind::Mht, &makeMhtIpdaConfig});
+  // Canonical estimator + IPDA + VIMM visibility — ablation that
+  // isolates obscuration handling (VIMM shields existence during the
+  // shadowed stretches that IPDA-only would decay through).
+  configs.push_back({"imm_cv_ct_mht_vimm", &makeImmCvCt, &makeJpda,
+                     TrackerKind::Mht, &makeMhtVimmConfig});
   // JPDA/GNN-style ablations (single-hypothesis Tracker pipeline).
   configs.push_back({"ekf_cv_gnn", &makeEkfCv, &makeGnn});
   configs.push_back({"ekf_cv_jpda", &makeEkfCv, &makeJpda});

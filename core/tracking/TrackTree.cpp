@@ -14,6 +14,88 @@
 
 namespace navtracker {
 
+namespace {
+
+// IPDA / VIMM existence-recursion helpers.
+//
+// Notation: r̄, v̄ are the post-predict (Markov) existence and
+// visibility-given-exists. P_D is the per-sensor detection probability
+// (or the cfg global for the miss branch). P_G is the gate probability
+// mass. g(z) is the predicted measurement density at the gated z
+// (exp of the estimator's log-likelihood). λ_C is the per-sensor
+// clutter intensity in the measurement's natural units.
+//
+// All four updates collapse to the no-op identity (r,v) → (r,v) when
+// the corresponding update flag is off — branch() guards the call.
+// Without visibility, v is held at 1.0 so the IPDA-only formulas
+// reduce to plain Musicki 1994.
+
+struct ExistenceVis {
+  double existence;
+  double visibility_given_exists;
+};
+
+inline ExistenceVis predictExistence(double r, double v,
+                                     double pi_e,
+                                     double pi_vv, double pi_hv,
+                                     bool use_visibility) {
+  // Existence always predicts (IPDA Markov). Visibility only predicts
+  // when VIMM is on — otherwise we'd silently decay v from its 1.0
+  // sentinel even in plain IPDA mode, which would change behaviour.
+  return {pi_e * r,
+          use_visibility ? (pi_vv * v + pi_hv * (1.0 - v)) : v};
+}
+
+// Hit posterior on (existence, visibility) given measurement z.
+// IPDA-only (use_visibility=false): r' = r̄·L / (1 − r̄ + r̄·L),
+//   where L = P_D · g(z) / λ_C; v' carried through unchanged.
+// VIMM (use_visibility=true): r' = r̄·v̄·P_D·g / (r̄·v̄·P_D·g + (1−r̄)·λ_C);
+//   v' = 1.0 (a hit means the target was visible this scan).
+inline ExistenceVis updateHit(double r_pred, double v_pred,
+                              double p_d, double exp_log_lik,
+                              double lambda_c,
+                              bool use_visibility) {
+  const double p_d_g = p_d * exp_log_lik;
+  if (use_visibility) {
+    const double num = r_pred * v_pred * p_d_g;
+    const double den = num + (1.0 - r_pred) * lambda_c;
+    const double r_post = (den > 0.0) ? (num / den) : r_pred;
+    return {std::clamp(r_post, 0.0, 1.0), 1.0};
+  }
+  const double L = (lambda_c > 0.0) ? (p_d_g / lambda_c) : 0.0;
+  const double den = 1.0 - r_pred + r_pred * L;
+  const double r_post = (den > 0.0) ? (r_pred * L / den) : r_pred;
+  return {std::clamp(r_post, 0.0, 1.0), v_pred};
+}
+
+// Miss posterior on (existence, visibility).
+// IPDA-only: r' = r̄·(1 − P_D·P_G) / (1 − r̄·P_D·P_G); v' carried.
+// VIMM: split between visible (1 − P_D·P_G) and hidden (1) channels →
+//   r' = r̄·(1 − v̄·P_D·P_G) / (1 − r̄·v̄·P_D·P_G);
+//   v' = v̄·(1 − P_D·P_G) / (1 − v̄·P_D·P_G).
+// VIMM under v̄ ≪ 1 (already-obscured): r' ≈ r̄ — existence barely
+// decays, the obscuration-friendly behaviour.
+inline ExistenceVis updateMiss(double r_pred, double v_pred,
+                               double p_d, double p_g,
+                               bool use_visibility) {
+  const double p_d_pg = p_d * p_g;
+  if (use_visibility) {
+    const double r_factor = 1.0 - v_pred * p_d_pg;
+    const double den_r = 1.0 - r_pred * v_pred * p_d_pg;
+    const double r_post = (den_r > 0.0) ? (r_pred * r_factor / den_r) : r_pred;
+    const double den_v = 1.0 - v_pred * p_d_pg;
+    const double v_post =
+        (den_v > 0.0) ? (v_pred * (1.0 - p_d_pg) / den_v) : v_pred;
+    return {std::clamp(r_post, 0.0, 1.0), std::clamp(v_post, 0.0, 1.0)};
+  }
+  const double L = 1.0 - p_d_pg;
+  const double den = 1.0 - r_pred + r_pred * L;
+  const double r_post = (den > 0.0) ? (r_pred * L / den) : r_pred;
+  return {std::clamp(r_post, 0.0, 1.0), v_pred};
+}
+
+}  // namespace
+
 TrackTree::TrackTree(TrackId external_id, const TrackTreeNode& root)
     : external_id_(external_id) {
   nodes_.push_back(root);
@@ -71,6 +153,26 @@ void TrackTree::branch(const IEstimator& estimator,
       miss.is_leaf = true;
       miss.is_hit = false;
       miss.scan_meas_idx = TrackTreeNode::kNoMeasurement;
+      // IPDA / VIMM existence on the miss branch (carried through when
+      // update_existence is off).
+      if (params.update_existence) {
+        const ExistenceVis pred = predictExistence(
+            nodes_[leaf_idx].existence_probability,
+            nodes_[leaf_idx].visibility_given_exists,
+            params.existence_persistence,
+            params.visibility_persistence, params.visibility_recovery,
+            params.update_visibility);
+        const ExistenceVis post = updateMiss(
+            pred.existence, pred.visibility_given_exists,
+            params.miss_probability_of_detection,
+            params.gate_probability_mass, params.update_visibility);
+        miss.existence_probability = post.existence;
+        miss.visibility_given_exists = post.visibility_given_exists;
+      } else {
+        miss.existence_probability = nodes_[leaf_idx].existence_probability;
+        miss.visibility_given_exists =
+            nodes_[leaf_idx].visibility_given_exists;
+      }
       nodes_.push_back(miss);
     }
 
@@ -110,6 +212,26 @@ void TrackTree::branch(const IEstimator& estimator,
       hit.is_leaf = true;
       hit.is_hit = true;
       hit.scan_meas_idx = mi;
+      // IPDA / VIMM existence on the hit branch (carried through when
+      // update_existence is off). Uses the same per-sensor (P_D, λ_C)
+      // the score uses — calibrated quantity, not the raw score.
+      if (params.update_existence) {
+        const ExistenceVis pred = predictExistence(
+            nodes_[leaf_idx].existence_probability,
+            nodes_[leaf_idx].visibility_given_exists,
+            params.existence_persistence,
+            params.visibility_persistence, params.visibility_recovery,
+            params.update_visibility);
+        const ExistenceVis post = updateHit(
+            pred.existence, pred.visibility_given_exists,
+            dp.probability_of_detection, std::exp(log_likelihood),
+            dp.clutter_intensity, params.update_visibility);
+        hit.existence_probability = post.existence;
+        hit.visibility_given_exists = post.visibility_given_exists;
+      } else {
+        hit.existence_probability = nodes_[leaf_idx].existence_probability;
+        hit.visibility_given_exists = nodes_[leaf_idx].visibility_given_exists;
+      }
       nodes_.push_back(hit);
     }
 

@@ -62,6 +62,16 @@ struct Track {
     bool covariance_is_default{false};
   };
   std::vector<SourceTouch> recent_contributions;
+
+  // IPDA existence probability r ∈ [0,1] (Musicki 1994) and VIMM
+  // visibility-given-exists v ∈ [0,1] (Brekke & Wilthil 2019). Populated
+  // by the MhtTracker when its IPDA / VIMM lifecycle is enabled —
+  // otherwise the 1.0 default is a "no information" sentinel that
+  // matches the legacy "always confident" semantics. Downstream
+  // consumers can read these as a calibrated track-quality signal
+  // (more honest than the raw LLR score).
+  double existence_probability{1.0};
+  double visibility_given_exists{1.0};
 };
 
 }  // namespace navtracker

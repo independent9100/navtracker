@@ -224,6 +224,7 @@ add_executable(navtracker_tests
   tests/estimation/test_noise_models.cpp
   tests/tracking/test_sensor_detection_models.cpp
   tests/pipeline/test_mht_sprt_confirm.cpp
+  tests/pipeline/test_mht_ipda_lifecycle.cpp
   tests/benchmark/test_smoke.cpp
   tests/benchmark/test_scenario_run_port.cpp
   tests/benchmark/test_bench_sink.cpp

@@ -124,6 +124,37 @@ class MhtTracker {
     // accumulate evidence (or be discarded as non-competitive). Set 0
     // to disable adaptation.
     int n_scan_extension_when_protected = 2;
+
+    // IPDA lifecycle (Musicki-Evans-Stankovic 1994). When enabled,
+    // every leaf carries an existence_probability r ∈ [0,1] updated
+    // by a Bayes recursion from per-sensor (P_D, λ_C) — *the*
+    // calibrated quantity (unlike the raw LLR score, which is
+    // dominated by measurement-fit). Confirm/delete then read r
+    // rather than score / M-of-N hit counts. M-of-N stays available
+    // as the default since it works well under the current per-sensor
+    // model; flip use_ipda_lifecycle to compare.
+    //
+    // Disabled (default): existence_probability stays at its 1.0
+    // sentinel, M-of-N / SPRT still drive confirm/delete, tree-delete
+    // still reads score — bit-identical to the previous behaviour.
+    bool use_ipda_lifecycle = false;
+    double ipda_init_existence = 0.5;     // prior r₀ at track birth
+    double ipda_confirm_threshold = 0.7;  // r ≥ → Confirmed
+    double ipda_delete_threshold = 0.05;  // r < → tree deleted
+    double ipda_persistence = 0.99;       // P(eₖ=1 | eₖ₋₁=1)
+    double ipda_gate_probability_mass = 0.99;  // P_G; 1 ≈ generous gate
+
+    // VIMM visibility (Brekke & Wilthil 2019). When enabled (requires
+    // use_ipda_lifecycle), each leaf also carries a
+    // visibility_given_exists v ∈ [0,1]. A miss is then attributed
+    // partly to "currently obscured" (v drops) rather than entirely
+    // to "track is gone" (r drops). Designed for the AutoFerry
+    // shadowing scenarios where the standard IPDA recursion would
+    // kill a temporarily-hidden target.
+    bool use_visibility = false;
+    double visibility_init = 1.0;         // v₀ at birth (just detected)
+    double visibility_persistence = 0.95; // P(vₖ=1 | vₖ₋₁=1)
+    double visibility_recovery = 0.3;     // P(vₖ=1 | vₖ₋₁=0)
   };
 
   // `detection_model` supplies per-sensor (P_D, λ_C) for branch scoring.
