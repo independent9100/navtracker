@@ -83,8 +83,13 @@ std::vector<MetricRow> runSweep(
         auto est = config.build_estimator();
         BenchResult result;
         if (config.tracker_kind == TrackerKind::Mht) {
-          const MhtTracker::Config cfg =
+          MhtTracker::Config cfg =
               config.mht_config ? config.mht_config() : MhtTracker::Config{};
+          // Clutter density is a property of the scenario's environment,
+          // not the tracker config — override with the scenario's value so
+          // MHT scoring matches the actual false-alarm rate (clean for
+          // synthetic, realistic for cluttered real data).
+          cfg.clutter_density = desc.clutter_density;
           MhtTracker tracker(*est, cfg);
           result = runBenchMht(scen, tracker);
         } else {

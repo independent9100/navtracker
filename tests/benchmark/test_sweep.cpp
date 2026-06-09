@@ -28,7 +28,13 @@ class TinyStraightLine : public ScenarioRun {
 }  // namespace
 
 TEST(Sweep, RowCountMatchesMatrix) {
-  std::vector<Config> configs = {defaultConfigs()[0]};  // ekf_cv_gnn
+  // Select ekf_cv_gnn explicitly (by label, not position) so the test is
+  // robust to the canonical-config ordering in defaultConfigs().
+  std::vector<Config> all = defaultConfigs();
+  std::vector<Config> configs;
+  for (const auto& c : all)
+    if (c.label == "ekf_cv_gnn") configs.push_back(c);
+  ASSERT_EQ(configs.size(), 1u);
   std::vector<std::unique_ptr<ScenarioRun>> scenarios;
   scenarios.push_back(std::make_unique<TinyStraightLine>());
 

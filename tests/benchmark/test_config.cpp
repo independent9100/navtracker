@@ -10,14 +10,17 @@ using navtracker::benchmark::defaultConfigs;
 
 TEST(Config, DefaultConfigsHaveUniqueLabels) {
   const auto configs = defaultConfigs();
-  ASSERT_EQ(configs.size(), 9u);
+  ASSERT_EQ(configs.size(), 10u);
+  // Canonical config is listed first.
+  EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   std::set<std::string> labels;
   for (const auto& c : configs) {
     labels.insert(c.label);
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 9u);
+  EXPECT_EQ(labels.size(), 10u);
+  EXPECT_EQ(labels.count("imm_cv_ct_mht_robust"), 1u);
   EXPECT_EQ(labels.count("ekf_cv_gnn"), 1u);
   EXPECT_EQ(labels.count("ekf_cv_jpda"), 1u);
   EXPECT_EQ(labels.count("ukf_cv_gnn"), 1u);

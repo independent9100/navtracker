@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <gtest/gtest.h>
+#include "core/tracking/SensorDetectionModels.hpp"
 #include "core/tracking/TrackTree.hpp"
 
 using navtracker::TrackId;
@@ -70,7 +71,9 @@ TEST(TrackTree, BranchProducesMissAndPerMeasurementChildren) {
   z.covariance = Eigen::Matrix2d::Identity() * 1.0;
   z.source_id = "t";
 
-  TrackTree::BranchParams p{0.9, 1e-4, 9.0};
+  navtracker::FixedSensorDetectionModel det(
+      navtracker::DetectionParams{0.9, 1e-4});
+  TrackTree::BranchParams p{&det, 0.9, 9.0};
   tt.branch(ekf, {z}, navtracker::Timestamp::fromSeconds(1.0), p);
 
   EXPECT_FALSE(tt.nodes()[0].is_leaf);
@@ -91,7 +94,9 @@ TEST(TrackTree, BranchSkipsUngatedMeasurements) {
   z.covariance = Eigen::Matrix2d::Identity() * 1.0;
   z.source_id = "t";
 
-  TrackTree::BranchParams p{0.9, 1e-4, 9.0};
+  navtracker::FixedSensorDetectionModel det(
+      navtracker::DetectionParams{0.9, 1e-4});
+  TrackTree::BranchParams p{&det, 0.9, 9.0};
   tt.branch(ekf, {z}, navtracker::Timestamp::fromSeconds(1.0), p);
 
   EXPECT_EQ(tt.leafIndices().size(), 1u);

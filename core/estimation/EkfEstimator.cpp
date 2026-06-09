@@ -11,8 +11,11 @@
 namespace navtracker {
 
 EkfEstimator::EkfEstimator(std::shared_ptr<const IMotionModel> motion,
-                           double init_speed_std)
-    : motion_(std::move(motion)), init_speed_std_(init_speed_std) {}
+                           double init_speed_std,
+                           std::shared_ptr<const IMeasurementNoiseModel> noise)
+    : motion_(std::move(motion)),
+      init_speed_std_(init_speed_std),
+      noise_(std::move(noise)) {}
 
 void EkfEstimator::predict(Track& track, Timestamp to) const {
   const double dt = to.secondsSince(track.last_update);
@@ -28,7 +31,14 @@ void EkfEstimator::update(Track& track, const Measurement& z) const {
   const MeasurementPrediction pred = predictMeasurement(z.model, track.state, z.sensor_position_enu);
   const Eigen::VectorXd y = measurementResidual(z.model, z.value, pred.z_pred);
   const Eigen::MatrixXd& h = pred.H;
-  const Eigen::MatrixXd s = h * track.covariance * h.transpose() + z.covariance;
+  // Robustify: inflate R by the noise model's scale (Gaussian → 1; a
+  // Student-t down-weights outliers). The scale is computed from the
+  // nominal innovation covariance, then folded into the effective R used
+  // for both the gain and the Joseph covariance update.
+  const Eigen::MatrixXd s_nom = h * track.covariance * h.transpose() + z.covariance;
+  const double scale = noise_ ? noise_->covarianceScale(y, s_nom) : 1.0;
+  const Eigen::MatrixXd R = z.covariance * scale;
+  const Eigen::MatrixXd s = h * track.covariance * h.transpose() + R;
   const Eigen::MatrixXd k = track.covariance * h.transpose() * s.inverse();
   track.state += k * y;
   // Joseph form: symmetric and PD-preserving even when (I-KH)P leaks
@@ -37,7 +47,7 @@ void EkfEstimator::update(Track& track, const Measurement& z) const {
   const Eigen::MatrixXd id = Eigen::MatrixXd::Identity(n, n);
   const Eigen::MatrixXd ikh = id - k * h;
   track.covariance = ikh * track.covariance * ikh.transpose() +
-                     k * z.covariance * k.transpose();
+                     k * R * k.transpose();
   track.last_update = z.time;
 }
 

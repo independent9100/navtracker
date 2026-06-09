@@ -10,6 +10,7 @@
 #include "core/estimation/MeasurementModels.hpp"
 #include "core/types/Track.hpp"
 #include "ports/IEstimator.hpp"
+#include "ports/ISensorDetectionModel.hpp"
 
 namespace navtracker {
 
@@ -66,7 +67,7 @@ void TrackTree::branch(const IEstimator& estimator,
       miss.imm_mode_probabilities = tmp_predicted.imm_mode_probabilities;
       miss.time = scan_time;
       miss.score = nodes_[leaf_idx].score +
-                   std::log(1.0 - params.probability_of_detection);
+                   std::log(1.0 - params.miss_probability_of_detection);
       miss.is_leaf = true;
       miss.is_hit = false;
       miss.scan_meas_idx = TrackTreeNode::kNoMeasurement;
@@ -86,6 +87,13 @@ void TrackTree::branch(const IEstimator& estimator,
       Track child_tr = tmp_predicted;
       estimator.update(child_tr, z);
 
+      // Per-sensor (P_D, λ_C). Units of λ_C match z.model's measurement
+      // space (m^-2 / (m·rad)^-1 / rad^-1) so the score increment
+      //   log P_D + log p(z|x) − log λ_C
+      // is dimensionally consistent for this sensor — even when the
+      // scan mixes sensors with different units.
+      const DetectionParams dp = params.detection_model->paramsFor(z);
+
       TrackTreeNode hit;
       hit.parent = leaf_idx;
       hit.scan_idx = nodes_[leaf_idx].scan_idx + 1;
@@ -96,9 +104,9 @@ void TrackTree::branch(const IEstimator& estimator,
       hit.imm_mode_probabilities = child_tr.imm_mode_probabilities;
       hit.time = scan_time;
       hit.score = nodes_[leaf_idx].score +
-                  std::log(params.probability_of_detection) +
+                  std::log(dp.probability_of_detection) +
                   log_likelihood -
-                  std::log(params.clutter_density);
+                  std::log(dp.clutter_intensity);
       hit.is_leaf = true;
       hit.is_hit = true;
       hit.scan_meas_idx = mi;

@@ -1,18 +1,29 @@
 #include "core/pipeline/MhtTracker.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <map>
+#include <tuple>
 #include <utility>
 
 #include "core/association/Gating.hpp"
 #include "core/association/Hungarian.hpp"
 #include "core/association/Murty.hpp"
 #include "core/estimation/MeasurementModels.hpp"
+#include "core/tracking/SensorDetectionModels.hpp"
 
 namespace navtracker {
 
-MhtTracker::MhtTracker(const IEstimator& estimator, Config cfg)
-    : estimator_(estimator), cfg_(cfg) {}
+MhtTracker::MhtTracker(const IEstimator& estimator, Config cfg,
+                       std::shared_ptr<ISensorDetectionModel> detection_model)
+    : estimator_(estimator),
+      cfg_(cfg),
+      detection_model_(detection_model
+                           ? std::move(detection_model)
+                           : std::make_shared<FixedSensorDetectionModel>(
+                                 DetectionParams{cfg.probability_of_detection,
+                                                 cfg.clutter_density})) {}
 
 namespace {
 
@@ -183,9 +194,13 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
   // Protection is cleared and refreshed at the end of this method,
   // after the new solve has identified this scan's top-K leaves.
 
+  // Hit-branch (P_D, λ_C) is looked up per measurement inside branch()
+  // from the detection model — so each sensor contributes its own units
+  // and rate to the score. Miss-branch P_D is the configured global
+  // (single number per scan; see Config docs).
   TrackTree::BranchParams bp{
+      detection_model_.get(),
       cfg_.probability_of_detection,
-      cfg_.clutter_density,
       cfg_.gate_threshold};
   for (TrackTree& tt : trees_) {
     tt.branch(estimator_, scan, t, bp);
@@ -238,6 +253,37 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     if (!canInitiateTrack(scan[j].model)) continue;
     const TrackId id{next_external_id_++};
     trees_.emplace_back(id, rootFromMeasurement(estimator_, scan[j]));
+  }
+
+  // Feed the scan outcome to the detection model, bucketed per
+  // (sensor, model). Measurements that gated to no existing tree are
+  // the clutter proxy (most unassociated returns are false alarms).
+  // Each sensor's bucket grows its own EWMA + surveyed area; one noisy
+  // sensor no longer pollutes another's λ_C estimate. Fixed models
+  // ignore.
+  {
+    using Key = std::tuple<SensorKind, MeasurementModel>;
+    std::map<Key, ISensorDetectionModel::ScanObservation> by_sensor;
+    for (std::size_t j = 0; j < scan.size(); ++j) {
+      const Key k{scan[j].sensor, scan[j].model};
+      auto it = by_sensor.find(k);
+      if (it == by_sensor.end()) {
+        ISensorDetectionModel::ScanObservation obs;
+        obs.sensor = scan[j].sensor;
+        obs.model = scan[j].model;
+        obs.num_unassociated = 0;
+        it = by_sensor.emplace(k, std::move(obs)).first;
+      }
+      // Pure-bearing measurements carry no ENU position — exclude from
+      // surveyed-area but still count unassociated as a clutter proxy.
+      if (canInitiateTrack(scan[j].model) && scan[j].value.size() >= 2)
+        it->second.positions.emplace_back(scan[j].value(0), scan[j].value(1));
+      if (!measurement_explained[j]) ++it->second.num_unassociated;
+    }
+    std::vector<ISensorDetectionModel::ScanObservation> bundle;
+    bundle.reserve(by_sensor.size());
+    for (auto& kv : by_sensor) bundle.push_back(std::move(kv.second));
+    detection_model_->observe(bundle);
   }
 
   // Drop trees whose best-leaf score is below the delete threshold,
@@ -312,12 +358,21 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     }
     if (leaf == TrackTreeNode::kNoParent) continue;
 
-    // M-of-N confirmation gate.
-    const int hits = trees_[ti].countHitsInWindow(
-        leaf, cfg_.confirm_hits_window);
-    const TrackStatus status =
-        (hits >= cfg_.confirm_hits_needed) ? TrackStatus::Confirmed
-                                            : TrackStatus::Tentative;
+    // Confirmation gate: SPRT on the leaf LLR score (default) or legacy
+    // M-of-N hit count.
+    TrackStatus status;
+    if (cfg_.use_sprt_confirm) {
+      const double t_confirm = std::log(
+          (1.0 - cfg_.sprt_beta) / std::max(cfg_.sprt_alpha, 1e-12));
+      status = (trees_[ti].nodes()[leaf].score >= t_confirm)
+                   ? TrackStatus::Confirmed
+                   : TrackStatus::Tentative;
+    } else {
+      const int hits = trees_[ti].countHitsInWindow(
+          leaf, cfg_.confirm_hits_window);
+      status = (hits >= cfg_.confirm_hits_needed) ? TrackStatus::Confirmed
+                                                  : TrackStatus::Tentative;
+    }
 
     Track view;
     view.id = trees_[ti].externalId();

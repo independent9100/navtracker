@@ -12,6 +12,7 @@
 #include "core/estimation/CoordinatedTurn.hpp"
 #include "core/estimation/EkfEstimator.hpp"
 #include "core/estimation/ImmEstimator.hpp"
+#include "core/estimation/NoiseModels.hpp"
 #include "core/estimation/UkfEstimator.hpp"
 
 namespace navtracker {
@@ -119,6 +120,25 @@ std::shared_ptr<IEstimator> makeImmCvCtNoisy() {
                                         kImmInitSpeedStd, kImmInitOmegaStd);
 }
 
+// Same IMM as makeImmCvCt but with a Student-t robust measurement model
+// (ν=4) injected. Down-weights outlier measurements (EO/IR bearing clutter
+// that slips the gate) instead of letting them pull the state at full
+// weight. ν=4 is the roadmap's clutter-prone-sensor default.
+std::shared_ptr<IEstimator> makeImmCvCtRobust() {
+  std::vector<std::shared_ptr<IMotionModel>> motions = {
+      std::make_shared<ConstantVelocity5State>(kImmCv5AccelPsd,
+                                               kImmCv5OmegaPsd),
+      std::make_shared<CoordinatedTurn>(kImmCtAccelPsd, kImmCtOmegaPsd)};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05,
+        0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 0.5, 0.5;
+  auto noise = std::make_shared<StudentTNoiseModel>(4.0);
+  return std::make_shared<ImmEstimator>(motions, pi, mu0, kImmInitSpeedStd,
+                                        kImmInitOmegaStd, noise);
+}
+
 std::shared_ptr<IDataAssociator> makeGnn() {
   return std::make_shared<GnnAssociator>(kGnnGate);
 }
@@ -148,21 +168,30 @@ MhtTracker::Config makeMhtConfig() {
 
 std::vector<Config> defaultConfigs() {
   std::vector<Config> configs;
-  configs.reserve(9);
-  // JPDA/GNN-style configs (current Tracker pipeline).
+  configs.reserve(10);
+  // CANONICAL config, listed first. IMM (CV + CT) inside TOMHT is the
+  // tracker navtracker treats as its reference / default — the textbook
+  // classical gold-standard and the baseline PMBM will be measured
+  // against. The remaining configs are ablations that isolate one axis
+  // (estimator / motion model / associator) away from it.
+  configs.push_back({"imm_cv_ct_mht", &makeImmCvCt, &makeJpda,
+                     TrackerKind::Mht, &makeMhtConfig});
+  // Same as canonical but with Student-t robust updates — the ablation
+  // that isolates the heavy-tailed-measurement (EO/IR clutter) axis.
+  configs.push_back({"imm_cv_ct_mht_robust", &makeImmCvCtRobust, &makeJpda,
+                     TrackerKind::Mht, &makeMhtConfig});
+  // JPDA/GNN-style ablations (single-hypothesis Tracker pipeline).
   configs.push_back({"ekf_cv_gnn", &makeEkfCv, &makeGnn});
   configs.push_back({"ekf_cv_jpda", &makeEkfCv, &makeJpda});
   configs.push_back({"ukf_cv_gnn", &makeUkfCv, &makeGnn});
   configs.push_back({"ukf_ct_gnn", &makeUkfCt, &makeGnn});
   configs.push_back({"imm_cv_ct_jpda", &makeImmCvCt, &makeJpda});
   configs.push_back({"imm_cv_ct_noisy_jpda", &makeImmCvCtNoisy, &makeJpda});
-  // MHT configs (MhtTracker pipeline). associator factory unused; we
-  // still pass it because the Config struct ergonomics expect it
+  // Other MHT ablations (MhtTracker pipeline). associator factory unused;
+  // we still pass it because the Config struct ergonomics expect it
   // populated. The MhtTracker constructs its own gating + association
   // via TrackTree::branch internally.
   configs.push_back({"ekf_cv_mht", &makeEkfCv, &makeJpda,
-                     TrackerKind::Mht, &makeMhtConfig});
-  configs.push_back({"imm_cv_ct_mht", &makeImmCvCt, &makeJpda,
                      TrackerKind::Mht, &makeMhtConfig});
   configs.push_back({"imm_cv_ct_noisy_mht", &makeImmCvCtNoisy, &makeJpda,
                      TrackerKind::Mht, &makeMhtConfig});

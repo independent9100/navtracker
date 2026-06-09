@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "ports/IEstimator.hpp"
+#include "ports/IMeasurementNoiseModel.hpp"
 #include "ports/IMotionModel.hpp"
 
 namespace navtracker {
@@ -24,7 +25,8 @@ class ImmEstimator : public IEstimator {
                Eigen::MatrixXd transition_matrix,
                Eigen::VectorXd initial_mode_probabilities,
                double init_speed_std = 10.0,
-               double init_omega_std = 0.1);
+               double init_omega_std = 0.1,
+               std::shared_ptr<const IMeasurementNoiseModel> noise = nullptr);
 
   void predict(Track& track, Timestamp to) const override;
   void update(Track& track, const Measurement& z) const override;
@@ -57,6 +59,7 @@ class ImmEstimator : public IEstimator {
   Eigen::VectorXd mu0_;
   double init_speed_std_;
   double init_omega_std_;
+  std::shared_ptr<const IMeasurementNoiseModel> noise_;
 };
 
 }  // namespace navtracker

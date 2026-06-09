@@ -15,12 +15,14 @@ ImmEstimator::ImmEstimator(std::vector<std::shared_ptr<IMotionModel>> motions,
                            Eigen::MatrixXd transition_matrix,
                            Eigen::VectorXd initial_mode_probabilities,
                            double init_speed_std,
-                           double init_omega_std)
+                           double init_omega_std,
+                           std::shared_ptr<const IMeasurementNoiseModel> noise)
     : motions_(std::move(motions)),
       pi_(std::move(transition_matrix)),
       mu0_(std::move(initial_mode_probabilities)),
       init_speed_std_(init_speed_std),
-      init_omega_std_(init_omega_std) {}
+      init_omega_std_(init_omega_std),
+      noise_(std::move(noise)) {}
 
 void ImmEstimator::projectMixtureToTrack(Track& track) const {
   const int K = static_cast<int>(track.imm_means.cols());
@@ -125,7 +127,12 @@ void ImmEstimator::update(Track& track, const Measurement& z) const {
     const Eigen::VectorXd y =
         measurementResidual(z.model, z.value, pred.z_pred);
     const Eigen::MatrixXd& H = pred.H;
-    const Eigen::MatrixXd S = H * P_j * H.transpose() + z.covariance;
+    // Robustify per mode: inflate R by the noise model's scale (Gaussian →
+    // 1; Student-t down-weights an outlier measurement under this mode).
+    const Eigen::MatrixXd S_nom = H * P_j * H.transpose() + z.covariance;
+    const double scale = noise_ ? noise_->covarianceScale(y, S_nom) : 1.0;
+    const Eigen::MatrixXd R = z.covariance * scale;
+    const Eigen::MatrixXd S = H * P_j * H.transpose() + R;
     const Eigen::MatrixXd S_inv = S.inverse();
     const Eigen::MatrixXd K_gain = P_j * H.transpose() * S_inv;
     const Eigen::VectorXd x_new = x_j + K_gain * y;
@@ -134,7 +141,7 @@ void ImmEstimator::update(Track& track, const Measurement& z) const {
     const Eigen::MatrixXd IKH = I - K_gain * H;
     const Eigen::MatrixXd P_new =
         IKH * P_j * IKH.transpose() +
-        K_gain * z.covariance * K_gain.transpose();
+        K_gain * R * K_gain.transpose();
     track.imm_means.col(j) = x_new;
     track.imm_covariances[j] = P_new;
 

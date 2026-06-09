@@ -13,6 +13,7 @@
 namespace navtracker {
 
 class IEstimator;
+class ISensorDetectionModel;
 
 // One node in a track-tree hypothesis. Index into the tree's nodes vector
 // serves as the node_id. Parent index of std::numeric_limits<std::size_t>::max()
@@ -72,9 +73,18 @@ class TrackTree {
   std::size_t bestLeafIndex() const;
 
   // Branching parameters for one scan.
+  //
+  // Hit branches use per-measurement (P_D, λ_C) looked up from the
+  // detection model (correct units per sensor — see
+  // ISensorDetectionModel). The miss branch uses a single
+  // `miss_probability_of_detection` value because the miss is a
+  // *per-track* event, not per-measurement; deciding which sensor "should
+  // have detected" the track would require multi-sensor footprint
+  // accounting that we don't carry yet. The default is the configured
+  // global P_D — equivalent to today.
   struct BranchParams {
-    double probability_of_detection;
-    double clutter_density;
+    const ISensorDetectionModel* detection_model;
+    double miss_probability_of_detection;
     double gate_threshold;
   };
 

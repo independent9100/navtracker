@@ -1,12 +1,14 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "core/tracking/TrackTree.hpp"
 #include "core/types/Measurement.hpp"
 #include "core/types/Track.hpp"
 #include "ports/IEstimator.hpp"
+#include "ports/ISensorDetectionModel.hpp"
 
 namespace navtracker {
 
@@ -35,6 +37,17 @@ namespace navtracker {
 class MhtTracker {
  public:
   struct Config {
+    // Default per-sensor detection parameters. These populate the
+    // "default" entry of the ISensorDetectionModel constructed when the
+    // caller does not inject one — bit-identical to the previous global
+    // (P_D, λ_C) behaviour. To get per-sensor tables (the textbook
+    // multi-sensor formulation), inject a FixedSensorDetectionModel /
+    // AdaptiveSensorDetectionModel with explicit per-sensor entries.
+    //
+    // P_D also serves as the miss-branch detection probability: the
+    // missed-detection branch score uses log(1 - probability_of_detection)
+    // because the miss is a per-track event, not per-measurement, so a
+    // single number is used regardless of which sensors are in the scan.
     double probability_of_detection = 0.9;
     double clutter_density = 1e-4;
     double gate_threshold = 9.0;
@@ -42,10 +55,32 @@ class MhtTracker {
     std::size_t k_max_leaves = 5;
     double score_delete_threshold = -15.0;
 
-    // M-of-N confirmation. A tree's best selected leaf must have at
-    // least `confirm_hits_needed` hits among its last
-    // `confirm_hits_window` nodes for the tree to be reported as
-    // Confirmed; otherwise the emitted Track stays Tentative.
+    // Track confirmation mode.
+    //
+    // M-of-N (DEFAULT): confirm when the selected leaf has ≥
+    // confirm_hits_needed hits among its last confirm_hits_window nodes.
+    //
+    // SPRT (use_sprt_confirm=true, Wald 1947): confirm when the leaf's
+    // cumulative log-likelihood-ratio score crosses
+    //   T_confirm = ln((1 − β) / α)
+    // (deletion already uses the lower bound score_delete_threshold ≈
+    // T_delete = ln(β / (1 − α))). In theory this calibrates confirmation
+    // to a target false-track rate α and adapts to clutter via the −ln λ_C
+    // term already in the score.
+    //
+    // *Measured*, however, SPRT is WORSE than M-of-N on the current score
+    // scale (it degrades clean scenarios — crossing OSPA 18 → 88 — and is
+    // neutral on real data), because (a) the cumulative-from-root score is
+    // less responsive than a recent-window hit count — an early hit burst
+    // keeps a quiet track confirmed — and (b) the per-hit increment is
+    // dominated by the measurement-fit term log N, not a clean
+    // target-vs-clutter ratio. SPRT becomes worthwhile only once the score
+    // is a proper *existence* LLR with per-sensor clutter intensity — i.e.
+    // the JIPDA direction. Kept implemented + tested behind the flag for
+    // that work; default stays M-of-N until it actually wins.
+    bool use_sprt_confirm = false;
+    double sprt_alpha = 0.01;  // tolerable false-confirmation probability
+    double sprt_beta = 0.01;   // tolerable missed-confirmation probability
     int confirm_hits_needed = 2;
     int confirm_hits_window = 3;
 
@@ -91,16 +126,31 @@ class MhtTracker {
     int n_scan_extension_when_protected = 2;
   };
 
-  MhtTracker(const IEstimator& estimator, Config cfg);
+  // `detection_model` supplies per-sensor (P_D, λ_C) for branch scoring.
+  // Null (default) installs a FixedSensorDetectionModel whose single
+  // "default" entry is built from cfg.{probability_of_detection,
+  // clutter_density} — bit-identical to the previous global behaviour.
+  // Inject a FixedSensorDetectionModel with a per-(SensorKind,
+  // MeasurementModel) table for the textbook multi-sensor case, or an
+  // AdaptiveSensorDetectionModel for per-sensor online λ_C.
+  MhtTracker(const IEstimator& estimator, Config cfg,
+             std::shared_ptr<ISensorDetectionModel> detection_model = nullptr);
 
   void processBatch(const std::vector<Measurement>& scan);
 
   const std::vector<Track>& tracks() const { return tracks_; }
   std::size_t treeCount() const { return trees_.size(); }
 
+  // Detection model in use. Exposed for diagnostics / tests (e.g. to
+  // inspect per-sensor λ_C from an AdaptiveSensorDetectionModel).
+  const ISensorDetectionModel& detectionModel() const {
+    return *detection_model_;
+  }
+
  private:
   const IEstimator& estimator_;
   Config cfg_;
+  std::shared_ptr<ISensorDetectionModel> detection_model_;
   std::vector<TrackTree> trees_;
   std::vector<Track> tracks_;
   std::uint64_t next_external_id_{1};
