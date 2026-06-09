@@ -62,13 +62,24 @@ std::vector<MetricRow> runSweep(
     const std::vector<std::unique_ptr<ScenarioRun>>& scenarios,
     const SweepParams& params) {
   std::vector<MetricRow> rows;
-  for (const auto& config : configs) {
-    for (const auto& scenario_ptr : scenarios) {
-      const auto desc = scenario_ptr->descriptor();
-      const std::uint32_t seeds =
-          desc.is_multi_seed ? params.synthetic_seeds : 1u;
-      for (std::uint32_t seed = 0; seed < seeds; ++seed) {
-        const Scenario scen = scenario_ptr->generate(seed);
+  // Loop order: scenario × seed × config. The Scenario for a given
+  // (scenario, seed) is independent of which estimator/associator runs
+  // on it, so we generate it once and replay-by-reference across every
+  // config. This is essentially free for synthetic scenarios but a
+  // ~9× win for the file-driven replays whose generate() reads CSVs
+  // from disk and sorts them. Replays also ignore seed and are always
+  // single-seed, so per-replay generate() runs exactly once total.
+  // Skip a scenario entirely when generate() returns empty — this lets
+  // ReplayScenarioRun absent-fixtures path turn into a graceful no-op
+  // rather than throwing inside the inner loops.
+  for (const auto& scenario_ptr : scenarios) {
+    const auto desc = scenario_ptr->descriptor();
+    const std::uint32_t seeds =
+        desc.is_multi_seed ? params.synthetic_seeds : 1u;
+    for (std::uint32_t seed = 0; seed < seeds; ++seed) {
+      const Scenario scen = scenario_ptr->generate(seed);
+      if (scen.measurements.empty()) continue;
+      for (const auto& config : configs) {
         auto est = config.build_estimator();
         BenchResult result;
         if (config.tracker_kind == TrackerKind::Mht) {

@@ -41,9 +41,16 @@ int main(int argc, char** argv) {
     std::cout
         << "Usage: navtracker_bench_baseline [--run-id ID] [--out DIR]\n"
            "                                 [--seeds N] [--skip-replays]\n"
+           "                                 [--with-haxr]\n"
            "\n"
            "Writes <out>/<run-id>.csv containing one row per\n"
-           "(config x scenario x seed x metric) plus a provenance header.\n";
+           "(config x scenario x seed x metric) plus a provenance header.\n"
+           "\n"
+           "Replays (philos + AutoFerry x9) run by default; --skip-replays\n"
+           "omits them. The haxr full radar-hour (302k plots, ~169/scan) is\n"
+           "off by default because the full-enumeration JPDA / MHT configs\n"
+           "are intractable on it without cluster decomposition; pass\n"
+           "--with-haxr to include it (expect long runtime / high memory).\n";
     return 0;
   }
 
@@ -59,13 +66,25 @@ int main(int argc, char** argv) {
       seeds_arg.empty() ? 10u
                         : static_cast<std::uint32_t>(std::stoul(seeds_arg));
   const bool skip_replays = has_flag(argc, argv, "--skip-replays");
+  const bool with_haxr = has_flag(argc, argv, "--with-haxr");
 
   const auto t0 = std::chrono::steady_clock::now();
 
   auto configs = defaultConfigs();
   auto sim_scenarios = defaultSimScenarios();
   std::vector<std::unique_ptr<ScenarioRun>> replay_scenarios;
-  if (!skip_replays) replay_scenarios = defaultReplayScenarios();
+  if (!skip_replays) {
+    // philos + AutoFerry are tractable across the full config matrix. haxr
+    // (302k plots / ~169 per scan) is gated behind --with-haxr: the
+    // full-enumeration JPDA and MHT configs OOM on it absent cluster
+    // decomposition (see docs/baselines/README.md).
+    for (auto& s : defaultReplayScenarios()) {
+      if (!with_haxr && s->descriptor().label == "haxr") continue;
+      replay_scenarios.push_back(std::move(s));
+    }
+    auto autoferry = defaultAutoferryScenarios();
+    for (auto& s : autoferry) replay_scenarios.push_back(std::move(s));
+  }
 
   std::vector<std::unique_ptr<ScenarioRun>> all;
   for (auto& s : sim_scenarios) all.push_back(std::move(s));

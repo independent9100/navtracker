@@ -105,10 +105,13 @@ void Tracker::process(const Measurement& z) {
     manager_.recordHit(id);
     manager_.noteObservation(id, z.time);
     manager_.recordUpdated(id, z.time);
-  } else {
+  } else if (canInitiateTrack(z.model)) {
     Track seed = estimator_.initiate(z);
     manager_.add(seed, z.time);
   }
+  // else: a bearing-only measurement that gated to no track has no
+  // observable range — drop it rather than seed a garbage position
+  // (passive sensors don't initiate; see canInitiateTrack).
 
   const std::int64_t timeout_ns =
       static_cast<std::int64_t>(miss_timeout_seconds_ * 1e9);
@@ -215,10 +218,12 @@ void Tracker::processBatch(const std::vector<Measurement>& scan) {
   }
 
   for (std::size_t j = 0; j < scan.size(); ++j) {
-    if (!meas_used[j]) {
+    if (!meas_used[j] && canInitiateTrack(scan[j].model)) {
       Track seed = estimator_.initiate(scan[j]);
       manager_.add(seed, t);
     }
+    // Unassociated bearing-only measurements are dropped (no observable
+    // range to seed a track); they only ever refine existing tracks.
   }
 
   const std::int64_t timeout_ns =

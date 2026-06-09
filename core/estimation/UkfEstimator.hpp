@@ -17,6 +17,7 @@ class UkfEstimator : public IEstimator {
  public:
   UkfEstimator(std::shared_ptr<const IMotionModel> motion,
                double init_speed_std = 10.0,
+               double init_omega_std = 0.1,
                double alpha = 1e-3,
                double beta = 2.0,
                double kappa = 0.0);
@@ -28,6 +29,7 @@ class UkfEstimator : public IEstimator {
  private:
   std::shared_ptr<const IMotionModel> motion_;
   double init_speed_std_;
+  double init_omega_std_;
   double alpha_;
   double beta_;
   double kappa_;

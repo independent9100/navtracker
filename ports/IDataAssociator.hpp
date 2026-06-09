@@ -32,6 +32,12 @@ struct AssociationResult {
   // hard-association results.
   double p_d{0.0};
   double gate_threshold{0.0};
+
+  // True when a soft associator (JPDA) exceeded its joint-event budget for
+  // some cluster and fell back to greedy hard assignment. Diagnostic only —
+  // betas/beta_0 stay valid (hard 0/1 for the fallen-back cluster). Lets
+  // the harness flag real-clutter scans that outran full enumeration.
+  bool overflow_fallback{false};
 };
 
 class IEstimator;

@@ -11,11 +11,13 @@ namespace navtracker {
 
 UkfEstimator::UkfEstimator(std::shared_ptr<const IMotionModel> motion,
                            double init_speed_std,
+                           double init_omega_std,
                            double alpha,
                            double beta,
                            double kappa)
     : motion_(std::move(motion)),
       init_speed_std_(init_speed_std),
+      init_omega_std_(init_omega_std),
       alpha_(alpha),
       beta_(beta),
       kappa_(kappa) {}
@@ -94,23 +96,32 @@ void UkfEstimator::update(Track& track, const Measurement& z) const {
 }
 
 Track UkfEstimator::initiate(const Measurement& z) const {
+  // Size from motion model. CV2D → 4-state, CT / CV5State → 5-state with
+  // ω as the trailing entry. Position rows/cols come from the measurement,
+  // velocity rows from init_speed_std, ω from init_omega_std.
+  const int n = motion_->stateDim();
   Track t;
   t.last_update = z.time;
   t.status = TrackStatus::Tentative;
 
-  Eigen::Vector4d x = Eigen::Vector4d::Zero();
+  Eigen::VectorXd x = Eigen::VectorXd::Zero(n);
   x(0) = z.value(0);
   x(1) = z.value(1);
   t.state = x;
 
-  Eigen::Matrix4d p = Eigen::Matrix4d::Zero();
+  Eigen::MatrixXd p = Eigen::MatrixXd::Zero(n, n);
   p(0, 0) = z.covariance(0, 0);
   p(0, 1) = z.covariance(0, 1);
   p(1, 0) = z.covariance(1, 0);
   p(1, 1) = z.covariance(1, 1);
   const double vv = init_speed_std_ * init_speed_std_;
-  p(2, 2) = vv;
-  p(3, 3) = vv;
+  if (n >= 4) {
+    p(2, 2) = vv;
+    p(3, 3) = vv;
+  }
+  if (n >= 5) {
+    p(4, 4) = init_omega_std_ * init_omega_std_;
+  }
   t.covariance = p;
 
   if (z.hints.mmsi.has_value()) t.attributes.mmsi = z.hints.mmsi;

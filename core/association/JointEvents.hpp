@@ -16,4 +16,15 @@ using JointEvent = std::vector<int>;
 // share the same non-zero track index.
 std::vector<JointEvent> enumerateJointEvents(const Eigen::MatrixXi& V);
 
+// Budgeted variant. Stops and returns an empty vector if the number of
+// feasible joint events would exceed `max_events`. Since the normal
+// enumeration always yields at least one event (the all-clutter event),
+// an empty return unambiguously signals overflow, letting the caller
+// fall back to a tractable approximation (e.g. greedy hard assignment).
+// This is the standard cluster-size safeguard for full-enumeration JPDA
+// without an EHM solver (Blackman & Popoli §6): dense clutter or large
+// track clusters make exhaustive enumeration O(M^T) intractable.
+std::vector<JointEvent> enumerateJointEvents(const Eigen::MatrixXi& V,
+                                             std::size_t max_events);
+
 }  // namespace navtracker

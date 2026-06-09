@@ -15,6 +15,18 @@ struct MeasurementPrediction {
 // Wrap an angle in radians to the interval (-pi, pi].
 double wrapAngle(double radians);
 
+// Whether a single measurement of this model carries enough information to
+// initiate a new track (i.e. observe Cartesian position). Active sensors
+// (Position2D / PositionVelocity2D / RangeBearing2D) do; a bearing-only
+// measurement does not — its range is unobservable from one look, so it
+// can only refine an existing track. Track-birth paths use this to drop
+// non-gating passive-sensor measurements instead of seeding garbage state.
+// Matches the standard maritime-fusion convention (Helgesen et al. 2022,
+// §4.4.1: "only active sensors are used in track initialization").
+inline bool canInitiateTrack(MeasurementModel model) {
+  return model != MeasurementModel::Bearing2D;
+}
+
 // h(x) and H for `model` evaluated at state = [px, py, vx, vy].
 // `sensor_position_enu` is the sensor's ENU position; defaults to the origin.
 // Range/bearing and bearing-only models compute dx = px - sx, dy = py - sy so

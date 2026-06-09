@@ -7,6 +7,7 @@
 #include "core/association/Gating.hpp"
 #include "core/association/Hungarian.hpp"
 #include "core/association/Murty.hpp"
+#include "core/estimation/MeasurementModels.hpp"
 
 namespace navtracker {
 
@@ -231,6 +232,10 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
   }
   for (std::size_t j = 0; j < scan.size(); ++j) {
     if (measurement_explained[j]) continue;
+    // Passive bearing-only measurements can't seed a new tree (range
+    // unobservable); they only extend existing trees via branch(). Drop
+    // unassociated ones — see canInitiateTrack.
+    if (!canInitiateTrack(scan[j].model)) continue;
     const TrackId id{next_external_id_++};
     trees_.emplace_back(id, rootFromMeasurement(estimator_, scan[j]));
   }

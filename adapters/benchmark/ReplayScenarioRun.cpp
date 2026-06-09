@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <utility>
@@ -9,6 +10,7 @@
 
 #include "adapters/own_ship/OwnShipProvider.hpp"
 #include "adapters/replay/AisCsvReplayAdapter.hpp"
+#include "adapters/replay/AutoferryJsonReplay.hpp"
 #include "adapters/replay/HaxrTruthLoader.hpp"
 #include "adapters/replay/OwnshipCsvReader.hpp"
 #include "adapters/replay/PlotCsvReplayAdapter.hpp"
@@ -36,6 +38,17 @@ constexpr const char* kHaxrPlotsCsv =
 constexpr const char* kHaxrAisCsv = "data/dlr/kattwyk_08-UTC.csv";
 constexpr const char* kHaxrStationsCsv = "data/dlr/stations.csv";
 
+// Replays read fixture CSVs by relative path; resolution depends on the
+// process cwd. When the bench is launched from the project root (as the
+// README documents) the paths resolve; in ctest the cwd is build/ and
+// the paths don't, but the test should *skip* rather than crash. This
+// helper lets generate() short-circuit to an empty Scenario when any
+// required input is missing.
+bool fileExists(const char* path) {
+  std::ifstream f(path);
+  return static_cast<bool>(f);
+}
+
 // AIS Measurement → TruthSample. The AIS adapter emits Position2D in the
 // working ENU frame; we reuse those positions as ground truth, mirroring
 // the Philos OSPA test that scores tracks against AIS-as-truth.
@@ -55,9 +68,14 @@ class PhilosScenarioRun : public ScenarioRun {
   }
 
   Scenario generate(std::uint64_t /*seed*/) override {
+    if (!fileExists(kPhilosOwnshipCsv) || !fileExists(kPhilosAisCsv) ||
+        !fileExists(kPhilosPlotsCsv)) {
+      return {};  // fixtures absent — caller skips
+    }
     // Prime an OwnShipProvider from the full ownship history so plot/AIS
     // adapters can look up pose at-or-before any time.
     const auto poses = navtracker::replay::loadOwnshipCsv(kPhilosOwnshipCsv);
+    if (poses.empty()) return {};
     OwnShipProvider provider(/*history_size=*/poses.size() + 1);
     navtracker::replay::feedOwnshipHistory(provider, poses);
 
@@ -90,6 +108,10 @@ class HaxrScenarioRun : public ScenarioRun {
   }
 
   Scenario generate(std::uint64_t /*seed*/) override {
+    if (!fileExists(kHaxrPlotsCsv) || !fileExists(kHaxrAisCsv) ||
+        !fileExists(kHaxrStationsCsv)) {
+      return {};
+    }
     const auto stations = navtracker::replay::loadStations(kHaxrStationsCsv);
     auto plots = navtracker::replay::loadPlotCsv(
         kHaxrPlotsCsv, stations, SensorKind::ArpaTtm, "kattwyk");
@@ -103,6 +125,32 @@ class HaxrScenarioRun : public ScenarioRun {
   }
 };
 
+// One AutoFerry scenario folder under data/autoferry/<label>/. generate()
+// returns empty (caller skips) when the JSON files are not reachable from
+// cwd, mirroring the philos/haxr fixture-absent behaviour.
+class AutoferryScenarioRun : public ScenarioRun {
+ public:
+  explicit AutoferryScenarioRun(std::string label) : label_(std::move(label)) {}
+
+  ScenarioDescriptor descriptor() const override {
+    return {"autoferry_" + label_, /*is_multi_seed=*/false, /*seed_count=*/1};
+  }
+
+  Scenario generate(std::uint64_t /*seed*/) override {
+    // Full four-sensor fusion: radar + lidar (active → Position2D) plus
+    // EO + IR (passive → Bearing2D). Bearings refine existing tracks but
+    // never initiate one — the track-birth paths drop non-gating bearings
+    // (canInitiateTrack), matching the paper's active-only initiation.
+    navtracker::replay::AutoferryLoadOptions opts;
+    opts.include_bearings = true;
+    return navtracker::replay::loadAutoferryScenario(
+        std::string("data/autoferry/") + label_, label_, opts);
+  }
+
+ private:
+  std::string label_;
+};
+
 }  // namespace
 
 std::vector<std::unique_ptr<ScenarioRun>> defaultReplayScenarios() {
@@ -110,6 +158,19 @@ std::vector<std::unique_ptr<ScenarioRun>> defaultReplayScenarios() {
   out.reserve(2);
   out.push_back(std::make_unique<PhilosScenarioRun>());
   out.push_back(std::make_unique<HaxrScenarioRun>());
+  return out;
+}
+
+std::vector<std::unique_ptr<ScenarioRun>> defaultAutoferryScenarios() {
+  // The nine published AutoFerry scenarios with ground-truth coverage.
+  // Env 1 (open water, Gunnerus+Havfruen): 2–6. Env 2 (urban channel,
+  // Jetboat+Havfruen): 13, 16, 17, 22.
+  static const char* kLabels[] = {"scenario2",  "scenario3",  "scenario4",
+                                   "scenario5",  "scenario6",  "scenario13",
+                                   "scenario16", "scenario17", "scenario22"};
+  std::vector<std::unique_ptr<ScenarioRun>> out;
+  for (const char* label : kLabels)
+    out.push_back(std::make_unique<AutoferryScenarioRun>(label));
   return out;
 }
 

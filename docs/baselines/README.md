@@ -154,6 +154,99 @@ Tested by `BenchDeterminism.RepeatedSweepProducesIdenticalRows`. If a
 future change breaks this, that test fails and the cause should be
 fixed at the source, not papered over.
 
+## Real-world AutoFerry baseline (`2026-06-08_autoferry`)
+
+The first baseline to include true-ground-truth real-world data: the nine
+AutoFerry `milliAmpere` scenarios (see `data/README.md`), plus `philos`,
+across all 9 configs. `haxr` is excluded by default (302k plots /
+~169-per-scan — the full-enumeration JPDA and MHT configs are intractable
+on it without cluster decomposition; pass `--with-haxr` to force it).
+
+Two AutoFerry baselines exist:
+- `2026-06-08_autoferry` — **active sensors only** (radar+lidar → Position2D).
+- `2026-06-09_autoferry_4sensor` — **all four sensors**: active + EO/IR
+  (passive → Bearing2D). Apples-to-apples vs the paper. Side-by-side:
+  `autoferry_active_vs_4sensor.md`.
+
+Passive bearings *refine* tracks but never *initiate* one (range is
+unobservable from a single look); the track-birth paths drop non-gating
+bearing measurements (`canInitiateTrack`), matching the paper's §4.4.1
+("only active sensors are used in track initialization").
+
+**Headline finding — the synthetic bench was hiding the real problem.**
+On clean synthetic scenarios OSPA is 12–20 m and id_switches ≈ 0. On raw
+AutoFerry detections the *same* configs report (mean over the 9 scenarios):
+
+| config | ospa_mean (m) | lifetime | id_switches | pos_rmse (m) |
+|---|---|---|---|---|
+| ekf_cv_gnn | 469 | 0.91 | 2782 | 11.8 |
+| imm_cv_ct_jpda | 460 | 0.91 | 2775 | 11.3 |
+| imm_cv_ct_noisy_jpda | 458 | 0.91 | 2723 | 11.8 |
+| ekf_cv_mht | 409 | 0.81 | 2109 | 17.4 |
+| imm_cv_ct_mht | 407 | 0.81 | 2029 | 17.6 |
+
+Read this carefully:
+
+- **`pos_rmse_m` is 11–18 m** — when a track is assigned to a truth, the
+  kinematic estimate is *good*. The estimators (EKF/UKF/IMM) work on real
+  noise.
+- **OSPA ≈ 460 m (near the 500 m cutoff) and id_switches in the thousands**
+  — the cardinality/labelling side is swamped. The bench scores only
+  *Confirmed* tracks, so this means **hundreds of clutter false-alarms
+  survive M-of-N confirmation and confirm into tracks.** Real port/sea
+  clutter, which the synthetic harness never modelled at this density,
+  overwhelms the consecutive-count `TrackManager`.
+- **Estimator choice barely moves the needle** (IMM vs EKF: ~460 vs ~469);
+  **MHT helps** (score-based tree deletion suppresses some clutter:
+  OSPA 409 vs 469, id_switches 2109 vs 2782) but fragments tracks
+  (track_breaks up, lifetime 0.81 vs 0.91).
+
+**Conclusion.** The binding real-world constraint is **not** the estimator
+or the motion model — it is **clutter-robust track lifecycle**. This is
+direct empirical support for the top two items in
+`docs/algorithms/sota-roadmap.md`: SPRT/LLR score-based confirmation (#1)
+and JIPDA existence probability (#2). It also re-confirms the JPDA EHM gap
+(#3): `JpdaAssociator` now caps joint-event enumeration at 1e6 and falls
+back to greedy hard assignment per overflowing cluster
+(`AssociationResult::overflow_fallback`), which is why the JPDA configs ran
+at all on this data.
+
+**Adding EO/IR (four-sensor) makes it *worse*, and that's the second
+finding.** Enabling the passive bearings (scenario2: 849 active +
+**3390 bearings**, the majority of the data) moves the numbers the wrong
+way (mean over 9 scenarios, active → four-sensor):
+
+| config | OSPA | pos_rmse (m) |
+|---|---|---|
+| ekf_cv_gnn | 469 → 477 | 11.8 → 14.3 |
+| imm_cv_ct_jpda | 460 → 476 | 11.3 → 15.3 |
+| ekf_cv_mht | 409 → 467 | 17.4 → 26.3 |
+| imm_cv_ct_mht | 407 → 462 | 17.6 → 26.9 |
+
+This is **not** a loader bug — the bearing convention is verified correct
+(residual to the true target is zero-mean, 0.49° ± 4.7°). The cause is the
+data: **27% of EO/IR detections are clutter** (>15° from any real target),
+and the remaining real bearings carry ~4.7° noise (8–33 m cross-range at
+typical 100–400 m ranges). Fed through naive Gaussian hard-gated updates,
+the clutter bearings corrupt tracks and the noisy ones pull position. The
+tracker has neither outlier-robust updates nor existence-aware association
+to benefit from a heavy-clutter passive sensor.
+
+**Conclusion (both findings).** More sensors ≠ better here. The binding
+constraints, in priority order, are exactly the top `sota-roadmap.md`
+items: (1) **clutter-robust track lifecycle** — SPRT/LLR confirmation to
+stop false-alarms confirming; (2) **JIPDA existence probability** —
+existence-aware association so passive clutter doesn't corrupt tracks;
+(5) **VB-adaptive Student-t robust updates** — so heavy-tailed EO/IR
+bearings down-weight outliers instead of pulling the estimate. The
+estimator/motion-model layer (EKF/UKF/IMM/MHT) is *not* the bottleneck:
+on assigned real targets it tracks to single-digit metres (4.4 m on the
+unobscured target in scenario2). The dataset's value is precisely that it
+exposes this — the synthetic harness never did.
+
+The `sog_rmse_mps` / `cog_rmse_deg` columns are not meaningful here
+(position-only ground truth — same caveat as the other replays).
+
 ## Known caveats (read before drawing conclusions)
 
 These are honest limitations of the *current* baseline, not bugs in

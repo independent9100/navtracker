@@ -1,5 +1,6 @@
 #include "core/association/JpdaAssociator.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -67,7 +68,41 @@ AssociationResult JpdaAssociator::associate(
     }
   }
 
-  const std::vector<JointEvent> events = enumerateJointEvents(V);
+  // Full-enumeration JPDA is O(M^T) per gating cluster. On real radar with
+  // clutter the per-scan track cluster can be large enough to exhaust
+  // memory; cap the enumeration and degrade gracefully to greedy hard
+  // (GNN-style) association when the cap trips. This is the documented
+  // cluster-size safeguard for a JPDA without an EHM solver. The cap is
+  // generous (1e6 events) so synthetic scenes — whose clusters are tiny —
+  // are bit-identical; only pathological real-clutter clusters fall back.
+  constexpr std::size_t kMaxJointEvents = 1'000'000;
+  const std::vector<JointEvent> events =
+      enumerateJointEvents(V, kMaxJointEvents);
+  if (events.empty()) {
+    // Overflow: greedy mutual-exclusion assignment by descending density.
+    // Each measurement claims its best gating track if neither is taken;
+    // the result is hard betas (0/1), i.e. this cluster is associated as
+    // GNN would. Loud-ish but safe: tracking continues instead of OOM.
+    out.betas = Eigen::MatrixXd::Zero(M, T);
+    out.beta_0 = Eigen::VectorXd::Ones(T);
+    struct Pair { int j; int t; double dens; };
+    std::vector<Pair> pairs;
+    for (int t = 0; t < T; ++t)
+      for (int j = 0; j < M; ++j)
+        if (V(j, t)) pairs.push_back({j, t, g(j, t)});
+    std::sort(pairs.begin(), pairs.end(),
+              [](const Pair& a, const Pair& b) { return a.dens > b.dens; });
+    std::vector<bool> m_used(M, false), t_used(T, false);
+    for (const Pair& p : pairs) {
+      if (m_used[p.j] || t_used[p.t]) continue;
+      out.betas(p.j, p.t) = 1.0;
+      out.beta_0(p.t) = 0.0;
+      m_used[p.j] = true;
+      t_used[p.t] = true;
+    }
+    out.overflow_fallback = true;
+    return out;
+  }
   std::vector<double> log_w;
   log_w.reserve(events.size());
   for (const auto& e : events) {
