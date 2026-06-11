@@ -22,7 +22,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   EXPECT_EQ(labels.size(), 12u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_robust"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_ipda"), 1u);
-  EXPECT_EQ(labels.count("imm_cv_ct_mht_vimm"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_mht_mofn"), 1u);
   EXPECT_EQ(labels.count("ekf_cv_gnn"), 1u);
   EXPECT_EQ(labels.count("ekf_cv_jpda"), 1u);
   EXPECT_EQ(labels.count("ukf_cv_gnn"), 1u);

@@ -41,6 +41,24 @@ measure first via `ReorderBuffer::dropped()` telemetry.
 
 ## 2. IPDA/VIMM confirmation latency → flip the canonical lifecycle
 
+**STATUS: DONE (2026-06-11).** Root cause of the synthetic latency was
+*not* r₀/threshold tuning but dishonest synthetic λ_C: clutter-free
+scenarios scored with the legacy global 1e-4 m⁻², making a gated hit
+on a young (unconverged, large-S) track evidence *against* existence
+(measured: r dips 0.5 → 0.19 over scans 2–4, confirm at scan 7).
+Fixes: (a) hysteresis (confirm 0.9 / demote 0.6, ever-confirmed flag
+on TrackTree; demote == confirm reproduces the memoryless readout);
+(b) honest per-scenario detection tables for all 10 synthetics
+(clutter-free floor 1e-6 m⁻², dense_clutter 3.33e-5 measured, P_D
+0.95); (c) r₀ stays 0.5 — with honest λ the first update is decisive
+and raising it was unnecessary. Result: IPDA/VIMM bit-identical to
+M-of-N on clean synthetics, dominant under misses/clutter →
+`use_ipda_lifecycle = use_visibility = true` are now the MhtTracker
+defaults, the canonical bench config, and the documented default;
+M-of-N kept as `imm_cv_ct_mht_mofn` ablation; scenario2 pins
+tightened to lifetime > 0.9, breaks < 10, switches < 120. See
+evaluation-log 2026-06-11.
+
 **Problem.** IPDA/VIMM dominate M-of-N on every real-data scenario
 (scenario2: breaks 64.5 → 7, lifetime 0.77 → 0.945, best-in-class
 OSPA) but cost OSPA on clean synthetics (crossing 19.7 → ~82,

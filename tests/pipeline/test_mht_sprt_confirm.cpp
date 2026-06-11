@@ -33,6 +33,10 @@ MhtTracker::Config sprtConfig() {
   cfg.gate_threshold = 20.0;
   cfg.probability_of_detection = 0.9;
   cfg.clutter_density = 1e-4;  // physical scale: hits accrue positive LLR
+  // IPDA (now the default) takes precedence over SPRT in the confirm
+  // gate -- disable it so these tests exercise the SPRT path.
+  cfg.use_ipda_lifecycle = false;
+  cfg.use_visibility = false;
   cfg.use_sprt_confirm = true;
   cfg.sprt_alpha = 0.01;
   cfg.sprt_beta = 0.01;

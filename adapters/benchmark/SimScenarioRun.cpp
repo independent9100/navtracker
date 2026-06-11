@@ -19,6 +19,43 @@ namespace {
 
 constexpr std::uint32_t kSeedCount = 10;
 
+// Honest per-sensor detection tables — scenario *properties*, declared
+// the same way the autoferry replays declare their calibrated tables.
+// The synthetic generators emit exactly one detection per target per
+// scan (outside dropout windows), so P_D ≈ 1; declared 0.95 to keep
+// log(1 − P_D) finite and tolerate occasional gating misses. Clutter:
+// the clutter-free scenarios have a true λ_C of 0, declared as a 1e-6
+// m⁻² floor (λ = 0 degenerates the LLR; 1e-6 ≈ "≤1 false alarm per km²
+// per scan"). Scoring them with the legacy global 1e-4 made a gated
+// hit on a young (unconverged, large-S) track score as evidence
+// *against* existence — the measured 6-scan IPDA confirmation latency
+// on crossing (see evaluation-log 2026-06-11).
+std::vector<SensorDetectionEntry> cleanAisTable() {
+  return {{SensorKind::Ais, MeasurementModel::Position2D,
+           DetectionParams{0.95, 1e-6}}};
+}
+
+// dense_clutter: 4 uniform false alarms per scan in a 600×200 m box →
+// λ_C = 4 / 120000 m² = 3.33e-5 m⁻².
+std::vector<SensorDetectionEntry> denseClutterTable() {
+  return {{SensorKind::Ais, MeasurementModel::Position2D,
+           DetectionParams{0.95, 3.33e-5}}};
+}
+
+// non_cooperative: bearing-only camera, no false bearings generated;
+// floor in the bearing measurement space (rad⁻¹).
+std::vector<SensorDetectionEntry> bearingOnlyTable() {
+  return {{SensorKind::EoIr, MeasurementModel::Bearing2D,
+           DetectionParams{0.95, 1e-2}}};
+}
+
+ScenarioDescriptor describe(const char* label,
+                            std::vector<SensorDetectionEntry> table) {
+  ScenarioDescriptor d{label, true, kSeedCount};
+  d.detection_table = std::move(table);
+  return d;
+}
+
 std::vector<double> linearSeconds(int first, int last) {
   std::vector<double> v;
   v.reserve(static_cast<std::size_t>(last - first + 1));
@@ -29,7 +66,7 @@ std::vector<double> linearSeconds(int first, int last) {
 class CrossingScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
-    return {"crossing", true, kSeedCount};
+    return describe("crossing", cleanAisTable());
   }
   Scenario generate(std::uint64_t seed) override {
     return buildCrossingTargetsScenario(
@@ -46,7 +83,7 @@ class CrossingScenarioRun : public ScenarioRun {
 class OvertakingScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
-    return {"overtaking", true, kSeedCount};
+    return describe("overtaking", cleanAisTable());
   }
   Scenario generate(std::uint64_t seed) override {
     return buildOvertakingScenario(
@@ -63,7 +100,7 @@ class OvertakingScenarioRun : public ScenarioRun {
 class HeadOnScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
-    return {"head_on", true, kSeedCount};
+    return describe("head_on", cleanAisTable());
   }
   Scenario generate(std::uint64_t seed) override {
     // Anti-parallel velocities; small lateral offset (5 m) so the targets
@@ -82,7 +119,7 @@ class HeadOnScenarioRun : public ScenarioRun {
 class ParallelTargetsScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
-    return {"parallel_targets", true, kSeedCount};
+    return describe("parallel_targets", cleanAisTable());
   }
   Scenario generate(std::uint64_t seed) override {
     return buildParallelTargetsScenario(
@@ -98,7 +135,7 @@ class ParallelTargetsScenarioRun : public ScenarioRun {
 class AisDropoutScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
-    return {"ais_dropout", true, kSeedCount};
+    return describe("ais_dropout", cleanAisTable());
   }
   Scenario generate(std::uint64_t seed) override {
     return buildCrossingDropoutScenario(
@@ -115,7 +152,7 @@ class AisDropoutScenarioRun : public ScenarioRun {
 class ClockSkewScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
-    return {"clock_skew", true, kSeedCount};
+    return describe("clock_skew", cleanAisTable());
   }
   Scenario generate(std::uint64_t seed) override {
     Scenario s = buildStraightLineScenario(
@@ -138,7 +175,7 @@ class ClockSkewScenarioRun : public ScenarioRun {
 class SpeedChangeScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
-    return {"speed_change", true, kSeedCount};
+    return describe("speed_change", cleanAisTable());
   }
   Scenario generate(std::uint64_t seed) override {
     // 40-second run, 1-second cadence. Target cruising east at 8 m/s
@@ -162,7 +199,7 @@ class SpeedChangeScenarioRun : public ScenarioRun {
 class DenseClutterScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
-    return {"dense_clutter", true, kSeedCount};
+    return describe("dense_clutter", denseClutterTable());
   }
   Scenario generate(std::uint64_t seed) override {
     // Two crossing CV targets at the origin + 4 uniform false alarms
@@ -191,7 +228,7 @@ class DenseClutterScenarioRun : public ScenarioRun {
 class CrossingDropoutScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
-    return {"crossing_dropout", true, kSeedCount};
+    return describe("crossing_dropout", cleanAisTable());
   }
   Scenario generate(std::uint64_t seed) override {
     // Two CV targets crossing close to each other (6 m y-offset → 12 m
@@ -219,7 +256,7 @@ class CrossingDropoutScenarioRun : public ScenarioRun {
 class NonCooperativeScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
-    return {"non_cooperative", true, kSeedCount};
+    return describe("non_cooperative", bearingOnlyTable());
   }
   Scenario generate(std::uint64_t seed) override {
     // Bearing-only target (no AIS / no range): stresses filters whose

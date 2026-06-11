@@ -1400,3 +1400,71 @@ churn was never an estimator problem.
   (π^dt, semigroup), `tests/benchmark/test_metrics.cpp` (truth_id
   keying, time-varying cardinality).
 - Suite size 511/511 green.
+
+## 2026-06-11 — IPDA/VIMM becomes the canonical lifecycle
+
+### Changes
+
+1. **Stale-input guard, default ON** (`Tracker` + `MhtTracker`): inputs
+   older than the engine's high-water mark are dropped and counted
+   (`staleDropped()`); equal timestamps pass. Opt-out for
+   guaranteed-ordered feeds. In-order feeds bit-identical.
+2. **Default-detection-model diagnostic**:
+   `MhtTracker::defaultDetectionModelWarning()` goes sticky-true when
+   ≥2 distinct (SensorKind, MeasurementModel) keys run on the
+   auto-installed single-default model.
+3. **IPDA confirmation hysteresis**: confirm 0.9 / demote 0.6 with an
+   ever-confirmed flag on `TrackTree`; once confirmed, a track holds
+   Confirmed down to the demote threshold; re-confirmation requires the
+   full confirm threshold. `demote == confirm` reproduces the
+   memoryless readout exactly.
+4. **Honest detection tables for all 10 synthetic scenarios**
+   (scenario *properties*, like the calibrated autoferry table):
+   P_D 0.95; λ_C = 1e-6 m⁻² floor for the clutter-free scenarios,
+   3.33e-5 m⁻² for dense_clutter (4 FA / 600×200 m box), 1e-2 rad⁻¹
+   for the bearing-only scenario.
+5. **Canonical lifecycle flip**: `use_ipda_lifecycle = use_visibility
+   = true` are now the `MhtTracker::Config` defaults and the canonical
+   bench config; M-of-N kept as the `imm_cv_ct_mht_mofn` ablation
+   (SPRT remains behind its flag).
+
+### Root cause of the old IPDA synthetic latency
+
+Not r₀ or thresholds: clutter-free synthetics scored with the legacy
+global λ_C = 1e-4 m⁻². The existence LR for a gated hit is
+L = P_D·g(z)/λ_C with g evaluated under the *track's* predicted
+density; a young track's diffuse (unconverged) covariance spreads g so
+thin that L < 1 — a perfect hit was evidence *against* existence.
+Measured on crossing-equivalent feeds: r walks 0.5 → 0.19 over scans
+2–4 before the filter converges, confirm at scan 7 ⇒ lifetime 0.875
+(two targets × ~6 scans of a 40-step scenario). With the honest
+λ = 1e-6 the same feed confirms at scan 2. r₀ stays 0.5 (Musicki):
+raising it would emit clutter-born trees as Confirmed for 1–2 scans.
+
+### Measured (2026-06-11_vimm_canonical vs 2026-06-10 IPDA/VIMM rows)
+
+- Clean synthetics (crossing, head_on, overtaking, parallel, dropout
+  pair, clock_skew, speed_change): IPDA/VIMM now **bit-identical to
+  M-of-N** — with honest tables every lifecycle confirms at scan 2 and
+  the lifecycles only diverge where misses are actually processed.
+  ais_dropout: 148 → 66 OSPA (existence no longer dies through the
+  10 s gap and re-pays birth latency).
+- dense_clutter: VIMM 245 vs M-of-N 421 OSPA (M-of-N regressed under
+  honest λ — clutter hits score higher, score-deletes get slower —
+  while existence handles them; the flip retires that failure mode).
+- AutoFerry: VIMM improved again over 2026-06-10 (scenario2 breaks
+  11.5/7 → 1.5, lifetime 0.945 → 0.954; scenario17 OSPA 380 → 369;
+  scenario22 breaks 11 → 4.5). The residual ~59 id_switches on
+  scenario2 are duplicate-tree swaps (backlog §3).
+- speed_change canonical 44 → 18 OSPA (honest tables also fixed the
+  M-of-N score scale there).
+
+### Methodology notes
+
+- Baseline: `docs/baselines/2026-06-11_vimm_canonical.{csv,md}`;
+  config labels: `imm_cv_ct_mht` is now the VIMM lifecycle,
+  `imm_cv_ct_mht_mofn` is the old lifecycle, `imm_cv_ct_mht_vimm`
+  was removed (duplicate of canonical).
+- Pins tightened: scenario2 MHT lifetime > 0.9, breaks < 10,
+  switches < 120 (measured 0.954 / 1.5 / 59).
+- philos unchanged (needs truth resampling — backlog §7).

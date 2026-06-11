@@ -30,6 +30,7 @@ Measurement posMeas(double x, double y, double t) {
 MhtTracker::Config ipdaConfig() {
   MhtTracker::Config cfg;
   cfg.use_ipda_lifecycle = true;
+  cfg.use_visibility = false;  // plain IPDA; VIMM tests enable it
   cfg.ipda_init_existence = 0.5;
   cfg.ipda_confirm_threshold = 0.9;
   cfg.ipda_delete_threshold = 0.05;
@@ -164,4 +165,102 @@ TEST(MhtVimmRecursion, VisibilityShieldsExistenceDuringObscuration) {
       << "VIMM visibility should decay across the obscured stretch";
   EXPECT_DOUBLE_EQ(ipda_orig->visibility_given_exists, 1.0)
       << "Plain IPDA (no use_visibility) should leave v at its sentinel";
+}
+
+// Hysteresis — a confirmed track whose existence dips below the confirm
+// threshold but stays above the demote threshold remains Confirmed;
+// only crossing the demote threshold flips it back to Tentative (and
+// re-confirmation then requires the full confirm threshold again).
+// Rationale: without hysteresis a single shallow evidence dip demotes a
+// healthy track for a scan — on real multi-rate data that produces
+// lifecycle flicker (cardinality holes) even when the track is never
+// in doubt.
+TEST(MhtIpdaLifecycle, HysteresisKeepsConfirmedThroughShallowDip) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  MhtTracker::Config cfg = ipdaConfig();
+  cfg.gate_threshold = 9.0;
+  // P_D = 0.5 → per-miss existence decay is gentle, so r walks down
+  // *through* the (demote, confirm) band over several scans instead of
+  // jumping across it (P_D = 0.9 goes 0.92 → 0.51 in one miss).
+  cfg.probability_of_detection = 0.5;
+  cfg.ipda_confirm_threshold = 0.9;
+  cfg.ipda_demote_threshold = 0.6;
+  MhtTracker mht(ekf, cfg);
+
+  // Establish + confirm with clean 1 Hz hits.
+  double t = 0.0;
+  for (int i = 0; i < 5; ++i, t += 1.0) {
+    mht.processBatch({posMeas(0.0, 0.0, t)});
+  }
+  const auto find1 = [&]() -> const navtracker::Track* {
+    for (const auto& tr : mht.tracks())
+      if (tr.id.value == 1u) return &tr;
+    return nullptr;
+  };
+  ASSERT_NE(find1(), nullptr);
+  ASSERT_EQ(find1()->status, TrackStatus::Confirmed);
+
+  // Miss scans (far measurement keeps the scan clock ticking). Walk r
+  // down into the hysteresis band — Confirmed must hold while
+  // r ∈ [demote, confirm).
+  bool saw_band_scan = false;
+  for (int i = 0; i < 20; ++i, t += 1.0) {
+    mht.processBatch({posMeas(50000.0 + 100.0 * i, 50000.0, t)});
+    const navtracker::Track* tr = find1();
+    ASSERT_NE(tr, nullptr);
+    const double r = tr->existence_probability;
+    if (r >= 0.6 && r < 0.9) {
+      saw_band_scan = true;
+      EXPECT_EQ(tr->status, TrackStatus::Confirmed)
+          << "scan " << i << ": r=" << r
+          << " is in the hysteresis band — must stay Confirmed";
+    }
+    if (r < 0.6) {
+      EXPECT_EQ(tr->status, TrackStatus::Tentative)
+          << "scan " << i << ": r=" << r << " below demote — Tentative";
+      break;
+    }
+  }
+  EXPECT_TRUE(saw_band_scan) << "test never exercised the band — adjust P_D";
+
+  // Re-acquisition: hits drive r back ≥ confirm → Confirmed again.
+  for (int i = 0; i < 4; ++i, t += 1.0) {
+    mht.processBatch({posMeas(0.0, 0.0, t)});
+  }
+  const navtracker::Track* tr = find1();
+  ASSERT_NE(tr, nullptr);
+  EXPECT_GE(tr->existence_probability, 0.9);
+  EXPECT_EQ(tr->status, TrackStatus::Confirmed);
+}
+
+// Demote == confirm reproduces the pre-hysteresis behaviour exactly:
+// status is a pure threshold readout of r each scan.
+TEST(MhtIpdaLifecycle, DemoteEqualToConfirmIsLegacyBehaviour) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  MhtTracker::Config cfg = ipdaConfig();
+  cfg.gate_threshold = 9.0;
+  cfg.probability_of_detection = 0.5;
+  cfg.ipda_confirm_threshold = 0.9;
+  cfg.ipda_demote_threshold = 0.9;  // no band
+  MhtTracker mht(ekf, cfg);
+
+  double t = 0.0;
+  for (int i = 0; i < 5; ++i, t += 1.0) {
+    mht.processBatch({posMeas(0.0, 0.0, t)});
+  }
+  // Walk r below confirm; with no band the first scan with r < 0.9
+  // must already be Tentative.
+  for (int i = 0; i < 20; ++i, t += 1.0) {
+    mht.processBatch({posMeas(50000.0 + 100.0 * i, 50000.0, t)});
+    for (const auto& tr : mht.tracks()) {
+      if (tr.id.value != 1u) continue;
+      if (tr.existence_probability < 0.9) {
+        EXPECT_EQ(tr.status, TrackStatus::Tentative);
+        return;  // first sub-confirm scan checked — done
+      }
+    }
+  }
+  FAIL() << "r never dropped below confirm";
 }

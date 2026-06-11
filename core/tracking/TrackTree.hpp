@@ -193,10 +193,19 @@ class TrackTree {
     protected_alternatives_last_scan_ = n;
   }
 
+  // IPDA confirmation hysteresis memory: true after the tree's selected
+  // leaf first crossed ipda_confirm_threshold; cleared when existence
+  // falls below ipda_demote_threshold. While set, the track stays
+  // Confirmed anywhere in the [demote, confirm) band instead of
+  // flickering Tentative on a shallow evidence dip.
+  bool everConfirmed() const { return ever_confirmed_; }
+  void setEverConfirmed(bool v) { ever_confirmed_ = v; }
+
  private:
   TrackId external_id_;
   std::vector<TrackTreeNode> nodes_;
   std::size_t protected_alternatives_last_scan_ = 0;
+  bool ever_confirmed_ = false;
 };
 
 }  // namespace navtracker

@@ -208,7 +208,7 @@ silently merges your sensor's calibration with another's.
  ┌──────────────┐   ┌─────────────┐   ┌──────────────┐   ┌──────────────┐   ┌────────────┐
  │ Sensor       │──►│ Normalize + │──►│ Time-ordered │──►│ Predict →    │──►│ Track      │
  │ adapters     │   │ ENU project │   │ reorder buf  │   │ associate →  │   │ manager    │
- │ (AIS, ARPA,  │   │ (per-sensor │   │ (drops late) │   │ update or    │   │ (M-of-N    │
+ │ (AIS, ARPA,  │   │ (per-sensor │   │ (drops late) │   │ update or    │   │ (existence │
  │ EO/IR,       │   │  R, hints)  │   │              │   │ initiate     │   │ lifecycle, │
  │ own-ship)    │   │             │   │              │   │              │   │ stable IDs)│
  └──────────────┘   └─────────────┘   └──────────────┘   └──────────────┘   └────────────┘

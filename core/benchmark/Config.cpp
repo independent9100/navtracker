@@ -152,10 +152,14 @@ std::shared_ptr<IDataAssociator> makeJpda() {
 
 namespace {
 
-// MHT tracker defaults. gate_threshold matches kJpdaGate (20.0) so MHT
-// branches see the same gate volume the soft associator uses; the rest
-// are the MhtTracker::Config defaults. Bhattacharyya merging at 1.0
-// (Mahalanobis-like), 2-of-3 confirmation, N-scan = 3.
+// MHT tracker canonical config. gate_threshold matches kJpdaGate
+// (20.0) so MHT branches see the same gate volume the soft associator
+// uses; the rest are the MhtTracker::Config defaults — which since
+// 2026-06-11 means the IPDA + VIMM existence/visibility lifecycle
+// with confirm 0.9 / demote 0.6 hysteresis (measured bit-identical to
+// M-of-N on clean synthetics, decisively better under misses/clutter;
+// see evaluation-log 2026-06-11). Bhattacharyya merging at 1.0,
+// N-scan = 3.
 MhtTracker::Config makeMhtConfig() {
   MhtTracker::Config cfg;
   cfg.gate_threshold = kJpdaGate;
@@ -164,36 +168,22 @@ MhtTracker::Config makeMhtConfig() {
   return cfg;
 }
 
-// IPDA lifecycle ablation: same as makeMhtConfig but reads existence
-// probability per leaf for confirm/delete instead of M-of-N + raw
-// score. ipda_init_existence=0.5 is a deliberately weak birth prior
-// (single detection is weak evidence — Musicki 1994's typical
-// recommendation). ipda_confirm_threshold=0.9 ≈ "we're 9× more
-// confident in target than clutter," ipda_delete_threshold=0.05
-// catches sustained miss decay. Persistence 0.99 = ~100-scan target
-// lifetime under perfect detection.
+// IPDA-only ablation: existence lifecycle without the visibility
+// channel — isolates what VIMM's obscuration handling adds on top of
+// plain Musicki 1994.
 MhtTracker::Config makeMhtIpdaConfig() {
   MhtTracker::Config cfg = makeMhtConfig();
-  cfg.use_ipda_lifecycle = true;
-  cfg.ipda_init_existence = 0.5;
-  cfg.ipda_confirm_threshold = 0.9;
-  cfg.ipda_delete_threshold = 0.05;
-  cfg.ipda_persistence = 0.99;
-  cfg.ipda_gate_probability_mass = 0.99;
+  cfg.use_visibility = false;
   return cfg;
 }
 
-// VIMM ablation: IPDA + visibility-given-exists. visibility_init=1.0
-// (just-born tracks are visible by definition; the seed detection
-// proves it). visibility_persistence=0.95 + visibility_recovery=0.3
-// give ~20-scan obscured stretches that still recover — calibrated to
-// the AutoFerry scenarios where Gunnerus shadows Havfruen for ~10 s.
-MhtTracker::Config makeMhtVimmConfig() {
-  MhtTracker::Config cfg = makeMhtIpdaConfig();
-  cfg.use_visibility = true;
-  cfg.visibility_init = 1.0;
-  cfg.visibility_persistence = 0.95;
-  cfg.visibility_recovery = 0.3;
+// M-of-N ablation: the pre-2026-06-11 lifecycle (2-of-3 hit-count
+// confirmation, score-threshold deletion). Kept to measure what the
+// existence lifecycle buys.
+MhtTracker::Config makeMhtMofnConfig() {
+  MhtTracker::Config cfg = makeMhtConfig();
+  cfg.use_ipda_lifecycle = false;
+  cfg.use_visibility = false;
   return cfg;
 }
 
@@ -202,26 +192,26 @@ MhtTracker::Config makeMhtVimmConfig() {
 std::vector<Config> defaultConfigs() {
   std::vector<Config> configs;
   configs.reserve(10);
-  // CANONICAL config, listed first. IMM (CV + CT) inside TOMHT is the
-  // tracker navtracker treats as its reference / default — the textbook
-  // classical gold-standard and the baseline PMBM will be measured
-  // against. The remaining configs are ablations that isolate one axis
-  // (estimator / motion model / associator) away from it.
+  // CANONICAL config, listed first. IMM (CV + CT) inside TOMHT with
+  // the IPDA + VIMM existence/visibility lifecycle (the MhtTracker
+  // defaults) is the tracker navtracker treats as its reference — the
+  // baseline PMBM will be measured against. The remaining configs are
+  // ablations that isolate one axis (estimator / motion model /
+  // associator / lifecycle) away from it.
   configs.push_back({"imm_cv_ct_mht", &makeImmCvCt, &makeJpda,
                      TrackerKind::Mht, &makeMhtConfig});
   // Same as canonical but with Student-t robust updates — the ablation
   // that isolates the heavy-tailed-measurement (EO/IR clutter) axis.
   configs.push_back({"imm_cv_ct_mht_robust", &makeImmCvCtRobust, &makeJpda,
                      TrackerKind::Mht, &makeMhtConfig});
-  // Canonical estimator + IPDA lifecycle — ablation that isolates the
-  // confirm/delete axis (calibrated existence vs M-of-N score gates).
+  // Canonical minus the visibility channel — isolates what VIMM's
+  // obscuration handling adds over plain IPDA.
   configs.push_back({"imm_cv_ct_mht_ipda", &makeImmCvCt, &makeJpda,
                      TrackerKind::Mht, &makeMhtIpdaConfig});
-  // Canonical estimator + IPDA + VIMM visibility — ablation that
-  // isolates obscuration handling (VIMM shields existence during the
-  // shadowed stretches that IPDA-only would decay through).
-  configs.push_back({"imm_cv_ct_mht_vimm", &makeImmCvCt, &makeJpda,
-                     TrackerKind::Mht, &makeMhtVimmConfig});
+  // Canonical minus the existence lifecycle (pre-2026-06-11 M-of-N +
+  // score-delete) — isolates what calibrated existence buys.
+  configs.push_back({"imm_cv_ct_mht_mofn", &makeImmCvCt, &makeJpda,
+                     TrackerKind::Mht, &makeMhtMofnConfig});
   // JPDA/GNN-style ablations (single-hypothesis Tracker pipeline).
   configs.push_back({"ekf_cv_gnn", &makeEkfCv, &makeGnn});
   configs.push_back({"ekf_cv_jpda", &makeEkfCv, &makeJpda});

@@ -136,33 +136,45 @@ class MhtTracker {
     // to disable adaptation.
     int n_scan_extension_when_protected = 2;
 
-    // IPDA lifecycle (Musicki-Evans-Stankovic 1994). When enabled,
-    // every leaf carries an existence_probability r ∈ [0,1] updated
-    // by a Bayes recursion from per-sensor (P_D, λ_C) — *the*
-    // calibrated quantity (unlike the raw LLR score, which is
-    // dominated by measurement-fit). Confirm/delete then read r
-    // rather than score / M-of-N hit counts. M-of-N stays available
-    // as the default since it works well under the current per-sensor
-    // model; flip use_ipda_lifecycle to compare.
+    // IPDA lifecycle (Musicki-Evans-Stankovic 1994), ON by default
+    // since 2026-06-11. Every leaf carries an existence_probability
+    // r ∈ [0,1] updated by a Bayes recursion from per-sensor
+    // (P_D, λ_C) — *the* calibrated quantity (unlike the raw LLR
+    // score, which is dominated by measurement-fit). Confirm/delete
+    // read r (with hysteresis) rather than score / M-of-N hit counts.
     //
-    // Disabled (default): existence_probability stays at its 1.0
-    // sentinel, M-of-N / SPRT still drive confirm/delete, tree-delete
-    // still reads score — bit-identical to the previous behaviour.
-    bool use_ipda_lifecycle = false;
+    // Measured (2026-06-11 baseline, with honest per-sensor tables):
+    // bit-identical to M-of-N on clean synthetics, decisively better
+    // wherever misses/clutter exist (dense_clutter OSPA 421 → 245,
+    // AutoFerry scenario2 breaks 64.5 → 1.5, lifetime 0.77 → 0.95).
+    // NB: r is only calibrated if the detection table is honest —
+    // see defaultDetectionModelWarning().
+    //
+    // Disabled: existence_probability stays at its 1.0 sentinel,
+    // M-of-N / SPRT drive confirm/delete, tree-delete reads score —
+    // the pre-2026-06-11 behaviour, kept as the comparison ablation.
+    bool use_ipda_lifecycle = true;
     double ipda_init_existence = 0.5;     // prior r₀ at track birth
-    double ipda_confirm_threshold = 0.7;  // r ≥ → Confirmed
+    double ipda_confirm_threshold = 0.9;  // r ≥ → Confirmed (first time)
+    // Hysteresis: once confirmed, a track stays Confirmed while
+    // r ≥ ipda_demote_threshold; it demotes to Tentative only below
+    // that, and must re-cross ipda_confirm_threshold to confirm again.
+    // Equal to ipda_confirm_threshold → no band (legacy readout).
+    // Values above ipda_confirm_threshold are clamped down to it.
+    double ipda_demote_threshold = 0.6;
     double ipda_delete_threshold = 0.05;  // r < → tree deleted
     double ipda_persistence = 0.99;       // P(eₖ=1 | eₖ₋₁=1)
     double ipda_gate_probability_mass = 0.99;  // P_G; 1 ≈ generous gate
 
-    // VIMM visibility (Brekke & Wilthil 2019). When enabled (requires
-    // use_ipda_lifecycle), each leaf also carries a
-    // visibility_given_exists v ∈ [0,1]. A miss is then attributed
+    // VIMM visibility (Brekke & Wilthil 2019), ON by default since
+    // 2026-06-11 (requires use_ipda_lifecycle). Each leaf also carries
+    // a visibility_given_exists v ∈ [0,1]. A miss is then attributed
     // partly to "currently obscured" (v drops) rather than entirely
     // to "track is gone" (r drops). Designed for the AutoFerry
     // shadowing scenarios where the standard IPDA recursion would
-    // kill a temporarily-hidden target.
-    bool use_visibility = false;
+    // kill a temporarily-hidden target; identical to plain IPDA on
+    // miss-free runs (with v₀ = 1 the hit recursions coincide).
+    bool use_visibility = true;
     double visibility_init = 1.0;         // v₀ at birth (just detected)
     double visibility_persistence = 0.95; // P(vₖ=1 | vₖ₋₁=1)
     double visibility_recovery = 0.3;     // P(vₖ=1 | vₖ₋₁=0)

@@ -138,6 +138,29 @@ Per scan:
   `P_D = 1 − Π_s (1 − P_D^s(x))`, and the IPDA/VIMM persistence
   parameters are **per-second rates** applied as `π^dt` (1 Hz cadence
   reproduces the classical per-scan recursion exactly).
+
+  Since 2026-06-11 the IPDA + VIMM existence/visibility lifecycle is
+  the **default** (`use_ipda_lifecycle = use_visibility = true`):
+  confirm/delete read the existence posterior r instead of M-of-N hit
+  counts / the raw LLR score. Measured (2026-06-11 baseline, honest
+  per-sensor tables everywhere): bit-identical to M-of-N on clean
+  synthetics — the lifecycles only diverge where misses are actually
+  processed — and decisively better under misses/clutter
+  (dense_clutter OSPA 421 → 245, AutoFerry scenario2 breaks
+  64.5 → 1.5, lifetime 0.77 → 0.95). M-of-N and SPRT remain available
+  as ablations (`use_ipda_lifecycle = false`).
+
+  IPDA confirmation uses **hysteresis**: first confirmation requires
+  `r ≥ ipda_confirm_threshold`; once confirmed, the track holds
+  Confirmed while `r ≥ ipda_demote_threshold` (< confirm), and after
+  demotion must re-cross the full confirm threshold. Rationale: the
+  existence posterior is volatile scan-to-scan (one weak/missed scan
+  drops r from 0.92 to ~0.5 at P_D 0.9), and a memoryless threshold
+  readout turns each shallow dip into a one-scan Tentative hole —
+  lifecycle flicker that fragments downstream consumers' picture
+  without any genuine doubt about the track. The ever-confirmed flag
+  lives on the `TrackTree`; `demote == confirm` reproduces the
+  memoryless readout exactly.
 - **K_local prune.** Drop the lowest-scoring leaves per tree until at most
   `k_max_leaves` remain.
 - **N-scan trunk-merge.** For each tree, find each current leaf's
@@ -158,7 +181,9 @@ enforce global non-conflict (the same measurement can in principle
 contribute to two trees' winning leaves within one scan). The
 K-best-global / Murty's-algorithm extension is captured as future work.
 Tracks are dropped when their best leaf's score falls below
-`score_delete_threshold`.
+`score_delete_threshold`, or — under the default IPDA lifecycle —
+when every leaf's existence probability falls below
+`ipda_delete_threshold`.
 
 **Rationale.** GNN commits per scan and stays wrong; JPDA spreads update
 mass per scan and stays uncommitted; MHT carries multiple full-history

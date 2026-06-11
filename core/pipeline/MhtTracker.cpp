@@ -415,10 +415,23 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     // SPRT (when enabled) → M-of-N (default).
     TrackStatus status;
     if (cfg_.use_ipda_lifecycle) {
-      status = (trees_[ti].nodes()[leaf].existence_probability >=
-                cfg_.ipda_confirm_threshold)
-                   ? TrackStatus::Confirmed
-                   : TrackStatus::Tentative;
+      // Hysteresis: first confirmation needs r ≥ confirm; once
+      // confirmed, the track holds Confirmed down to the demote
+      // threshold, and re-confirmation needs the full confirm
+      // threshold again (ever-confirmed memory lives on the tree).
+      const double r = trees_[ti].nodes()[leaf].existence_probability;
+      const double confirm = cfg_.ipda_confirm_threshold;
+      const double demote =
+          std::min(cfg_.ipda_demote_threshold, confirm);
+      if (trees_[ti].everConfirmed()) {
+        status = (r >= demote) ? TrackStatus::Confirmed
+                               : TrackStatus::Tentative;
+        if (r < demote) trees_[ti].setEverConfirmed(false);
+      } else {
+        status = (r >= confirm) ? TrackStatus::Confirmed
+                                : TrackStatus::Tentative;
+        if (r >= confirm) trees_[ti].setEverConfirmed(true);
+      }
     } else if (cfg_.use_sprt_confirm) {
       const double t_confirm = std::log(
           (1.0 - cfg_.sprt_beta) / std::max(cfg_.sprt_alpha, 1e-12));

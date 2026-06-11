@@ -119,14 +119,14 @@ TEST(ReplayScenarioRun, AutoferryScenario2MhtLifecycleIsSane) {
   const auto result = runBenchMht(scen, tracker);
 
   ASSERT_FALSE(result.steps.empty());
-  // Regression pins with margin over the post-fix measurement (lifetime
-  // 0.77, breaks 64.5, switches 146.5; pre-fix: 0.02–0.8 lifetime and
-  // ~600 breaks). The residual churn is M-of-N confirmation flicker on
-  // the 16 Hz multi-sensor stream plus duplicate-tree ID swaps — the
-  // IPDA/VIMM lifecycle configs are the candidates to retire it; tighten
-  // these pins when one of them becomes the canonical config.
+  // Regression pins with ~2x margin over the canonical (IPDA+VIMM
+  // lifecycle, 2026-06-11) measurement: lifetime 0.954, breaks 1.5,
+  // switches 59. History: M-of-N post-multi-sensor-fix measured
+  // 0.77 / 64.5 / 146.5; pre-fix ~600 breaks. The residual ~59
+  // switches are duplicate-tree ID swaps — cross-tree merge
+  // (improvement-backlog §3) is the candidate to retire them.
   const auto m = computeMetrics(result, {});
-  EXPECT_GT(m.lifetime_ratio, 0.7);
-  EXPECT_LT(m.track_breaks, 150.0);
-  EXPECT_LT(m.id_switches, 300.0);
+  EXPECT_GT(m.lifetime_ratio, 0.9);
+  EXPECT_LT(m.track_breaks, 10.0);
+  EXPECT_LT(m.id_switches, 120.0);
 }
