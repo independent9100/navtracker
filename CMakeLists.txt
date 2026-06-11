@@ -54,6 +54,7 @@ add_library(navtracker_core
   core/scenario/HarnessBatched.cpp
   core/scenario/HarnessBatchedMht.cpp
   core/scenario/Metrics.cpp
+  core/scenario/TruthResample.cpp
   core/output/TrackOutput.cpp
   adapters/own_ship/OwnShipProvider.cpp
 )
@@ -186,6 +187,7 @@ add_executable(navtracker_tests
   tests/scenario/test_mht_comparison.cpp
   tests/scenario/test_multi_seed_sweep.cpp
   tests/scenario/test_truth_tick_ospa.cpp
+  tests/scenario/test_truth_resample.cpp
   tests/scenario/test_datum_recenter_scenario.cpp
   tests/sim/test_truth_trajectory.cpp
   tests/sim/test_maneuvering_trajectory.cpp

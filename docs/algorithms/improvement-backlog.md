@@ -187,19 +187,27 @@ with a table-backed model.
 
 ## 7. Philos replay: asynchronous truth resampling
 
-**Problem.** All MHT configs score lifetime ≤ 0.015 on philos. Philos
-truth is AIS-as-truth: asynchronous per-vessel messages with no scan
-structure, so the AutoFerry per-scan truth fix does not apply — steps
-are 1-truth fragments again, and the scenario still uses the legacy
-scalar λ_C.
-
-**Change.** Time-windowed truth resampling in the harness (interpolate
-each vessel's AIS track onto a fixed evaluation clock, e.g. 1 Hz,
-holding cardinality per window), plus a per-sensor detection table for
-the philos radar.
-
-**Test.** Same style as `AutoferryScenario2GnnMetricsAreSane`: pin
-step cardinality and identity metrics on the real fixture.
+**STATUS: DONE (2026-06-11).** `resampleTruthToClock(samples, period_s,
+max_gap_s)` (`core/scenario/TruthResample.hpp`) interpolates each
+vessel's asynchronous AIS track onto a shared evaluation clock: linear
+position interpolation + segment-FD velocity between fixes, nearest-tick
+snap (half-open ±period/2) at span endpoints so single-fix vessels get
+one-step presence instead of becoming permanent cardinality errors, and
+a max-gap guard so minutes-long dropouts are not bridged by a straight
+line. PhilosScenarioRun resamples at 1 Hz / 30 s max gap and declares a
+calibrated per-sensor table: radar 0.07 / 2.7e-6 m⁻² / 1000 m **per
+sub-scan event** (the rotating sweep arrives as ~10 narrow azimuth
+bursts/s — measured across 187 vessel × event opportunities), AIS
+0.05 / 1e-9 (a broadcast detects one vessel per event, so per-event
+P_D ≈ 1/N_vessels). Canonical MHT on philos: lifetime 0.015 → 0.295,
+breaks 0.04, switches 0.17, OSPA 430 (off the 500 cutoff), pos_rmse
+38 m; pinned in `ReplayScenarioRun.PhilosResampledTruthAndMhtLifecycle`.
+The remaining lifetime ceiling is honest: the fixture is a ~20 s
+snippet where most vessels report AIS only twice ~10 s apart, so
+confirming at the second fix already costs half the presence window.
+Boston-harbor radar caveat: unmatched plots are mostly persistent shore
+structure — same uniform-λ limitation as the AutoFerry urban cameras
+(item 5).
 
 ## 8. JPDA path parity: per-sensor (P_D, λ_C)
 

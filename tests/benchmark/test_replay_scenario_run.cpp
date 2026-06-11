@@ -169,3 +169,58 @@ TEST(ReplayScenarioRun, AutoferryDeclaresSplitEoIrDetectionEntries) {
         << d.label;
   }
 }
+
+// Backlog item 7: philos truth is AIS-as-truth — asynchronous per-vessel
+// messages with no scan structure. Before truth resampling, BenchRunner's
+// exact-time bucketing fragmented every evaluation step to cardinality 1
+// and ALL MHT configs scored lifetime <= 0.015 (phantom misses dominated
+// every metric). The descriptor now declares a calibrated per-sensor
+// table (radar 0.07/2.7e-6 per sub-scan event; AIS as a broadcast, not a
+// sweep) and generate() resamples truth onto a shared 1 Hz clock.
+TEST(ReplayScenarioRun, PhilosResampledTruthAndMhtLifecycle) {
+  std::unique_ptr<ScenarioRun> run;
+  for (auto& s : defaultReplayScenarios()) {
+    if (s->descriptor().label == "philos") run = std::move(s);
+  }
+  ASSERT_TRUE(run);
+  const auto scen = run->generate(0);
+  if (scen.measurements.empty())
+    GTEST_SKIP() << "philos fixtures not reachable from cwd";
+
+  // Resampled truth: shared-clock steps with real multi-vessel
+  // cardinality (the fixture carries ~23 AIS vessels over ~20 s).
+  std::map<double, int> card;
+  for (const auto& t : scen.truth) card[t.time.seconds()] += 1;
+  ASSERT_GE(card.size(), 15u);
+  int max_card = 0;
+  for (const auto& [t, n] : card) max_card = std::max(max_card, n);
+  EXPECT_GE(max_card, 10);
+
+  const auto configs = defaultConfigs();
+  const Config* mht = nullptr;
+  for (const auto& c : configs)
+    if (c.label == "imm_cv_ct_mht") mht = &c;
+  ASSERT_NE(mht, nullptr);
+
+  auto est = mht->build_estimator();
+  navtracker::MhtTracker::Config cfg = mht->mht_config();
+  auto det = detectionModelFor(run->descriptor(), cfg);
+  ASSERT_TRUE(det) << "philos should declare a per-sensor table";
+  navtracker::MhtTracker tracker(*est, cfg, det);
+  const auto result = runBenchMht(scen, tracker);
+  ASSERT_FALSE(result.steps.empty());
+
+  // Regression pins with margin over the 2026-06-11 measurement
+  // (lifetime 0.295, breaks 0.04, switches 0.17, ospa 430, rmse 38).
+  // Pre-fix every MHT config scored lifetime <= 0.015 with OSPA pegged
+  // at the 500 m cutoff. The remaining lifetime ceiling is honest: the
+  // fixture is a ~20 s snippet in which most vessels report AIS only
+  // twice ~10 s apart, so confirmation at the second fix already costs
+  // half of such a vessel's presence window.
+  const auto m = computeMetrics(result, {});
+  EXPECT_GT(m.lifetime_ratio, 0.2);
+  EXPECT_LT(m.track_breaks, 2.0);
+  EXPECT_LT(m.id_switches, 5.0);
+  EXPECT_LT(m.ospa_mean, 470.0);
+  EXPECT_LT(m.pos_rmse_m, 60.0);
+}

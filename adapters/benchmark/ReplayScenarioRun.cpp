@@ -15,6 +15,7 @@
 #include "adapters/replay/OwnshipCsvReader.hpp"
 #include "adapters/replay/PlotCsvReplayAdapter.hpp"
 #include "core/scenario/Truth.hpp"
+#include "core/scenario/TruthResample.hpp"
 #include "core/types/Measurement.hpp"
 
 namespace navtracker {
@@ -64,7 +65,31 @@ TruthSample aisMeasurementToTruth(const Measurement& m) {
 class PhilosScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
-    return {"philos", /*is_multi_seed=*/false, /*seed_count=*/1};
+    ScenarioDescriptor d{"philos", /*is_multi_seed=*/false,
+                         /*seed_count=*/1};
+    // Per-sensor detection table, calibrated against interpolated
+    // AIS-as-truth on the ais_ferry_near fixture (30 m gate):
+    //
+    // - Radar plots arrive as ~10 narrow sub-scan events/s (the
+    //   rotating sweep is split per azimuth burst), so the honest
+    //   per-EVENT P_D for an in-coverage vessel is low: measured
+    //   0.07 across 187 (vessel × event) opportunities. λ from the
+    //   unmatched-plot rate over the plot bounding box: 9.8/event /
+    //   3.6e6 m² ≈ 2.7e-6 m⁻²; max plot range ≈ 980 m carried as
+    //   coverage. Boston-harbor caveat: most unmatched plots are
+    //   persistent shore/moored-structure returns, not Poisson clutter
+    //   (same lesson as the AutoFerry urban cameras — backlog §5).
+    // - AIS is a per-vessel broadcast, not a surveillance sweep: any
+    //   single AIS scan event "detects" exactly one of the ~23 vessels
+    //   in range, so the per-event P_D for an arbitrary vessel is
+    //   ≈ 1/23 ≈ 0.05, with essentially zero clutter.
+    d.detection_table = {
+        {SensorKind::ArpaTtm, MeasurementModel::Position2D,
+         DetectionParams{0.07, 2.7e-6, /*max_range_m=*/1000.0}},
+        {SensorKind::Ais, MeasurementModel::Position2D,
+         DetectionParams{0.05, 1e-9}},
+    };
+    return d;
   }
 
   Scenario generate(std::uint64_t /*seed*/) override {
@@ -97,6 +122,18 @@ class PhilosScenarioRun : public ScenarioRun {
 
     s.truth.reserve(ais.size());
     for (const auto& m : ais) s.truth.push_back(aisMeasurementToTruth(m));
+    std::sort(s.truth.begin(), s.truth.end(),
+              [](const TruthSample& a, const TruthSample& b) {
+                return a.time < b.time;
+              });
+    // AIS-as-truth is asynchronous per-vessel messages with no scan
+    // structure: resample onto a shared 1 Hz evaluation clock so
+    // BenchRunner's exact-time bucketing sees honest multi-target
+    // steps instead of 1-truth fragments (see TruthResample.hpp).
+    // 30 s max gap comfortably bridges the fixture's 8–12 s AIS
+    // report intervals without bridging real dropouts.
+    s.truth = resampleTruthToClock(s.truth, /*period_s=*/1.0,
+                                   /*max_gap_s=*/30.0);
     return s;
   }
 };

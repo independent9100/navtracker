@@ -1572,3 +1572,49 @@ scans and radar refreshes ~0.6 Hz. Bearings gate into both tracks and
 the global hypothesis swaps them; the slow radar cannot re-anchor
 identity. Neither a duplicate-tree nor a close-pass problem —
 candidate fixes recorded in backlog §11.
+
+## 2026-06-11 — Backlog item 7: philos asynchronous truth resampling
+
+**Change.** `resampleTruthToClock` (`core/scenario/TruthResample.hpp`):
+linear interpolation of each vessel's asynchronous AIS-as-truth track
+onto a shared fixed evaluation clock (segment-FD velocities,
+nearest-tick snap at span endpoints so single-fix vessels get one-step
+presence, max-gap guard against bridging real dropouts).
+PhilosScenarioRun resamples at 1 Hz / 30 s and declares a calibrated
+per-sensor detection table: radar P_D 0.07 / λ 2.7e-6 m⁻² / 1000 m
+coverage **per sub-scan event** (the rotating sweep arrives as ~10
+narrow azimuth bursts per second; measured across 187 vessel × event
+opportunities at a 30 m gate), AIS P_D 0.05 / λ 1e-9 (a broadcast
+"detects" one vessel per event → per-event P_D ≈ 1/N_vessels).
+
+**Why.** Philos truth carries no scan structure: no two raw samples
+share a timestamp, so BenchRunner's exact-time bucketing fragmented
+every evaluation step to cardinality 1 — the same harness failure mode
+as the pre-fix AutoFerry truth, in its asynchronous form. All MHT
+configs scored lifetime ≤ 0.015 with OSPA pegged at the cutoff, and
+GNN/JPDA scores were *flattered* (per-vessel presence collapsed to its
+2–5 raw message instants, trivially covered).
+
+**Measured (2026-06-11_philos_resample vs 2026-06-11_eoir_split;
+philos only — every other scenario bit-identical).**
+
+- Canonical imm_cv_ct_mht: lifetime 0 → 0.295, OSPA 500 → 430, breaks
+  0.04, switches 0.17, pos_rmse 38 m. All IPDA/VIMM MHT configs land
+  in the same band (0.27–0.30 lifetime, 428–432 OSPA).
+- GNN/JPDA lifetime drops 0.68 → 0.33–0.35: the old value was an
+  artifact of fragmented presence; the new one is honest and now
+  comparable across configs.
+- M-of-N ablation (imm_cv_ct_mht_mofn) stays at lifetime ≈ 0.01 — it
+  cannot confirm on a ~10 s AIS cadence interleaved with ~10 Hz radar
+  events; per-dataset evidence for why the IPDA lifecycle is canonical.
+- The remaining lifetime ceiling (~0.3) is honest confirmation latency
+  on a ~20 s fixture where most vessels carry only two AIS fixes ~10 s
+  apart: confirmed-from-second-fix costs half such a vessel's presence
+  window. A longer philos capture would raise it mechanically.
+- Pins: `ReplayScenarioRun.PhilosResampledTruthAndMhtLifecycle`
+  (cardinality ≥ 10 at peak, lifetime > 0.2, breaks < 2, switches < 5,
+  OSPA < 470, rmse < 60).
+
+Boston-harbor caveat, recorded for item 5: most unmatched radar plots
+are persistent shore/moored structure, the same uniform-λ limitation
+as the AutoFerry urban cameras.
