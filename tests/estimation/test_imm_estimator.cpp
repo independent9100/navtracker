@@ -279,3 +279,68 @@ TEST(ImmEstimator, AnyModeGateAcceptsNearAnyMode) {
   // individual mode mean — must be REJECTED by any-mode gating.
   EXPECT_FALSE(imm.gate(t, z_in_no_mode, 9.0));
 }
+
+// --- dt-scaled mode transitions --------------------------------------------
+//
+// The configured transition matrix is the 1-second TPM. predict() must
+// apply π^dt (continuous-time semantics), not π once per call: per-call
+// application at 16 Hz mixes modes 16× faster than the same parameters
+// at 1 Hz, washing the mode probabilities toward stationarity between
+// every measurement (observed on AutoFerry: IMM ≈ blurred single model).
+// predict() advances the mode probabilities to the predicted prior
+// c = π(dt)ᵀ μ; update() consumes that prior directly.
+
+TEST(ImmEstimator, ModeTransitionIsDtScaled) {
+  auto cv = std::make_shared<ConstantVelocity5State>(0.0, 0.0);
+  auto ct = std::make_shared<CoordinatedTurn>(0.0, 0.0);
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {cv, ct};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.9, 0.1,
+        0.1, 0.9;  // symmetric: eigenvalues 1 and 0.8
+  Eigen::VectorXd mu0(2);
+  mu0 << 1.0, 0.0;
+  ImmEstimator imm(motions, pi, mu0, 10.0, 0.1);
+
+  // dt = 1 s: the classical one-step prior [0.9, 0.1].
+  navtracker::Track a = imm.initiate(positionMeas(0.0, 0.0, 1.0, 0.0));
+  imm.predict(a, Timestamp::fromSeconds(1.0));
+  EXPECT_NEAR(a.imm_mode_probabilities(0), 0.9, 1e-12);
+  EXPECT_NEAR(a.imm_mode_probabilities(1), 0.1, 1e-12);
+
+  // dt = 0.1 s: π^0.1 has diagonal (1 + 0.8^0.1)/2 — mode 0 keeps
+  // almost all of its probability instead of leaking 0.1 per call.
+  const double lam = std::pow(0.8, 0.1);
+  navtracker::Track b = imm.initiate(positionMeas(0.0, 0.0, 1.0, 0.0));
+  imm.predict(b, Timestamp::fromSeconds(0.1));
+  EXPECT_NEAR(b.imm_mode_probabilities(0), (1.0 + lam) / 2.0, 1e-9);
+  EXPECT_NEAR(b.imm_mode_probabilities(1), (1.0 - lam) / 2.0, 1e-9);
+}
+
+TEST(ImmEstimator, ModeTransitionComposesAcrossPredicts) {
+  // Semigroup property: predicting 0 → 0.5 s → 1.0 s must land on the
+  // same mode prior as one 0 → 1.0 s predict. Per-call TPM application
+  // fails this badly (two applications vs one).
+  auto cv = std::make_shared<ConstantVelocity5State>(0.0, 0.0);
+  auto ct = std::make_shared<CoordinatedTurn>(0.0, 0.0);
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {cv, ct};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05,
+        0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 1.0, 0.0;
+  ImmEstimator imm(motions, pi, mu0, 10.0, 0.1);
+
+  navtracker::Track two_steps = imm.initiate(positionMeas(0.0, 0.0, 1.0, 0.0));
+  imm.predict(two_steps, Timestamp::fromSeconds(0.5));
+  imm.predict(two_steps, Timestamp::fromSeconds(1.0));
+
+  navtracker::Track one_step = imm.initiate(positionMeas(0.0, 0.0, 1.0, 0.0));
+  imm.predict(one_step, Timestamp::fromSeconds(1.0));
+
+  ASSERT_EQ(two_steps.imm_mode_probabilities.size(),
+            one_step.imm_mode_probabilities.size());
+  for (int j = 0; j < one_step.imm_mode_probabilities.size(); ++j) {
+    EXPECT_NEAR(two_steps.imm_mode_probabilities(j),
+                one_step.imm_mode_probabilities(j), 1e-9);
+  }
+}

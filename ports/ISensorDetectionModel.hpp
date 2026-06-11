@@ -1,5 +1,6 @@
 #pragma once
 
+#include <limits>
 #include <vector>
 
 #include <Eigen/Core>
@@ -27,6 +28,12 @@ namespace navtracker {
 struct DetectionParams {
   double probability_of_detection;
   double clutter_intensity;
+  // Coverage radius (metres) about the sensor position. Beyond it the
+  // sensor cannot have detected anything, so the miss branch charges no
+  // penalty (effective P_D → 0). Infinite by default — position-
+  // independent P_D, the legacy behaviour for sensors without coverage
+  // information.
+  double max_range_m{std::numeric_limits<double>::infinity()};
 };
 
 // Per-sensor detection model. Strategy: at every per-measurement score
@@ -47,10 +54,30 @@ class ISensorDetectionModel {
  public:
   virtual ~ISensorDetectionModel() = default;
 
-  // Lookup (P_D, λ_C) for one measurement. Implementations dispatch on
-  // (z.sensor, z.model). MUST be O(1) — called once per (leaf, gated-
-  // measurement) pair inside TrackTree::branch.
-  virtual DetectionParams paramsFor(const Measurement& z) const = 0;
+  // Lookup (P_D, λ_C) for one (sensor, model) key. MUST be O(1) —
+  // called once per (leaf, gated-measurement) pair inside
+  // TrackTree::branch, and once per distinct scan sensor for the miss
+  // branch.
+  virtual DetectionParams paramsFor(SensorKind sensor,
+                                    MeasurementModel model) const = 0;
+
+  // Convenience: lookup keyed by a measurement's (sensor, model).
+  DetectionParams paramsFor(const Measurement& z) const {
+    return paramsFor(z.sensor, z.model);
+  }
+
+  // Detection probability for the MISS branch: "could this sensor have
+  // detected a target at track_pos_enu at all?". Coverage-conditioned:
+  // 0 beyond the entry's max_range_m about the sensor position, the
+  // table P_D inside. log(1 − 0) = 0 — an out-of-coverage scan charges
+  // no miss penalty and leaves IPDA existence untouched.
+  double missDetectionProbability(SensorKind sensor, MeasurementModel model,
+                                  const Eigen::Vector2d& track_pos_enu,
+                                  const Eigen::Vector2d& sensor_pos_enu) const {
+    const DetectionParams p = paramsFor(sensor, model);
+    if ((track_pos_enu - sensor_pos_enu).norm() > p.max_range_m) return 0.0;
+    return p.probability_of_detection;
+  }
 
   // One bucket of post-scan evidence, partitioned by (sensor, model).
   struct ScanObservation {

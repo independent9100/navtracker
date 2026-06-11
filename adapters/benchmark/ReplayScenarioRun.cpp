@@ -133,15 +133,35 @@ class AutoferryScenarioRun : public ScenarioRun {
   explicit AutoferryScenarioRun(std::string label) : label_(std::move(label)) {}
 
   ScenarioDescriptor descriptor() const override {
-    // Real port radar/lidar carries genuine clutter; ~1e-2 false alarms
-    // per m² per scan (≈100× the synthetic clean-scene default) was the
-    // empirically clutter-appropriate MHT setting on this data — it cuts
-    // IMM+TOMHT OSPA ~30% without the synthetic-breaking side effects of
-    // a global change. A data-driven per-scenario estimate is the
-    // adaptive follow-up.
     ScenarioDescriptor d{"autoferry_" + label_, /*is_multi_seed=*/false,
                          /*seed_count=*/1};
-    d.clutter_density = 1e-2;
+    // Per-sensor detection table, calibrated against the published
+    // ground truth across scenarios 2/5/13/22 (open water + urban
+    // channel; matching gate 15 m position / 0.15 rad bearing):
+    //
+    //   sensor  empirical P_D  clutter/scan  λ_C (units)        coverage
+    //   lidar   0.40–0.71      0.1–0.5       ≈0.3 / (π·140²)    ≤135 m
+    //                                        ≈ 5e-6 m⁻²         observed
+    //   radar   0.71–0.91      0.9–4.4       ≈3 / ~3e5 m²
+    //                                        ≈ 1e-5 m⁻²         (region-
+    //                                                            cropped)
+    //   EO+IR   0.24–0.87      0.4–12        ≈2 / 2π ≈ 0.3–0.6 rad⁻¹
+    //
+    // The lidar P_D is depressed by out-of-coverage opportunities in
+    // the empirical count; with the 140 m range gate carried in
+    // max_range_m, the in-coverage value is higher → 0.7. EO and IR
+    // share a (SensorKind, MeasurementModel) key, so one combined
+    // entry. Values are deliberately round mid-points: per-scenario
+    // adaptive estimation (AdaptiveSensorDetectionModel) is the
+    // follow-up.
+    d.detection_table = {
+        {SensorKind::Lidar, MeasurementModel::Position2D,
+         DetectionParams{0.7, 5e-6, /*max_range_m=*/140.0}},
+        {SensorKind::ArpaTtm, MeasurementModel::Position2D,
+         DetectionParams{0.8, 1e-5}},
+        {SensorKind::EoIr, MeasurementModel::Bearing2D,
+         DetectionParams{0.6, 0.5}},
+    };
     return d;
   }
 

@@ -111,7 +111,11 @@ TEST(Metrics, RmseConstantOffsets) {
 }
 
 TEST(Metrics, ContinuityKnownPatterns) {
-  // 1 truth, 6 steps, assignments: [1,1,_, _,1,2]
+  // 1 truth (id 1) present in all 6 steps, assignments: [1,1,_, _,1,2]
+  BenchResult r;
+  for (int k = 0; k < 6; ++k)
+    r.steps.push_back(makeStep(k, {{0, 0}}, {}));
+
   std::vector<benchmark::StepAssignment> a;
   a.push_back({TrackId{1}});
   a.push_back({TrackId{1}});
@@ -120,10 +124,82 @@ TEST(Metrics, ContinuityKnownPatterns) {
   a.push_back({TrackId{1}});
   a.push_back({TrackId{2}});  // <- 1 id switch
 
-  const auto c = benchmark::computeContinuity(a, /*n_truths=*/1);
+  const auto c = benchmark::computeContinuity(r, a);
   EXPECT_NEAR(c.lifetime_ratio, 4.0 / 6.0, 1e-9);
   EXPECT_NEAR(c.track_breaks, 1.0, 1e-9);  // one nullopt run
   EXPECT_NEAR(c.id_switches, 1.0, 1e-9);
+}
+
+namespace {
+// Step builder with explicit truth ids — the slot order in step.truth is
+// part of what these tests exercise, so ids can't just be slot+1.
+BenchStep makeStepIds(
+    double t,
+    std::vector<std::pair<std::uint64_t, Eigen::Vector2d>> truth,
+    std::vector<std::pair<std::uint64_t, Eigen::Vector2d>> tracks) {
+  BenchStep s;
+  s.time = Timestamp::fromSeconds(t);
+  for (const auto& [id, p] : truth)
+    s.truth.push_back({id, p, Eigen::Vector2d(10, 0)});
+  for (const auto& [id, p] : tracks)
+    s.tracks.push_back({TrackId{id}, p, Eigen::Vector2d(10, 0)});
+  return s;
+}
+}  // namespace
+
+TEST(Metrics, ContinuityKeyedByTruthIdNotSlot) {
+  // Two targets, two steps; the truth vector's SLOT ORDER swaps between
+  // steps (as happens with real per-target data). Each physical target is
+  // followed by the same track throughout — there is no identity churn,
+  // so switches and breaks must be zero.
+  BenchResult r;
+  r.steps.push_back(makeStepIds(0.0,
+                                {{7, {0, 0}}, {9, {100, 0}}},
+                                {{1, {1, 0}}, {2, {101, 0}}}));
+  r.steps.push_back(makeStepIds(1.0,
+                                {{9, {100, 0}}, {7, {0, 0}}},
+                                {{1, {1, 0}}, {2, {101, 0}}}));
+
+  const auto a = benchmark::assignPerStep(r, 50.0);
+  const auto c = benchmark::computeContinuity(r, a);
+  EXPECT_NEAR(c.lifetime_ratio, 1.0, 1e-9);
+  EXPECT_NEAR(c.track_breaks, 0.0, 1e-9);
+  EXPECT_NEAR(c.id_switches, 0.0, 1e-9);
+}
+
+TEST(Metrics, ContinuityTimeVaryingCardinality) {
+  // Target 7 exists for steps 0-1, target 9 for steps 1-2. Each is
+  // perfectly tracked while present. Lifetime is measured against
+  // presence, and appearance/disappearance is not a break or a switch.
+  BenchResult r;
+  r.steps.push_back(makeStepIds(0.0, {{7, {0, 0}}}, {{1, {1, 0}}}));
+  r.steps.push_back(makeStepIds(1.0,
+                                {{7, {0, 0}}, {9, {100, 0}}},
+                                {{1, {1, 0}}, {2, {101, 0}}}));
+  r.steps.push_back(makeStepIds(2.0, {{9, {100, 0}}}, {{2, {101, 0}}}));
+
+  const auto a = benchmark::assignPerStep(r, 50.0);
+  const auto c = benchmark::computeContinuity(r, a);
+  EXPECT_NEAR(c.lifetime_ratio, 1.0, 1e-9);
+  EXPECT_NEAR(c.track_breaks, 0.0, 1e-9);
+  EXPECT_NEAR(c.id_switches, 0.0, 1e-9);
+}
+
+TEST(Metrics, RmseKeyedByTruthIdAcrossReorderedSlots) {
+  // Target 7 is tracked with a constant 3 m offset, target 9 exactly.
+  // Slot order swaps between steps. Per-truth RMSE must follow the id:
+  // mean(rmse_7, rmse_9) = mean(3, 0) = 1.5 — not the slot-mixed 2.12.
+  BenchResult r;
+  r.steps.push_back(makeStepIds(0.0,
+                                {{7, {0, 0}}, {9, {100, 0}}},
+                                {{1, {3, 0}}, {2, {100, 0}}}));
+  r.steps.push_back(makeStepIds(1.0,
+                                {{9, {100, 0}}, {7, {0, 0}}},
+                                {{1, {3, 0}}, {2, {100, 0}}}));
+
+  const auto a = benchmark::assignPerStep(r, 50.0);
+  const auto rmse = benchmark::computeRmse(r, a);
+  EXPECT_NEAR(rmse.pos_rmse_m, 1.5, 1e-9);
 }
 
 TEST(Metrics, ComputeMetricsBundlesAll) {

@@ -73,7 +73,7 @@ TEST(TrackTree, BranchProducesMissAndPerMeasurementChildren) {
 
   navtracker::FixedSensorDetectionModel det(
       navtracker::DetectionParams{0.9, 1e-4});
-  TrackTree::BranchParams p{&det, 0.9, 9.0};
+  TrackTree::BranchParams p{&det, 9.0};
   tt.branch(ekf, {z}, navtracker::Timestamp::fromSeconds(1.0), p);
 
   EXPECT_FALSE(tt.nodes()[0].is_leaf);
@@ -96,7 +96,7 @@ TEST(TrackTree, BranchSkipsUngatedMeasurements) {
 
   navtracker::FixedSensorDetectionModel det(
       navtracker::DetectionParams{0.9, 1e-4});
-  TrackTree::BranchParams p{&det, 0.9, 9.0};
+  TrackTree::BranchParams p{&det, 9.0};
   tt.branch(ekf, {z}, navtracker::Timestamp::fromSeconds(1.0), p);
 
   EXPECT_EQ(tt.leafIndices().size(), 1u);
@@ -326,4 +326,140 @@ TEST(TrackTree, MergeBranchesDisabledWhenThresholdZero) {
   tt.mutableNodes().push_back(n2);
   EXPECT_EQ(tt.mergeBranches(0.0), 0u);
   EXPECT_EQ(tt.mergeBranches(-1.0), 0u);
+}
+
+// --- Per-sensor miss-branch scoring ---------------------------------------
+//
+// The miss penalty must reflect which sensor(s) actually surveyed this
+// scan instant: log Π_s (1 − P_D^s(track)), with per-sensor P_D
+// conditioned on coverage. A global per-scan P_D charges every track
+// log(1 − 0.9) ≈ −2.3 at the UNION of all sensors' event rates (~16 Hz
+// on AutoFerry) and kills any track its fastest sensor can't see.
+
+namespace {
+
+// The miss leaf is the branch child carrying no measurement.
+const TrackTreeNode* findMissLeaf(const TrackTree& tt) {
+  for (const auto& n : tt.nodes()) {
+    if (n.is_leaf && n.scan_meas_idx == TrackTreeNode::kNoMeasurement)
+      return &n;
+  }
+  return nullptr;
+}
+
+navtracker::Measurement farMeasurement(navtracker::SensorKind s) {
+  navtracker::Measurement z;
+  z.time = navtracker::Timestamp::fromSeconds(1.0);
+  z.model = navtracker::MeasurementModel::Position2D;
+  z.sensor = s;
+  z.value = Eigen::Vector2d(1000.0, 1000.0);  // never gates
+  z.covariance = Eigen::Matrix2d::Identity();
+  z.source_id = "t";
+  return z;
+}
+
+}  // namespace
+
+TEST(TrackTree, MissBranchUsesPerSensorPd) {
+  TrackTree tt(TrackId{20}, rootNode(0.0, 0.0));
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+
+  navtracker::FixedSensorDetectionModel det(
+      navtracker::DetectionParams{0.9, 1e-4});
+  det.set(navtracker::SensorKind::Lidar,
+          navtracker::MeasurementModel::Position2D,
+          navtracker::DetectionParams{0.5, 1e-4});
+
+  TrackTree::BranchParams p{&det, 9.0};
+  tt.branch(ekf, {farMeasurement(navtracker::SensorKind::Lidar)},
+            navtracker::Timestamp::fromSeconds(1.0), p);
+
+  const TrackTreeNode* miss = findMissLeaf(tt);
+  ASSERT_NE(miss, nullptr);
+  EXPECT_NEAR(miss->score, std::log(1.0 - 0.5), 1e-12);
+}
+
+TEST(TrackTree, MissBranchIgnoresOutOfRangeSensor) {
+  // Track at (500, 0); lidar at the origin with 100 m coverage: it could
+  // not have detected the track, so the miss costs nothing.
+  TrackTree tt(TrackId{21}, rootNode(500.0, 0.0));
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+
+  navtracker::FixedSensorDetectionModel det(
+      navtracker::DetectionParams{0.9, 1e-4});
+  det.set(navtracker::SensorKind::Lidar,
+          navtracker::MeasurementModel::Position2D,
+          navtracker::DetectionParams{0.5, 1e-4, /*max_range_m=*/100.0});
+
+  TrackTree::BranchParams p{&det, 9.0};
+  tt.branch(ekf, {farMeasurement(navtracker::SensorKind::Lidar)},
+            navtracker::Timestamp::fromSeconds(1.0), p);
+
+  const TrackTreeNode* miss = findMissLeaf(tt);
+  ASSERT_NE(miss, nullptr);
+  EXPECT_NEAR(miss->score, 0.0, 1e-12);
+}
+
+TEST(TrackTree, MissBranchCombinesDistinctScanSensors) {
+  // A scan carrying radar (P_D .8) and lidar (P_D .5) measurements:
+  // missed by both → log(0.2) + log(0.5).
+  TrackTree tt(TrackId{22}, rootNode(0.0, 0.0));
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+
+  navtracker::FixedSensorDetectionModel det(
+      navtracker::DetectionParams{0.9, 1e-4});
+  det.set(navtracker::SensorKind::ArpaTtm,
+          navtracker::MeasurementModel::Position2D,
+          navtracker::DetectionParams{0.8, 1e-4});
+  det.set(navtracker::SensorKind::Lidar,
+          navtracker::MeasurementModel::Position2D,
+          navtracker::DetectionParams{0.5, 1e-4});
+
+  TrackTree::BranchParams p{&det, 9.0};
+  tt.branch(ekf,
+            {farMeasurement(navtracker::SensorKind::ArpaTtm),
+             farMeasurement(navtracker::SensorKind::Lidar)},
+            navtracker::Timestamp::fromSeconds(1.0), p);
+
+  const TrackTreeNode* miss = findMissLeaf(tt);
+  ASSERT_NE(miss, nullptr);
+  EXPECT_NEAR(miss->score, std::log(0.2) + std::log(0.5), 1e-12);
+}
+
+TEST(TrackTree, ExistencePredictIsDtScaled) {
+  // IPDA persistence is a per-second rate: a miss after 0.1 s decays
+  // existence less than a miss after 1.0 s; the 1.0 s case reproduces
+  // the legacy per-scan recursion exactly.
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+  navtracker::FixedSensorDetectionModel det(
+      navtracker::DetectionParams{0.5, 1e-4});
+
+  auto runMiss = [&](double dt) {
+    TrackTreeNode root = rootNode(0.0, 0.0);
+    root.existence_probability = 0.8;
+    TrackTree tt(TrackId{23}, root);
+    TrackTree::BranchParams p{&det, 9.0};
+    p.update_existence = true;
+    p.existence_persistence = 0.99;
+    p.gate_probability_mass = 0.99;
+    auto z = farMeasurement(navtracker::SensorKind::Lidar);
+    z.time = navtracker::Timestamp::fromSeconds(dt);
+    tt.branch(ekf, {z}, navtracker::Timestamp::fromSeconds(dt), p);
+    const TrackTreeNode* miss = findMissLeaf(tt);
+    return miss ? miss->existence_probability : -1.0;
+  };
+
+  const double r_fast = runMiss(0.1);
+  const double r_slow = runMiss(1.0);
+  EXPECT_GT(r_fast, r_slow);
+
+  // dt = 1 s endpoint == legacy closed form (Musicki 1994 miss update).
+  const double r_pred = 0.99 * 0.8;
+  const double l_miss = 1.0 - 0.5 * 0.99;
+  const double r_expected = r_pred * l_miss / (1.0 - r_pred + r_pred * l_miss);
+  EXPECT_NEAR(r_slow, r_expected, 1e-12);
 }

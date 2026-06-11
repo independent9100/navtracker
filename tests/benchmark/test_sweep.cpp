@@ -51,3 +51,43 @@ TEST(Sweep, RowCountMatchesMatrix) {
     EXPECT_EQ(r.scenario, "tiny_line");
   }
 }
+
+// --- Per-scenario per-sensor detection tables -----------------------------
+
+TEST(Sweep, DetectionModelForBuildsPerSensorTable) {
+  ScenarioDescriptor desc;
+  desc.label = "with_table";
+  desc.detection_table.push_back(
+      {navtracker::SensorKind::Lidar, navtracker::MeasurementModel::Position2D,
+       navtracker::DetectionParams{0.7, 5e-6, 140.0}});
+  desc.detection_table.push_back(
+      {navtracker::SensorKind::EoIr, navtracker::MeasurementModel::Bearing2D,
+       navtracker::DetectionParams{0.6, 0.5}});
+
+  navtracker::MhtTracker::Config cfg;
+  const auto model = detectionModelFor(desc, cfg);
+  ASSERT_TRUE(model);
+  const auto lidar = model->paramsFor(navtracker::SensorKind::Lidar,
+                                      navtracker::MeasurementModel::Position2D);
+  EXPECT_DOUBLE_EQ(lidar.probability_of_detection, 0.7);
+  EXPECT_DOUBLE_EQ(lidar.clutter_intensity, 5e-6);
+  EXPECT_DOUBLE_EQ(lidar.max_range_m, 140.0);
+  const auto eo = model->paramsFor(navtracker::SensorKind::EoIr,
+                                   navtracker::MeasurementModel::Bearing2D);
+  EXPECT_DOUBLE_EQ(eo.probability_of_detection, 0.6);
+  // Sensors not in the table fall back to the tracker config defaults.
+  const auto other = model->paramsFor(navtracker::SensorKind::Ais,
+                                      navtracker::MeasurementModel::Position2D);
+  EXPECT_DOUBLE_EQ(other.probability_of_detection,
+                   cfg.probability_of_detection);
+  EXPECT_DOUBLE_EQ(other.clutter_intensity, cfg.clutter_density);
+}
+
+TEST(Sweep, DetectionModelForEmptyTableReturnsNull) {
+  // No table → null, and the sweep falls back to the legacy scalar
+  // clutter_density override.
+  ScenarioDescriptor desc;
+  desc.label = "no_table";
+  navtracker::MhtTracker::Config cfg;
+  EXPECT_FALSE(detectionModelFor(desc, cfg));
+}

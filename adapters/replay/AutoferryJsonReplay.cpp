@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -270,6 +271,9 @@ Scenario loadAutoferryScenario(const std::string& dir,
         m.model = MeasurementModel::Position2D;
         m.value = Eigen::Vector2d(os_e + me, os_n + mn);  // (E, N)
         m.covariance = Eigen::Matrix2d::Identity() * (std_m * std_m);
+        // Ownship carries the sensor: needed downstream to range-
+        // condition the per-sensor miss P_D (lidar coverage ~140 m).
+        m.sensor_position_enu = Eigen::Vector2d(os_e, os_n);
         s.measurements.push_back(std::move(m));
       }
     } else if ((s_id == 3 || s_id == 4) && opts.include_bearings) {
@@ -304,18 +308,73 @@ Scenario loadAutoferryScenario(const std::string& dir,
                    });
 
   // --- Ground truth (per detection-index scan of per-target objects) ---
+  //
+  // The dataset stamps every target with its OWN time inside a scan
+  // (skews ~0.1 s). Passed through verbatim, those per-target times
+  // fragment one 2-target scan into two 1-target evaluation steps in
+  // BenchRunner::groupTruth (which buckets on exact time), wrecking
+  // every cardinality/identity metric. One scan = one evaluation
+  // instant: all of a scan's samples are stamped with the scan's latest
+  // target time (≤0.1 s labelling skew ≈ <1 m at harbour speeds —
+  // negligible against sensor noise).
   for (const JValue& scan : gt_root.arr) {
     if (!scan.isArray()) continue;
+    const std::size_t scan_begin = s.truth.size();
+    double scan_t = -std::numeric_limits<double>::infinity();
     for (const JValue& tgt : scan.arr) {
       const JValue* id = tgt.find("targetID");
       const JValue* pos = tgt.find("position");
       const JValue* tm = tgt.find("time");
       if (!id || !pos || !tm || !pos->isArray() || pos->arr.size() < 2) continue;
       TruthSample ts;
-      ts.time = Timestamp::fromSeconds(tm->number);
       ts.truth_id = static_cast<std::uint64_t>(std::lround(id->number));
       ts.position = Eigen::Vector2d(pos->arr[1].number, pos->arr[0].number);  // (E,N)
+      scan_t = std::max(scan_t, tm->number);
       s.truth.push_back(ts);
+    }
+    for (std::size_t i = scan_begin; i < s.truth.size(); ++i)
+      s.truth[i].time = Timestamp::fromSeconds(scan_t);
+  }
+
+  // Scans should already be file-ordered by time; guarantee the sorted-
+  // by-time precondition of BenchRunner::groupTruth either way. The
+  // dataset also repeats the previous truth scan verbatim when no new
+  // ground-truth fix arrived between detection events — sort by
+  // (time, id) and drop those exact duplicates so one evaluation step
+  // sees each target once.
+  std::sort(s.truth.begin(), s.truth.end(),
+            [](const TruthSample& a, const TruthSample& b) {
+              if (a.time < b.time) return true;
+              if (b.time < a.time) return false;
+              return a.truth_id < b.truth_id;
+            });
+  s.truth.erase(std::unique(s.truth.begin(), s.truth.end(),
+                            [](const TruthSample& a, const TruthSample& b) {
+                              return a.time == b.time &&
+                                     a.truth_id == b.truth_id;
+                            }),
+                s.truth.end());
+
+  // The dataset carries positions only; derive per-target velocity by
+  // finite differences so SOG/COG metrics compare against real target
+  // kinematics instead of the zero vector. Central difference at
+  // interior samples, one-sided at the ends, zero for singletons.
+  {
+    std::map<std::uint64_t, std::vector<std::size_t>> by_target;
+    for (std::size_t i = 0; i < s.truth.size(); ++i)
+      by_target[s.truth[i].truth_id].push_back(i);
+    for (const auto& [tid, idx] : by_target) {
+      const std::size_t n = idx.size();
+      for (std::size_t k = 0; k < n; ++k) {
+        const std::size_t lo = idx[k > 0 ? k - 1 : k];
+        const std::size_t hi = idx[k + 1 < n ? k + 1 : k];
+        if (lo == hi) continue;  // singleton: velocity stays zero
+        const double dt =
+            s.truth[hi].time.secondsSince(s.truth[lo].time);
+        if (dt <= 0.0) continue;
+        s.truth[idx[k]].velocity =
+            (s.truth[hi].position - s.truth[lo].position) / dt;
+      }
     }
   }
 

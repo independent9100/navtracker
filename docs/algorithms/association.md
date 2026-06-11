@@ -117,9 +117,27 @@ where score is the cumulative log-likelihood-ratio (LLR).
 Per scan:
 
 - **Branch.** For each leaf in each tree, produce one missed-detection
-  child (`Δscore = log(1 − P_D)`) and one child per gated measurement
-  (`Δscore = log P_D + log N(z; ẑ, S) − log λ_C`). The EKF update is
+  child and one child per gated measurement
+  (`Δscore = log P_D + log N(z; ẑ, S) − log λ_C`, with `(P_D, λ_C)`
+  looked up per (sensor, model) from `ISensorDetectionModel` — units of
+  λ_C live in the sensor's measurement space). The EKF update is
   applied per measurement-assigned child.
+
+  The miss child charges `Δscore = Σ_s log(1 − P_D^s(x))` over the
+  *distinct sensors present in this scan*, where `P_D^s(x)` is
+  coverage-conditioned (0 beyond the sensor's `max_range_m` about its
+  position → zero penalty). Asynchronous multi-sensor rationale: scans
+  are per-sensor timestamp groups arriving at the union of all sensor
+  rates; a global per-scan `log(1 − P_D)` makes the miss cost
+  proportional to the *total event rate* (~16 Hz on AutoFerry) and
+  deletes any track its fastest sensor cannot see ≈0.4 s after its
+  last hit (measured: ~600 track breaks per AutoFerry scenario, philos
+  lifetime 0.02). With per-sensor conditioning the same scenarios run
+  at ~65 breaks / lifetime 0.77 under the canonical config.
+  The IPDA miss recursion uses the scan's effective
+  `P_D = 1 − Π_s (1 − P_D^s(x))`, and the IPDA/VIMM persistence
+  parameters are **per-second rates** applied as `π^dt` (1 Hz cadence
+  reproduces the classical per-scan recursion exactly).
 - **K_local prune.** Drop the lowest-scoring leaves per tree until at most
   `k_max_leaves` remain.
 - **N-scan trunk-merge.** For each tree, find each current leaf's

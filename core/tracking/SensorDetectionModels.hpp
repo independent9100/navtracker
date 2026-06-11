@@ -39,8 +39,10 @@ class FixedSensorDetectionModel : public ISensorDetectionModel {
     table_[Key{sensor, model}] = p;
   }
 
-  DetectionParams paramsFor(const Measurement& z) const override {
-    const auto it = table_.find(Key{z.sensor, z.model});
+  using ISensorDetectionModel::paramsFor;
+  DetectionParams paramsFor(SensorKind sensor,
+                            MeasurementModel model) const override {
+    const auto it = table_.find(Key{sensor, model});
     return (it == table_.end()) ? defaults_ : it->second;
   }
 
@@ -92,8 +94,10 @@ class AdaptiveSensorDetectionModel : public ISensorDetectionModel {
     b.params = init;
   }
 
-  DetectionParams paramsFor(const Measurement& z) const override {
-    const auto it = buckets_.find(Key{z.sensor, z.model});
+  using ISensorDetectionModel::paramsFor;
+  DetectionParams paramsFor(SensorKind sensor,
+                            MeasurementModel model) const override {
+    const auto it = buckets_.find(Key{sensor, model});
     return (it == buckets_.end()) ? defaults_ : it->second.params;
   }
 

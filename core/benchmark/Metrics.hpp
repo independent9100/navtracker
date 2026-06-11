@@ -48,8 +48,12 @@ struct ContinuityCounts {
   double track_breaks;    // mean count per truth
   double id_switches;     // mean count per truth
 };
-ContinuityCounts computeContinuity(const std::vector<StepAssignment>& assigns,
-                                   std::size_t n_truths);
+// Continuity keyed by truth_id (read from result.steps[k].truth), so it
+// supports time-varying truth cardinality and per-step slot reordering.
+// Lifetime is assigned-steps / present-steps per truth id; a truth id
+// appearing or disappearing is neither a break nor a switch.
+ContinuityCounts computeContinuity(const BenchResult& result,
+                                   const std::vector<StepAssignment>& assigns);
 
 struct RmseResult {
   double pos_rmse_m;

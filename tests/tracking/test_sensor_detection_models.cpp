@@ -148,3 +148,42 @@ TEST(AdaptiveSensorDetectionModel, BearingBucketKeepsInitDensity) {
   EXPECT_DOUBLE_EQ(
       m.densityFor(SensorKind::EoIr, MeasurementModel::Bearing2D), 0.1);
 }
+
+// --- Coverage-conditioned miss P_D ---------------------------------------
+//
+// The miss branch of the MHT score asks "could this sensor have detected
+// the track at all?". A sensor whose coverage excludes the track (e.g. a
+// lidar with ~140 m range and a track at 500 m) must contribute P_D = 0,
+// i.e. zero miss penalty — otherwise every out-of-coverage scan bleeds
+// score from a perfectly healthy track.
+
+TEST(FixedSensorDetectionModel, MissPdReturnsTablePdInsideCoverage) {
+  FixedSensorDetectionModel m(DetectionParams{0.9, 1e-4});
+  m.set(SensorKind::Lidar, MeasurementModel::Position2D,
+        DetectionParams{0.7, 5e-6, /*max_range_m=*/100.0});
+  const double pd = m.missDetectionProbability(
+      SensorKind::Lidar, MeasurementModel::Position2D,
+      /*track_pos_enu=*/Eigen::Vector2d(50.0, 0.0),
+      /*sensor_pos_enu=*/Eigen::Vector2d(0.0, 0.0));
+  EXPECT_DOUBLE_EQ(pd, 0.7);
+}
+
+TEST(FixedSensorDetectionModel, MissPdZeroBeyondMaxRange) {
+  FixedSensorDetectionModel m(DetectionParams{0.9, 1e-4});
+  m.set(SensorKind::Lidar, MeasurementModel::Position2D,
+        DetectionParams{0.7, 5e-6, /*max_range_m=*/100.0});
+  const double pd = m.missDetectionProbability(
+      SensorKind::Lidar, MeasurementModel::Position2D,
+      Eigen::Vector2d(500.0, 0.0), Eigen::Vector2d(0.0, 0.0));
+  EXPECT_DOUBLE_EQ(pd, 0.0);
+}
+
+TEST(FixedSensorDetectionModel, MissPdDefaultEntryIsUnbounded) {
+  // No table entry → defaults, whose max_range is infinite: coverage
+  // never truncates (legacy behaviour for sensors without range info).
+  FixedSensorDetectionModel m(DetectionParams{0.9, 1e-4});
+  const double pd = m.missDetectionProbability(
+      SensorKind::Ais, MeasurementModel::Position2D,
+      Eigen::Vector2d(1e6, 0.0), Eigen::Vector2d(0.0, 0.0));
+  EXPECT_DOUBLE_EQ(pd, 0.9);
+}

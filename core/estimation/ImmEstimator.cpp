@@ -5,6 +5,7 @@
 #include <utility>
 
 #include <Eigen/LU>
+#include <unsupported/Eigen/MatrixFunctions>
 
 #include "core/estimation/CoordinatedTurn.hpp"
 #include "core/estimation/MeasurementModels.hpp"
@@ -40,6 +41,25 @@ void ImmEstimator::projectMixtureToTrack(Track& track) const {
   track.covariance = P;
 }
 
+// π^dt with stochastic-matrix sanitation. dt == 1 short-circuits to the
+// configured matrix (the common synthetic cadence — bit-identical to the
+// legacy per-call behaviour there). The fractional power of a row-
+// stochastic, diagonally-dominant TPM is again row-stochastic up to FP
+// noise; tiny negative entries are clamped and rows re-normalised. A
+// non-embeddable chain (NaNs in the power) falls back to the per-call
+// matrix — wrong cadence scaling, but never garbage probabilities.
+Eigen::MatrixXd ImmEstimator::transitionFor(double dt) const {
+  if (dt == 1.0) return pi_;
+  Eigen::MatrixXd p = pi_.pow(dt);
+  if (!p.allFinite()) return pi_;
+  p = p.cwiseMax(0.0);
+  for (int i = 0; i < p.rows(); ++i) {
+    const double row_sum = p.row(i).sum();
+    if (row_sum > 0.0) p.row(i) /= row_sum;
+  }
+  return p;
+}
+
 void ImmEstimator::predict(Track& track, Timestamp to) const {
   if (track.imm_means.cols() == 0) return;
   const double dt = to.secondsSince(track.last_update);
@@ -47,12 +67,13 @@ void ImmEstimator::predict(Track& track, Timestamp to) const {
   const int K = static_cast<int>(track.imm_means.cols());
   const int n = static_cast<int>(track.imm_means.rows());
 
-  // Mixing step.
+  // Mixing step with the dt-scaled TPM (see class docs).
+  const Eigen::MatrixXd pi_dt = transitionFor(dt);
   Eigen::VectorXd c(K);
   for (int j = 0; j < K; ++j) {
     double sum = 0.0;
     for (int i = 0; i < K; ++i)
-      sum += pi_(i, j) * track.imm_mode_probabilities(i);
+      sum += pi_dt(i, j) * track.imm_mode_probabilities(i);
     c(j) = sum;
   }
   Eigen::MatrixXd mu_ij(K, K);
@@ -62,7 +83,7 @@ void ImmEstimator::predict(Track& track, Timestamp to) const {
       mu_ij(j, j) = 1.0;
     } else {
       for (int i = 0; i < K; ++i)
-        mu_ij(i, j) = pi_(i, j) * track.imm_mode_probabilities(i) / c(j);
+        mu_ij(i, j) = pi_dt(i, j) * track.imm_mode_probabilities(i) / c(j);
     }
   }
 
@@ -98,6 +119,12 @@ void ImmEstimator::predict(Track& track, Timestamp to) const {
     track.imm_covariances[j] = F * P_mix[j] * F.transpose() + Q;
   }
 
+  // Advance the mode probabilities to the predicted prior c = π(dt)ᵀ μ.
+  // update()/softUpdate() consume this directly (μ⁺ ∝ c_j Λ_j), so the
+  // TPM is applied exactly once per predict, scaled by its dt — never
+  // once more per measurement.
+  track.imm_mode_probabilities = c;
+
   projectMixtureToTrack(track);
   track.last_update = to;
 }
@@ -107,15 +134,11 @@ void ImmEstimator::update(Track& track, const Measurement& z) const {
   const int K = static_cast<int>(track.imm_means.cols());
   const int n = static_cast<int>(track.imm_means.rows());
 
-  // c_j: mode-prior at update time. μ here is the previous-cycle posterior
-  // since predict does not modify it.
-  Eigen::VectorXd c(K);
-  for (int j = 0; j < K; ++j) {
-    double sum = 0.0;
-    for (int i = 0; i < K; ++i)
-      sum += pi_(i, j) * track.imm_mode_probabilities(i);
-    c(j) = sum;
-  }
+  // c_j: mode-prior at update time. predict() already advanced μ to the
+  // dt-scaled predicted prior π(dt)ᵀμ, so it is consumed as-is. (A
+  // same-timestamp second update sees dt = 0 ⇒ π(0) = I — applying the
+  // TPM again here would double-count the transition.)
+  const Eigen::VectorXd c = track.imm_mode_probabilities;
 
   // Per-mode EKF update + log-likelihood. Copies of (x_j, P_j) so we
   // read the prior while writing the posterior back to the same slot.
@@ -238,14 +261,9 @@ void ImmEstimator::softUpdate(Track& track,
            "sensor_position_enu");
   }
 
-  // Mode prior c_j = sum_i pi(i,j) mu_i — same as update().
-  Eigen::VectorXd c(K);
-  for (int j = 0; j < K; ++j) {
-    double sum = 0.0;
-    for (int i = 0; i < K; ++i)
-      sum += pi_(i, j) * track.imm_mode_probabilities(i);
-    c(j) = sum;
-  }
+  // Mode prior: predict() already advanced μ to π(dt)ᵀμ — same as
+  // update().
+  const Eigen::VectorXd c = track.imm_mode_probabilities;
 
   Eigen::VectorXd log_lambda(K);
   for (int j = 0; j < K; ++j) {

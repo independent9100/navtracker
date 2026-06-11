@@ -198,10 +198,23 @@ matrix π; mode probabilities `μⱼ` carried per track.
 
 Per cycle:
 
-- **Mixing (in `predict`).** `cⱼ = Σᵢ π[i][j]·μᵢ`,
-  `μᵢⱼ = π[i][j]·μᵢ / cⱼ`,
+- **Mixing (in `predict`).** With the dt-scaled TPM `π(dt) = π^dt`
+  (π is the **one-second** TPM; matrix fractional power, equivalent to
+  `expm(logm(π)·dt)` for the diagonally-dominant chains used in
+  tracking): `cⱼ = Σᵢ π(dt)[i][j]·μᵢ`,
+  `μᵢⱼ = π(dt)[i][j]·μᵢ / cⱼ`,
   `x̂₀ⱼ = Σᵢ μᵢⱼ·xᵢ`,
   `P̂₀ⱼ = Σᵢ μᵢⱼ·(Pᵢ + (xᵢ − x̂₀ⱼ)(xᵢ − x̂₀ⱼ)ᵀ)`.
+  `predict` then advances `μ ← c` (the predicted mode prior);
+  `update`/`softUpdate` consume it directly, so the TPM is applied
+  exactly once per predict, scaled by dt — never once more per
+  measurement. Rationale: per-call application ties the mode mixing
+  rate to the measurement cadence — at the AutoFerry replay's ~16
+  scans/s the modes washed to the stationary distribution between
+  every measurement. `π^dt` makes prediction a semigroup (two 0.5 s
+  predicts ≡ one 1 s predict) and keeps the mixing rate a property of
+  the configuration. At the 1 Hz synthetic cadence this is
+  bit-identical to the legacy per-call behaviour.
 - **Per-mode prediction.** `xⱼ ← Fⱼ(dt)·x̂₀ⱼ`,
   `Pⱼ ← Fⱼ·P̂₀ⱼ·Fⱼᵀ + Qⱼ(dt)`.
   For `CoordinatedTurn`, `Fⱼ(dt)` is evaluated at the mixed-prior `ωⱼ`.
@@ -214,9 +227,12 @@ Per cycle:
 
 **Assumptions.** Unified state dimension across all K models (5-state).
 `CoordinatedTurn` is evaluated at the current `ω` estimate (not iteratively
-re-linearized through `ω`). Mixing happens inside `predict`; mode
-probabilities are not changed by `predict`. Transition matrix π is
-time-invariant and chosen by the user.
+re-linearized through `ω`). Mixing happens inside `predict`, which also
+advances the mode probabilities to the predicted prior. Transition
+matrix π is time-invariant, chosen by the user, and interpreted as the
+TPM at dt = 1 s; it must be embeddable (fractional powers real and
+non-negative — true for the diagonally-dominant matrices used here;
+non-embeddable chains fall back to per-call application).
 
 **Rationale.** Single-model filters (EKF/UKF/PF over CV) lag through
 maneuvers because `Q_CV` does not represent a turn — they widen their

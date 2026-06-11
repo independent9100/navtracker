@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <numeric>
 #include <unordered_set>
 
@@ -120,98 +121,135 @@ std::vector<StepAssignment> assignPerStep(const BenchResult& result,
   return out;
 }
 
-// Math:        per truth i, walk the time series of StepAssignment[i].
-//                - lifetime_ratio_i = (#steps where a[i] is Some) / total
-//                - track_breaks_i  = # of maximal Some -> None transitions
-//                - id_switches_i   = # of adjacent Some -> Some transitions
-//                  where the TrackId changes
-//              Reported as plain means across truths.
-// Assumptions: assigns is the output of assignPerStep; each entry's size
-//              matches n_truths; n_truths > 0. Bad inputs return zeros.
+// Math:        per truth id g (keyed by TruthStateSnapshot::truth_id),
+//              walk the steps where g is present in step.truth:
+//                - lifetime_ratio_g = (#present steps where g assigned)
+//                                     / (#present steps)
+//                - track_breaks_g  = # of maximal assigned -> unassigned
+//                                    transitions while present
+//                - id_switches_g   = # of adjacent assigned -> assigned
+//                                    transitions where the TrackId changes
+//              Steps where g is absent from truth reset the per-id walk
+//              (prev id forgotten, no break counted): breaks and switches
+//              are only scored within continuous-presence intervals, since
+//              the tracker cannot be faulted while truth itself is gone.
+//              Reported as plain means across truth ids.
+// Assumptions: assigns is the per-step output of assignPerStep (parallel
+//              to result.steps and to each step's truth slots). Truth
+//              cardinality and slot order may vary per step. Bad inputs
+//              return zeros.
 // Rationale:   CLAUDE.md names ID stability as an architectural
 //              guarantee; OSPA alone wouldn't catch silent ID churn or
-//              brief drops that don't change cardinality. Sharing the
-//              assignment with assignPerStep keeps every metric in
-//              agreement about which track represents which truth.
+//              brief drops that don't change cardinality. Keying by
+//              truth_id (not slot index) is required for real-data
+//              replays whose truth lists targets in varying order and
+//              number — slot keying there counts file layout, not
+//              tracker behaviour.
 // Improve next: replace per-step assignment with a run-level longest
 //               common subsequence over (truth, track_id) — better at
 //               distinguishing brief swap-then-swap-back from real
 //               permanent ID churn.
-ContinuityCounts computeContinuity(const std::vector<StepAssignment>& assigns,
-                                   std::size_t n_truths) {
-  if (n_truths == 0 || assigns.empty()) return {0, 0, 0};
-  std::vector<double> life(n_truths, 0.0);
-  std::vector<double> breaks(n_truths, 0.0);
-  std::vector<double> switches(n_truths, 0.0);
-  std::vector<bool> in_gap(n_truths, true);
-  std::vector<std::optional<TrackId>> prev(n_truths, std::nullopt);
+ContinuityCounts computeContinuity(const BenchResult& result,
+                                   const std::vector<StepAssignment>& assigns) {
+  if (result.steps.empty() || assigns.size() != result.steps.size())
+    return {0, 0, 0};
 
-  for (const auto& step : assigns) {
-    for (std::size_t i = 0; i < n_truths && i < step.size(); ++i) {
-      const auto& a = step[i];
+  struct PerTruth {
+    double present = 0.0;
+    double assigned = 0.0;
+    double breaks = 0.0;
+    double switches = 0.0;
+    bool in_gap = true;
+    std::optional<TrackId> prev;
+  };
+  std::map<std::uint64_t, PerTruth> per;  // ordered: deterministic means
+
+  for (std::size_t k = 0; k < result.steps.size(); ++k) {
+    const auto& truth = result.steps[k].truth;
+    const auto& assign = assigns[k];
+    std::unordered_set<std::uint64_t> seen;
+    for (std::size_t i = 0; i < truth.size() && i < assign.size(); ++i) {
+      seen.insert(truth[i].truth_id);
+      PerTruth& p = per[truth[i].truth_id];
+      p.present += 1.0;
+      const auto& a = assign[i];
       if (a.has_value()) {
-        life[i] += 1.0;
-        if (in_gap[i]) in_gap[i] = false;
-        if (prev[i].has_value() && prev[i]->value != a->value) {
-          switches[i] += 1.0;
+        p.assigned += 1.0;
+        if (p.in_gap) p.in_gap = false;
+        if (p.prev.has_value() && p.prev->value != a->value) {
+          p.switches += 1.0;
         }
-        prev[i] = a;
+        p.prev = a;
       } else {
-        if (!in_gap[i]) {
-          breaks[i] += 1.0;  // exited an assigned interval
-          in_gap[i] = true;
+        if (!p.in_gap) {
+          p.breaks += 1.0;  // exited an assigned interval
+          p.in_gap = true;
         }
-        prev[i] = std::nullopt;
+        p.prev = std::nullopt;
       }
     }
+    // Truth ids absent this step: reset the walk without scoring — the
+    // next presence interval starts fresh.
+    for (auto& [id, p] : per) {
+      if (seen.count(id)) continue;
+      p.in_gap = true;
+      p.prev = std::nullopt;
+    }
   }
+  if (per.empty()) return {0, 0, 0};
 
   ContinuityCounts c{};
-  for (std::size_t i = 0; i < n_truths; ++i) {
-    c.lifetime_ratio += life[i] / static_cast<double>(assigns.size());
-    c.track_breaks += breaks[i];
-    c.id_switches += switches[i];
+  for (const auto& [id, p] : per) {
+    if (p.present > 0.0) c.lifetime_ratio += p.assigned / p.present;
+    c.track_breaks += p.breaks;
+    c.id_switches += p.switches;
   }
-  c.lifetime_ratio /= static_cast<double>(n_truths);
-  c.track_breaks /= static_cast<double>(n_truths);
-  c.id_switches /= static_cast<double>(n_truths);
+  const double n = static_cast<double>(per.size());
+  c.lifetime_ratio /= n;
+  c.track_breaks /= n;
+  c.id_switches /= n;
   return c;
 }
 
-// Math:        for each truth i, walk timesteps assigned to a track tid.
-//              For each such (truth, track) pair, accumulate squared
-//              errors of position, SOG (= |v|), and wrapped COG. Per
-//              truth, take sqrt(mean). Final result is the mean across
-//              truths that contributed at least one sample.
-//                pos_rmse_m   = mean_i sqrt(mean_k ||pos_diff_k||^2)
-//                sog_rmse_mps = mean_i sqrt(mean_k (|v_i,k| - |v_truth,k|)^2)
-//                cog_rmse_deg = mean_i sqrt(mean_k wrap(cog_diff_k)^2)
+// Math:        for each truth id g, walk timesteps where g is present and
+//              assigned to a track tid. For each such (truth, track)
+//              pair, accumulate squared errors of position, SOG (= |v|),
+//              and wrapped COG. Per truth id, take sqrt(mean). Final
+//              result is the mean across truth ids that contributed at
+//              least one sample.
+//                pos_rmse_m   = mean_g sqrt(mean_k ||pos_diff_k||^2)
+//                sog_rmse_mps = mean_g sqrt(mean_k (|v_g,k| - |v_truth,k|)^2)
+//                cog_rmse_deg = mean_g sqrt(mean_k wrap(cog_diff_k)^2)
 // Assumptions: assigns is the per-step output of assignPerStep so
 //              estimate/truth pairs agree across all three metrics;
+//              truth cardinality and slot order may vary per step;
 //              track velocity is in metres/second; COG convention is
 //              cog = atan2(vx, vy) (clockwise from north).
 // Rationale:   decomposes OSPA so an improvement's source (position
-//              fit / velocity / course) is visible. Shared assignment
-//              with continuity and id_switches keeps "which track
-//              represents which truth" consistent across all metrics.
+//              fit / velocity / course) is visible. Keyed by truth_id
+//              for the same reason as computeContinuity: slot keying
+//              mixes different physical targets on real-data replays.
 // Improve next: report NEES / NIS to check covariance calibration; add
 //               a velocity-vector RMSE (single number capturing both
 //               magnitude and direction) if downstream callers want it.
 RmseResult computeRmse(const BenchResult& result,
                        const std::vector<StepAssignment>& assigns) {
-  if (result.steps.empty() || assigns.empty()) return {0, 0, 0};
-  const std::size_t n_truths = result.steps.front().truth.size();
-  if (n_truths == 0) return {0, 0, 0};
+  if (result.steps.empty() || assigns.size() != result.steps.size())
+    return {0, 0, 0};
 
-  std::vector<double> pos_se(n_truths, 0.0);
-  std::vector<double> sog_se(n_truths, 0.0);
-  std::vector<double> cog_se(n_truths, 0.0);
-  std::vector<std::size_t> n(n_truths, 0);
+  struct Accum {
+    double pos_se = 0.0;
+    double sog_se = 0.0;
+    double cog_se = 0.0;
+    std::size_t n = 0;
+  };
+  std::map<std::uint64_t, Accum> per;  // ordered: deterministic means
 
   for (std::size_t k = 0; k < result.steps.size(); ++k) {
     const auto& step = result.steps[k];
     const auto& assign = assigns[k];
-    for (std::size_t i = 0; i < std::min(n_truths, assign.size()); ++i) {
+    for (std::size_t i = 0; i < std::min(step.truth.size(), assign.size());
+         ++i) {
       if (!assign[i].has_value()) continue;
       const TrackId tid = *assign[i];
       auto it = std::find_if(step.tracks.begin(), step.tracks.end(),
@@ -219,23 +257,25 @@ RmseResult computeRmse(const BenchResult& result,
                                return s.id.value == tid.value;
                              });
       if (it == step.tracks.end()) continue;
+      Accum& acc = per[step.truth[i].truth_id];
       const Eigen::Vector2d dp = it->position - step.truth[i].position;
-      pos_se[i] += dp.squaredNorm();
+      acc.pos_se += dp.squaredNorm();
       const double ds = it->velocity.norm() - step.truth[i].velocity.norm();
-      sog_se[i] += ds * ds;
-      const double dc = wrapDeg(cogDeg(it->velocity) - cogDeg(step.truth[i].velocity));
-      cog_se[i] += dc * dc;
-      n[i] += 1;
+      acc.sog_se += ds * ds;
+      const double dc =
+          wrapDeg(cogDeg(it->velocity) - cogDeg(step.truth[i].velocity));
+      acc.cog_se += dc * dc;
+      acc.n += 1;
     }
   }
 
   RmseResult out{0, 0, 0};
   std::size_t contributing = 0;
-  for (std::size_t i = 0; i < n_truths; ++i) {
-    if (n[i] == 0) continue;
-    out.pos_rmse_m += std::sqrt(pos_se[i] / static_cast<double>(n[i]));
-    out.sog_rmse_mps += std::sqrt(sog_se[i] / static_cast<double>(n[i]));
-    out.cog_rmse_deg += std::sqrt(cog_se[i] / static_cast<double>(n[i]));
+  for (const auto& [id, acc] : per) {
+    if (acc.n == 0) continue;
+    out.pos_rmse_m += std::sqrt(acc.pos_se / static_cast<double>(acc.n));
+    out.sog_rmse_mps += std::sqrt(acc.sog_se / static_cast<double>(acc.n));
+    out.cog_rmse_deg += std::sqrt(acc.cog_se / static_cast<double>(acc.n));
     ++contributing;
   }
   if (contributing == 0) return {0, 0, 0};
@@ -250,13 +290,13 @@ RmseResult computeRmse(const BenchResult& result,
 //              fields of MetricsResult agree on which track represents
 //              which truth at each timestep.
 // Assumptions: params.ospa_cutoff_m > 0; params.assoc_gate_m > 0.
-//              n_truths is taken from the first step's truth count
-//              (constant across the run — see TruthTrajectory contract).
+//              Truth cardinality and slot order may vary per step; the
+//              continuity and RMSE metrics key by truth_id.
 // Rationale:   single entry point keeps the Sweep code in Task 13 trivial
 //              ("run, compute, emit") and prevents drift between
 //              individual metric callers.
-// Improve next: support time-varying truth cardinality if a future
-//               scenario emits targets that appear/disappear mid-run.
+// Improve next: OSPA(2) (window-based) to fold identity churn into the
+//               headline metric instead of reporting it separately.
 MetricsResult computeMetrics(const BenchResult& result,
                              const MetricsParams& params) {
   MetricsResult m{};
@@ -264,9 +304,7 @@ MetricsResult computeMetrics(const BenchResult& result,
   m.ospa_mean = mean(per_step);
   m.ospa_p95 = percentile(per_step, 0.95);
   const auto assigns = assignPerStep(result, params.assoc_gate_m);
-  const std::size_t n_truths =
-      result.steps.empty() ? 0 : result.steps.front().truth.size();
-  const auto cont = computeContinuity(assigns, n_truths);
+  const auto cont = computeContinuity(result, assigns);
   m.lifetime_ratio = cont.lifetime_ratio;
   m.track_breaks = cont.track_breaks;
   m.id_switches = cont.id_switches;

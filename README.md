@@ -100,6 +100,100 @@ see `docs/output-contract.md`. CMake targets:
 
 For more details, see `CLAUDE.md`.
 
+### Adding a sensor — what to pull from the spec
+
+Integrating a new sensor means building `Measurement` objects plus (for
+the MHT path) one detection-model entry. This is the checklist of what
+to look up in the sensor's datasheet / ICD, and where each number goes.
+
+**1. Measurement model — what does one detection observe?**
+
+| The sensor reports | `MeasurementModel` | `value` layout (SI, rad) |
+| --- | --- | --- |
+| absolute position (GPS-equipped, AIS) | `Position2D` | `(E, N)` metres in the working ENU frame |
+| position + velocity | `PositionVelocity2D` | `(E, N, vE, vN)` |
+| range + bearing relative to the platform | `RangeBearing2D` | `(r, θ)` — use `makeMeasurementFromRelativeBearing(...)` to fold in heading + GPS uncertainty |
+| bearing only (camera, ESM) | `Bearing2D` | `(θ)` |
+
+Bearings are ENU `atan2(dy, dx)` — measured from **east,
+counter-clockwise**, in radians. If the spec gives compass bearings
+(from north, clockwise), convert: `θ_enu = π/2 − θ_compass`.
+
+A bearing-only sensor **never initiates tracks** (range is unobservable
+from one look — see `canInitiateTrack`); it only refines tracks that
+active sensors created. If your new sensor is bearing-only, you need at
+least one active sensor in the system for its data to matter.
+
+**2. Timestamps.** `Measurement.time` is the *time of observation* in
+UTC, not the arrival time. From the spec you need: (a) whether the
+sensor timestamps at the sensor head (good) or at the output interface
+(then add the documented internal latency); (b) the worst-case delivery
+latency and jitter — that sizes the `ReorderBuffer` window if this
+sensor can arrive out of order relative to others. The engine requires
+non-decreasing timestamps; late data outside the buffer window is
+dropped, not rewound.
+
+**3. Uncertainty (R).** `Measurement.covariance` lives in the
+measurement space of the chosen model (m² for positions, rad² for
+bearings, mixed for range/bearing). Prefer, in order: per-detection
+covariance from the sensor; the datasheet's 1σ accuracy (σ² on the
+diagonal); nothing — then leave the covariance empty and call
+`applyDefaultsIfEmpty(m, pessimisticSensorDefaults())` so the gap is
+explicit and flagged (`covariance_is_default`). Beware datasheets
+quoting 95% / 2σ figures — convert to 1σ before squaring. For polar
+sensors the cross-range error grows with range; the
+`makeMeasurementFrom...` builders handle that projection.
+
+**4. Sensor position.** Set `sensor_position_enu` to the platform's ENU
+position at observation time. Mandatory for `Bearing2D` /
+`RangeBearing2D` (the math is relative to the sensor), and required for
+any sensor that declares a finite coverage range (next item) — range
+conditioning measures track distance *from the sensor*.
+
+**5. Detection model entry (MHT path) — the numbers that drive scoring.**
+For each (SensorKind, MeasurementModel) pair the tracker wants:
+
+- **P_D** — probability of detecting a target *inside coverage* per
+  scan. Datasheet value if given; otherwise calibrate from data
+  (fraction of scans with a return near a ground-truth/AIS target).
+- **λ_C** — clutter intensity in the *measurement space's* units:
+  false alarms per m² per scan (positions), per radian per scan
+  (bearings), per (m·rad) (range/bearing). Estimate: unassociated
+  returns per scan ÷ surveyed area (or 2π for a full-circle bearing
+  sensor). A single global λ cannot be correct across mixed sensors —
+  that is why this is per-sensor.
+- **max_range_m** — coverage radius. With it set, scans from this
+  sensor charge no missed-detection penalty against tracks it could not
+  have seen. Leave at the default (infinite) only if the sensor truly
+  has no practical range limit for target sizes of interest.
+
+Pass these via `FixedSensorDetectionModel::set(...)` into `MhtTracker`
+(or `ScenarioDescriptor::detection_table` in the bench). **If you skip
+this, every sensor runs at the defaults (P_D 0.9, λ_C 1e-4 m⁻²,
+infinite range)** — tolerable for a single radar, badly wrong for
+multi-sensor fusion. It is exactly the misconfiguration that tanked the
+AutoFerry baseline (see `docs/algorithms/evaluation-log.md`,
+2026-06-10 entry).
+
+**6. Rates.** Note the scan/frame rate. It needs no configuration —
+scoring, IMM mixing and the IPDA lifecycle are dt-scaled — but it sizes
+the reorder window and tells you how much weight the sensor will carry
+relative to slower ones.
+
+**7. Identity hints.** External identifiers (MMSI, ARPA target numbers)
+go into `Measurement.hints` as *attributes*. They are never the fusion
+key — the tracker's own `track_id` is.
+
+**8. Validate at the edge.** Your adapter owns plausibility: reject
+NaN/Inf, out-of-range values, impossible speeds, and unit mistakes
+(deg vs rad, knots vs m/s) *before* constructing the `Measurement`.
+Internal stages trust their inputs by design.
+
+Finally: if the modality is genuinely new (not AIS / radar / EO-IR /
+lidar / own-ship), add a `SensorKind` enumerator — the detection table
+and per-sensor adaptive statistics key on it, so reusing the wrong kind
+silently merges your sensor's calibration with another's.
+
 ## The processing chain
 
 ```

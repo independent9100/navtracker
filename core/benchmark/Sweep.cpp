@@ -34,6 +34,7 @@
 #include "core/benchmark/BenchRunner.hpp"
 #include "core/benchmark/BenchSink.hpp"
 #include "core/pipeline/Tracker.hpp"
+#include "core/tracking/SensorDetectionModels.hpp"
 #include "core/tracking/TrackManager.hpp"
 
 namespace navtracker {
@@ -56,6 +57,16 @@ void emit(std::vector<MetricRow>& out,
   out.push_back({p.run_id, config, scenario, seed, "cog_rmse_deg", m.cog_rmse_deg, "deg"});
 }
 }  // namespace
+
+std::shared_ptr<ISensorDetectionModel> detectionModelFor(
+    const ScenarioDescriptor& desc, const MhtTracker::Config& cfg) {
+  if (desc.detection_table.empty()) return nullptr;
+  auto model = std::make_shared<FixedSensorDetectionModel>(
+      DetectionParams{cfg.probability_of_detection, cfg.clutter_density});
+  for (const SensorDetectionEntry& e : desc.detection_table)
+    model->set(e.sensor, e.model, e.params);
+  return model;
+}
 
 std::vector<MetricRow> runSweep(
     const std::vector<Config>& configs,
@@ -85,12 +96,14 @@ std::vector<MetricRow> runSweep(
         if (config.tracker_kind == TrackerKind::Mht) {
           MhtTracker::Config cfg =
               config.mht_config ? config.mht_config() : MhtTracker::Config{};
-          // Clutter density is a property of the scenario's environment,
-          // not the tracker config — override with the scenario's value so
-          // MHT scoring matches the actual false-alarm rate (clean for
-          // synthetic, realistic for cluttered real data).
-          cfg.clutter_density = desc.clutter_density;
-          MhtTracker tracker(*est, cfg);
+          // The detection environment is a property of the scenario, not
+          // the tracker config. Preferred: the scenario's per-sensor
+          // detection table (correct units per sensor, coverage-
+          // conditioned miss P_D). Legacy: a scenario-scalar clutter
+          // density override when no table is declared.
+          auto det = detectionModelFor(desc, cfg);
+          if (!det) cfg.clutter_density = desc.clutter_density;
+          MhtTracker tracker(*est, cfg, std::move(det));
           result = runBenchMht(scen, tracker);
         } else {
           auto asc = config.build_associator();

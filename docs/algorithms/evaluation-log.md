@@ -1314,3 +1314,89 @@ velocity derivatives.
 
 - Sweep test: `tests/scenario/test_cpa_scenario.cpp::PerpendicularPassVelocityUncertaintySweepReport`.
 - Suite size 318/318 green (was 317; +1 new test).
+
+---
+
+## 2026-06-10 — Multi-sensor harness + miss-model fixes; baseline `2026-06-10_multisensor_fixes`
+
+### What changed
+
+Four root-cause fixes from the AutoFerry "why is textbook IMM+TOMHT bad
+on real data" review:
+
+1. **Harness (dominant):** the AutoFerry loader unified per-target truth
+   timestamps onto one timestamp per scan (per-target skews of ~0.1 s
+   were fragmenting every 2-target evaluation step into two 1-target
+   steps, pegging OSPA at the 500 m cutoff and producing ~3.2e3 phantom
+   id_switches for every config), deduplicated repeated truth scans, and
+   derived finite-difference truth velocities. Bench continuity/RMSE
+   metrics are now keyed by `truth_id` with time-varying cardinality.
+2. **Per-sensor miss model:** TrackTree's miss branch charges
+   Σ_s log(1 − P_D^s(x)) over the distinct sensors in each scan,
+   coverage-conditioned (lidar max_range 140 m); IPDA's miss recursion
+   uses the scan-effective P_D; IPDA/VIMM persistence is a per-second
+   rate (π^dt). AutoFerry scenarios declare a per-sensor detection
+   table calibrated from ground truth (radar 0.8 / 1e-5 m⁻², lidar
+   0.7 / 5e-6 m⁻² / 140 m, EO+IR 0.6 / 0.5 rad⁻¹) replacing the
+   dimensionally-wrong scalar λ_C = 1e-2 override.
+3. **IMM TPM dt-scaling:** π is the 1 s TPM, predict applies π^dt and
+   advances μ to the predicted prior; update consumes it.
+
+### Measured (scenario2, canonical `imm_cv_ct_mht`)
+
+| metric | pre-fix | post-fix |
+| --- | --- | --- |
+| track_breaks | 608 | 64.5 |
+| id_switches | ~2.0e3 (phantom-dominated) | 146 |
+| lifetime_ratio | 0.805 (broken metric) | 0.771 |
+| pos_rmse_m | 30.3 | 18.4 |
+
+Synthetic scenarios: **bit-identical** for all canonical configs
+(verified via `navtracker_bench_compare` — all-zero deltas), confirming
+the fixes are exact no-ops at the 1 Hz cadence.
+
+### IPDA / VIMM ablations (first baseline including them)
+
+On every AutoFerry scenario the existence lifecycle dominates M-of-N:
+scenario2 breaks 64.5 → 11.5 (IPDA) / 7 (VIMM), lifetime 0.77 → 0.94,
+pos_rmse 18.4 → 8.8, OSPA 413 → 379/377 — the best OSPA of any config
+including GNN (457), because existence both keeps true tracks alive
+through camera-blind stretches and suppresses clutter births. Same
+pattern on scenarios 3–22. On synthetic dense_clutter, IPDA/VIMM cut
+OSPA 379 → 137/128.
+
+**Open gap:** on clean synthetics (crossing) IPDA/VIMM cost OSPA
+(19.7 → ~82, p95 = 500) from confirmation latency at track birth
+(r₀ = 0.5 must climb past 0.9) plus occasional mid-run existence dips.
+Tuning (lower confirm threshold with hysteresis, higher r₀ in clean
+scenes, or score-gated fallback) is the next experiment before making
+IPDA/VIMM the canonical lifecycle.
+
+**Known limitation (philos):** all MHT configs remain broken on philos
+(lifetime ≤ 0.015; IPDA 0). Philos truth is asynchronous per-vessel AIS
+with no scan structure, so the AutoFerry per-scan truth fix does not
+apply; it needs time-windowed truth resampling, and its clutter
+environment still uses the legacy scalar λ_C. Tracked as follow-up.
+
+### Key insight (IMM on real data)
+
+On AutoFerry, IMM mode probabilities converge to the TPM's stationary
+distribution regardless of dt-scaling: CV and CT are indistinguishable
+through 2-D position measurements at 16 Hz (ω weakly observable →
+per-mode likelihoods nearly equal), so the kinematic output is
+insensitive to μ. The dt fix matters where modes actually separate
+(turn scenarios at radar-favourable geometry); the AutoFerry lifecycle
+churn was never an estimator problem.
+
+### Methodology notes
+
+- Baseline: `docs/baselines/2026-06-10_multisensor_fixes.{csv,md}`;
+  diff vs 2026-06-09:
+  `docs/baselines/2026-06-09_robust_vs_2026-06-10_multisensor_fixes.md`.
+- New regression pins: `tests/benchmark/test_replay_scenario_run.cpp`
+  (GNN + MHT sanity on real scenario2),
+  `tests/tracking/test_track_tree.cpp` (per-sensor miss scoring,
+  dt-scaled existence), `tests/estimation/test_imm_estimator.cpp`
+  (π^dt, semigroup), `tests/benchmark/test_metrics.cpp` (truth_id
+  keying, time-varying cardinality).
+- Suite size 511/511 green.

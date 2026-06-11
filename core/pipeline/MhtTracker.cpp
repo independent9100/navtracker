@@ -196,11 +196,12 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
 
   // Hit-branch (P_D, λ_C) is looked up per measurement inside branch()
   // from the detection model — so each sensor contributes its own units
-  // and rate to the score. Miss-branch P_D is the configured global
-  // (single number per scan; see Config docs).
+  // and rate to the score. Miss-branch P_D is likewise per-sensor (and
+  // coverage-conditioned) via the detection model: each tree is only
+  // charged for the sensors that actually surveyed this scan instant
+  // and could have seen it (see TrackTree::BranchParams docs).
   TrackTree::BranchParams bp{
       detection_model_.get(),
-      cfg_.probability_of_detection,
       cfg_.gate_threshold,
       cfg_.use_ipda_lifecycle,
       cfg_.use_visibility && cfg_.use_ipda_lifecycle,

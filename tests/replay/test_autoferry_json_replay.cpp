@@ -78,6 +78,14 @@ TEST(AutoferryJsonReplay, ActiveSensorsMapToEnuPositions) {
   EXPECT_DOUBLE_EQ(s.measurements[2].value(0), 4.0);
   EXPECT_DOUBLE_EQ(s.measurements[2].value(1), 2.0);
   EXPECT_EQ(s.measurements[1].sensor, SensorKind::Lidar);
+
+  // Active sensors carry the ownship ENU position as sensor position so
+  // the MHT miss branch can range-condition per-sensor P_D (a lidar with
+  // ~140 m coverage must not penalise a track at 500 m). Radar ownship
+  // NED [10, 20] → ENU (20, 10).
+  EXPECT_DOUBLE_EQ(s.measurements[0].sensor_position_enu(0), 20.0);
+  EXPECT_DOUBLE_EQ(s.measurements[0].sensor_position_enu(1), 10.0);
+  EXPECT_DOUBLE_EQ(s.measurements[1].sensor_position_enu(0), 0.0);
 }
 
 TEST(AutoferryJsonReplay, GroundTruthSwapsNedToEnu) {
@@ -103,6 +111,50 @@ TEST(AutoferryJsonReplay, BearingsEmittedOnlyWhenEnabled) {
   // NED bearing 0 (due north) → ENU atan2 from east = π/2.
   EXPECT_NEAR(b.value(0), M_PI / 2.0, 1e-12);
   EXPECT_EQ(b.sensor, SensorKind::EoIr);
+}
+
+// The real dataset gives every target its OWN timestamp inside a ground-
+// truth scan (skews of ~0.1 s). If the loader passes those through, the
+// bench harness fragments each 2-target scan into two 1-target steps and
+// every cardinality/identity metric collapses. The loader must therefore
+// unify each scan's samples onto a single timestamp (the scan's latest
+// target time) and keep the flattened list time-sorted.
+constexpr const char* kSkewedGroundTruth = R"JSON(
+[
+  [{"targetID":1,"position":[100,200,0],"time":1.08},
+   {"targetID":2,"position":[300,400,0],"time":1.0}],
+  [{"targetID":1,"position":[110,205,0],"time":2.08},
+   {"targetID":2,"position":[310,405,0],"time":2.0}]
+]
+)JSON";
+
+TEST(AutoferryJsonReplay, TruthScansShareOneTimestampAndStaySorted) {
+  const std::string label = "af_test_skewed_gt";
+  const std::string dir = tmpDir() + "/" + label;
+  std::string mk = "mkdir -p '" + dir + "'";
+  (void)std::system(mk.c_str());
+  writeFile(dir + "/" + label + "_detections.json", kDetections);
+  writeFile(dir + "/" + label + "_groundTruth.json", kSkewedGroundTruth);
+
+  const Scenario s = loadAutoferryScenario(dir, label);
+  ASSERT_EQ(s.truth.size(), 4u);
+  // Both targets of one scan share a single timestamp (the scan max).
+  EXPECT_TRUE(s.truth[0].time == s.truth[1].time);
+  EXPECT_TRUE(s.truth[2].time == s.truth[3].time);
+  EXPECT_TRUE(s.truth[0].time == Timestamp::fromSeconds(1.08));
+  EXPECT_TRUE(s.truth[2].time == Timestamp::fromSeconds(2.08));
+  // Flattened list is sorted by time (BenchRunner::groupTruth precondition).
+  EXPECT_TRUE(s.truth[1].time < s.truth[2].time);
+
+  // The dataset carries no truth velocity; the loader derives it by
+  // finite differences per target so SOG/COG RMSE compare against real
+  // kinematics instead of a zero vector. Target 1 moves ENU (200,100) →
+  // (205,110) over the unified dt of 1.0 s → v = (5, 10).
+  ASSERT_EQ(s.truth[0].truth_id, 1u);
+  EXPECT_NEAR(s.truth[0].velocity(0), 5.0, 1e-9);
+  EXPECT_NEAR(s.truth[0].velocity(1), 10.0, 1e-9);
+  EXPECT_NEAR(s.truth[2].velocity(0), 5.0, 1e-9);
+  EXPECT_NEAR(s.truth[2].velocity(1), 10.0, 1e-9);
 }
 
 TEST(AutoferryJsonReplay, MissingFilesReturnEmpty) {

@@ -35,15 +35,33 @@ struct ExistenceVis {
   double visibility_given_exists;
 };
 
+// dt-scaled Markov prediction. The persistence parameters are per-second
+// rates; raising the chain to dt keeps the decay rate independent of the
+// scan cadence (per-scan application at 16 Hz would decay 16× faster
+// than the same parameters at the classical 1 Hz).
+//
+// Existence is an absorbing 2-state chain (no birth): r̄ = π_e^dt · r.
+// Visibility is a full 2-state chain with stay a = π_vv and recovery
+// b = π_hv; its one-step map v ↦ a·v + b·(1−v) = λ·v + b with
+// λ = a − b has the closed-form dt-step
+//   v̄ = v∞ + λ^dt (v − v∞),   v∞ = b / (1 − λ)
+// (dt = 1 reproduces the one-step map exactly; dt = 0 is the identity).
+// λ is clamped to [0, 1) — a "chain" with a < b oscillates per step,
+// which has no physical reading for obscuration; we collapse it to its
+// stationary value instead.
 inline ExistenceVis predictExistence(double r, double v,
                                      double pi_e,
                                      double pi_vv, double pi_hv,
-                                     bool use_visibility) {
-  // Existence always predicts (IPDA Markov). Visibility only predicts
-  // when VIMM is on — otherwise we'd silently decay v from its 1.0
-  // sentinel even in plain IPDA mode, which would change behaviour.
-  return {pi_e * r,
-          use_visibility ? (pi_vv * v + pi_hv * (1.0 - v)) : v};
+                                     bool use_visibility,
+                                     double dt) {
+  const double t = std::max(dt, 0.0);
+  const double r_pred = std::pow(pi_e, t) * r;
+  if (!use_visibility) return {r_pred, v};
+  const double lam = std::clamp(pi_vv - pi_hv, 0.0,
+                                1.0 - std::numeric_limits<double>::epsilon());
+  const double v_inf = pi_hv / (1.0 - lam);
+  const double v_pred = v_inf + std::pow(lam, t) * (v - v_inf);
+  return {r_pred, std::clamp(v_pred, 0.0, 1.0)};
 }
 
 // Hit posterior on (existence, visibility) given measurement z.
@@ -138,7 +156,32 @@ void TrackTree::branch(const IEstimator& estimator,
     tmp_predicted.last_update = nodes_[leaf_idx].time;
     estimator.predict(tmp_predicted, scan_time);
 
+    // Elapsed time driving the dt-scaled lifecycle prediction (per-second
+    // Markov rates; see BranchParams docs).
+    const double dt = scan_time.secondsSince(nodes_[leaf_idx].time);
+
     {
+      // Per-sensor coverage-conditioned miss penalty: missed by every
+      // DISTINCT (sensor, model) that surveyed this scan instant,
+      //   Δscore = Σ_s log(1 − P_D^s(x)),
+      // evaluated at this leaf's predicted position. A sensor whose
+      // coverage excludes the track contributes P_D^s = 0 → log 1 = 0.
+      const Eigen::Vector2d track_pos(tmp_predicted.state(0),
+                                      tmp_predicted.state(1));
+      double log_miss = 0.0;
+      std::vector<std::pair<SensorKind, MeasurementModel>> seen;
+      for (const Measurement& z : scan) {
+        const std::pair<SensorKind, MeasurementModel> key{z.sensor, z.model};
+        if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
+        seen.push_back(key);
+        const double p_d = params.detection_model->missDetectionProbability(
+            z.sensor, z.model, track_pos, z.sensor_position_enu);
+        log_miss += std::log(std::max(1.0 - p_d, 1e-12));
+      }
+      // Effective scan-level P_D for the IPDA miss recursion:
+      // P(detected by at least one surveying sensor).
+      const double p_d_eff = 1.0 - std::exp(log_miss);
+
       TrackTreeNode miss;
       miss.parent = leaf_idx;
       miss.scan_idx = nodes_[leaf_idx].scan_idx + 1;
@@ -148,8 +191,7 @@ void TrackTree::branch(const IEstimator& estimator,
       miss.imm_covariances = tmp_predicted.imm_covariances;
       miss.imm_mode_probabilities = tmp_predicted.imm_mode_probabilities;
       miss.time = scan_time;
-      miss.score = nodes_[leaf_idx].score +
-                   std::log(1.0 - params.miss_probability_of_detection);
+      miss.score = nodes_[leaf_idx].score + log_miss;
       miss.is_leaf = true;
       miss.is_hit = false;
       miss.scan_meas_idx = TrackTreeNode::kNoMeasurement;
@@ -161,10 +203,10 @@ void TrackTree::branch(const IEstimator& estimator,
             nodes_[leaf_idx].visibility_given_exists,
             params.existence_persistence,
             params.visibility_persistence, params.visibility_recovery,
-            params.update_visibility);
+            params.update_visibility, dt);
         const ExistenceVis post = updateMiss(
             pred.existence, pred.visibility_given_exists,
-            params.miss_probability_of_detection,
+            p_d_eff,
             params.gate_probability_mass, params.update_visibility);
         miss.existence_probability = post.existence;
         miss.visibility_given_exists = post.visibility_given_exists;
@@ -221,7 +263,7 @@ void TrackTree::branch(const IEstimator& estimator,
             nodes_[leaf_idx].visibility_given_exists,
             params.existence_persistence,
             params.visibility_persistence, params.visibility_recovery,
-            params.update_visibility);
+            params.update_visibility, dt);
         const ExistenceVis post = updateHit(
             pred.existence, pred.visibility_given_exists,
             dp.probability_of_detection, std::exp(log_likelihood),

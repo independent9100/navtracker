@@ -93,36 +93,50 @@ class TrackTree {
   //
   // Hit branches use per-measurement (P_D, λ_C) looked up from the
   // detection model (correct units per sensor — see
-  // ISensorDetectionModel). The miss branch uses a single
-  // `miss_probability_of_detection` value because the miss is a
-  // *per-track* event, not per-measurement; deciding which sensor "should
-  // have detected" the track would require multi-sensor footprint
-  // accounting that we don't carry yet. The default is the configured
-  // global P_D — equivalent to today.
+  // ISensorDetectionModel).
+  //
+  // Miss branch (multi-sensor, asynchronous): the penalty is
+  //   Σ_s log(1 − P_D^s(x))  over the DISTINCT (sensor, model) pairs
+  // present in this scan, with P_D^s(x) coverage-conditioned via
+  // ISensorDetectionModel::missDetectionProbability (0 outside the
+  // sensor's max_range → zero penalty). Rationale: scans are timestamp
+  // groups from individual sensors arriving at the union of all sensor
+  // rates; a single global per-scan P_D makes the miss cost scale with
+  // the number of sensors and their event rates, and deletes any track
+  // its fastest sensor cannot see (measured on AutoFerry: ~16 scans/s
+  // across 4 sensors → −37 score/s for a radar-only target — deletion
+  // 0.4 s after its last hit).
   //
   // IPDA / VIMM lifecycle: when `update_existence` is set, each new
   // child node carries an existence_probability updated by a Bayes
   // recursion using (P_D, λ_C) from the detection model + the
-  // estimator's measurement likelihood. When `update_visibility` is
-  // also set, the joint (existence, visibility) update of Brekke &
-  // Wilthil 2019 (VIMM-JIPDA) applies — missed detections under
-  // obscuration decay visibility rather than existence. Both default
-  // to false → tree-node existence/visibility stay at their 1.0
-  // sentinels and lifecycle math is a no-op (bit-identical to legacy).
+  // estimator's measurement likelihood; the miss recursion uses the
+  // scan's effective P_D = 1 − Π_s(1 − P_D^s(x)). When
+  // `update_visibility` is also set, the joint (existence, visibility)
+  // update of Brekke & Wilthil 2019 (VIMM-JIPDA) applies — missed
+  // detections under obscuration decay visibility rather than
+  // existence. Both default to false → tree-node existence/visibility
+  // stay at their 1.0 sentinels and lifecycle math is a no-op
+  // (bit-identical to legacy).
+  //
+  // The Markov persistence knobs are PER-SECOND rates: prediction
+  // applies the chain raised to dt = scan_time − leaf_time (seconds).
+  // At the classical 1 Hz scan cadence this reproduces the per-scan
+  // recursion exactly; at 16 Hz it no longer decays 16× too fast, and
+  // simultaneous scans (dt = 0) do not double-decay.
   struct BranchParams {
     const ISensorDetectionModel* detection_model;
-    double miss_probability_of_detection;
     double gate_threshold;
     // IPDA / VIMM controls. The `existence_persistence` and
     // `visibility_*` knobs are only consulted when the corresponding
     // update flag is on.
     bool update_existence{false};
     bool update_visibility{false};
-    double existence_persistence{0.99};       // P(e_k=1 | e_{k-1}=1)
+    double existence_persistence{0.99};       // P(e=1 | e=1) per second
     double gate_probability_mass{0.99};       // P_G — gate-captured mass
                                               // under target-present
-    double visibility_persistence{0.95};      // P(v_k=1 | v_{k-1}=1)
-    double visibility_recovery{0.3};          // P(v_k=1 | v_{k-1}=0)
+    double visibility_persistence{0.95};      // P(v=1 | v=1) per second
+    double visibility_recovery{0.3};          // P(v=1 | v=0) per second
   };
 
   // N-scan pruning. For each current leaf, walk back N steps via parent
@@ -138,8 +152,9 @@ class TrackTree {
   std::size_t pruneKLocal(std::size_t k);
 
   // Branch every current leaf by:
-  //   - generating one missed-detection child (state advanced via predict only;
-  //     score += log(1 - P_D))
+  //   - generating one missed-detection child (state advanced via predict
+  //     only; score += Σ_s log(1 − P_D^s(x)) over distinct scan sensors,
+  //     coverage-conditioned)
   //   - for each gated measurement, generating one child with EKF-updated
   //     state + score += log(P_D) + log N(z|x,P) - log lambda_C
   // The old leaves get is_leaf = false; new nodes are is_leaf = true.
