@@ -120,13 +120,12 @@ TEST(ReplayScenarioRun, AutoferryScenario2MhtLifecycleIsSane) {
 
   ASSERT_FALSE(result.steps.empty());
   // Regression pins with ~2x margin over the canonical (IPDA+VIMM
-  // lifecycle, 2026-06-11) measurement: lifetime 0.954, breaks 1.5,
-  // switches 59. History: M-of-N post-multi-sensor-fix measured
-  // 0.77 / 64.5 / 146.5; pre-fix ~600 breaks. The residual ~59
-  // switches are duplicate-tree ID swaps — cross-tree merge
-  // (improvement-backlog §3) is the candidate to retire them.
+  // lifecycle + time-based cross-tree duplicate merge, 2026-06-11)
+  // measurement: lifetime 0.954, breaks 1.5, switches 39.5. History:
+  // M-of-N post-multi-sensor-fix measured 0.77 / 64.5 / 146.5;
+  // pre-fix ~600 breaks; pre-merge VIMM had 59 switches.
   const auto m = computeMetrics(result, {});
   EXPECT_GT(m.lifetime_ratio, 0.9);
   EXPECT_LT(m.track_breaks, 10.0);
-  EXPECT_LT(m.id_switches, 120.0);
+  EXPECT_LT(m.id_switches, 80.0);
 }

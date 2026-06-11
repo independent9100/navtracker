@@ -170,6 +170,18 @@ Per scan:
   the most recent N scans stay multi-hypothesis.
 - **Spawn.** Any measurement not gated to any existing tree's best leaf
   starts a new track tree.
+- **Cross-tree duplicate merge.** When two trees' best leaves stay
+  within a Bhattacharyya bound (position block, default 1.0) for M
+  consecutive scans (default 3), the younger tree is retired and the
+  older external id survives (ID-stability invariant). Rationale: the
+  global hypothesis only enforces *per-scan measurement* exclusivity —
+  with several detections of one target per scan (multi-sensor), tree A
+  takes one hit and tree B another, so both stay confirmed forever:
+  a permanent +1 cardinality error and id flapping in any downstream
+  assignment (~59 residual id_switches on AutoFerry scenario2). The
+  consecutive-scan streak resets the moment a pair separates, so
+  crossing targets that brush past never accumulate it. Set the
+  threshold ≤ 0 to disable.
 - **Output.** For each tree, the best-scoring leaf's `(state, covariance)`
   is the externally-visible track.
 
@@ -194,14 +206,17 @@ crossing-with-dropout case. **Measured: 7x lower OSPA than JPDA, zero ID
 switches vs JPDA's 2, correct final track count (2 vs JPDA's 3)** on the
 documented scenario.
 
-**Ways to improve / test next.** (1) **K-best global non-conflict** via
-Murty's or auction-style assignment over current leaves — the single
-largest practical improvement and the standard TOMHT formulation.
-(2) Score-based confirmation/deletion as a first-class alternative to
-M-of-N. (3) UKF / IMM / PF backends for the per-leaf predict + update +
-likelihood. (4) MHT with track merging (when two trees converge to
-nearly the same state for several scans, merge them). (5) Sensitivity
-sweep over (dropout length, N_scan, closest-approach distance).
+**Ways to improve / test next.** (1) ~~K-best global non-conflict~~
+DONE — Murty K-best with Score-Δ protected alternatives. (2) ~~Score /
+existence-based confirmation/deletion~~ DONE — IPDA/VIMM lifecycle is
+the default since 2026-06-11. (3) UKF / PF backends for the per-leaf
+predict + update + likelihood (IMM is in). (4) ~~Cross-tree track
+merging~~ DONE 2026-06-11 — see the duplicate-merge pass above; next
+refinement would be merging *hypotheses* (mixture fusion) instead of
+retiring the younger tree. (5) Sensitivity sweep over (dropout length,
+N_scan, closest-approach distance). (6) Track-to-track bias-aware
+distance in the merge bound once inter-sensor registration biases are
+modelled (improvement-backlog §9).
 
 **Configuration choices for the documented scenario.** P_D = 0.9,
 λ_C = 1e-4, gate = 9.0 (χ²₂ at 0.99), N_scan = 3, K_max_leaves = 5,

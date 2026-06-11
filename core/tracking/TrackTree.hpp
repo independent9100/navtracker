@@ -15,6 +15,16 @@ namespace navtracker {
 class IEstimator;
 class ISensorDetectionModel;
 
+// Bhattacharyya distance between two Gaussians evaluated on the
+// position block of the kinematic state (rows/cols 0..1). Same-position
+// covariances → 0; well-separated → grows; +∞ if a covariance block is
+// singular. Used for within-tree leaf merging and the cross-tree
+// duplicate merge.
+double bhattacharyyaPosition(const Eigen::VectorXd& mu_a,
+                             const Eigen::MatrixXd& Sa,
+                             const Eigen::VectorXd& mu_b,
+                             const Eigen::MatrixXd& Sb);
+
 // One node in a track-tree hypothesis. Index into the tree's nodes vector
 // serves as the node_id. Parent index of std::numeric_limits<std::size_t>::max()
 // marks the root.

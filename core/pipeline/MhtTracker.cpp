@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <set>
 #include <tuple>
 #include <utility>
 
@@ -361,6 +362,64 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     kept.push_back(std::move(tt));
   }
   trees_ = std::move(kept);
+
+  // Cross-tree duplicate merge: retire the younger of two trees whose
+  // best leaves have stayed within the Bhattacharyya bound for
+  // duplicate_merge_seconds of sustained stream time (time-based, not
+  // scan-counted — see Config::duplicate_merge_bhattacharyya). Runs
+  // before the global solve so a retired duplicate never emits this
+  // scan. trees_ preserves spawn order and external ids are monotonic,
+  // so trees_[i] is the older of any pair (i < j).
+  if (cfg_.duplicate_merge_bhattacharyya > 0.0 && trees_.size() > 1) {
+    std::vector<bool> retire(trees_.size(), false);
+    for (std::size_t i = 0; i < trees_.size(); ++i) {
+      if (retire[i]) continue;
+      const std::size_t li = trees_[i].bestLeafIndex();
+      if (li == TrackTreeNode::kNoParent) continue;
+      for (std::size_t j = i + 1; j < trees_.size(); ++j) {
+        if (retire[j]) continue;
+        const std::size_t lj = trees_[j].bestLeafIndex();
+        if (lj == TrackTreeNode::kNoParent) continue;
+        const auto key = std::make_pair(trees_[i].externalId().value,
+                                        trees_[j].externalId().value);
+        const double d = bhattacharyyaPosition(
+            trees_[i].nodes()[li].state, trees_[i].nodes()[li].covariance,
+            trees_[j].nodes()[lj].state, trees_[j].nodes()[lj].covariance);
+        if (d < cfg_.duplicate_merge_bhattacharyya) {
+          const auto it = duplicate_close_since_.find(key);
+          if (it == duplicate_close_since_.end()) {
+            duplicate_close_since_.emplace(key, t);  // streak begins
+          } else if (t.secondsSince(it->second) >=
+                     cfg_.duplicate_merge_seconds) {
+            retire[j] = true;
+          }
+        } else {
+          duplicate_close_since_.erase(key);  // separated: clock resets
+        }
+      }
+    }
+    std::vector<TrackTree> survivors;
+    survivors.reserve(trees_.size());
+    for (std::size_t i = 0; i < trees_.size(); ++i) {
+      if (!retire[i]) survivors.push_back(std::move(trees_[i]));
+    }
+    trees_ = std::move(survivors);
+  }
+  // Prune streak entries whose trees no longer exist (retired here or
+  // deleted by score/existence above).
+  if (!duplicate_close_since_.empty()) {
+    std::set<std::uint64_t> live;
+    for (const TrackTree& tt : trees_) live.insert(tt.externalId().value);
+    for (auto it = duplicate_close_since_.begin();
+         it != duplicate_close_since_.end();) {
+      if (live.count(it->first.first) == 0 ||
+          live.count(it->first.second) == 0) {
+        it = duplicate_close_since_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
 
   // Global hypothesis: pick one leaf per tree such that no scan
   // measurement is consumed by more than one tree. K>1 also collects

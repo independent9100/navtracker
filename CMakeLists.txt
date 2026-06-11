@@ -155,6 +155,7 @@ add_executable(navtracker_tests
   tests/pipeline/test_tracker.cpp
   tests/pipeline/test_tracker_bearing_innovation_emit.cpp
   tests/pipeline/test_mht_tracker.cpp
+  tests/pipeline/test_mht_cross_merge.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
   tests/adapters/own_ship/test_own_ship_provider.cpp

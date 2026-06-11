@@ -1468,3 +1468,40 @@ raising it would emit clutter-born trees as Confirmed for 1–2 scans.
 - Pins tightened: scenario2 MHT lifetime > 0.9, breaks < 10,
   switches < 120 (measured 0.954 / 1.5 / 59).
 - philos unchanged (needs truth resampling — backlog §7).
+
+### Addendum 2026-06-11 — cross-tree duplicate merge (backlog §3)
+
+New pass in `MhtTracker::processBatch` before the global solve: retire
+the younger of two trees whose best leaves stay within a position-block
+Bhattacharyya bound (default 1.0) for `duplicate_merge_seconds`
+(default 3.0) of sustained stream time; the older external id survives
+(ID-stability invariant); the clock resets the moment a pair separates.
+
+**Why time-based.** The first implementation counted 3 consecutive
+close *scans* — at AutoFerry's ~16 Hz union rate that is ~0.19 s, and
+real vessels passing close merged almost instantly: scenario6 breaks
+2.5 → 11.5, scenario4 lifetime 0.99 → 0.89. Same multi-rate lesson as
+scan-counted M-of-N confirmation. The time-based rework recovered the
+regressions (scenario6 breaks back to 2.5, scenario4 lifetime 0.94)
+while keeping most of the duplicate suppression.
+
+**Measured (2026-06-11_crossmerge vs 2026-06-11_vimm_canonical,
+canonical config):**
+
+- id_switches roughly halved on every autoferry scenario: sc16
+  68.5 → 10, sc17 27 → 9, sc3 62 → 38.5, sc4 36.5 → 21, sc2 59 → 39.5.
+- OSPA down on all autoferry scenarios (duplicates were a permanent +1
+  cardinality error): sc16 412 → 335, sc17 369 → 289, sc13 397 → 360.
+- dense_clutter OSPA 245 → 103 (duplicate clutter trees retired);
+  ais_dropout 66 → 55.
+- Clean synthetics bit-identical (no false merges; parallel targets,
+  crossings unaffected).
+- Honest residuals: lifetime −0.02..−0.07 on sc3/sc4/sc17 — pairs of
+  real tracks that genuinely stay within the bound ≥ 3 s, typically
+  while one coasts under occlusion with an inflating covariance
+  (Bhattacharyya widens). FOV/occlusion modelling (backlog §4) and a
+  bias-aware merge distance (§9) are the refinements. Remaining
+  switches (sc5 ~97) are not duplicate-induced.
+- Scenario2 e2e pin tightened: id_switches < 80 (measured 39.5).
+- Side effect: scenario2 e2e runtime 14.6 s → 2.6 s (fewer live trees
+  → smaller Murty problems).

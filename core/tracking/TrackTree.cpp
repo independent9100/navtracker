@@ -281,15 +281,15 @@ void TrackTree::branch(const IEstimator& estimator,
   }
 }
 
-namespace {
-
 // Bhattacharyya distance between two Gaussians evaluated on the
 // position block of the kinematic state (rows/cols 0..1). Same-position
 // covariances → 0; well-separated → grows. Returns +∞ if Σ is singular.
-double bhattacharyya2d(const Eigen::VectorXd& mu_a,
-                       const Eigen::MatrixXd& Sa,
-                       const Eigen::VectorXd& mu_b,
-                       const Eigen::MatrixXd& Sb) {
+// Shared by within-tree leaf merging and the cross-tree duplicate merge
+// in MhtTracker.
+double bhattacharyyaPosition(const Eigen::VectorXd& mu_a,
+                             const Eigen::MatrixXd& Sa,
+                             const Eigen::VectorXd& mu_b,
+                             const Eigen::MatrixXd& Sb) {
   const Eigen::Vector2d d = mu_a.head<2>() - mu_b.head<2>();
   const Eigen::Matrix2d Pa = Sa.topLeftCorner<2, 2>();
   const Eigen::Matrix2d Pb = Sb.topLeftCorner<2, 2>();
@@ -304,8 +304,6 @@ double bhattacharyya2d(const Eigen::VectorXd& mu_a,
   return 0.125 * mahal +
          0.5 * std::log(det_P / std::sqrt(det_a * det_b));
 }
-
-}  // namespace
 
 int TrackTree::countHitsInWindow(std::size_t leaf, int window) const {
   if (window <= 0) return 0;
@@ -448,7 +446,7 @@ std::size_t TrackTree::mergeBranches(double threshold) {
     for (std::size_t j = i + 1; j < leaves.size(); ++j) {
       if (!nodes_[leaves[j]].is_leaf) continue;
       const double b =
-          bhattacharyya2d(nodes_[leaves[i]].state,
+          bhattacharyyaPosition(nodes_[leaves[i]].state,
                           nodes_[leaves[i]].covariance,
                           nodes_[leaves[j]].state,
                           nodes_[leaves[j]].covariance);

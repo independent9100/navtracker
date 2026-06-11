@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <set>
 #include <utility>
@@ -99,6 +100,25 @@ class MhtTracker {
     // Set <= 0 to disable. Typical 0.5–2.0 (smaller = stricter, fewer
     // merges).
     double merge_bhattacharyya_threshold = 1.0;
+
+    // Cross-tree duplicate merge. The global hypothesis only enforces
+    // per-scan measurement exclusivity, so two trees latched onto one
+    // target both persist when each scan carries several detections of
+    // it (multi-sensor): tree A takes one hit, tree B another, both
+    // stay confirmed, and downstream consumers see a permanent
+    // duplicate (+1 cardinality, id flapping). When two trees' best
+    // leaves stay within this Bhattacharyya bound (position block) for
+    // `duplicate_merge_seconds` of *sustained stream time*, the
+    // younger tree is retired — the OLDER external id survives
+    // (ID-stability invariant). The clock resets on any scan apart, so
+    // crossing targets that merely brush past never accumulate it.
+    // Time-based, NOT scan-counted, for the same reason confirmation
+    // is not scan-counted: on a 16 Hz multi-sensor stream a 3-scan
+    // streak is ~0.19 s and two real vessels passing close would merge
+    // (measured: AutoFerry scenario6 breaks 2.5 → 11.5). Set the
+    // threshold <= 0 to disable the pass.
+    double duplicate_merge_bhattacharyya = 1.0;
+    double duplicate_merge_seconds = 3.0;
 
     // Murty K-best global hypothesis enumeration. The reported track
     // per tree always comes from the best (K=1) assignment — K>1 only
@@ -228,6 +248,12 @@ class MhtTracker {
   std::size_t stale_dropped_{0};
   bool has_high_water_{false};
   Timestamp high_water_{};
+  // Start of each pair's current uninterrupted closeness streak for
+  // the cross-tree duplicate merge, keyed by (older external id,
+  // younger external id). Erased when a pair separates and pruned when
+  // either tree dies.
+  std::map<std::pair<std::uint64_t, std::uint64_t>, Timestamp>
+      duplicate_close_since_;
   bool using_default_detection_model_{false};
   bool default_detection_warning_{false};
   std::set<std::pair<SensorKind, MeasurementModel>> seen_sensor_keys_;

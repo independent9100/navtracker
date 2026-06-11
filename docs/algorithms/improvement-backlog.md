@@ -81,6 +81,24 @@ IPDA/VIMM rows.
 
 ## 3. Cross-tree duplicate management
 
+**STATUS: DONE (2026-06-11).** Merge pass in `MhtTracker::processBatch`
+(before the global solve): when two trees' best leaves stay within a
+position-block Bhattacharyya bound (`duplicate_merge_bhattacharyya`,
+default 1.0) for `duplicate_merge_seconds` (default 3.0) of
+**sustained stream time**, the younger tree is retired — older
+external id survives. The clock resets on separation; threshold ≤ 0
+disables. Time-based, not scan-counted: a scan-counted streak of 3 is
+~0.19 s at AutoFerry's 16 Hz and merged real vessels passing close
+(measured: scenario6 breaks 2.5 → 11.5 before the time-based rework
+fixed it — same multi-rate lesson as scan-counted M-of-N). Measured
+(2026-06-11_crossmerge): id_switches roughly halved on all autoferry
+scenarios (sc16 68.5 → 10, sc17 27 → 9, sc2 59 → 39.5), dense_clutter
+OSPA 245 → 103, clean synthetics bit-identical; residual lifetime cost
+−0.02..−0.07 on 3 of 9 autoferry scenarios from genuinely-sustained
+close passes (the Bhattacharyya bound widens while a track coasts
+under occlusion — FOV/occlusion modelling, item 4, is the refinement).
+Remaining residual switches (sc5 ~97) are not duplicates.
+
 **Problem.** The global hypothesis only enforces per-scan measurement
 exclusivity. Two trees latched onto one target both persist and both
 emit Confirmed tracks; the per-step greedy metric assignment then
