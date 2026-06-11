@@ -17,3 +17,9 @@ CMakeUserPresets.json
 /.vscode
 /.zprofile
 /.zshrc
+
+# Local datasets / fixtures / renders — multi-GB, never committed.
+/data/
+/vids/
+/tests/fixtures/
+/.claude/
