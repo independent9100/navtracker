@@ -130,8 +130,11 @@ sensor timestamps at the sensor head (good) or at the output interface
 (then add the documented internal latency); (b) the worst-case delivery
 latency and jitter — that sizes the `ReorderBuffer` window if this
 sensor can arrive out of order relative to others. The engine requires
-non-decreasing timestamps; late data outside the buffer window is
-dropped, not rewound.
+non-decreasing timestamps and enforces it: both trackers drop and count
+(`staleDropped()`) any measurement older than what they have already
+processed. A `ReorderBuffer` in front *recovers* late data within its
+window; without one, late data is rejected, never rewound into the
+state.
 
 **3. Uncertainty (R).** `Measurement.covariance` lives in the
 measurement space of the chosen model (m² for positions, rad² for
@@ -173,7 +176,9 @@ this, every sensor runs at the defaults (P_D 0.9, λ_C 1e-4 m⁻²,
 infinite range)** — tolerable for a single radar, badly wrong for
 multi-sensor fusion. It is exactly the misconfiguration that tanked the
 AutoFerry baseline (see `docs/algorithms/evaluation-log.md`,
-2026-06-10 entry).
+2026-06-10 entry). `MhtTracker::defaultDetectionModelWarning()` goes
+true if it sees two or more sensor kinds while running on the
+un-injected default model — poll it once after warm-up.
 
 **6. Rates.** Note the scan/frame rate. It needs no configuration —
 scoring, IMM mixing and the IPDA lifecycle are dt-scaled — but it sizes

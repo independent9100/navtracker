@@ -23,6 +23,17 @@ drop; multi-sensor scan grouping inside the window.
 ## 2. Single-measurement orchestration (`Tracker`)
 
 **Math/Logic.** For each released `Measurement z`:
+0. Stale-input guard (default ON, also in `MhtTracker`): maintain a
+   high-water mark `T = max(time processed)`. If `z.time < T`, drop and
+   count (`staleDropped()`); equal timestamps pass. Without the guard a
+   stale measurement is applied against newer state (predict is a dt≤0
+   no-op) and `estimator.update` rewinds `track.last_update`, so the
+   *next* predict spans an inflated dt — over-blown process noise,
+   widened gates. Opt out via `setRejectStaleMeasurements(false)` /
+   `MhtTracker::Config::reject_stale_measurements = false`; the
+   `ReorderBuffer` is the tool for *recovering* (not just rejecting)
+   late data, and OOSM retrodiction is the future path to *using* it
+   (improvement-backlog §1).
 1. `predictAll(estimator, z.time)`.
 2. `result = associator.associate(tracks, {z})`.
 3. If matched: `estimator.update(track, z)`; `recordHit`; `noteObservation`;

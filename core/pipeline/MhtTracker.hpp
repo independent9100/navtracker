@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <set>
+#include <utility>
 #include <vector>
 
 #include "core/tracking/TrackTree.hpp"
@@ -51,6 +53,15 @@ class MhtTracker {
     double probability_of_detection = 0.9;
     double clutter_density = 1e-4;
     double gate_threshold = 9.0;
+
+    // Stale-input guard, ON by default. A scan older than the
+    // high-water mark of everything already processed would be applied
+    // against newer leaf states and rewind node times, inflating the
+    // next predict's dt. Such scans are dropped and counted
+    // (staleDropped()). Use a ReorderBuffer upstream to *recover* late
+    // data; opt out only if input is guaranteed time-ordered.
+    bool reject_stale_measurements = true;
+
     int n_scan = 3;
     std::size_t k_max_leaves = 5;
     double score_delete_threshold = -15.0;
@@ -178,6 +189,23 @@ class MhtTracker {
     return *detection_model_;
   }
 
+  // Scans dropped by the stale-input guard (reject_stale_measurements).
+  std::size_t staleDropped() const { return stale_dropped_; }
+
+  // One-shot diagnostic, sticky once set: ≥2 distinct (SensorKind,
+  // MeasurementModel) keys have been processed while running on the
+  // auto-installed single-default detection model — i.e. every sensor
+  // shares one (P_D, λ_C) despite different rates and λ_C *units*
+  // (m⁻² vs rad⁻¹), which is dimensionally wrong and the exact
+  // misconfiguration behind the pre-fix AutoFerry collapse. The
+  // composition root should read this and inject a per-sensor
+  // FixedSensorDetectionModel table. Never set when a model was
+  // injected (even a single-default one — that is then a stated
+  // choice, not an accident).
+  bool defaultDetectionModelWarning() const {
+    return default_detection_warning_;
+  }
+
  private:
   const IEstimator& estimator_;
   Config cfg_;
@@ -185,6 +213,12 @@ class MhtTracker {
   std::vector<TrackTree> trees_;
   std::vector<Track> tracks_;
   std::uint64_t next_external_id_{1};
+  std::size_t stale_dropped_{0};
+  bool has_high_water_{false};
+  Timestamp high_water_{};
+  bool using_default_detection_model_{false};
+  bool default_detection_warning_{false};
+  std::set<std::pair<SensorKind, MeasurementModel>> seen_sensor_keys_;
 };
 
 }  // namespace navtracker

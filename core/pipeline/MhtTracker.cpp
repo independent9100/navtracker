@@ -17,13 +17,14 @@ namespace navtracker {
 
 MhtTracker::MhtTracker(const IEstimator& estimator, Config cfg,
                        std::shared_ptr<ISensorDetectionModel> detection_model)
-    : estimator_(estimator),
-      cfg_(cfg),
-      detection_model_(detection_model
-                           ? std::move(detection_model)
-                           : std::make_shared<FixedSensorDetectionModel>(
-                                 DetectionParams{cfg.probability_of_detection,
-                                                 cfg.clutter_density})) {}
+    : estimator_(estimator), cfg_(cfg) {
+  using_default_detection_model_ = (detection_model == nullptr);
+  detection_model_ =
+      detection_model
+          ? std::move(detection_model)
+          : std::make_shared<FixedSensorDetectionModel>(DetectionParams{
+                cfg.probability_of_detection, cfg.clutter_density});
+}
 
 namespace {
 
@@ -188,6 +189,24 @@ GlobalAssignment solveGlobalHypothesis(
 void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
   if (scan.empty()) return;
   const Timestamp t = scan.front().time;
+  if (has_high_water_ && t < high_water_) {
+    if (cfg_.reject_stale_measurements) {
+      stale_dropped_ += scan.size();
+      return;
+    }
+  } else {
+    high_water_ = t;
+    has_high_water_ = true;
+  }
+
+  // Footgun diagnostic: ≥2 distinct sensor keys on the auto-installed
+  // single-default detection model (see defaultDetectionModelWarning).
+  if (using_default_detection_model_ && !default_detection_warning_) {
+    for (const Measurement& z : scan) {
+      seen_sensor_keys_.insert({z.sensor, z.model});
+    }
+    if (seen_sensor_keys_.size() >= 2) default_detection_warning_ = true;
+  }
 
   // NB: do NOT clear is_protected here. The pruning passes below need
   // to see the flags set by the PREVIOUS scan's solveGlobalHypothesis.

@@ -204,3 +204,81 @@ TEST(Tracker, PropagatesOwnPositionStdToSourceTouch) {
   }
   EXPECT_TRUE(found_arpa);
 }
+
+// --- Stale-input guard (default ON) -----------------------------------
+// The engine is time-driven: a measurement older than the high-water
+// mark would be applied against newer state and rewind last_update,
+// silently corrupting the track. Default behaviour is to drop and count
+// it; the ReorderBuffer is the tool for *recovering* late data.
+
+TEST(Tracker, DropsStaleMeasurementByDefaultAndCounts) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator estimator(motion, 10.0);
+  const GnnAssociator associator(20.0);
+
+  // Twin A: clean in-order feed.
+  TrackManager mgr_clean(2, 3);
+  Tracker clean(estimator, associator, mgr_clean, 100.0);
+  clean.process(positionAt(123.0, 10.0, 0.0, "s1"));
+  clean.process(positionAt(126.0, 16.0, 0.0, "s2"));
+
+  // Twin B: same feed with a stale measurement injected. It gates to
+  // the track, so without the guard it would corrupt state and rewind
+  // last_update.
+  TrackManager mgr(2, 3);
+  Tracker tracker(estimator, associator, mgr, 100.0);
+  tracker.process(positionAt(123.0, 10.0, 0.0, "s1"));
+  tracker.process(positionAt(115.0, 9.0, 0.0, "s1"));   // stale
+  tracker.process(positionAt(126.0, 16.0, 0.0, "s2"));
+
+  EXPECT_EQ(tracker.staleDropped(), 1u);
+  EXPECT_EQ(clean.staleDropped(), 0u);
+  ASSERT_EQ(mgr.size(), 1u);
+  ASSERT_EQ(mgr_clean.size(), 1u);
+  // Identical to the clean run, bit for bit.
+  EXPECT_TRUE(mgr.tracks()[0].state == mgr_clean.tracks()[0].state);
+  EXPECT_EQ(mgr.tracks()[0].last_update.nanos(),
+            mgr_clean.tracks()[0].last_update.nanos());
+}
+
+TEST(Tracker, EqualTimestampIsNotStale) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator estimator(motion, 10.0);
+  const GnnAssociator associator(20.0);
+  TrackManager mgr(2, 3);
+  Tracker tracker(estimator, associator, mgr, 100.0);
+
+  tracker.process(positionAt(123.0, 10.0, 0.0, "s1"));
+  tracker.process(positionAt(123.0, 10.5, 0.0, "s2"));  // same instant: OK
+  EXPECT_EQ(tracker.staleDropped(), 0u);
+}
+
+TEST(Tracker, StaleGuardCanBeOptedOut) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator estimator(motion, 10.0);
+  const GnnAssociator associator(20.0);
+  TrackManager mgr(2, 3);
+  Tracker tracker(estimator, associator, mgr, 100.0);
+  tracker.setRejectStaleMeasurements(false);
+
+  tracker.process(positionAt(123.0, 10.0, 0.0, "s1"));
+  // Far away: with the guard off this seeds a second track (legacy
+  // behaviour); with the guard on it would have been dropped.
+  tracker.process(positionAt(115.0, 1000.0, 0.0, "s1"));
+  EXPECT_EQ(tracker.staleDropped(), 0u);
+  EXPECT_EQ(mgr.size(), 2u);
+}
+
+TEST(Tracker, ProcessBatchDropsStaleScan) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator estimator(motion, 10.0);
+  const GnnAssociator associator(20.0);
+  TrackManager mgr(2, 3);
+  Tracker tracker(estimator, associator, mgr, 100.0);
+
+  tracker.processBatch({positionAt(123.0, 10.0, 0.0, "s1")});
+  tracker.processBatch({positionAt(115.0, 9.0, 0.0, "s1"),
+                        positionAt(115.0, 1000.0, 0.0, "s1")});
+  EXPECT_EQ(tracker.staleDropped(), 2u);
+  EXPECT_EQ(mgr.size(), 1u);  // stale far-away measurement seeded nothing
+}

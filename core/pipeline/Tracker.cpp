@@ -66,6 +66,16 @@ Tracker::Tracker(const IEstimator& estimator,
       miss_timeout_seconds_(miss_timeout_seconds) {}
 
 void Tracker::process(const Measurement& z) {
+  if (has_high_water_ && z.time < high_water_) {
+    if (reject_stale_) {
+      ++stale_dropped_;
+      return;
+    }
+  } else {
+    high_water_ = z.time;
+    has_high_water_ = true;
+  }
+
   manager_.predictAll(estimator_, z.time);
 
   const std::vector<Measurement> batch{z};
@@ -127,6 +137,16 @@ void Tracker::process(const Measurement& z) {
 void Tracker::processBatch(const std::vector<Measurement>& scan) {
   if (scan.empty()) return;
   const Timestamp t = scan.front().time;
+  if (has_high_water_ && t < high_water_) {
+    if (reject_stale_) {
+      stale_dropped_ += scan.size();
+      return;
+    }
+  } else {
+    high_water_ = t;
+    has_high_water_ = true;
+  }
+
   manager_.predictAll(estimator_, t);
 
   const AssociationResult result =
