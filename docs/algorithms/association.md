@@ -119,14 +119,24 @@ Per scan:
 - **Branch.** For each leaf in each tree, produce one missed-detection
   child and one child per gated measurement
   (`Δscore = log P_D + log N(z; ẑ, S) − log λ_C`, with `(P_D, λ_C)`
-  looked up per (sensor, model) from `ISensorDetectionModel` — units of
-  λ_C live in the sensor's measurement space). The EKF update is
+  looked up per (sensor, model, source_id) from `ISensorDetectionModel`
+  — units of λ_C live in the sensor's measurement space). The source_id
+  refinement (2026-06-11, backlog item 4) lets two physical sensors
+  sharing a `SensorKind` calibrate independently: on AutoFerry the EO
+  and IR cameras are both `SensorKind::EoIr` yet measure P_D ≈ 0.73 vs
+  0.46 against ground truth. Sources without an exact entry fall back
+  to the kind-wide entry, then to the model defaults. The EKF update is
   applied per measurement-assigned child.
 
   The miss child charges `Δscore = Σ_s log(1 − P_D^s(x))` over the
-  *distinct sensors present in this scan*, where `P_D^s(x)` is
-  coverage-conditioned (0 beyond the sensor's `max_range_m` about its
-  position → zero penalty). Asynchronous multi-sensor rationale: scans
+  *distinct (sensor, model, source) triples present in this scan*,
+  where `P_D^s(x)` is coverage-conditioned: 0 beyond the sensor's
+  `max_range_m` about its position, and 0 outside its azimuth sector
+  (`sector_center_rad` ± `sector_width_rad`/2, ENU math convention,
+  default full circle) → zero penalty. The sector is fixed in the ENU
+  frame; entries for sensors on rotating platforms must be expressed in
+  absolute azimuth (per-measurement sensor attitude is future work).
+  Asynchronous multi-sensor rationale: scans
   are per-sensor timestamp groups arriving at the union of all sensor
   rates; a global per-scan `log(1 − P_D)` makes the miss cost
   proportional to the *total event rate* (~16 Hz on AutoFerry) and
@@ -171,17 +181,20 @@ Per scan:
 - **Spawn.** Any measurement not gated to any existing tree's best leaf
   starts a new track tree.
 - **Cross-tree duplicate merge.** When two trees' best leaves stay
-  within a Bhattacharyya bound (position block, default 1.0) for M
-  consecutive scans (default 3), the younger tree is retired and the
-  older external id survives (ID-stability invariant). Rationale: the
-  global hypothesis only enforces *per-scan measurement* exclusivity —
-  with several detections of one target per scan (multi-sensor), tree A
-  takes one hit and tree B another, so both stay confirmed forever:
-  a permanent +1 cardinality error and id flapping in any downstream
-  assignment (~59 residual id_switches on AutoFerry scenario2). The
-  consecutive-scan streak resets the moment a pair separates, so
-  crossing targets that brush past never accumulate it. Set the
-  threshold ≤ 0 to disable.
+  within a Bhattacharyya bound (position block, default 1.0) for
+  `duplicate_merge_seconds` (default 3.0 s) of sustained stream time,
+  the younger tree is retired and the older external id survives
+  (ID-stability invariant). Rationale: the global hypothesis only
+  enforces *per-scan measurement* exclusivity — with several detections
+  of one target per scan (multi-sensor), tree A takes one hit and tree
+  B another, so both stay confirmed forever: a permanent +1 cardinality
+  error and id flapping in any downstream assignment (~59 residual
+  id_switches on AutoFerry scenario2). The streak is **time-based, not
+  scan-counted** — a scan-counted streak of 3 is ~0.19 s at AutoFerry's
+  16 Hz union rate and merged real vessels passing close (same
+  multi-rate lesson as scan-counted M-of-N). The clock resets the
+  moment a pair separates, so crossing targets that brush past never
+  accumulate it. Set the threshold ≤ 0 to disable.
 - **Output.** For each tree, the best-scoring leaf's `(state, covariance)`
   is the externally-visible track.
 
@@ -216,7 +229,20 @@ refinement would be merging *hypotheses* (mixture fusion) instead of
 retiring the younger tree. (5) Sensitivity sweep over (dropout length,
 N_scan, closest-approach distance). (6) Track-to-track bias-aware
 distance in the merge bound once inter-sensor registration biases are
-modelled (improvement-backlog §9).
+modelled (improvement-backlog §9). (7) ~~Source-keyed detection
+entries + azimuth sectors~~ DONE 2026-06-11 (backlog item 4) — but the
+companion lesson is recorded in the evaluation log: feeding the
+*measured* urban-channel camera clutter rate into the uniform-λ score
+collapses urban lifetime, because shoreline returns are persistent
+structure, not Poisson clutter. The spatial clutter map
+(improvement-backlog §5) is the right vehicle. (8) Bearing-driven
+identity churn between angularly-unresolvable targets (AutoFerry
+scenario5: the two vessels sit < 0.15 rad apart from ownship for 36%
+of the run while cameras provide 89% of all scans — ~95 id_switches
+that neither duplicate-merge nor existence modelling can address);
+candidate fixes: cluster-coupled hypotheses for bearing-overlapped
+tracks, or withholding identity commitment while the pair is
+unresolved.
 
 **Configuration choices for the documented scenario.** P_D = 0.9,
 λ_C = 1e-4, gate = 9.0 (χ²₂ at 0.99), N_scan = 3, K_max_leaves = 5,

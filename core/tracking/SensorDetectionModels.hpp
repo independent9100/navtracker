@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -16,8 +17,11 @@
 namespace navtracker {
 
 // Fixed per-sensor detection model. A table of (P_D, λ_C) entries
-// keyed by (SensorKind, MeasurementModel); anything not in the table
-// falls back to `defaults`.
+// keyed by (SensorKind, MeasurementModel), optionally refined by
+// source_id for distinct physical sensors sharing a kind (EO and IR
+// cameras are both SensorKind::EoIr). Lookup precedence:
+// (sensor, model, source_id) exact > (sensor, model) kind-wide >
+// `defaults`.
 //
 // Use the default-only constructor (or omit overrides) to reproduce the
 // legacy single-sensor behaviour — same constant for every measurement,
@@ -25,6 +29,7 @@ namespace navtracker {
 class FixedSensorDetectionModel : public ISensorDetectionModel {
  public:
   using Key = std::tuple<SensorKind, MeasurementModel>;
+  using SourceKey = std::tuple<SensorKind, MeasurementModel, std::string>;
 
   explicit FixedSensorDetectionModel(DetectionParams defaults)
       : defaults_(defaults) {}
@@ -39,11 +44,26 @@ class FixedSensorDetectionModel : public ISensorDetectionModel {
     table_[Key{sensor, model}] = p;
   }
 
+  // Set or replace one source-keyed entry (per physical sensor unit).
+  void set(SensorKind sensor, MeasurementModel model,
+           const std::string& source_id, DetectionParams p) {
+    source_table_[SourceKey{sensor, model, source_id}] = p;
+  }
+
   using ISensorDetectionModel::paramsFor;
   DetectionParams paramsFor(SensorKind sensor,
                             MeasurementModel model) const override {
     const auto it = table_.find(Key{sensor, model});
     return (it == table_.end()) ? defaults_ : it->second;
+  }
+
+  DetectionParams paramsFor(SensorKind sensor, MeasurementModel model,
+                            const std::string& source_id) const override {
+    if (!source_table_.empty()) {
+      const auto it = source_table_.find(SourceKey{sensor, model, source_id});
+      if (it != source_table_.end()) return it->second;
+    }
+    return paramsFor(sensor, model);
   }
 
   void observe(const std::vector<ScanObservation>&) override {}
@@ -53,6 +73,7 @@ class FixedSensorDetectionModel : public ISensorDetectionModel {
  private:
   DetectionParams defaults_;
   std::map<Key, DetectionParams> table_;
+  std::map<SourceKey, DetectionParams> source_table_;
 };
 
 // Adaptive per-sensor detection model. Per (sensor, model) bucket:

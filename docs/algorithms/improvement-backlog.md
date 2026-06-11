@@ -117,20 +117,33 @@ two-real-targets case must NOT merge).
 
 ## 4. Sensor coverage beyond range: FOV sectors + EO/IR split
 
-**Problem.** Coverage conditioning is range-only (`max_range_m`).
-Cameras have azimuth sectors; harbours have occlusion. Also EO and IR
-share `SensorKind::EoIr`, so they share one detection-table entry
-despite measured P_D differing (EO 0.7–0.87, IR 0.24–0.54).
+**STATUS: DONE (2026-06-11).** (a) `DetectionParams` gained
+`sector_center_rad` / `sector_width_rad` (ENU math convention, default
+full circle = legacy), evaluated in `missDetectionProbability`
+alongside `max_range_m` — out-of-sector tracks charge no miss penalty.
+(b) Detection entries are now source-keyed:
+`ISensorDetectionModel::paramsFor(sensor, model, source_id)` with
+fallback source → kind-wide → defaults; the TrackTree miss loop keys
+distinct surveying sensors by the full (sensor, model, source) triple.
+AutoFerry declares split camera entries calibrated per camera and per
+environment (EO P_D 0.7 open / 0.8 urban; IR 0.5 / 0.4).
 
-**Change.** (a) Add azimuth-sector coverage to `DetectionParams`
-(start/width about the sensor position, evaluated in
-`missDetectionProbability`). (b) Key detection models by
-(SensorKind, MeasurementModel, source_id?) or split the enum so EO and
-IR calibrate independently. VIMM remains the statistical backstop for
-unmodelled occlusion.
+**Calibration lesson (recorded so it isn't re-tried):** the measured
+per-environment camera clutter rate (open water 0.004–0.6 rad⁻¹ vs
+urban channel 1.0–4.9 rad⁻¹) was fed in first and **collapsed urban
+lifetime** (sc17 0.65 → 0.35, sc13 0.77 → 0.59, sc22 0.71 → 0.44;
+baseline `2026-06-11_eoir_split_measured_lambda`). The urban excess is
+persistent structured shoreline returns, not uniform Poisson clutter —
+when the model family is wrong, the honestly-fitted parameter is not
+the right operating point. Camera λ therefore stays at the kind-wide
+0.5 rad⁻¹ (regression-pinned in
+`ReplayScenarioRun.AutoferryDeclaresSplitEoIrDetectionEntries`) until
+item 5 provides a spatial clutter model.
 
-**Test.** Unit: out-of-sector track gets zero miss penalty. Bench:
-autoferry with split EO/IR entries.
+**Open residue → item 5:** spatially-resolved clutter for the urban
+shoreline. VIMM remains the statistical backstop for unmodelled
+occlusion; per-measurement sensor attitude (sectors on rotating
+platforms) is future work.
 
 ## 5. Spatially varying clutter (clutter map)
 
@@ -218,3 +231,26 @@ the heading-bias estimator's v1 pair flow.
 - haxr remains gated out for full-enumeration JPDA/MHT — needs cluster
   decomposition (independent-subproblem partitioning) before it can
   join the matrix.
+
+## 11. Bearing-driven identity churn on angularly-unresolvable targets
+
+**Problem (diagnosed 2026-06-11).** AutoFerry scenario5 retains ~95
+id_switches after the duplicate merge. Measured geometry: the two
+vessels are never closer than 44 m, but sit < 0.15 rad apart *as seen
+from ownship* for 36% of the 139 s run (< 0.1 rad for 20%), while
+cameras provide 2891 of 3250 scans (radar only ~0.6 Hz). Camera
+bearings gate into both tracks throughout; the global hypothesis swaps
+them and the slow radar cannot re-anchor identity. This is neither a
+duplicate-tree nor a close-pass problem — it is bearings carrying
+association weight they cannot support.
+
+**Candidate changes.** (a) Cluster-coupled hypotheses for
+bearing-overlapped track pairs (keep the swap ambiguity inside one
+cluster instead of committing per scan). (b) Withhold identity-bearing
+association (bearings update kinematics but not identity) while two
+tracks are within k·σ_bearing of each other from the sensor.
+(c) Cheaper variant: raise the effective bearing R for measurements
+that gate into more than one track (un-identifying them).
+
+**Test.** Scenario5 id_switches with no regression on scenarios 2–4/6
+(bearings must still refine kinematics — pos_rmse must not climb).

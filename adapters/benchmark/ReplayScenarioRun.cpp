@@ -136,24 +136,44 @@ class AutoferryScenarioRun : public ScenarioRun {
     ScenarioDescriptor d{"autoferry_" + label_, /*is_multi_seed=*/false,
                          /*seed_count=*/1};
     // Per-sensor detection table, calibrated against the published
-    // ground truth across scenarios 2/5/13/22 (open water + urban
-    // channel; matching gate 15 m position / 0.15 rad bearing):
+    // ground truth (matching gate 15 m position / 0.15 rad bearing):
     //
-    //   sensor  empirical P_D  clutter/scan  λ_C (units)        coverage
-    //   lidar   0.40–0.71      0.1–0.5       ≈0.3 / (π·140²)    ≤135 m
-    //                                        ≈ 5e-6 m⁻²         observed
-    //   radar   0.71–0.91      0.9–4.4       ≈3 / ~3e5 m²
-    //                                        ≈ 1e-5 m⁻²         (region-
-    //                                                            cropped)
-    //   EO+IR   0.24–0.87      0.4–12        ≈2 / 2π ≈ 0.3–0.6 rad⁻¹
+    //   sensor  empirical P_D  λ_C (units)        coverage
+    //   lidar   0.40–0.71      ≈ 5e-6 m⁻²         ≤135 m observed
+    //   radar   0.71–0.91      ≈ 1e-5 m⁻²         (region-cropped)
+    //   EO cam  0.62–0.87      see below, rad⁻¹
+    //   IR cam  0.21–0.57      see below, rad⁻¹
     //
     // The lidar P_D is depressed by out-of-coverage opportunities in
     // the empirical count; with the 140 m range gate carried in
-    // max_range_m, the in-coverage value is higher → 0.7. EO and IR
-    // share a (SensorKind, MeasurementModel) key, so one combined
-    // entry. Values are deliberately round mid-points: per-scenario
-    // adaptive estimation (AdaptiveSensorDetectionModel) is the
-    // follow-up.
+    // max_range_m, the in-coverage value is higher → 0.7.
+    //
+    // EO and IR share SensorKind::EoIr but are distinct physical
+    // sensors, so they get source-keyed entries (backlog item 4):
+    // measured per-camera across all nine ground-truthed scenarios
+    // (0.15 rad gate), EO P_D ≈ 0.73 aggregate vs IR ≈ 0.46, split per
+    // environment — open water (scenarios 2–6) EO 0.62–0.87 / IR
+    // 0.34–0.57, urban channel (13/16/17/22) EO 0.78–0.82 / IR
+    // 0.21–0.54.
+    //
+    // λ_C deliberately stays at the kind-wide 0.5 rad⁻¹ for all camera
+    // entries. The measured unmatched-bearing rate splits hugely by
+    // environment (open water 0.004–0.6 rad⁻¹, urban 1.0–4.9 rad⁻¹),
+    // but the urban excess is persistent structured returns (shoreline,
+    // moored vessels) — not uniform Poisson clutter. Feeding the
+    // ML-fitted uniform λ into the score charges every camera hit
+    // ~2 nats, including hits on true targets, and was measured
+    // (2026-06-11_eoir_split_measured_lambda baseline) to collapse
+    // urban lifetime 0.65→0.35 / 0.77→0.59 / 0.71→0.44. When the model
+    // family is wrong, the honestly-fitted parameter is not the right
+    // operating point; the spatial clutter map (backlog item 5) is the
+    // vehicle for shoreline clutter, not a bigger uniform λ.
+    const bool urban = (label_ == "scenario13" || label_ == "scenario16" ||
+                        label_ == "scenario17" || label_ == "scenario22");
+    const DetectionParams eo =
+        urban ? DetectionParams{0.8, 0.5} : DetectionParams{0.7, 0.5};
+    const DetectionParams ir =
+        urban ? DetectionParams{0.4, 0.5} : DetectionParams{0.5, 0.5};
     d.detection_table = {
         {SensorKind::Lidar, MeasurementModel::Position2D,
          DetectionParams{0.7, 5e-6, /*max_range_m=*/140.0}},
@@ -161,6 +181,8 @@ class AutoferryScenarioRun : public ScenarioRun {
          DetectionParams{0.8, 1e-5}},
         {SensorKind::EoIr, MeasurementModel::Bearing2D,
          DetectionParams{0.6, 0.5}},
+        {SensorKind::EoIr, MeasurementModel::Bearing2D, eo, "autoferry_eo"},
+        {SensorKind::EoIr, MeasurementModel::Bearing2D, ir, "autoferry_ir"},
     };
     return d;
   }

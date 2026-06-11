@@ -91,3 +91,37 @@ TEST(Sweep, DetectionModelForEmptyTableReturnsNull) {
   navtracker::MhtTracker::Config cfg;
   EXPECT_FALSE(detectionModelFor(desc, cfg));
 }
+
+TEST(Sweep, DetectionModelForBuildsSourceKeyedEntries) {
+  // An entry with a source_id calibrates one physical sensor unit (EO
+  // vs IR cameras share SensorKind::EoIr); empty source_id stays a
+  // kind-wide entry that unknown sources fall back to.
+  ScenarioDescriptor desc;
+  desc.label = "with_sources";
+  desc.detection_table.push_back(
+      {navtracker::SensorKind::EoIr, navtracker::MeasurementModel::Bearing2D,
+       navtracker::DetectionParams{0.6, 0.5}});
+  desc.detection_table.push_back(
+      {navtracker::SensorKind::EoIr, navtracker::MeasurementModel::Bearing2D,
+       navtracker::DetectionParams{0.8, 0.9}, "cam_eo"});
+  desc.detection_table.push_back(
+      {navtracker::SensorKind::EoIr, navtracker::MeasurementModel::Bearing2D,
+       navtracker::DetectionParams{0.4, 0.3}, "cam_ir"});
+
+  navtracker::MhtTracker::Config cfg;
+  const auto model = detectionModelFor(desc, cfg);
+  ASSERT_TRUE(model);
+  const auto eo = model->paramsFor(navtracker::SensorKind::EoIr,
+                                   navtracker::MeasurementModel::Bearing2D,
+                                   "cam_eo");
+  EXPECT_DOUBLE_EQ(eo.probability_of_detection, 0.8);
+  EXPECT_DOUBLE_EQ(eo.clutter_intensity, 0.9);
+  const auto ir = model->paramsFor(navtracker::SensorKind::EoIr,
+                                   navtracker::MeasurementModel::Bearing2D,
+                                   "cam_ir");
+  EXPECT_DOUBLE_EQ(ir.probability_of_detection, 0.4);
+  const auto other = model->paramsFor(navtracker::SensorKind::EoIr,
+                                      navtracker::MeasurementModel::Bearing2D,
+                                      "cam_unknown");
+  EXPECT_DOUBLE_EQ(other.probability_of_detection, 0.6);
+}

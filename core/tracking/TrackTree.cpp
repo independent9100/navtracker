@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <string>
+#include <tuple>
 
 #include <Eigen/LU>
 
@@ -162,20 +164,24 @@ void TrackTree::branch(const IEstimator& estimator,
 
     {
       // Per-sensor coverage-conditioned miss penalty: missed by every
-      // DISTINCT (sensor, model) that surveyed this scan instant,
+      // DISTINCT (sensor, model, source) that surveyed this scan instant,
       //   Δscore = Σ_s log(1 − P_D^s(x)),
       // evaluated at this leaf's predicted position. A sensor whose
-      // coverage excludes the track contributes P_D^s = 0 → log 1 = 0.
+      // coverage (range or azimuth sector) excludes the track
+      // contributes P_D^s = 0 → log 1 = 0. The source_id is part of the
+      // key so that two physical sensors sharing a SensorKind (EO + IR
+      // cameras) each charge their own calibrated miss penalty.
       const Eigen::Vector2d track_pos(tmp_predicted.state(0),
                                       tmp_predicted.state(1));
       double log_miss = 0.0;
-      std::vector<std::pair<SensorKind, MeasurementModel>> seen;
+      std::vector<std::tuple<SensorKind, MeasurementModel, std::string>> seen;
       for (const Measurement& z : scan) {
-        const std::pair<SensorKind, MeasurementModel> key{z.sensor, z.model};
+        std::tuple<SensorKind, MeasurementModel, std::string> key{
+            z.sensor, z.model, z.source_id};
         if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
-        seen.push_back(key);
+        seen.push_back(std::move(key));
         const double p_d = params.detection_model->missDetectionProbability(
-            z.sensor, z.model, track_pos, z.sensor_position_enu);
+            z.sensor, z.model, track_pos, z.sensor_position_enu, z.source_id);
         log_miss += std::log(std::max(1.0 - p_d, 1e-12));
       }
       // Effective scan-level P_D for the IPDA miss recursion:

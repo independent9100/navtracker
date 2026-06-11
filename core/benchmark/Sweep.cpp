@@ -63,8 +63,12 @@ std::shared_ptr<ISensorDetectionModel> detectionModelFor(
   if (desc.detection_table.empty()) return nullptr;
   auto model = std::make_shared<FixedSensorDetectionModel>(
       DetectionParams{cfg.probability_of_detection, cfg.clutter_density});
-  for (const SensorDetectionEntry& e : desc.detection_table)
-    model->set(e.sensor, e.model, e.params);
+  for (const SensorDetectionEntry& e : desc.detection_table) {
+    if (e.source_id.empty())
+      model->set(e.sensor, e.model, e.params);
+    else
+      model->set(e.sensor, e.model, e.source_id, e.params);
+  }
   return model;
 }
 

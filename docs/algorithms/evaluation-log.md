@@ -1505,3 +1505,70 @@ canonical config):**
 - Scenario2 e2e pin tightened: id_switches < 80 (measured 39.5).
 - Side effect: scenario2 e2e runtime 14.6 s → 2.6 s (fewer live trees
   → smaller Murty problems).
+
+## 2026-06-11 — Backlog item 4: source-keyed detection entries, FOV sectors, EO/IR split
+
+**Change.** `ISensorDetectionModel` gained a source-aware lookup
+(`paramsFor(sensor, model, source_id)`, fallback source-exact →
+kind-wide → defaults) and `DetectionParams` gained azimuth-sector
+coverage (`sector_center_rad`/`sector_width_rad`, ENU math convention,
+default full circle; evaluated in `missDetectionProbability` alongside
+`max_range_m` — out-of-sector tracks charge no miss penalty). The
+TrackTree miss loop now keys distinct surveying sensors by the full
+(sensor, model, source) triple, so EO and IR cameras sharing
+`SensorKind::EoIr` each charge their own calibrated miss penalty.
+AutoFerry declares split camera entries; bench plumbing carries an
+optional `source_id` per `SensorDetectionEntry`.
+
+**Calibration (per camera, 0.15 rad gate, all nine ground-truthed
+scenarios).** EO P_D 0.73 aggregate (0.62–0.87), IR 0.46 (0.21–0.57);
+per environment: open water (sc2–6) EO 0.7 / IR 0.5, urban channel
+(sc13/16/17/22) EO 0.8 / IR 0.4. Unmatched-bearing rate: open water
+0.004–0.6 rad⁻¹, urban 1.0–4.9 rad⁻¹.
+
+**Negative result worth keeping: the measured urban λ must NOT be fed
+into the uniform-λ score.** First sweep
+(`2026-06-11_eoir_split_measured_lambda`) used the honestly-fitted
+per-environment λ and collapsed urban lifetime: sc17 0.65 → 0.35, sc13
+0.77 → 0.59, sc22 0.71 → 0.44. The urban excess is persistent
+structured shoreline/moored-vessel returns, not uniform Poisson
+clutter; the ML-fitted parameter of a wrong model family is not the
+right operating point (each camera hit — including on true targets —
+was charged ~2 extra nats). Camera λ stays at the kind-wide 0.5 rad⁻¹,
+regression-pinned in
+`ReplayScenarioRun.AutoferryDeclaresSplitEoIrDetectionEntries`, until
+the spatial clutter map (backlog §5) models the shoreline.
+
+**Measured (2026-06-11_eoir_split vs 2026-06-11_crossmerge, canonical
+config, P_D split only).**
+
+- lifetime_ratio up on ALL nine autoferry scenarios: sc17
+  0.647 → 0.902, sc22 0.706 → 0.837, sc16 0.791 → 0.851, sc3
+  0.85 → 0.872, sc5 0.899 → 0.913. track_breaks down or flat
+  everywhere except sc6 (+0.5).
+- Honest IR P_D (0.4 vs the combined 0.6) is the driver: IR misses —
+  which dominate the 16 Hz stream — now charge a miss penalty that
+  matches how often the IR camera actually detects, so tracks survive
+  IR-dark stretches instead of dying.
+- Coverage-vs-accuracy trade, recorded honestly: tracks that now
+  survive obscuration coast through it, so urban id_switches rise from
+  very low bases (sc17 9 → 23, sc22 10 → 24) and coasting pos_rmse
+  climbs (sc17 17.9 → 36.3). OSPA mixed (sc13 360 → 348 and sc17 p95
+  500 → 447 improve; sc2/16/22 mean worsens ≤ 43). The OSPA cost is
+  the price of reporting tracks through occlusion instead of dropping
+  them; FOV/occlusion-aware coasting (now backlog §5/§11 follow-ups)
+  is the refinement.
+- sc5 id_switches 97.5 → 91: marginal, as predicted — diagnosed
+  separately (see below). Clean synthetics, dense_clutter, philos:
+  bit-identical (no source-keyed entries there).
+- Scenario2 e2e pins re-verified: lifetime 0.958, breaks 1.5,
+  switches 37.5 (pins 0.9 / 10 / 80).
+
+**Scenario5 root cause (new backlog §11).** The ~91 residual switches
+are bearing-driven identity churn: the two vessels are never closer
+than 44 m, but sit < 0.15 rad apart as seen from ownship for 36% of
+the 139 s run (< 0.1 rad for 20%) while cameras provide 2891 of 3250
+scans and radar refreshes ~0.6 Hz. Bearings gate into both tracks and
+the global hypothesis swaps them; the slow radar cannot re-anchor
+identity. Neither a duplicate-tree nor a close-pass problem —
+candidate fixes recorded in backlog §11.

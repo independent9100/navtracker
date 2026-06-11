@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cmath>
 #include <limits>
+#include <string>
 #include <vector>
 
 #include <Eigen/Core>
@@ -34,6 +36,21 @@ struct DetectionParams {
   // independent P_D, the legacy behaviour for sensors without coverage
   // information.
   double max_range_m{std::numeric_limits<double>::infinity()};
+
+  // Azimuth-sector coverage about the sensor position (cameras, sector
+  // radars). Angles use the ENU math convention — atan2(dy, dx), CCW
+  // from east — matching Bearing2D. A track whose azimuth from the
+  // sensor falls outside center ± width/2 cannot have been detected
+  // (miss P_D → 0), same contract as max_range_m. Default width = full
+  // circle = legacy omnidirectional behaviour.
+  //
+  // The sector is fixed in the ENU frame. For a sensor on a rotating
+  // platform the entries must be expressed in absolute azimuth (or
+  // refreshed with platform heading) — per-measurement sensor attitude
+  // is a future extension.
+  static constexpr double kFullCircleRad = 6.283185307179586476925287;
+  double sector_center_rad{0.0};
+  double sector_width_rad{kFullCircleRad};
 };
 
 // Per-sensor detection model. Strategy: at every per-measurement score
@@ -61,21 +78,42 @@ class ISensorDetectionModel {
   virtual DetectionParams paramsFor(SensorKind sensor,
                                     MeasurementModel model) const = 0;
 
-  // Convenience: lookup keyed by a measurement's (sensor, model).
+  // Source-aware lookup. Two physical sensors can share a SensorKind
+  // (EO and IR cameras are both SensorKind::EoIr) yet have very
+  // different (P_D, λ_C); Measurement::source_id distinguishes them.
+  // Default: ignore the source and fall back to the kind-wide entry —
+  // models without per-source calibration behave exactly as before.
+  virtual DetectionParams paramsFor(SensorKind sensor, MeasurementModel model,
+                                    const std::string& /*source_id*/) const {
+    return paramsFor(sensor, model);
+  }
+
+  // Convenience: lookup keyed by a measurement's (sensor, model,
+  // source_id).
   DetectionParams paramsFor(const Measurement& z) const {
-    return paramsFor(z.sensor, z.model);
+    return paramsFor(z.sensor, z.model, z.source_id);
   }
 
   // Detection probability for the MISS branch: "could this sensor have
   // detected a target at track_pos_enu at all?". Coverage-conditioned:
-  // 0 beyond the entry's max_range_m about the sensor position, the
-  // table P_D inside. log(1 − 0) = 0 — an out-of-coverage scan charges
-  // no miss penalty and leaves IPDA existence untouched.
+  // 0 beyond the entry's max_range_m about the sensor position or
+  // outside its azimuth sector, the table P_D inside. log(1 − 0) = 0 —
+  // an out-of-coverage scan charges no miss penalty and leaves IPDA
+  // existence untouched.
   double missDetectionProbability(SensorKind sensor, MeasurementModel model,
                                   const Eigen::Vector2d& track_pos_enu,
-                                  const Eigen::Vector2d& sensor_pos_enu) const {
-    const DetectionParams p = paramsFor(sensor, model);
-    if ((track_pos_enu - sensor_pos_enu).norm() > p.max_range_m) return 0.0;
+                                  const Eigen::Vector2d& sensor_pos_enu,
+                                  const std::string& source_id = {}) const {
+    const DetectionParams p = paramsFor(sensor, model, source_id);
+    const Eigen::Vector2d d = track_pos_enu - sensor_pos_enu;
+    if (d.norm() > p.max_range_m) return 0.0;
+    if (p.sector_width_rad < DetectionParams::kFullCircleRad) {
+      const double az = std::atan2(d.y(), d.x());
+      // std::remainder wraps the difference to [-π, π].
+      const double off = std::remainder(az - p.sector_center_rad,
+                                        DetectionParams::kFullCircleRad);
+      if (std::abs(off) > 0.5 * p.sector_width_rad) return 0.0;
+    }
     return p.probability_of_detection;
   }
 

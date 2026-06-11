@@ -129,3 +129,43 @@ TEST(ReplayScenarioRun, AutoferryScenario2MhtLifecycleIsSane) {
   EXPECT_LT(m.track_breaks, 10.0);
   EXPECT_LT(m.id_switches, 80.0);
 }
+
+// Backlog item 4: EO and IR cameras share SensorKind::EoIr but have very
+// different measured detection performance (aggregate across the nine
+// ground-truthed scenarios: EO P_D 0.73, IR 0.46). Every autoferry
+// descriptor must declare source-keyed camera entries with IR strictly
+// below EO, plus the kind-wide fallback for unknown camera sources.
+//
+// λ_C is pinned UNIFORM across the camera entries on purpose: the
+// measured per-environment unmatched-bearing rate (urban channel up to
+// ~5 rad⁻¹) is persistent structured shoreline returns, not uniform
+// Poisson clutter, and feeding it into the uniform-λ score collapsed
+// urban lifetime (see 2026-06-11 evaluation-log entry). Until the
+// spatial clutter map (backlog item 5) exists, a camera-λ split is a
+// modelling error, and this pin is the regression guard for it.
+TEST(ReplayScenarioRun, AutoferryDeclaresSplitEoIrDetectionEntries) {
+  for (const auto& s : defaultAutoferryScenarios()) {
+    const auto d = s->descriptor();
+    const SensorDetectionEntry* eo = nullptr;
+    const SensorDetectionEntry* ir = nullptr;
+    const SensorDetectionEntry* kind_wide = nullptr;
+    for (const auto& e : d.detection_table) {
+      if (e.sensor != navtracker::SensorKind::EoIr) continue;
+      if (e.source_id == "autoferry_eo") eo = &e;
+      if (e.source_id == "autoferry_ir") ir = &e;
+      if (e.source_id.empty()) kind_wide = &e;
+    }
+    ASSERT_NE(eo, nullptr) << d.label;
+    ASSERT_NE(ir, nullptr) << d.label;
+    ASSERT_NE(kind_wide, nullptr) << d.label;
+    EXPECT_GT(eo->params.probability_of_detection,
+              ir->params.probability_of_detection)
+        << d.label;
+    EXPECT_DOUBLE_EQ(eo->params.clutter_intensity,
+                     kind_wide->params.clutter_intensity)
+        << d.label;
+    EXPECT_DOUBLE_EQ(ir->params.clutter_intensity,
+                     kind_wide->params.clutter_intensity)
+        << d.label;
+  }
+}

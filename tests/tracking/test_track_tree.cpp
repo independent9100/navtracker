@@ -463,3 +463,97 @@ TEST(TrackTree, ExistencePredictIsDtScaled) {
   const double r_expected = r_pred * l_miss / (1.0 - r_pred + r_pred * l_miss);
   EXPECT_NEAR(r_slow, r_expected, 1e-12);
 }
+
+TEST(TrackTree, MissBranchSplitsSameKindSensorsBySourceId) {
+  // EO and IR cameras share SensorKind::EoIr but are distinct physical
+  // sensors: a scan carrying a bearing from each must charge BOTH miss
+  // penalties, each with its own source-keyed P_D.
+  TrackTree tt(TrackId{30}, rootNode(0.0, 0.0));
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+
+  navtracker::FixedSensorDetectionModel det(
+      navtracker::DetectionParams{0.9, 1e-4});
+  det.set(navtracker::SensorKind::EoIr,
+          navtracker::MeasurementModel::Position2D, "eo",
+          navtracker::DetectionParams{0.8, 1e-4});
+  det.set(navtracker::SensorKind::EoIr,
+          navtracker::MeasurementModel::Position2D, "ir",
+          navtracker::DetectionParams{0.4, 1e-4});
+
+  navtracker::Measurement eo = farMeasurement(navtracker::SensorKind::EoIr);
+  eo.source_id = "eo";
+  navtracker::Measurement ir = farMeasurement(navtracker::SensorKind::EoIr);
+  ir.source_id = "ir";
+
+  TrackTree::BranchParams p{&det, 9.0};
+  tt.branch(ekf, {eo, ir}, navtracker::Timestamp::fromSeconds(1.0), p);
+
+  const TrackTreeNode* miss = findMissLeaf(tt);
+  ASSERT_NE(miss, nullptr);
+  EXPECT_NEAR(miss->score, std::log(1.0 - 0.8) + std::log(1.0 - 0.4), 1e-12);
+}
+
+TEST(TrackTree, HitScoreUsesSourceKeyedClutter) {
+  // Two identical gating measurements that differ only in source_id score
+  // against their own λ_C: Δscore = log(λ_ir) − log(λ_eo) after the shared
+  // P_D terms cancel (same P_D in both entries).
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+
+  navtracker::FixedSensorDetectionModel det(
+      navtracker::DetectionParams{0.9, 1e-4});
+  det.set(navtracker::SensorKind::EoIr,
+          navtracker::MeasurementModel::Position2D, "eo",
+          navtracker::DetectionParams{0.6, 0.9});
+  det.set(navtracker::SensorKind::EoIr,
+          navtracker::MeasurementModel::Position2D, "ir",
+          navtracker::DetectionParams{0.6, 0.3});
+
+  navtracker::Measurement z;
+  z.time = navtracker::Timestamp::fromSeconds(1.0);
+  z.model = navtracker::MeasurementModel::Position2D;
+  z.sensor = navtracker::SensorKind::EoIr;
+  z.value = Eigen::Vector2d(0.1, 0.0);
+  z.covariance = Eigen::Matrix2d::Identity();
+
+  double hit_scores[2];
+  const char* sources[2] = {"eo", "ir"};
+  for (int i = 0; i < 2; ++i) {
+    TrackTree tt(TrackId{31}, rootNode(0.0, 0.0));
+    navtracker::Measurement m = z;
+    m.source_id = sources[i];
+    TrackTree::BranchParams p{&det, 9.0};
+    tt.branch(ekf, {m}, navtracker::Timestamp::fromSeconds(1.0), p);
+    double best = -1e300;
+    for (const auto& n : tt.nodes())
+      if (n.is_leaf && n.is_hit) best = std::max(best, n.score);
+    hit_scores[i] = best;
+  }
+  EXPECT_NEAR(hit_scores[1] - hit_scores[0], std::log(0.9) - std::log(0.3),
+              1e-9);
+}
+
+TEST(TrackTree, MissBranchIgnoresOutOfSectorSensor) {
+  // Track due north of the sensor; camera sector looks east (±45°). The
+  // camera could not have seen the track → its miss costs nothing.
+  TrackTree tt(TrackId{32}, rootNode(0.0, 500.0));
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+
+  navtracker::FixedSensorDetectionModel det(
+      navtracker::DetectionParams{0.9, 1e-4});
+  navtracker::DetectionParams cam{0.8, 1e-4};
+  cam.sector_center_rad = 0.0;
+  cam.sector_width_rad = M_PI / 2.0;
+  det.set(navtracker::SensorKind::EoIr,
+          navtracker::MeasurementModel::Position2D, cam);
+
+  TrackTree::BranchParams p{&det, 9.0};
+  tt.branch(ekf, {farMeasurement(navtracker::SensorKind::EoIr)},
+            navtracker::Timestamp::fromSeconds(1.0), p);
+
+  const TrackTreeNode* miss = findMissLeaf(tt);
+  ASSERT_NE(miss, nullptr);
+  EXPECT_NEAR(miss->score, 0.0, 1e-12);
+}

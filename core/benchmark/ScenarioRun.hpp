@@ -12,11 +12,19 @@ namespace benchmark {
 
 // One per-sensor detection-model entry a scenario can declare about its
 // environment: P_D, λ_C in the sensor's measurement-space units, and an
-// optional coverage radius. See ISensorDetectionModel for unit rules.
+// optional coverage radius / azimuth sector (inside DetectionParams).
+// See ISensorDetectionModel for unit rules.
+//
+// `source_id` (optional, last so existing aggregate initialisers stay
+// valid): non-empty entries calibrate one physical sensor unit by
+// Measurement::source_id — two units sharing a SensorKind (EO and IR
+// cameras are both SensorKind::EoIr) get independent (P_D, λ_C). Empty
+// = kind-wide entry; sources without an exact match fall back to it.
 struct SensorDetectionEntry {
   SensorKind sensor;
   MeasurementModel model;
   DetectionParams params;
+  std::string source_id;
 };
 
 struct ScenarioDescriptor {

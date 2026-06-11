@@ -1,3 +1,5 @@
+#include <cmath>
+#include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -186,4 +188,165 @@ TEST(FixedSensorDetectionModel, MissPdDefaultEntryIsUnbounded) {
       SensorKind::Ais, MeasurementModel::Position2D,
       Eigen::Vector2d(1e6, 0.0), Eigen::Vector2d(0.0, 0.0));
   EXPECT_DOUBLE_EQ(pd, 0.9);
+}
+
+// ---------------------------------------------------------------------------
+// Source-keyed entries: two physical sensors sharing a SensorKind (EO and
+// IR cameras are both SensorKind::EoIr) calibrate independently when the
+// table carries entries keyed by Measurement::source_id. Lookup precedence:
+// (sensor, model, source_id) exact > (sensor, model) kind-wide > defaults.
+
+namespace {
+
+Measurement makeWithSource(SensorKind s, MeasurementModel m,
+                           const std::string& source) {
+  Measurement z = make(s, m);
+  z.source_id = source;
+  return z;
+}
+
+}  // namespace
+
+TEST(FixedSensorDetectionModel, SourceKeyedEntryTakesPrecedence) {
+  FixedSensorDetectionModel m(DetectionParams{0.9, 1e-4});
+  m.set(SensorKind::EoIr, MeasurementModel::Bearing2D,
+        DetectionParams{0.6, 0.5});  // kind-wide combined entry
+  m.set(SensorKind::EoIr, MeasurementModel::Bearing2D, "eo",
+        DetectionParams{0.8, 0.9});
+  m.set(SensorKind::EoIr, MeasurementModel::Bearing2D, "ir",
+        DetectionParams{0.4, 0.3});
+
+  const auto eo = m.paramsFor(
+      makeWithSource(SensorKind::EoIr, MeasurementModel::Bearing2D, "eo"));
+  EXPECT_DOUBLE_EQ(eo.probability_of_detection, 0.8);
+  EXPECT_DOUBLE_EQ(eo.clutter_intensity, 0.9);
+
+  const auto ir = m.paramsFor(
+      makeWithSource(SensorKind::EoIr, MeasurementModel::Bearing2D, "ir"));
+  EXPECT_DOUBLE_EQ(ir.probability_of_detection, 0.4);
+  EXPECT_DOUBLE_EQ(ir.clutter_intensity, 0.3);
+}
+
+TEST(FixedSensorDetectionModel, UnknownSourceFallsBackToKindThenDefaults) {
+  FixedSensorDetectionModel m(DetectionParams{0.9, 1e-4});
+  m.set(SensorKind::EoIr, MeasurementModel::Bearing2D,
+        DetectionParams{0.6, 0.5});
+  m.set(SensorKind::EoIr, MeasurementModel::Bearing2D, "eo",
+        DetectionParams{0.8, 0.9});
+
+  // Source not in the table → kind-wide entry.
+  const auto other = m.paramsFor(
+      makeWithSource(SensorKind::EoIr, MeasurementModel::Bearing2D, "tv"));
+  EXPECT_DOUBLE_EQ(other.probability_of_detection, 0.6);
+
+  // Neither source nor kind entry → defaults.
+  const auto none = m.paramsFor(
+      makeWithSource(SensorKind::Lidar, MeasurementModel::Position2D, "x"));
+  EXPECT_DOUBLE_EQ(none.probability_of_detection, 0.9);
+}
+
+TEST(ISensorDetectionModel, ThreeArgParamsForDefaultsToKindLookup) {
+  // Models that don't override the source-aware lookup keep behaving
+  // exactly as before — the base implementation ignores source_id.
+  AdaptiveSensorDetectionModel m(DetectionParams{0.9, 1e-4});
+  const auto p = m.paramsFor(SensorKind::Ais, MeasurementModel::Position2D,
+                             "any_source");
+  EXPECT_DOUBLE_EQ(p.probability_of_detection, 0.9);
+  EXPECT_DOUBLE_EQ(p.clutter_intensity, 1e-4);
+}
+
+// ---------------------------------------------------------------------------
+// Azimuth-sector coverage. DetectionParams::{sector_center_rad,
+// sector_width_rad} bound the sensor's field of view about its position,
+// in the ENU math convention (atan2(dy, dx), CCW from east — the same
+// convention as Bearing2D). A track outside the sector cannot have been
+// detected → missDetectionProbability returns 0 (no miss penalty), same
+// contract as max_range_m. Default width 2π = full circle = legacy.
+
+TEST(FixedSensorDetectionModel, OutOfSectorTrackHasZeroMissPd) {
+  FixedSensorDetectionModel m(DetectionParams{0.9, 1e-4});
+  DetectionParams cam{0.8, 0.5};
+  cam.sector_center_rad = 0.0;            // looking east
+  cam.sector_width_rad = M_PI / 2.0;      // ±45°
+  m.set(SensorKind::EoIr, MeasurementModel::Bearing2D, cam);
+
+  // Track due north of the sensor — 90° off the sector centre.
+  const double p_d = m.missDetectionProbability(
+      SensorKind::EoIr, MeasurementModel::Bearing2D,
+      /*track=*/Eigen::Vector2d(0.0, 100.0),
+      /*sensor=*/Eigen::Vector2d(0.0, 0.0));
+  EXPECT_DOUBLE_EQ(p_d, 0.0);
+}
+
+TEST(FixedSensorDetectionModel, InSectorTrackKeepsTablePd) {
+  FixedSensorDetectionModel m(DetectionParams{0.9, 1e-4});
+  DetectionParams cam{0.8, 0.5};
+  cam.sector_center_rad = 0.0;
+  cam.sector_width_rad = M_PI / 2.0;
+  m.set(SensorKind::EoIr, MeasurementModel::Bearing2D, cam);
+
+  // 30° off-centre — inside the ±45° sector.
+  const double az = M_PI / 6.0;
+  const double p_d = m.missDetectionProbability(
+      SensorKind::EoIr, MeasurementModel::Bearing2D,
+      Eigen::Vector2d(100.0 * std::cos(az), 100.0 * std::sin(az)),
+      Eigen::Vector2d(0.0, 0.0));
+  EXPECT_DOUBLE_EQ(p_d, 0.8);
+}
+
+TEST(FixedSensorDetectionModel, DefaultSectorIsFullCircle) {
+  FixedSensorDetectionModel m(DetectionParams{0.9, 1e-4});
+  m.set(SensorKind::EoIr, MeasurementModel::Bearing2D,
+        DetectionParams{0.8, 0.5});
+  // No sector configured: any azimuth keeps the table P_D.
+  for (double az = -3.0; az <= 3.0; az += 0.7) {
+    const double p_d = m.missDetectionProbability(
+        SensorKind::EoIr, MeasurementModel::Bearing2D,
+        Eigen::Vector2d(50.0 * std::cos(az), 50.0 * std::sin(az)),
+        Eigen::Vector2d(0.0, 0.0));
+    EXPECT_DOUBLE_EQ(p_d, 0.8) << "az=" << az;
+  }
+}
+
+TEST(FixedSensorDetectionModel, SectorWrapsAcrossPi) {
+  // Sector centred on the ±π seam (looking west). A track just south of
+  // due west sits at azimuth ≈ −(π − ε): in-sector only if the angular
+  // difference is wrapped.
+  FixedSensorDetectionModel m(DetectionParams{0.9, 1e-4});
+  DetectionParams cam{0.7, 0.5};
+  cam.sector_center_rad = M_PI;
+  cam.sector_width_rad = M_PI / 2.0;
+  m.set(SensorKind::EoIr, MeasurementModel::Bearing2D, cam);
+
+  const double in_sector = m.missDetectionProbability(
+      SensorKind::EoIr, MeasurementModel::Bearing2D,
+      Eigen::Vector2d(-100.0, -10.0), Eigen::Vector2d(0.0, 0.0));
+  EXPECT_DOUBLE_EQ(in_sector, 0.7);
+
+  const double out_of_sector = m.missDetectionProbability(
+      SensorKind::EoIr, MeasurementModel::Bearing2D,
+      Eigen::Vector2d(100.0, 10.0), Eigen::Vector2d(0.0, 0.0));
+  EXPECT_DOUBLE_EQ(out_of_sector, 0.0);
+}
+
+TEST(FixedSensorDetectionModel, SourceKeyedMissPdRespectsSourceEntry) {
+  // missDetectionProbability with a source_id picks the source-keyed
+  // entry — EO and IR charge different miss penalties.
+  FixedSensorDetectionModel m(DetectionParams{0.9, 1e-4});
+  m.set(SensorKind::EoIr, MeasurementModel::Bearing2D, "eo",
+        DetectionParams{0.8, 0.9});
+  m.set(SensorKind::EoIr, MeasurementModel::Bearing2D, "ir",
+        DetectionParams{0.4, 0.3});
+
+  const Eigen::Vector2d track(100.0, 0.0), sensor(0.0, 0.0);
+  EXPECT_DOUBLE_EQ(
+      m.missDetectionProbability(SensorKind::EoIr,
+                                 MeasurementModel::Bearing2D, track, sensor,
+                                 "eo"),
+      0.8);
+  EXPECT_DOUBLE_EQ(
+      m.missDetectionProbability(SensorKind::EoIr,
+                                 MeasurementModel::Bearing2D, track, sensor,
+                                 "ir"),
+      0.4);
 }
