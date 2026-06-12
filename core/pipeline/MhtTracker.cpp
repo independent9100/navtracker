@@ -272,6 +272,10 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     }
     measurement_explained[j] = gated_to_any;
   }
+  // Birth bookkeeping for the post-solve clutter labeling: which
+  // measurement seeded which tree (keyed by external id — trees_ gets
+  // reshuffled by deletion/merge before the solve).
+  std::map<std::size_t, std::uint64_t> birth_id_for_meas;
   for (std::size_t j = 0; j < scan.size(); ++j) {
     if (measurement_explained[j]) continue;
     // Passive bearing-only measurements can't seed a new tree (range
@@ -279,6 +283,7 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     // unassociated ones — see canInitiateTrack.
     if (!canInitiateTrack(scan[j].model)) continue;
     const TrackId id{next_external_id_++};
+    birth_id_for_meas.emplace(j, id.value);
     TrackTreeNode root = rootFromMeasurement(estimator_, scan[j]);
     // Seed IPDA / VIMM state on birth. Off → defaults (1.0, 1.0) =
     // no-op sentinel. On → ipda_init_existence as the prior r₀ (a
@@ -292,50 +297,9 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     trees_.emplace_back(id, std::move(root));
   }
 
-  // Feed the scan outcome to the detection model, bucketed per
-  // (sensor, model). Measurements that gated to no existing tree are
-  // the clutter proxy (most unassociated returns are false alarms).
-  // Each sensor's bucket grows its own EWMA + surveyed area; one noisy
-  // sensor no longer pollutes another's λ_C estimate. Fixed models
-  // ignore.
-  {
-    using Key = std::tuple<SensorKind, MeasurementModel>;
-    std::map<Key, ISensorDetectionModel::ScanObservation> by_sensor;
-    for (std::size_t j = 0; j < scan.size(); ++j) {
-      const Key k{scan[j].sensor, scan[j].model};
-      auto it = by_sensor.find(k);
-      if (it == by_sensor.end()) {
-        ISensorDetectionModel::ScanObservation obs;
-        obs.sensor = scan[j].sensor;
-        obs.model = scan[j].model;
-        obs.num_unassociated = 0;
-        obs.time = scan.front().time;
-        it = by_sensor.emplace(k, std::move(obs)).first;
-      }
-      // Pure-bearing measurements carry no ENU position — exclude from
-      // surveyed-area but still count unassociated as a clutter proxy.
-      // Spatial clutter estimators additionally get the unassociated
-      // subset (positions or azimuths) — where the clutter is, not just
-      // how much of it.
-      if (canInitiateTrack(scan[j].model) && scan[j].value.size() >= 2) {
-        it->second.positions.emplace_back(scan[j].value(0), scan[j].value(1));
-        if (!measurement_explained[j])
-          it->second.unassociated_positions.emplace_back(scan[j].value(0),
-                                                         scan[j].value(1));
-      }
-      if (scan[j].model == MeasurementModel::Bearing2D &&
-          scan[j].value.size() >= 1) {
-        it->second.bearings.push_back(scan[j].value(0));
-        if (!measurement_explained[j])
-          it->second.unassociated_bearings.push_back(scan[j].value(0));
-      }
-      if (!measurement_explained[j]) ++it->second.num_unassociated;
-    }
-    std::vector<ISensorDetectionModel::ScanObservation> bundle;
-    bundle.reserve(by_sensor.size());
-    for (auto& kv : by_sensor) bundle.push_back(std::move(kv.second));
-    detection_model_->observe(bundle);
-  }
+  // NB: the detection-model observe() feed happens at the END of this
+  // method — clutter evidence is labeled from the chosen global
+  // hypothesis (existence-weighted claims), not from the birth gate.
 
   // Drop trees whose best-leaf score is below the delete threshold,
   // UNLESS any leaf in the tree is protected — in which case an
@@ -533,6 +497,83 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     view.visibility_given_exists =
         trees_[ti].nodes()[leaf].visibility_given_exists;
     tracks_.push_back(std::move(view));
+  }
+
+  // Feed the scan outcome to the detection model, labeled from the
+  // global hypothesis just chosen: a return claimed by some tree's
+  // selected hit leaf (or that birthed a still-alive tree this scan)
+  // carries clutter weight 1 − r of that hypothesis; an unclaimed
+  // return carries 1.0. Clutter-born trees keep low existence, so the
+  // clutter signal survives, while returns explained by confident
+  // tracks contribute ≈ 0 — unlike the old birth-gate proxy, which
+  // counted every birthing return at full weight (the clean-scene
+  // "birth self-poisoning" tax) and couldn't grade confidence.
+  {
+    std::vector<double> claim_r(scan.size(), -1.0);  // < 0 = unclaimed
+    std::map<std::uint64_t, double> tree_r;  // external id → leaf r
+    for (std::size_t ti = 0; ti < trees_.size(); ++ti) {
+      std::size_t leaf = assign.chosen_leaf[ti];
+      if (leaf == TrackTreeNode::kNoParent) {
+        leaf = trees_[ti].bestLeafIndex();  // same fallback as readout
+      }
+      if (leaf == TrackTreeNode::kNoParent) continue;
+      const TrackTreeNode& n = trees_[ti].nodes()[leaf];
+      tree_r[trees_[ti].externalId().value] = n.existence_probability;
+      if (n.is_hit && n.scan_meas_idx != TrackTreeNode::kNoMeasurement &&
+          n.scan_meas_idx < scan.size()) {
+        claim_r[n.scan_meas_idx] =
+            std::max(claim_r[n.scan_meas_idx], n.existence_probability);
+      }
+    }
+    // Births: roots carry no scan_meas_idx, so credit the seeding
+    // measurement through the id map (the tree may have been retired
+    // between spawn and solve — then the claim simply lapses).
+    for (const auto& [j, id] : birth_id_for_meas) {
+      const auto it = tree_r.find(id);
+      if (it != tree_r.end())
+        claim_r[j] = std::max(claim_r[j], it->second);
+    }
+
+    using Key = std::tuple<SensorKind, MeasurementModel>;
+    std::map<Key, ISensorDetectionModel::ScanObservation> by_sensor;
+    for (std::size_t j = 0; j < scan.size(); ++j) {
+      const Key k{scan[j].sensor, scan[j].model};
+      auto it = by_sensor.find(k);
+      if (it == by_sensor.end()) {
+        ISensorDetectionModel::ScanObservation obs;
+        obs.sensor = scan[j].sensor;
+        obs.model = scan[j].model;
+        obs.num_unassociated = 0;
+        obs.time = scan.front().time;
+        it = by_sensor.emplace(k, std::move(obs)).first;
+      }
+      const bool claimed = claim_r[j] >= 0.0;
+      const double weight =
+          claimed ? std::clamp(1.0 - claim_r[j], 0.0, 1.0) : 1.0;
+      // Pure-bearing measurements carry no ENU position — exclude from
+      // surveyed-area but still contribute weighted clutter evidence.
+      if (canInitiateTrack(scan[j].model) && scan[j].value.size() >= 2) {
+        it->second.positions.emplace_back(scan[j].value(0), scan[j].value(1));
+        if (weight > 0.0) {
+          it->second.clutter_positions.emplace_back(scan[j].value(0),
+                                                    scan[j].value(1));
+          it->second.clutter_position_weights.push_back(weight);
+        }
+      }
+      if (scan[j].model == MeasurementModel::Bearing2D &&
+          scan[j].value.size() >= 1) {
+        it->second.bearings.push_back(scan[j].value(0));
+        if (weight > 0.0) {
+          it->second.clutter_bearings.push_back(scan[j].value(0));
+          it->second.clutter_bearing_weights.push_back(weight);
+        }
+      }
+      if (!claimed) ++it->second.num_unassociated;
+    }
+    std::vector<ISensorDetectionModel::ScanObservation> bundle;
+    bundle.reserve(by_sensor.size());
+    for (auto& kv : by_sensor) bundle.push_back(std::move(kv.second));
+    detection_model_->observe(bundle);
   }
 }
 

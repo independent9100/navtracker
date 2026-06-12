@@ -81,7 +81,7 @@ ISensorDetectionModel::ScanObservation posScan(
   o.num_unassociated = static_cast<int>(unassoc.size());
   o.positions = all;
   o.time = Timestamp::fromSeconds(t);
-  o.unassociated_positions = unassoc;
+  o.clutter_positions = unassoc;
   return o;
 }
 
@@ -94,7 +94,7 @@ ISensorDetectionModel::ScanObservation bearingScan(
   o.num_unassociated = static_cast<int>(unassoc.size());
   o.time = Timestamp::fromSeconds(t);
   o.bearings = all;
-  o.unassociated_bearings = unassoc;
+  o.clutter_bearings = unassoc;
   return o;
 }
 
@@ -345,4 +345,37 @@ TEST(ClutterMapDetectionModel, OnlyLambdaIsRemappedAndSourceKeysSurvive) {
       SensorKind::EoIr, MeasurementModel::Bearing2D,
       Eigen::Vector2d(1000.0, 0.0), Eigen::Vector2d::Zero(), "ir");
   EXPECT_DOUBLE_EQ(pd, 0.0);
+}
+
+// Clutter evidence carries per-return weights (1 − existence of the
+// claiming hypothesis, from the tracker's global solve): a return
+// claimed by a half-confident track must move the cell half as far as
+// a fully unclaimed one. Empty weight vectors mean weight 1.0 per
+// return (back-compat with binary labeling).
+TEST(ClutterMapDetectionModel, WeightedEvidenceScalesCellUpdate) {
+  ClutterMapParams p;
+  p.cell_size_m = 50.0;
+  p.time_constant_s = 2.0;
+  ClutterMapSensorDetectionModel full(makeInner(), p);
+  ClutterMapSensorDetectionModel half(makeInner(), p);
+
+  for (int k = 0; k < 40; ++k) {
+    const double t = static_cast<double>(k);
+    auto o = posScan(t, {{100.0, 100.0}}, {{100.0, 100.0}});
+    std::vector<ISensorDetectionModel::ScanObservation> b_full = {o};
+    o.clutter_position_weights = {0.5};
+    std::vector<ISensorDetectionModel::ScanObservation> b_half = {o};
+    full.observe(b_full);
+    half.observe(b_half);
+  }
+
+  const double lam_full =
+      full.paramsFor(posMeas(100.0, 100.0, 40.0)).clutter_intensity;
+  const double lam_half =
+      half.paramsFor(posMeas(100.0, 100.0, 40.0)).clutter_intensity;
+  EXPECT_GT(lam_full, lam_half);
+  EXPECT_GT(lam_half, kRadarLambda);
+  // Converged cell rates are ~1.0 vs ~0.5 → the interpolated λ above
+  // the shared baseline should be roughly double.
+  EXPECT_NEAR(lam_full / lam_half, 2.0, 0.25);
 }

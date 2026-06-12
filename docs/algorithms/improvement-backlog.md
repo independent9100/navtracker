@@ -165,13 +165,20 @@ so a trackless target's own bearings get labeled clutter and block
 its re-confirmation, self-reinforcing. Bearing maps are opt-in
 (`enable_bearing_map`) until the clutter proxy is fixed.
 
-**Open residue.** The birth-gate proxy ("gated to no existing tree")
-is the limiting factor for both the bearing death spiral and the
-clean-scene birth tax: label clutter from the *global hypothesis*
-(measurements unclaimed after the solve, existence-weighted) instead.
-That is the precondition for re-enabling bearing maps and for
-promoting the map into the canonical config. Pairs with backlog §8
-(JPDA per-sensor parity) for the single-hypothesis path.
+**Update 2026-06-12 (second iteration):** clutter evidence is now
+labeled from the *global hypothesis* — each return carries weight
+1 − r of the claiming track/birth, 1.0 unclaimed (was: binary
+birth-gate). This removed the clean-scene birth tax but, against the
+original hypothesis, did **not** make the bearing map safe: measured
+strictly worse (sc17 lifetime 0.13, sc5 0.10), because a coasting or
+re-born track's claimed bearings carry weight 1 − r exactly while r
+is low. Bearing maps stay opt-in; the open path is a weight that
+distinguishes "low-existence target" from "no target"
+(visibility-conditioned weights or a hard zero for hypothesis-claimed
+returns — association.md §6 ways-to-improve). Promotion of the
+position map into the canonical config is a measurement question
+after the hyplabel baseline. Pairs with backlog §8 (JPDA per-sensor
+parity) for the single-hypothesis path.
 
 ## 6. Default-detection-model footgun diagnostic
 

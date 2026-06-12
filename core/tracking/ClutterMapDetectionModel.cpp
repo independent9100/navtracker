@@ -109,14 +109,19 @@ void ClutterMapSensorDetectionModel::observe(
     // exactly the table value.
     const double base = inner_->paramsFor(s.sensor, s.model).clutter_intensity;
 
-    // touch(): one cell, one scan. n = unassociated count in the cell;
-    // cells holding only associated returns get n = 0 (pure decay).
-    const auto touch = [&](Cell& cell, bool is_new, int n) {
+    // touch(): one cell, one scan. n = weighted clutter-evidence sum in
+    // the cell; cells holding only claimed returns get n = 0 (decay).
+    const auto touch = [&](Cell& cell, bool is_new, double n) {
       double dt = p_.prior_dt_s;
       if (!is_new) dt = std::max(s.time.secondsSince(cell.last), 0.0);
       const double w = 1.0 - std::exp(-dt / p_.time_constant_s);
-      cell.rate += w * (static_cast<double>(n) - cell.rate);
+      cell.rate += w * (n - cell.rate);
       cell.last = s.time;
+    };
+    // Per-return clutter weight: aligned weights vector, or 1.0 each
+    // when the producer supplies binary labels only.
+    const auto weightAt = [](const std::vector<double>& ws, std::size_t i) {
+      return (i < ws.size()) ? ws[i] : 1.0;
     };
 
     if (positionMapped(s.model)) {
@@ -127,9 +132,11 @@ void ClutterMapSensorDetectionModel::observe(
             static_cast<std::int64_t>(std::floor(q.x() / h)),
             static_cast<std::int64_t>(std::floor(q.y() / h))};
       };
-      std::map<std::pair<std::int64_t, std::int64_t>, int> counts;
+      std::map<std::pair<std::int64_t, std::int64_t>, double> counts;
       for (const auto& q : s.positions) counts[cellOf(q)];  // touch, n = 0
-      for (const auto& q : s.unassociated_positions) ++counts[cellOf(q)];
+      for (std::size_t i = 0; i < s.clutter_positions.size(); ++i)
+        counts[cellOf(s.clutter_positions[i])] +=
+            weightAt(s.clutter_position_weights, i);
       for (const auto& [idx, n] : counts) {
         const auto [it, is_new] = m.cells.try_emplace(
             idx, Cell{base * h * h, s.time});
@@ -149,9 +156,11 @@ void ClutterMapSensorDetectionModel::observe(
             std::floor((wrapAzimuth(az) + kTwoPi / 2.0) / cell_w));
         return static_cast<std::size_t>(((i % n_cells) + n_cells) % n_cells);
       };
-      std::map<std::size_t, int> counts;
+      std::map<std::size_t, double> counts;
       for (double az : s.bearings) counts[cellOf(az)];  // touch, n = 0
-      for (double az : s.unassociated_bearings) ++counts[cellOf(az)];
+      for (std::size_t i = 0; i < s.clutter_bearings.size(); ++i)
+        counts[cellOf(s.clutter_bearings[i])] +=
+            weightAt(s.clutter_bearing_weights, i);
       for (const auto& [idx, n] : counts) {
         const bool is_new = !m.touched[idx];
         if (is_new) m.cells[idx] = Cell{base * cell_w, s.time};

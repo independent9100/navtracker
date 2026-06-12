@@ -22,13 +22,16 @@ struct ClutterMapParams {
   double cell_size_m{50.0};
   // Bearing-space maps (Bearing2D) are OFF by default. Bearings cannot
   // initiate tracks, so a real target whose track has lapsed keeps
-  // feeding "unassociated" bearings at its own azimuth: the map raises
-  // λ exactly where the target is, blocks re-confirmation, and the
-  // suppression self-reinforces. Measured on AutoFerry (2026-06-12):
-  // bearing map alone collapses lifetime sc17 0.90 → 0.28, sc5
-  // 0.91 → 0.34 while the position map alone is lifetime-neutral.
-  // Opt in only when tracks can be born from bearings or the clutter
-  // proxy can exclude trackless targets.
+  // feeding clutter-weighted bearings at its own azimuth: the map
+  // raises λ exactly where the target is, blocks re-confirmation, and
+  // the suppression self-reinforces. Measured on AutoFerry
+  // (2026-06-12): bearing map alone collapses lifetime sc17
+  // 0.90 → 0.28, sc5 0.91 → 0.34 while the position map alone is
+  // lifetime-neutral. Existence-weighted hypothesis labeling does NOT
+  // fix it — measured worse (sc17 0.13, sc5 0.10), because a coasting
+  // track's claimed bearings still carry weight 1 − r while r is low.
+  // Opt in only when tracks can be born from bearings or the weights
+  // distinguish "low-existence target" from "no target".
   bool enable_bearing_map{false};
   // Azimuth pitch for bearing-space maps; the circle is divided into
   // round(2π / bearing_cell_rad) equal cells. Default 5°.
@@ -53,19 +56,23 @@ struct ClutterMapParams {
 //
 // ## Math
 // Per (SensorKind, MeasurementModel) the model keeps a sparse grid of
-// cells; each cell c holds an EWMA estimate r_c of "unassociated returns
+// cells; each cell c holds an EWMA estimate r_c of "clutter evidence
 // per scan landing in c" plus the time of its last touch:
 //
-//   touch at time t with count n:
+//   touch at time t with weighted count n = Σ_j w_j over returns in c:
 //     w   = 1 − exp(−(t − t_last)/τ)        (first touch: Δt = prior_dt_s)
 //     r_c ← (1 − w)·r_c + w·n,   t_last ← t
 //
-// A cell is touched on every scan in which ANY return (associated or
-// not) lands in it: associated traffic contributes n = 0, dragging the
-// cell toward zero — evidence the sensor surveys the area and its
-// returns are targets, not clutter. Cells never receiving returns are
-// never created and read back as the table baseline (prior; absence of
-// evidence is not evidence of absence).
+// Per-return clutter weights w_j come from the producer (MhtTracker
+// labels them from the chosen global hypothesis: w_j = 1 − r of the
+// claiming track or this-scan birth, 1.0 when unclaimed; an empty
+// weight vector means binary labels at 1.0 each). A cell is touched on
+// every scan in which ANY return lands in it: returns claimed by
+// confident tracks contribute ≈ 0, dragging the cell toward zero —
+// evidence the sensor surveys the area and its returns are targets,
+// not clutter. Cells never receiving returns are never created and
+// read back as the table baseline (prior; absence of evidence is not
+// evidence of absence).
 //
 // Query (the virtual paramsFor(Measurement) override):
 //   λ_c        = r_c / A          (A = cell_size² m², or cell width rad)
@@ -84,11 +91,13 @@ struct ClutterMapParams {
 // through.
 //
 // ## Assumptions
-// - Unassociated returns ("gated to no existing track") are a usable
-//   clutter proxy. Persistent structure that births its own clutter
-//   track becomes "associated" one scan later, so the proxy
-//   *undercounts* stable shoreline structure for position sensors;
-//   bearings can't initiate tracks and keep counting.
+// - "1 − existence of the claiming hypothesis" is a usable clutter
+//   weight. Persistent structure that births its own clutter track is
+//   discounted only by that track's (low) existence, so the signal
+//   survives; but a *real* target tracked at low existence (coasting
+//   under occlusion, or trackless because bearings can't initiate) is
+//   charged as clutter too — this is what keeps the bearing map unsafe
+//   (see enable_bearing_map).
 // - Clutter fields move slowly relative to τ (shorelines do; rain
 //   squalls marginal).
 // - Bearing clutter is usefully indexed by absolute azimuth from

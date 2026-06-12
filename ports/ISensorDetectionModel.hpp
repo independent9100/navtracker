@@ -121,22 +121,30 @@ class ISensorDetectionModel {
   }
 
   // One bucket of post-scan evidence, partitioned by (sensor, model).
-  // The trailing fields (time, unassociated_*, bearings) feed spatial
+  // The trailing fields (time, clutter_*, bearings) feed spatial
   // clutter estimators; they are additive so existing aggregate
   // initialisers `{sensor, model, n, positions}` stay valid.
   struct ScanObservation {
     SensorKind sensor;
     MeasurementModel model;
-    int num_unassociated;                 // clutter proxy this scan
+    // Count of returns claimed by NO hypothesis at all (post-solve in
+    // MhtTracker). Coarse clutter proxy for non-spatial estimators.
+    int num_unassociated;
     std::vector<Eigen::Vector2d> positions; // ENU; empty for pure bearings
     Timestamp time;                       // scan timestamp
-    // Subset of `positions` that gated to no existing track — where the
-    // clutter is, not just how much of it.
-    std::vector<Eigen::Vector2d> unassociated_positions;
+    // Spatial clutter evidence, labeled from the tracker's chosen
+    // global hypothesis: each entry is a return with clutter weight
+    // 1 − r, where r is the existence probability of the hypothesis
+    // (track or this-scan birth) that claims it — 1.0 when unclaimed.
+    // Weight vectors align with their return lists; an empty weight
+    // vector means weight 1.0 per return (binary labeling).
+    std::vector<Eigen::Vector2d> clutter_positions;
+    std::vector<double> clutter_position_weights;
     // Bearing2D returns: absolute ENU azimuths (rad, atan2 convention),
-    // all returns and the unassociated subset.
+    // all returns and the clutter-evidence subset.
     std::vector<double> bearings;
-    std::vector<double> unassociated_bearings;
+    std::vector<double> clutter_bearings;
+    std::vector<double> clutter_bearing_weights;
   };
 
   // Feed the scan outcome for adaptation. Fixed models ignore.

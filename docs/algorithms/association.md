@@ -262,18 +262,27 @@ detection table that makes λ_C a function of *where* the measurement
 is, learned online from the scan stream.
 
 **Math.** Per (SensorKind, MeasurementModel) the model keeps a sparse
-grid of cells; cell c holds an EWMA estimate `r_c` of "unassociated
-returns per scan landing in c":
+grid of cells; cell c holds an EWMA estimate `r_c` of "clutter
+evidence per scan landing in c":
 
 ```
-touch at time t with count n:
+touch at time t with weighted count n = Σ_j w_j over returns in c:
   w   = 1 − exp(−(t − t_last)/τ)        (first touch: Δt = prior_dt_s)
   r_c ← (1 − w)·r_c + w·n
 ```
 
-A cell is touched on every scan in which *any* return (associated or
-not) lands in it; associated traffic contributes `n = 0` and drags the
-cell toward zero. New cells are seeded with the table baseline
+Per-return clutter weights are labeled by `MhtTracker` from the
+**chosen global hypothesis** (2026-06-12, second iteration): a return
+claimed by some tree's selected hit leaf — or that birthed a
+still-alive tree this scan — carries `w_j = 1 − r` of that hypothesis'
+existence; an unclaimed return carries 1.0. Clutter-born trees keep
+low existence, so the clutter signal survives, while returns claimed
+by confident tracks contribute ≈ 0. (The first iteration used the
+binary birth-gate proxy — "gated to no tree" — which charged every
+birthing return at full weight: the clean-scene "birth self-poisoning"
+tax.) A cell is touched on every scan in which *any* return lands in
+it; confidently-claimed traffic contributes ≈ 0 and drags the cell
+toward zero. New cells are seeded with the table baseline
 (`r = λ_table · A`), so an untouched map reads back the table exactly.
 Query — the virtual `paramsFor(z)` the TrackTree score already calls:
 
@@ -308,8 +317,15 @@ reproduces the full collapse — sc17 lifetime 0.90 → 0.28, sc5
 0.91 → 0.34, sc2 0.96 → 0.74 (baseline
 `2026-06-12_clutter_map_bearing_spiral`). The bearing map's apparent
 OSPA gains came from suppressing *true* tracks alongside false ones.
-It stays available as an opt-in for setups where tracks can be born
-from bearings or the clutter proxy can exclude trackless targets.
+**Existence-weighted hypothesis labeling does not fix it** — measured
+strictly worse (sc17 0.13, sc5 0.10): a coasting track's claimed
+bearings carry weight `1 − r` precisely while `r` is low, so the map
+feeds on the target during exactly the occlusions the track must
+survive. The spiral is structural until either tracks can be born
+from bearings or the weight distinguishes "low-existence target" from
+"no target" (e.g. visibility-conditioned weights, or excluding
+returns claimed by *any* live hypothesis regardless of r). Opt-in via
+`enable_bearing_map`.
 
 **Assumptions.** (1) "Gated to no existing track" is a usable clutter
 proxy — persistent structure that births its own clutter track becomes
@@ -332,16 +348,19 @@ path untouched. Clamping as *ratios* of the local table baseline keeps
 the band dimensionally sane across m⁻² and rad⁻¹ sensors
 simultaneously.
 
-**Ways to improve / test next.** (1) Label clutter from the
-global-hypothesis association instead of the birth-gate proxy — would
-catch position-sensor shoreline structure that currently self-explains
-via clutter tracks, and is also the precondition for re-enabling the
-bearing map (a trackless target's bearings would stop counting once
-any hypothesis claims them). (2) Per-source maps (EO vs IR) if
-per-source clutter measurably differs. (3) A range×bearing
-product-space map for RangeBearing2D sensors. (4) Forgetting toward
+**Ways to improve / test next.** (1) ~~Label clutter from the
+global-hypothesis association instead of the birth-gate proxy~~ DONE
+2026-06-12 (existence-weighted claims, see Math) — it removed the
+birth tax but, against the original hypothesis, did NOT make the
+bearing map safe (measured worse; see above). (2) A bearing weight
+that distinguishes "low-existence target" from "no target":
+visibility-conditioned weights (a VIMM-coasting track's claimed
+bearings should weigh ~0, not 1 − r), or a hard zero for returns
+claimed by any live hypothesis. (3) Per-source maps (EO vs IR) if
+per-source clutter measurably differs. (4) A range×bearing
+product-space map for RangeBearing2D sensors. (5) Forgetting toward
 the prior for cells unvisited ≫ τ (currently they keep their last
-estimate). (5) Feed the map into JPDA β computation once backlog item
+estimate). (6) Feed the map into JPDA β computation once backlog item
 8 (JPDA per-sensor parity) lands.
 
 **Measured behaviour.** Bench ablation `imm_cv_ct_mht_cmap` (canonical

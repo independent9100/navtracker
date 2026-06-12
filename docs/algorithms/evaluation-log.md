@@ -1683,3 +1683,50 @@ passthrough when untouched) — but the birth-gate proxy is too blunt
 for camera bearings and slightly taxes clean-scene confirmation.
 Promote only after the proxy reads the global hypothesis instead of
 the birth gate.
+
+## 2026-06-12 — Clutter map second iteration: global-hypothesis labeling
+
+**Change.** Clutter evidence for the spatial map is now labeled from
+the chosen global hypothesis instead of the birth gate: MhtTracker
+builds the observe() bundle AFTER the solve, and each return carries
+clutter weight 1 − r of the hypothesis that claims it (selected hit
+leaf, or the tree it birthed this scan; 1.0 when unclaimed; the IPDA-
+off sentinel r = 1 makes claimed returns weightless). ScanObservation
+renamed its evidence fields (`clutter_positions/_weights`,
+`clutter_bearings/_weights`); the map sums weights per cell. Fixed
+models ignore observe(), so every non-cmap config is bit-identical
+(verified against `2026-06-12_clutter_map`).
+
+**Hypothesis test — does this re-enable the bearing map? NO.**
+Original claim (this morning's entry): hypothesis labeling is the
+precondition for the bearing map. Measured (per-scenario diagnostic,
+bearing map opt-in): strictly WORSE than the binary proxy — sc17
+lifetime 0.25 → 0.13, sc5 0.31 → 0.10. Root cause: a coasting or
+freshly re-born track's claimed bearings carry weight 1 − r exactly
+while r is low — the map feeds on the target during the occlusions
+the track must survive; the binary proxy at least zeroed every gated
+bearing. The spiral is structural until the weight can distinguish
+"low-existence target" from "no target" (visibility-conditioned
+weights or a hard zero for hypothesis-claimed returns —
+association.md §6). Bearing maps stay opt-in-off; docs corrected.
+
+**Result (`2026-06-12_clutter_map_hyplabel`, cmap vs the birth-gate
+cmap of `2026-06-12_clutter_map`).** Better on 17 of 20 scenarios:
+
+- Clean synthetics recover 15–30% of the birth tax (crossing
+  28.1 → 26.9, crossing_dropout 35.0 → 31.8, overtaking 17.7 → 15.4;
+  canonical-fixed remains lower still — the residual tax is the birth
+  weight 0.5 plus low-r claims while a new track's existence climbs).
+- dense_clutter OSPA 64.3 → 59.4 (fixed: 103), switches 0.2 → 0.1.
+- autoferry: small broad gains (sc3 OSPA 440.5 → 433.8 with switches
+  40 → 36.5, sc6 switches 69 → 63, sc22 26.5 → 23); lifetime
+  unchanged everywhere.
+- philos regresses 398 → 408 (still −21 vs fixed) with lifetime
+  0.288 → 0.273: its vessels confirm slowly at P_D 0.07, so real
+  returns are claimed at low r and charged as partial clutter — the
+  same "low-existence target" signature as the bearing spiral, in
+  miniature. The weight refinement above would address both.
+
+**Verdict.** Keep hypothesis labeling (more principled, better
+almost everywhere); cmap remains an ablation config. Next refinement
+recorded: existence-vs-visibility-aware weights.

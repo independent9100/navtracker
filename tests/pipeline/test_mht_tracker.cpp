@@ -220,15 +220,23 @@ struct RecordingDetectionModel : navtracker::ISensorDetectionModel {
 
 }  // namespace
 
-TEST(MhtTracker, ObserveBundleCarriesTimeUnassociatedPositionsAndBearings) {
+// Clutter evidence is labeled from the GLOBAL HYPOTHESIS, not the
+// birth gate (backlog item 5 residue): each return's clutter weight is
+// 1 − r of the tree that claims it in the chosen assignment (or that it
+// birthed this scan), 1.0 when nothing claims it. A brand-new target's
+// first return therefore contributes 1 − r₀ = 0.5 instead of a full
+// count (halving the birth self-poisoning), and returns claimed by
+// high-existence tracks contribute ≈ 0.
+TEST(MhtTracker, ObserveBundleWeightsBirthsAtInitExistence) {
   auto motion = std::make_shared<ConstantVelocity2D>(0.1);
   const EkfEstimator ekf(motion, 5.0);
   MhtTracker::Config cfg;
   auto rec = std::make_shared<RecordingDetectionModel>();
   MhtTracker mht(ekf, cfg, rec);
 
-  // First scan, no prior trees: both position returns and the camera
-  // bearing gate to nothing → all unassociated.
+  // First scan, no prior trees: both position returns birth trees
+  // (claimed at r₀ = 0.5); the camera bearing can't initiate and is
+  // claimed by nothing → full clutter weight.
   Measurement p1 = positionMeas(0.0, 0.0, 1.0);
   Measurement p2 = positionMeas(1000.0, 1000.0, 1.0);
   Measurement b;
@@ -254,20 +262,26 @@ TEST(MhtTracker, ObserveBundleCarriesTimeUnassociatedPositionsAndBearings) {
 
   EXPECT_DOUBLE_EQ(pos->time.seconds(), 1.0);
   ASSERT_EQ(pos->positions.size(), 2u);
-  // Both position returns were unassociated → they must appear in the
-  // spatial-clutter evidence list too.
-  ASSERT_EQ(pos->unassociated_positions.size(), 2u);
-  EXPECT_EQ(pos->num_unassociated, 2);
+  // Both returns birthed trees → clutter weight 1 − r₀ = 0.5 each, and
+  // neither counts as fully unclaimed.
+  ASSERT_EQ(pos->clutter_positions.size(), 2u);
+  ASSERT_EQ(pos->clutter_position_weights.size(), 2u);
+  EXPECT_DOUBLE_EQ(pos->clutter_position_weights[0], 0.5);
+  EXPECT_DOUBLE_EQ(pos->clutter_position_weights[1], 0.5);
+  EXPECT_EQ(pos->num_unassociated, 0);
 
   EXPECT_DOUBLE_EQ(brg->time.seconds(), 1.0);
   ASSERT_EQ(brg->bearings.size(), 1u);
   EXPECT_DOUBLE_EQ(brg->bearings.front(), 0.25);
-  ASSERT_EQ(brg->unassociated_bearings.size(), 1u);
-  EXPECT_DOUBLE_EQ(brg->unassociated_bearings.front(), 0.25);
+  ASSERT_EQ(brg->clutter_bearings.size(), 1u);
+  ASSERT_EQ(brg->clutter_bearing_weights.size(), 1u);
+  EXPECT_DOUBLE_EQ(brg->clutter_bearings.front(), 0.25);
+  EXPECT_DOUBLE_EQ(brg->clutter_bearing_weights.front(), 1.0);
+  EXPECT_EQ(brg->num_unassociated, 1);
   EXPECT_TRUE(brg->positions.empty());
 }
 
-TEST(MhtTracker, ObserveBundleSplitsAssociatedFromUnassociated) {
+TEST(MhtTracker, ObserveBundleWeightsClaimedReturnsByExistence) {
   auto motion = std::make_shared<ConstantVelocity2D>(0.1);
   const EkfEstimator ekf(motion, 5.0);
   MhtTracker::Config cfg;
@@ -275,7 +289,7 @@ TEST(MhtTracker, ObserveBundleSplitsAssociatedFromUnassociated) {
   MhtTracker mht(ekf, cfg, rec);
 
   // Establish a track at the origin, then offer one gating return and
-  // one far clutter return in the same scan.
+  // one far return (births a fresh tree) in the same scan.
   mht.processBatch({positionMeas(0.0, 0.0, 1.0)});
   mht.processBatch({positionMeas(1.0, 0.0, 2.0),
                     positionMeas(5000.0, 5000.0, 2.0)});
@@ -285,8 +299,55 @@ TEST(MhtTracker, ObserveBundleSplitsAssociatedFromUnassociated) {
   ASSERT_EQ(second.size(), 1u);
   const auto& o = second.front();
   ASSERT_EQ(o.positions.size(), 2u);
-  ASSERT_EQ(o.unassociated_positions.size(), 1u);
-  EXPECT_DOUBLE_EQ(o.unassociated_positions.front().x(), 5000.0);
-  EXPECT_DOUBLE_EQ(o.unassociated_positions.front().y(), 5000.0);
-  EXPECT_EQ(o.num_unassociated, 1);
+  ASSERT_EQ(o.clutter_positions.size(), 2u);
+  ASSERT_EQ(o.clutter_position_weights.size(), 2u);
+  // Scan order is preserved: [0] = the claimed return, [1] = the birth.
+  EXPECT_DOUBLE_EQ(o.clutter_positions[0].x(), 1.0);
+  EXPECT_DOUBLE_EQ(o.clutter_positions[1].x(), 5000.0);
+  // The gating return is claimed by the existing tree's chosen hit
+  // leaf: its IPDA existence after the update is well above r₀, so the
+  // clutter weight must sit clearly below the birth's 0.5 — but above
+  // zero (the hypothesis is not yet certain).
+  EXPECT_LT(o.clutter_position_weights[0], 0.3);
+  EXPECT_GT(o.clutter_position_weights[0], 0.0);
+  EXPECT_DOUBLE_EQ(o.clutter_position_weights[1], 0.5);
+  // Neither return is fully unclaimed.
+  EXPECT_EQ(o.num_unassociated, 0);
+}
+
+TEST(MhtTracker, ObserveBundleFullWeightWhenNoTreeClaims) {
+  // With the IPDA lifecycle off, existence is the 1.0 sentinel: claimed
+  // and birthed returns carry weight 0 (and are omitted), so only the
+  // genuinely unexplained bearing contributes clutter evidence.
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  MhtTracker::Config cfg;
+  cfg.use_ipda_lifecycle = false;
+  cfg.use_visibility = false;
+  auto rec = std::make_shared<RecordingDetectionModel>();
+  MhtTracker mht(ekf, cfg, rec);
+
+  Measurement p1 = positionMeas(0.0, 0.0, 1.0);
+  Measurement b;
+  b.time = Timestamp::fromSeconds(1.0);
+  b.sensor = navtracker::SensorKind::EoIr;
+  b.model = MeasurementModel::Bearing2D;
+  b.value = Eigen::VectorXd::Constant(1, 0.25);
+  b.covariance = Eigen::MatrixXd::Identity(1, 1) * 1e-4;
+  mht.processBatch({p1, b});
+
+  ASSERT_EQ(rec->bundles.size(), 1u);
+  const navtracker::ISensorDetectionModel::ScanObservation* pos = nullptr;
+  const navtracker::ISensorDetectionModel::ScanObservation* brg = nullptr;
+  for (const auto& o : rec->bundles.front()) {
+    if (o.model == MeasurementModel::Position2D) pos = &o;
+    if (o.model == MeasurementModel::Bearing2D) brg = &o;
+  }
+  ASSERT_NE(pos, nullptr);
+  ASSERT_NE(brg, nullptr);
+  EXPECT_TRUE(pos->clutter_positions.empty());
+  EXPECT_EQ(pos->num_unassociated, 0);
+  ASSERT_EQ(brg->clutter_bearing_weights.size(), 1u);
+  EXPECT_DOUBLE_EQ(brg->clutter_bearing_weights.front(), 1.0);
+  EXPECT_EQ(brg->num_unassociated, 1);
 }
