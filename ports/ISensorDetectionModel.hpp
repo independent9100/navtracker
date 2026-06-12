@@ -88,9 +88,12 @@ class ISensorDetectionModel {
     return paramsFor(sensor, model);
   }
 
-  // Convenience: lookup keyed by a measurement's (sensor, model,
-  // source_id).
-  DetectionParams paramsFor(const Measurement& z) const {
+  // Measurement-resolved lookup — the hot-path entry point used by the
+  // per-(leaf, measurement) score step. Virtual so spatially-varying
+  // models can resolve λ_C *at the measurement's position* (clutter
+  // map, backlog item 5); the default ignores position and reproduces
+  // the (sensor, model, source) table lookup exactly.
+  virtual DetectionParams paramsFor(const Measurement& z) const {
     return paramsFor(z.sensor, z.model, z.source_id);
   }
 
@@ -118,11 +121,22 @@ class ISensorDetectionModel {
   }
 
   // One bucket of post-scan evidence, partitioned by (sensor, model).
+  // The trailing fields (time, unassociated_*, bearings) feed spatial
+  // clutter estimators; they are additive so existing aggregate
+  // initialisers `{sensor, model, n, positions}` stay valid.
   struct ScanObservation {
     SensorKind sensor;
     MeasurementModel model;
     int num_unassociated;                 // clutter proxy this scan
     std::vector<Eigen::Vector2d> positions; // ENU; empty for pure bearings
+    Timestamp time;                       // scan timestamp
+    // Subset of `positions` that gated to no existing track — where the
+    // clutter is, not just how much of it.
+    std::vector<Eigen::Vector2d> unassociated_positions;
+    // Bearing2D returns: absolute ENU azimuths (rad, atan2 convention),
+    // all returns and the unassociated subset.
+    std::vector<double> bearings;
+    std::vector<double> unassociated_bearings;
   };
 
   // Feed the scan outcome for adaptation. Fixed models ignore.

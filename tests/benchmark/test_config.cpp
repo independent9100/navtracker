@@ -10,7 +10,7 @@ using navtracker::benchmark::defaultConfigs;
 
 TEST(Config, DefaultConfigsHaveUniqueLabels) {
   const auto configs = defaultConfigs();
-  ASSERT_EQ(configs.size(), 12u);
+  ASSERT_EQ(configs.size(), 13u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   std::set<std::string> labels;
@@ -19,10 +19,11 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 12u);
+  EXPECT_EQ(labels.size(), 13u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_robust"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_ipda"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_mofn"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_mht_cmap"), 1u);
   EXPECT_EQ(labels.count("ekf_cv_gnn"), 1u);
   EXPECT_EQ(labels.count("ekf_cv_jpda"), 1u);
   EXPECT_EQ(labels.count("ukf_cv_gnn"), 1u);
@@ -32,6 +33,21 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   EXPECT_EQ(labels.count("ekf_cv_mht"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_noisy_mht"), 1u);
+}
+
+// Backlog item 5 ablation: the clutter-map config is the canonical MHT
+// stack with the spatial clutter map switched on, and is the ONLY config
+// with the flag — everything else must keep the fixed-table path.
+TEST(Config, ClutterMapAblationFlagsExactlyOneConfig) {
+  int flagged = 0;
+  for (const auto& c : defaultConfigs()) {
+    if (c.use_clutter_map) {
+      ++flagged;
+      EXPECT_EQ(c.label, "imm_cv_ct_mht_cmap");
+      EXPECT_EQ(c.tracker_kind, navtracker::benchmark::TrackerKind::Mht);
+    }
+  }
+  EXPECT_EQ(flagged, 1);
 }
 
 TEST(Config, FactoriesProduceUsableObjects) {

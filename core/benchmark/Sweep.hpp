@@ -37,9 +37,12 @@ struct SweepParams {
 // Build the per-sensor detection model a scenario declares, or null when
 // the scenario has no detection table (legacy scalar-clutter path).
 // Defaults (unlisted sensors) come from the tracker config's global
-// (P_D, λ_C) pair.
+// (P_D, λ_C) pair. With use_clutter_map the fixed table is wrapped in a
+// ClutterMapSensorDetectionModel (spatially-varying λ_C, backlog item 5);
+// the wrap is transparent until observations arrive.
 std::shared_ptr<ISensorDetectionModel> detectionModelFor(
-    const ScenarioDescriptor& desc, const MhtTracker::Config& cfg);
+    const ScenarioDescriptor& desc, const MhtTracker::Config& cfg,
+    bool use_clutter_map = false);
 
 std::vector<MetricRow> runSweep(
     const std::vector<Config>& configs,

@@ -199,3 +199,94 @@ TEST(MhtTracker, NoWarningWithSingleSensorKindOnDefaultModel) {
   }
   EXPECT_FALSE(mht.defaultDetectionModelWarning());
 }
+
+// --- Scan-observation enrichment (backlog item 5) ----------------------
+
+namespace {
+
+// Recording model: captures every observe() bundle so tests can assert
+// what evidence the tracker feeds spatial clutter estimators.
+struct RecordingDetectionModel : navtracker::ISensorDetectionModel {
+  using navtracker::ISensorDetectionModel::paramsFor;
+  navtracker::DetectionParams paramsFor(
+      navtracker::SensorKind, navtracker::MeasurementModel) const override {
+    return navtracker::DetectionParams{0.9, 1e-4};
+  }
+  void observe(const std::vector<ScanObservation>& bundle) override {
+    bundles.push_back(bundle);
+  }
+  std::vector<std::vector<ScanObservation>> bundles;
+};
+
+}  // namespace
+
+TEST(MhtTracker, ObserveBundleCarriesTimeUnassociatedPositionsAndBearings) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  MhtTracker::Config cfg;
+  auto rec = std::make_shared<RecordingDetectionModel>();
+  MhtTracker mht(ekf, cfg, rec);
+
+  // First scan, no prior trees: both position returns and the camera
+  // bearing gate to nothing → all unassociated.
+  Measurement p1 = positionMeas(0.0, 0.0, 1.0);
+  Measurement p2 = positionMeas(1000.0, 1000.0, 1.0);
+  Measurement b;
+  b.time = Timestamp::fromSeconds(1.0);
+  b.sensor = navtracker::SensorKind::EoIr;
+  b.model = MeasurementModel::Bearing2D;
+  b.value = Eigen::VectorXd::Constant(1, 0.25);
+  b.covariance = Eigen::MatrixXd::Identity(1, 1) * 1e-4;
+  mht.processBatch({p1, p2, b});
+
+  ASSERT_EQ(rec->bundles.size(), 1u);
+  const auto& bundle = rec->bundles.front();
+  ASSERT_EQ(bundle.size(), 2u);  // (Unknown, Position2D) + (EoIr, Bearing2D)
+
+  const navtracker::ISensorDetectionModel::ScanObservation* pos = nullptr;
+  const navtracker::ISensorDetectionModel::ScanObservation* brg = nullptr;
+  for (const auto& o : bundle) {
+    if (o.model == MeasurementModel::Position2D) pos = &o;
+    if (o.model == MeasurementModel::Bearing2D) brg = &o;
+  }
+  ASSERT_NE(pos, nullptr);
+  ASSERT_NE(brg, nullptr);
+
+  EXPECT_DOUBLE_EQ(pos->time.seconds(), 1.0);
+  ASSERT_EQ(pos->positions.size(), 2u);
+  // Both position returns were unassociated → they must appear in the
+  // spatial-clutter evidence list too.
+  ASSERT_EQ(pos->unassociated_positions.size(), 2u);
+  EXPECT_EQ(pos->num_unassociated, 2);
+
+  EXPECT_DOUBLE_EQ(brg->time.seconds(), 1.0);
+  ASSERT_EQ(brg->bearings.size(), 1u);
+  EXPECT_DOUBLE_EQ(brg->bearings.front(), 0.25);
+  ASSERT_EQ(brg->unassociated_bearings.size(), 1u);
+  EXPECT_DOUBLE_EQ(brg->unassociated_bearings.front(), 0.25);
+  EXPECT_TRUE(brg->positions.empty());
+}
+
+TEST(MhtTracker, ObserveBundleSplitsAssociatedFromUnassociated) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  MhtTracker::Config cfg;
+  auto rec = std::make_shared<RecordingDetectionModel>();
+  MhtTracker mht(ekf, cfg, rec);
+
+  // Establish a track at the origin, then offer one gating return and
+  // one far clutter return in the same scan.
+  mht.processBatch({positionMeas(0.0, 0.0, 1.0)});
+  mht.processBatch({positionMeas(1.0, 0.0, 2.0),
+                    positionMeas(5000.0, 5000.0, 2.0)});
+
+  ASSERT_EQ(rec->bundles.size(), 2u);
+  const auto& second = rec->bundles.back();
+  ASSERT_EQ(second.size(), 1u);
+  const auto& o = second.front();
+  ASSERT_EQ(o.positions.size(), 2u);
+  ASSERT_EQ(o.unassociated_positions.size(), 1u);
+  EXPECT_DOUBLE_EQ(o.unassociated_positions.front().x(), 5000.0);
+  EXPECT_DOUBLE_EQ(o.unassociated_positions.front().y(), 5000.0);
+  EXPECT_EQ(o.num_unassociated, 1);
+}

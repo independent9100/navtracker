@@ -1618,3 +1618,68 @@ philos only — every other scenario bit-identical).**
 Boston-harbor caveat, recorded for item 5: most unmatched radar plots
 are persistent shore/moored structure, the same uniform-λ limitation
 as the AutoFerry urban cameras.
+
+## 2026-06-12 — Backlog item 5: spatial clutter map (position maps on, bearing maps off)
+
+**Change.** `ClutterMapSensorDetectionModel`
+(`core/tracking/ClutterMapDetectionModel.hpp`, association.md §6): a
+decorator over the fixed per-sensor table that learns spatially
+varying λ_C online. Per (sensor, model), a sparse grid of cells each
+holding a time-based EWMA (τ = 20 s, never scan-counted) of
+unassociated returns per scan; cells touched by associated traffic
+decay toward zero, untouched cells read back the table baseline.
+`paramsFor(z)` — now virtual on the port; the TrackTree score already
+called it, so the hot path is unchanged — interpolates λ at the
+measurement position (bilinear ENU for position sensors, circular
+azimuth for bearings) and clamps to [baseline/8, baseline·64].
+`MhtTracker` enriches `ScanObservation` with scan time and the
+unassociated subset of positions/azimuths. Bench ablation config
+`imm_cv_ct_mht_cmap` = canonical IPDA+VIMM stack + map; the canonical
+config and all defaults are untouched (verified: every non-cmap row of
+baseline `2026-06-12_clutter_map` is bit-identical to
+`2026-06-11_philos_resample`).
+
+**Measured negative result — the bearing-map death spiral.** The first
+run (`2026-06-12_clutter_map_bearing_spiral`) had bearing maps on and
+collapsed lifetime on the camera-heavy autoferry scenarios (sc17
+0.90 → 0.25, sc5 0.91 → 0.31, sc22 0.84 → 0.43, sc2 0.96 → 0.72).
+Per-sub-map ablation (fixed vs full vs position-only vs bearing-only
+on sc2/5/13/16/17/22) isolated it cleanly: position-only is
+lifetime-neutral on every scenario; bearing-only reproduces the full
+collapse. Mechanism: bearings cannot initiate tracks, so a target
+whose track lapses keeps feeding "unassociated" bearings at its own
+azimuth — the map raises λ exactly where the target is, suppresses
+re-confirmation, and the suppression self-reinforces. The bearing
+map's apparent OSPA gains (sc13 348 → 262) came from suppressing true
+tracks alongside false ones. Bearing maps are therefore OFF by default
+(`ClutterMapParams::enable_bearing_map`), opt-in only; re-enabling
+requires a clutter proxy that excludes trackless targets
+(hypothesis-level labeling, association.md §6 ways-to-improve).
+
+**Result (`2026-06-12_clutter_map`, cmap vs canonical, position maps
+only).** Acceptance was "OSPA ↓ without lifetime loss on true tracks":
+
+- dense_clutter: OSPA 103 → 64.3 (−38%), breaks 0.35 → 0.2, switches
+  0.45 → 0.2 — uniform Poisson clutter is exactly what the map learns.
+- philos: OSPA 429.5 → 398.4, id_switches 0.17 → 0, pos_rmse
+  38.5 → 34.4 (Boston-harbour radar shore structure absorbed).
+- autoferry: lifetime preserved or up on all 9 (sc3 0.872 → 0.904,
+  sc22 0.837 → 0.856); OSPA small moves both ways (sc13 −10.5, sc6
+  −7.9, sc22 −4.6 vs sc16 +7.7, sc5 +6.7). Neutral overall — expected:
+  the urban offender is the *cameras*, whose map is the disabled one.
+- Clean synthetics: OSPA +5–11 (crossing 18.6 → 28.1, head_on
+  18.6 → 27.8), lifetime −0.02. Cause: birth self-poisoning — a new
+  target's first return is by definition unassociated, bumps its own
+  cell from the 1e-6 floor to the 64× clamp, and delays confirmation
+  by ~a scan. Inherent to the birth-gate clutter proxy (excluding
+  birthing returns would also exclude all clutter, which births
+  too); the fix is hypothesis-level labeling, same as above.
+
+**Verdict.** `imm_cv_ct_mht_cmap` stays an ablation config; the
+canonical config keeps the fixed table. The map is the right tool
+where clutter is dense and roughly Poisson per cell (dense_clutter,
+philos) and is safe-by-construction elsewhere (clamped, baseline
+passthrough when untouched) — but the birth-gate proxy is too blunt
+for camera bearings and slightly taxes clean-scene confirmation.
+Promote only after the proxy reads the global hypothesis instead of
+the birth gate.

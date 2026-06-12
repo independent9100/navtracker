@@ -212,6 +212,12 @@ std::vector<Config> defaultConfigs() {
   // score-delete) — isolates what calibrated existence buys.
   configs.push_back({"imm_cv_ct_mht_mofn", &makeImmCvCt, &makeJpda,
                      TrackerKind::Mht, &makeMhtMofnConfig});
+  // Canonical plus the spatial clutter map (backlog item 5) — isolates
+  // what spatially-resolved λ_C buys over the per-sensor scalar table
+  // on structured (shoreline) clutter.
+  configs.push_back({"imm_cv_ct_mht_cmap", &makeImmCvCt, &makeJpda,
+                     TrackerKind::Mht, &makeMhtConfig,
+                     /*use_clutter_map=*/true});
   // JPDA/GNN-style ablations (single-hypothesis Tracker pipeline).
   configs.push_back({"ekf_cv_gnn", &makeEkfCv, &makeGnn});
   configs.push_back({"ekf_cv_jpda", &makeEkfCv, &makeJpda});

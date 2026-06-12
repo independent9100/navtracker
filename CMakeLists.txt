@@ -44,6 +44,7 @@ add_library(navtracker_core
   core/association/Murty.cpp
   core/tracking/TrackManager.cpp
   core/tracking/TrackTree.cpp
+  core/tracking/ClutterMapDetectionModel.cpp
   core/tracking/DatumShift.cpp
   core/pipeline/ReorderBuffer.cpp
   core/pipeline/Tracker.cpp
@@ -226,6 +227,7 @@ add_executable(navtracker_tests
   tests/replay/test_autoferry_json_replay.cpp
   tests/estimation/test_noise_models.cpp
   tests/tracking/test_sensor_detection_models.cpp
+  tests/tracking/test_clutter_map_detection_model.cpp
   tests/pipeline/test_mht_sprt_confirm.cpp
   tests/pipeline/test_mht_ipda_lifecycle.cpp
   tests/benchmark/test_smoke.cpp

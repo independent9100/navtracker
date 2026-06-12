@@ -3,6 +3,7 @@
 #include "core/benchmark/Config.hpp"
 #include "core/benchmark/ScenarioRun.hpp"
 #include "core/benchmark/Sweep.hpp"
+#include "core/tracking/ClutterMapDetectionModel.hpp"
 #include "core/scenario/Builders.hpp"
 
 using namespace navtracker;
@@ -124,4 +125,37 @@ TEST(Sweep, DetectionModelForBuildsSourceKeyedEntries) {
                                       navtracker::MeasurementModel::Bearing2D,
                                       "cam_unknown");
   EXPECT_DOUBLE_EQ(other.probability_of_detection, 0.6);
+}
+
+TEST(Sweep, DetectionModelForWrapsClutterMapWhenRequested) {
+  // Backlog item 5: the clutter-map ablation wraps the scenario's fixed
+  // table in a ClutterMapSensorDetectionModel. The wrap must preserve
+  // the table lookups (transparent before observations) and must NOT
+  // happen for the default fixed path or for table-less scenarios.
+  ScenarioDescriptor desc;
+  desc.label = "with_table";
+  desc.detection_table.push_back(
+      {navtracker::SensorKind::EoIr, navtracker::MeasurementModel::Bearing2D,
+       navtracker::DetectionParams{0.6, 0.5}});
+
+  navtracker::MhtTracker::Config cfg;
+  const auto wrapped = detectionModelFor(desc, cfg, /*use_clutter_map=*/true);
+  ASSERT_TRUE(wrapped);
+  EXPECT_NE(
+      dynamic_cast<navtracker::ClutterMapSensorDetectionModel*>(wrapped.get()),
+      nullptr);
+  const auto p = wrapped->paramsFor(navtracker::SensorKind::EoIr,
+                                    navtracker::MeasurementModel::Bearing2D);
+  EXPECT_DOUBLE_EQ(p.probability_of_detection, 0.6);
+  EXPECT_DOUBLE_EQ(p.clutter_intensity, 0.5);
+
+  const auto fixed = detectionModelFor(desc, cfg);
+  ASSERT_TRUE(fixed);
+  EXPECT_EQ(
+      dynamic_cast<navtracker::ClutterMapSensorDetectionModel*>(fixed.get()),
+      nullptr);
+
+  ScenarioDescriptor no_table;
+  no_table.label = "no_table";
+  EXPECT_FALSE(detectionModelFor(no_table, cfg, /*use_clutter_map=*/true));
 }

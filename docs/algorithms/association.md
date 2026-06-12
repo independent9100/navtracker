@@ -120,7 +120,9 @@ Per scan:
   child and one child per gated measurement
   (`Δscore = log P_D + log N(z; ẑ, S) − log λ_C`, with `(P_D, λ_C)`
   looked up per (sensor, model, source_id) from `ISensorDetectionModel`
-  — units of λ_C live in the sensor's measurement space). The source_id
+  — units of λ_C live in the sensor's measurement space; the
+  measurement-resolved overload `paramsFor(z)` is virtual so λ_C can be
+  spatially resolved at z's position, see §6). The source_id
   refinement (2026-06-11, backlog item 4) lets two physical sensors
   sharing a `SensorKind` calibrate independently: on AutoFerry the EO
   and IR cameras are both `SensorKind::EoIr` yet measure P_D ≈ 0.73 vs
@@ -234,8 +236,8 @@ entries + azimuth sectors~~ DONE 2026-06-11 (backlog item 4) — but the
 companion lesson is recorded in the evaluation log: feeding the
 *measured* urban-channel camera clutter rate into the uniform-λ score
 collapses urban lifetime, because shoreline returns are persistent
-structure, not Poisson clutter. The spatial clutter map
-(improvement-backlog §5) is the right vehicle. (8) Bearing-driven
+structure, not Poisson clutter. The spatial clutter map (§6, backlog
+item 5) is the vehicle for that. (8) Bearing-driven
 identity churn between angularly-unresolvable targets (AutoFerry
 scenario5: the two vessels sit < 0.15 rad apart from ownship for 36%
 of the run while cameras provide 89% of all scans — ~95 id_switches
@@ -252,3 +254,96 @@ the dropout window where there are no measurements to process), so the
 trunk extends through the gap.
 
 **Measured behaviour.** See `docs/algorithms/evaluation-log.md`.
+
+## 6. Spatial clutter map (`ClutterMapSensorDetectionModel`)
+
+Backlog item 5 (2026-06-12). A decorator over the fixed per-sensor
+detection table that makes λ_C a function of *where* the measurement
+is, learned online from the scan stream.
+
+**Math.** Per (SensorKind, MeasurementModel) the model keeps a sparse
+grid of cells; cell c holds an EWMA estimate `r_c` of "unassociated
+returns per scan landing in c":
+
+```
+touch at time t with count n:
+  w   = 1 − exp(−(t − t_last)/τ)        (first touch: Δt = prior_dt_s)
+  r_c ← (1 − w)·r_c + w·n
+```
+
+A cell is touched on every scan in which *any* return (associated or
+not) lands in it; associated traffic contributes `n = 0` and drags the
+cell toward zero. New cells are seeded with the table baseline
+(`r = λ_table · A`), so an untouched map reads back the table exactly.
+Query — the virtual `paramsFor(z)` the TrackTree score already calls:
+
+```
+λ_c  = r_c / A                  (A = cell_size² m², or cell width rad)
+λ(z) = interpolation of λ_c at z's position
+λ    = clamp(λ(z), λ_table·min_ratio, λ_table·max_ratio)
+```
+
+Position sensors (Position2D / PositionVelocity2D) use a 2-D ENU grid
+(default 50 m pitch, bilinear interpolation over the 4 surrounding cell
+centers, λ in m⁻²). Bearing sensors (Bearing2D) have a 1-D circular
+grid over absolute ENU azimuth (default 5° pitch, linear interpolation
+with ±π wraparound, λ in rad⁻¹) that is **OFF by default**
+(`enable_bearing_map`, see the measured death spiral below).
+RangeBearing2D ((m·rad)⁻¹ space) has no map yet and passes through.
+P_D, `max_range_m`, and sector fields always come from the wrapped
+table — only `clutter_intensity` is position-resolved. The EWMA weight
+is **time-based (τ seconds), never scan-counted** (multi-rate lesson:
+10 scans is 0.6 s for a 16 Hz camera and 100 s for AIS).
+
+**Measured negative result — the bearing-map death spiral
+(2026-06-12).** Bearings cannot initiate tracks, so a real target whose
+track has lapsed (occlusion, score dip) keeps feeding "unassociated"
+bearings at its own azimuth. The map then raises λ exactly where the
+target is, every subsequent camera hit scores worse, re-confirmation is
+suppressed, and the suppression self-reinforces. Per-sub-map ablation
+on AutoFerry (canonical config, scenario × {fixed, full map, position
+map only, bearing map only}): the position map alone is
+lifetime-neutral on all scenarios while the bearing map alone
+reproduces the full collapse — sc17 lifetime 0.90 → 0.28, sc5
+0.91 → 0.34, sc2 0.96 → 0.74 (baseline
+`2026-06-12_clutter_map_bearing_spiral`). The bearing map's apparent
+OSPA gains came from suppressing *true* tracks alongside false ones.
+It stays available as an opt-in for setups where tracks can be born
+from bearings or the clutter proxy can exclude trackless targets.
+
+**Assumptions.** (1) "Gated to no existing track" is a usable clutter
+proxy — persistent structure that births its own clutter track becomes
+"associated" one scan later, so the proxy *undercounts* stable shoreline
+structure for position sensors; bearings cannot initiate tracks and keep
+counting. (2) Clutter fields move slowly relative to τ. (3) Indexing
+bearing clutter by absolute azimuth from ownship is useful while ownship
+moves slowly relative to τ.
+
+**Rationale.** Both real datasets show the same failure mode: harbour
+clutter is persistent *structured* shoreline return, not uniform
+Poisson, and feeding its ML-fitted rate into the uniform-λ score
+collapsed true-track lifetime (measured 2026-06-11, AutoFerry urban
+channel; same caveat recorded for philos Boston-harbour radar). A map
+keeps the calibrated baseline where nothing has been learned and raises
+λ only where false returns actually recur — the clutter-map CFAR idea
+transplanted into the MHT score. A decorator (rather than a new table
+type) keeps the fixed path bit-identical when unwrapped and the hot
+path untouched. Clamping as *ratios* of the local table baseline keeps
+the band dimensionally sane across m⁻² and rad⁻¹ sensors
+simultaneously.
+
+**Ways to improve / test next.** (1) Label clutter from the
+global-hypothesis association instead of the birth-gate proxy — would
+catch position-sensor shoreline structure that currently self-explains
+via clutter tracks, and is also the precondition for re-enabling the
+bearing map (a trackless target's bearings would stop counting once
+any hypothesis claims them). (2) Per-source maps (EO vs IR) if
+per-source clutter measurably differs. (3) A range×bearing
+product-space map for RangeBearing2D sensors. (4) Forgetting toward
+the prior for cells unvisited ≫ τ (currently they keep their last
+estimate). (5) Feed the map into JPDA β computation once backlog item
+8 (JPDA per-sensor parity) lands.
+
+**Measured behaviour.** Bench ablation `imm_cv_ct_mht_cmap` (canonical
+stack + map) vs `imm_cv_ct_mht` — see `docs/algorithms/evaluation-log.md`
+2026-06-12 entry.

@@ -42,6 +42,11 @@ struct Config {
   // Optional MHT configuration override. Used only when
   // tracker_kind == Mht; nullptr → default-constructed MhtTracker::Config.
   std::function<MhtTracker::Config()> mht_config{};
+  // Backlog item 5 ablation: wrap the scenario's fixed detection table
+  // in a ClutterMapSensorDetectionModel (spatially-varying λ_C learned
+  // online from unassociated returns). Mht only; no effect when the
+  // scenario declares no detection table.
+  bool use_clutter_map{false};
 };
 
 // Returns the five baseline configurations in fixed order:

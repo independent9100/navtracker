@@ -147,20 +147,31 @@ platforms) is future work.
 
 ## 5. Spatially varying clutter (clutter map)
 
-**Problem.** λ_C is one number per sensor per scenario. Harbour
-clutter is strongly non-uniform (shoreline vs open water); a global
-λ under-penalises shore clutter and over-penalises open-water hits.
-`AdaptiveSensorDetectionModel` exists (EWMA per sensor) but is unwired
-and still spatially global.
+**STATUS: DONE for position sensors (2026-06-12); bearing maps
+shipped but OFF by default.** `ClutterMapSensorDetectionModel`
+(association.md §6): decorator over the fixed table; sparse per-
+(sensor, model) grids of time-based EWMA cells (τ = 20 s), virtual
+`paramsFor(z)` interpolates λ at the measurement position, clamped to
+[baseline/8, baseline·64]; untouched cells read back the table.
+Bench ablation `imm_cv_ct_mht_cmap`. Measured
+(`2026-06-12_clutter_map`): dense_clutter OSPA 103 → 64, philos
+429 → 398 (switches → 0), autoferry lifetime preserved-or-up on all
+9; clean synthetics pay +5–11 OSPA from birth self-poisoning (a new
+target's first return bumps its own cell). **Key negative result:**
+the bearing map alone collapsed camera-heavy lifetime (sc17
+0.90 → 0.25; baseline `2026-06-12_clutter_map_bearing_spiral`,
+per-sub-map ablation isolated it) — bearings can't initiate tracks,
+so a trackless target's own bearings get labeled clutter and block
+its re-confirmation, self-reinforcing. Bearing maps are opt-in
+(`enable_bearing_map`) until the clutter proxy is fixed.
 
-**Change.** Grid-based clutter map per (sensor, model): EWMA of
-unassociated returns per cell / cell area; `paramsFor` interpolates at
-the measurement position. Wire the adaptive path into the bench as an
-ablation config first.
-
-**Test.** Bench ablation vs fixed table on all autoferry scenarios;
-acceptance = fewer confirmed false tracks (OSPA ↓) without lifetime
-loss on true tracks.
+**Open residue.** The birth-gate proxy ("gated to no existing tree")
+is the limiting factor for both the bearing death spiral and the
+clean-scene birth tax: label clutter from the *global hypothesis*
+(measurements unclaimed after the solve, existence-weighted) instead.
+That is the precondition for re-enabling bearing maps and for
+promoting the map into the canonical config. Pairs with backlog §8
+(JPDA per-sensor parity) for the single-hypothesis path.
 
 ## 6. Default-detection-model footgun diagnostic
 

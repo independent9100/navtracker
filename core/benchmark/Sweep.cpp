@@ -34,6 +34,7 @@
 #include "core/benchmark/BenchRunner.hpp"
 #include "core/benchmark/BenchSink.hpp"
 #include "core/pipeline/Tracker.hpp"
+#include "core/tracking/ClutterMapDetectionModel.hpp"
 #include "core/tracking/SensorDetectionModels.hpp"
 #include "core/tracking/TrackManager.hpp"
 
@@ -59,7 +60,8 @@ void emit(std::vector<MetricRow>& out,
 }  // namespace
 
 std::shared_ptr<ISensorDetectionModel> detectionModelFor(
-    const ScenarioDescriptor& desc, const MhtTracker::Config& cfg) {
+    const ScenarioDescriptor& desc, const MhtTracker::Config& cfg,
+    bool use_clutter_map) {
   if (desc.detection_table.empty()) return nullptr;
   auto model = std::make_shared<FixedSensorDetectionModel>(
       DetectionParams{cfg.probability_of_detection, cfg.clutter_density});
@@ -69,6 +71,9 @@ std::shared_ptr<ISensorDetectionModel> detectionModelFor(
     else
       model->set(e.sensor, e.model, e.source_id, e.params);
   }
+  if (use_clutter_map)
+    return std::make_shared<ClutterMapSensorDetectionModel>(
+        std::move(model), ClutterMapParams{});
   return model;
 }
 
@@ -105,7 +110,7 @@ std::vector<MetricRow> runSweep(
           // detection table (correct units per sensor, coverage-
           // conditioned miss P_D). Legacy: a scenario-scalar clutter
           // density override when no table is declared.
-          auto det = detectionModelFor(desc, cfg);
+          auto det = detectionModelFor(desc, cfg, config.use_clutter_map);
           if (!det) cfg.clutter_density = desc.clutter_density;
           MhtTracker tracker(*est, cfg, std::move(det));
           result = runBenchMht(scen, tracker);

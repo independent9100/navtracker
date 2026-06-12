@@ -309,12 +309,26 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
         obs.sensor = scan[j].sensor;
         obs.model = scan[j].model;
         obs.num_unassociated = 0;
+        obs.time = scan.front().time;
         it = by_sensor.emplace(k, std::move(obs)).first;
       }
       // Pure-bearing measurements carry no ENU position — exclude from
       // surveyed-area but still count unassociated as a clutter proxy.
-      if (canInitiateTrack(scan[j].model) && scan[j].value.size() >= 2)
+      // Spatial clutter estimators additionally get the unassociated
+      // subset (positions or azimuths) — where the clutter is, not just
+      // how much of it.
+      if (canInitiateTrack(scan[j].model) && scan[j].value.size() >= 2) {
         it->second.positions.emplace_back(scan[j].value(0), scan[j].value(1));
+        if (!measurement_explained[j])
+          it->second.unassociated_positions.emplace_back(scan[j].value(0),
+                                                         scan[j].value(1));
+      }
+      if (scan[j].model == MeasurementModel::Bearing2D &&
+          scan[j].value.size() >= 1) {
+        it->second.bearings.push_back(scan[j].value(0));
+        if (!measurement_explained[j])
+          it->second.unassociated_bearings.push_back(scan[j].value(0));
+      }
       if (!measurement_explained[j]) ++it->second.num_unassociated;
     }
     std::vector<ISensorDetectionModel::ScanObservation> bundle;
