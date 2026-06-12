@@ -201,6 +201,7 @@ void TrackTree::branch(const IEstimator& estimator,
       miss.is_leaf = true;
       miss.is_hit = false;
       miss.scan_meas_idx = TrackTreeNode::kNoMeasurement;
+      miss.last_position_anchor = nodes_[leaf_idx].last_position_anchor;
       // IPDA / VIMM existence on the miss branch (carried through when
       // update_existence is off).
       if (params.update_existence) {
@@ -226,23 +227,36 @@ void TrackTree::branch(const IEstimator& estimator,
 
     for (std::size_t mi = 0; mi < scan.size(); ++mi) {
       const Measurement& z = scan[mi];
-      // Gate + likelihood through IEstimator. For EKF/UKF/PF this is
-      // the textbook Mahalanobis + log-N. For IMM the gate is
-      // any-mode (Mazor 1998) and the likelihood is the mode-weighted
-      // mixture — strictly more honest than the moment-matched
-      // projection that this loop used to compute inline.
-      if (!estimator.gate(tmp_predicted, z, params.gate_threshold)) continue;
-      const double log_likelihood = estimator.logLikelihood(tmp_predicted, z);
-
-      Track child_tr = tmp_predicted;
-      estimator.update(child_tr, z);
-
-      // Per-sensor (P_D, λ_C). Units of λ_C match z.model's measurement
-      // space (m^-2 / (m·rad)^-1 / rad^-1) so the score increment
+      // Per-sensor (P_D, λ_C, gate). Units of λ_C match z.model's
+      // measurement space (m^-2 / (m·rad)^-1 / rad^-1) so the score
+      // increment
       //   log P_D + log p(z|x) − log λ_C
       // is dimensionally consistent for this sensor — even when the
       // scan mixes sensors with different units.
       const DetectionParams dp = params.detection_model->paramsFor(z);
+      // Gate + likelihood through IEstimator. For EKF/UKF/PF this is
+      // the textbook Mahalanobis + log-N. For IMM the gate is
+      // any-mode (Mazor 1998) and the likelihood is the mode-weighted
+      // mixture — strictly more honest than the moment-matched
+      // projection that this loop used to compute inline. The gate is
+      // per-sensor when the entry declares one (sparse position
+      // sensors widen it to recapture bearing-drifted tracks), and
+      // position gates additionally scale with the leaf's position-
+      // anchor age when the adaptive recapture gate is enabled.
+      double gate =
+          dp.gate_threshold > 0.0 ? dp.gate_threshold : params.gate_threshold;
+      if (params.recapture_tau_s > 0.0 && canInitiateTrack(z.model)) {
+        const double age = std::max(
+            0.0,
+            scan_time.secondsSince(nodes_[leaf_idx].last_position_anchor));
+        gate *= std::min(params.recapture_max_scale,
+                         1.0 + age / params.recapture_tau_s);
+      }
+      if (!estimator.gate(tmp_predicted, z, gate)) continue;
+      const double log_likelihood = estimator.logLikelihood(tmp_predicted, z);
+
+      Track child_tr = tmp_predicted;
+      estimator.update(child_tr, z);
 
       TrackTreeNode hit;
       hit.parent = leaf_idx;
@@ -260,6 +274,11 @@ void TrackTree::branch(const IEstimator& estimator,
       hit.is_leaf = true;
       hit.is_hit = true;
       hit.scan_meas_idx = mi;
+      // Position-sensor hits refresh the range anchor; bearing hits
+      // carry it through (they observe angle, not range).
+      hit.last_position_anchor = canInitiateTrack(z.model)
+                                     ? scan_time
+                                     : nodes_[leaf_idx].last_position_anchor;
       // IPDA / VIMM existence on the hit branch (carried through when
       // update_existence is off). Uses the same per-sensor (P_D, λ_C)
       // the score uses — calibrated quantity, not the raw score.

@@ -260,23 +260,59 @@ the heading-bias estimator's v1 pair flow.
 
 ## 11. Bearing-driven identity churn on angularly-unresolvable targets
 
-**Problem (diagnosed 2026-06-11).** AutoFerry scenario5 retains ~95
-id_switches after the duplicate merge. Measured geometry: the two
-vessels are never closer than 44 m, but sit < 0.15 rad apart *as seen
-from ownship* for 36% of the 139 s run (< 0.1 rad for 20%), while
-cameras provide 2891 of 3250 scans (radar only ~0.6 Hz). Camera
-bearings gate into both tracks throughout; the global hypothesis swaps
-them and the slow radar cannot re-anchor identity. This is neither a
-duplicate-tree nor a close-pass problem — it is bearings carrying
-association weight they cannot support.
+**RE-DIAGNOSED 2026-06-12 — the 2026-06-11 hypothesis was wrong.**
+Forensics on the ~91 sc5 switches (per-event dump): only 21 of 182
+raw events are pair swaps. The dominant pattern is a **conveyor belt
+of short-lived duplicate tracks**: 107 confirmed ids in 139 s for 2
+truths; 45 of 48 near-truth confirmations happened with a live
+confirmed track already within 50 m. Mechanism: a track carried by
+16 Hz camera bearings drifts 10–30 m and turns overconfident; the
+sparse (~0.6 Hz) radar return then misses the χ² gate, births a
+duplicate, the young tree takes the stream, the old one starves —
+identity hands off every 2–4 s.
 
-**Candidate changes.** (a) Cluster-coupled hypotheses for
-bearing-overlapped track pairs (keep the swap ambiguity inside one
-cluster instead of committing per scan). (b) Withhold identity-bearing
-association (bearings update kinematics but not identity) while two
-tracks are within k·σ_bearing of each other from the sensor.
-(c) Cheaper variant: raise the effective bearing R for measurements
-that gate into more than one track (un-identifying them).
+**Knobs landed 2026-06-12 (all opt-in, defaults OFF — measured, none
+promotable yet):**
+- `share_ambiguous_bearings` — a Bearing2D return whose hit branches
+  exist in ≥ 2 trees is exempted from solve exclusivity (candidate (b)
+  in its cheapest form). Measured: sc5 bit-identical (each tree
+  already takes its nearest bearing — per-scan swaps were not the
+  churn), tiny moves elsewhere. Kept for genuine merged-detection use.
+- `DetectionParams::gate_threshold` — per-sensor static gate. Flat 50
+  on position sensors: switches roughly halved on all 9 scenarios,
+  OSPA −15..−95, but lifetime −0.03..−0.07 on 4 scenarios.
+- `gate_recapture_tau_s` / `gate_recapture_max_scale` — position gate
+  scales with the hypothesis' position-anchor age (recapture exactly
+  when bearing-carried). Measured: switches/OSPA improve strongly
+  (sc5 91 → 38) but lifetime drops (sc3 0.87 → 0.63, sc17
+  0.90 → 0.54) and rmse climbs to 30–60 m — the return gates back in
+  but the Kalman gain (same overconfident P) barely corrects.
 
-**Test.** Scenario5 id_switches with no regression on scenarios 2–4/6
-(bearings must still refine kinematics — pos_rmse must not climb).
+**Actual root cause → item 12.** NEES on sc5 near-truth confirmed
+tracks: **mean 77.6** (consistent ≈ 2), 57% of samples above the 99%
+χ² bound; claimed σ 1.2–3.8 m vs actual error 15.1 m mean. The
+filter is structurally overconfident on real bearing-dominated data;
+every symptom above is downstream. Fix the covariance first, then
+re-evaluate these knobs (they may become unnecessary or finally
+default-able).
+
+## 12. Filter consistency on real data (NEES calibration)
+
+**Problem (measured 2026-06-12, sc5).** Mean position NEES 77.6 vs
+the ~2 of a consistent filter. Suspects, in test order:
+(a) camera bearing R too small (calibrate σ_bearing against AIS-truth
+residuals per camera); (b) bearing-update range collapse — 16 Hz
+linearized bearing updates leak spurious range information through
+the velocity states (classic BOT pathology; candidate guard: range-
+direction variance must be non-decreasing under a Bearing2D update);
+(c) IMM process noise tuned on synthetics, too small for real harbour
+maneuvering.
+
+**Change.** Instrument NEES per (scenario, sensor mix) in the bench;
+calibrate R from measured residuals; add the bearing range-variance
+guard if (b) confirmed.
+
+**Test.** NEES → O(2) band on autoferry scenarios; then re-run the
+item-11 knob sweeps — expect conveyor births to vanish at the BASE
+gate (honest P keeps radar returns in gate), sc5/sc6 switches to
+collapse without lifetime loss.

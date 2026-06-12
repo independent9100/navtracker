@@ -1730,3 +1730,54 @@ cmap of `2026-06-12_clutter_map`).** Better on 17 of 20 scenarios:
 **Verdict.** Keep hypothesis labeling (more principled, better
 almost everywhere); cmap remains an ablation config. Next refinement
 recorded: existence-vs-visibility-aware weights.
+
+## 2026-06-12 — Backlog item 11: sc5 identity churn re-diagnosed (conveyor, not swaps)
+
+**Investigation.** The 2026-06-11 hypothesis (camera bearings swapping
+between two angularly-unresolved tracks in the global solve) was
+tested and falsified in three steps:
+
+1. **Shared ambiguous bearings** (`share_ambiguous_bearings`): a
+   Bearing2D return whose hit branches exist in ≥ 2 trees is exempted
+   from the solve's exclusivity (each tree's bearing hit maps to its
+   private assignment column — both trees can consume it; the
+   physically right model for merged camera detections). Measured on
+   sc5: **bit-identical** despite 23k shared assignments — under
+   exclusivity each tree was already taking its nearest bearing, so
+   per-scan assignment swaps were never the churn.
+2. **Switch forensics** (per-event dump): 182 raw events, only 21 are
+   pair swaps. Dominant pattern: truth 1 is tracked by a *succession*
+   of short-lived ids (~2 s apart, second-nearest track 50 m away —
+   handoffs, not swaps), plus near-tie flicker (d1 10.7 vs d2 10.8 m).
+   107 confirmed ids in 139 s for 2 truths.
+3. **Birth forensics**: 45 of 48 near-truth confirmations occur with a
+   live confirmed track already within 50 m — duplicate births. Gate
+   sweep confirms gate escape: global gate 20 → 100 collapses sc5
+   switches 91 → 27 (sc6 74 → 8.5) while OSPA *improves* ~80 m
+   (duplicate cardinality), at the cost of rmse/lifetime.
+
+**Conveyor mechanism.** Bearing-carried track drifts 10–30 m and turns
+overconfident → sparse radar return misses the χ² gate → births a
+duplicate alongside → young tree confirms and takes the stream → old
+tree starves → handoff = id switch, every 2–4 s.
+
+**Remedies implemented (opt-in, defaults OFF, canonical bit-identical;
+574/574 tests green):** per-sensor static gate
+(`DetectionParams::gate_threshold`), and the adaptive recapture gate
+(`gate_recapture_tau_s`: position gate × min(max_scale, 1 + age/τ)
+with age = time since the hypothesis' last position-sensor update,
+anchor carried per tree node). Measured (τ = 2 s): switches/OSPA
+improve strongly (sc5 91 → 43, OSPA −60 on most scenarios) but
+lifetime regresses (sc3 0.87 → 0.63, sc17 0.90 → 0.54) and rmse
+climbs to 30–60 m: the radar return gates back in but the Kalman gain
+uses the same overconfident P and barely corrects. Gate widening
+treats the symptom.
+
+**Root cause, quantified (→ new backlog item 12).** NEES of near-truth
+confirmed tracks on sc5: **mean 77.6** (consistent filter ≈ 2), 57% of
+samples above the 99% χ² bound; claimed σ 1.2–3.8 m against 15.1 m
+mean actual error. The filter is structurally overconfident on real
+bearing-dominated data (suspects: camera R calibration, bearing-update
+range collapse, synthetic-tuned process noise). Until item 12 lands,
+none of the item-11 knobs is promotable — with honest covariance the
+conveyor should not form at the base gate at all.

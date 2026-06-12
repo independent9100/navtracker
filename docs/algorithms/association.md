@@ -237,14 +237,19 @@ companion lesson is recorded in the evaluation log: feeding the
 *measured* urban-channel camera clutter rate into the uniform-λ score
 collapses urban lifetime, because shoreline returns are persistent
 structure, not Poisson clutter. The spatial clutter map (§6, backlog
-item 5) is the vehicle for that. (8) Bearing-driven
-identity churn between angularly-unresolvable targets (AutoFerry
-scenario5: the two vessels sit < 0.15 rad apart from ownship for 36%
-of the run while cameras provide 89% of all scans — ~95 id_switches
-that neither duplicate-merge nor existence modelling can address);
-candidate fixes: cluster-coupled hypotheses for bearing-overlapped
-tracks, or withholding identity commitment while the pair is
-unresolved.
+item 5) is the vehicle for that. (8) ~~Bearing-driven identity churn
+(scenario5)~~ RE-DIAGNOSED 2026-06-12: the ~91 switches are a
+*duplicate-birth conveyor* (bearing-carried tracks turn overconfident,
+sparse radar returns escape the gate and birth replacements every
+2–4 s), not solve-level bearing swaps — measured via
+`share_ambiguous_bearings` (bit-identical on sc5) and birth forensics
+(45/48 near-truth confirmations with a live track < 50 m). Three
+opt-in knobs exist (`share_ambiguous_bearings`,
+`DetectionParams::gate_threshold`, `gate_recapture_tau_s` — see
+MhtTracker::Config docs); none is default because the root cause is
+filter overconfidence (sc5 NEES 77.6 vs ~2 — backlog item 12), and
+gate-level remedies recapture without correcting (the Kalman gain
+shares the bad P). See evaluation-log 2026-06-12.
 
 **Configuration choices for the documented scenario.** P_D = 0.9,
 λ_C = 1e-4, gate = 9.0 (χ²₂ at 0.99), N_scan = 3, K_max_leaves = 5,

@@ -51,6 +51,17 @@ struct DetectionParams {
   static constexpr double kFullCircleRad = 6.283185307179586476925287;
   double sector_center_rad{0.0};
   double sector_width_rad{kFullCircleRad};
+
+  // Per-sensor association/birth gate (χ², same convention as the
+  // tracker-wide gate_threshold). 0 (default) = use the tracker-wide
+  // gate. Rationale (AutoFerry sc5 conveyor diagnosis, 2026-06-12): a
+  // track carried by 16 Hz bearings drifts and turns overconfident in
+  // range; the sparse radar return then misses the shared gate, births
+  // a duplicate, and identity hands off every few seconds. Sparse,
+  // informative position sensors can declare a wider recapture gate
+  // here without widening the gate for clutter-prone high-rate
+  // bearings.
+  double gate_threshold{0.0};
 };
 
 // Per-sensor detection model. Strategy: at every per-measurement score

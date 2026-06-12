@@ -50,6 +50,14 @@ struct TrackTreeNode {
                             // global-hypothesis solver to enforce
                             // "each detection used at most once across trees".
 
+  // Time of the last position-sensor (range-observing) update on this
+  // hypothesis path; roots inherit their seed measurement's time.
+  // Bearing-only stretches leave it stale — its age drives the
+  // adaptive recapture gate (BranchParams::recapture_tau_s): a track
+  // carried by bearings grows genuinely uncertain in range, so the
+  // gate for the next position return must widen accordingly.
+  Timestamp last_position_anchor{};
+
   // Optional IMM ensemble carrier (parallel to Track::imm_means etc.).
   // Empty for single-mode estimators (EKF/UKF/PF). Required for IMM:
   // ImmEstimator::predict/update bail out when imm_means.cols()==0,
@@ -147,6 +155,15 @@ class TrackTree {
                                               // under target-present
     double visibility_persistence{0.95};      // P(v=1 | v=1) per second
     double visibility_recovery{0.3};          // P(v=1 | v=0) per second
+    // Adaptive recapture gate for position-model measurements: the
+    // effective gate is
+    //   gate · min(recapture_max_scale, 1 + anchor_age / τ)
+    // where anchor_age = scan_time − leaf.last_position_anchor.
+    // τ = 0 disables (legacy fixed gate). Bearing measurements always
+    // use the base gate — they are the clutter-prone channel, and
+    // their information is angular, not range.
+    double recapture_tau_s{0.0};
+    double recapture_max_scale{8.0};
   };
 
   // N-scan pruning. For each current leaf, walk back N steps via parent

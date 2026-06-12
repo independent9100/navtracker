@@ -198,6 +198,38 @@ class MhtTracker {
     double visibility_init = 1.0;         // v₀ at birth (just detected)
     double visibility_persistence = 0.95; // P(vₖ=1 | vₖ₋₁=1)
     double visibility_recovery = 0.3;     // P(vₖ=1 | vₖ₋₁=0)
+
+    // Shared ambiguous bearings (backlog item 11). A Bearing2D
+    // measurement whose hit branches exist in ≥ 2 trees this scan is
+    // angularly unresolved — it cannot support an identity decision,
+    // and at small angular separations the camera detection genuinely
+    // merges both targets. With this flag the global solve exempts
+    // such measurements from exclusivity (each tree's bearing hit
+    // competes only against that tree's own alternatives), so both
+    // trees use the bearing for kinematics while identity stays
+    // anchored by the exclusive sensors (radar/lidar positions).
+    // Diagnosed on AutoFerry scenario5: camera bearings gating into
+    // two angularly-close tracks drove ~91 id switches as the solve
+    // swapped them scan to scan (cameras 89% of scans, radar ~0.6 Hz
+    // unable to re-anchor). Position measurements are never shared —
+    // exclusivity is the right model for resolved sensors.
+    bool share_ambiguous_bearings = false;
+
+    // Adaptive recapture gate (backlog item 11, conveyor fix). For
+    // POSITION-model measurements the effective gate is
+    //   gate · min(gate_recapture_max_scale, 1 + anchor_age / τ)
+    // where anchor_age is the hypothesis' time since its last
+    // position-sensor update. Rationale (sc5 forensics): a track
+    // carried by 16 Hz camera bearings drifts and turns overconfident
+    // in range; the next sparse radar return then misses the fixed χ²
+    // gate, births a duplicate alongside (45 of 48 near-truth
+    // confirmations had a live track within 50 m), and identity hands
+    // off every few seconds — a conveyor belt of short-lived ids. The
+    // age-scaled gate widens exactly when recapture is needed and
+    // keeps the tight clutter gate when the track is freshly range-
+    // anchored. Bearings always use the base gate. τ = 0 disables.
+    double gate_recapture_tau_s = 0.0;
+    double gate_recapture_max_scale = 8.0;
   };
 
   // `detection_model` supplies per-sensor (P_D, λ_C) for branch scoring.
@@ -224,6 +256,13 @@ class MhtTracker {
   // Scans dropped by the stale-input guard (reject_stale_measurements).
   std::size_t staleDropped() const { return stale_dropped_; }
 
+  // Cumulative count of chosen hit leaves that consumed a SHARED
+  // (ambiguity-exempted) bearing — 0 unless share_ambiguous_bearings.
+  // Diagnostic: how often the identity-free bearing path engages.
+  std::size_t sharedBearingAssignments() const {
+    return shared_bearing_assignments_;
+  }
+
   // One-shot diagnostic, sticky once set: ≥2 distinct (SensorKind,
   // MeasurementModel) keys have been processed while running on the
   // auto-installed single-default detection model — i.e. every sensor
@@ -246,6 +285,7 @@ class MhtTracker {
   std::vector<Track> tracks_;
   std::uint64_t next_external_id_{1};
   std::size_t stale_dropped_{0};
+  std::size_t shared_bearing_assignments_{0};
   bool has_high_water_{false};
   Timestamp high_water_{};
   // Start of each pair's current uninterrupted closeness streak for

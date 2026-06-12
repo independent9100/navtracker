@@ -351,3 +351,184 @@ TEST(MhtTracker, ObserveBundleFullWeightWhenNoTreeClaims) {
   EXPECT_DOUBLE_EQ(brg->clutter_bearing_weights.front(), 1.0);
   EXPECT_EQ(brg->num_unassociated, 1);
 }
+
+// --- Shared ambiguous bearings (backlog item 11) ------------------------
+
+namespace {
+
+Measurement bearingFromOrigin(double az, double sigma, double t) {
+  Measurement m;
+  m.time = Timestamp::fromSeconds(t);
+  m.sensor = navtracker::SensorKind::EoIr;
+  m.model = MeasurementModel::Bearing2D;
+  m.value = Eigen::VectorXd::Constant(1, az);
+  m.covariance = Eigen::MatrixXd::Identity(1, 1) * sigma * sigma;
+  return m;
+}
+
+// Two trees ~0.1 rad apart as seen from the origin, both position-
+// anchored over two scans so their gates are tight but overlapping in
+// bearing space.
+void establishClosePair(MhtTracker& mht) {
+  mht.processBatch({positionMeas(100.0, 0.0, 1.0),
+                    positionMeas(100.0, 10.0, 1.0)});
+  mht.processBatch({positionMeas(100.0, 0.0, 2.0),
+                    positionMeas(100.0, 10.0, 2.0)});
+}
+
+}  // namespace
+
+// A bearing that gates into BOTH trees carries no identity information
+// (the two targets are angularly unresolved from this sensor) — with
+// share_ambiguous_bearings it is exempted from the global solve's
+// exclusivity, so both trees consume it for kinematics and identity
+// stays anchored by the exclusive (position) sensors. Diagnosed on
+// AutoFerry scenario5: camera bearings gating into both of two
+// angularly-close tracks drove ~91 id switches as the global solve
+// swapped them scan to scan.
+TEST(MhtTracker, SharedAmbiguousBearingConsumedByBothTrees) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  MhtTracker::Config cfg;
+  cfg.share_ambiguous_bearings = true;
+  MhtTracker mht(ekf, cfg);
+  establishClosePair(mht);
+  ASSERT_EQ(mht.treeCount(), 2u);
+
+  // One bearing midway between the two targets (0.0 and ~0.0997 rad),
+  // σ wide enough that it gates into both trees.
+  mht.processBatch({bearingFromOrigin(0.05, 0.05, 3.0)});
+  EXPECT_EQ(mht.treeCount(), 2u);
+  // Both trees' chosen leaves consumed the shared bearing.
+  EXPECT_GE(mht.sharedBearingAssignments(), 2u);
+}
+
+TEST(MhtTracker, AmbiguousBearingStaysExclusiveByDefault) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  MhtTracker::Config cfg;  // share_ambiguous_bearings defaults off
+  MhtTracker mht(ekf, cfg);
+  establishClosePair(mht);
+
+  mht.processBatch({bearingFromOrigin(0.05, 0.05, 3.0)});
+  EXPECT_EQ(mht.sharedBearingAssignments(), 0u);
+}
+
+TEST(MhtTracker, UnambiguousBearingStaysExclusiveWithSharingOn) {
+  // A bearing gating into exactly ONE tree keeps normal exclusive
+  // assignment — sharing applies only where ≥ 2 trees branch on it.
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  MhtTracker::Config cfg;
+  cfg.share_ambiguous_bearings = true;
+  MhtTracker mht(ekf, cfg);
+  // Two targets on opposite sides of the sensor: ~0 rad and ~π/2.
+  mht.processBatch({positionMeas(100.0, 0.0, 1.0),
+                    positionMeas(0.0, 100.0, 1.0)});
+  mht.processBatch({positionMeas(100.0, 0.0, 2.0),
+                    positionMeas(0.0, 100.0, 2.0)});
+  ASSERT_EQ(mht.treeCount(), 2u);
+
+  mht.processBatch({bearingFromOrigin(0.0, 0.05, 3.0)});
+  EXPECT_EQ(mht.sharedBearingAssignments(), 0u);
+}
+
+TEST(MhtTracker, PositionMeasurementsNeverShared) {
+  // Exclusivity is the right model for resolved position sensors even
+  // when a return gates into two close tracks — only Bearing2D (whose
+  // unresolved detections genuinely merge) is exempted.
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  MhtTracker::Config cfg;
+  cfg.share_ambiguous_bearings = true;
+  MhtTracker mht(ekf, cfg);
+  establishClosePair(mht);
+
+  mht.processBatch({positionMeas(100.0, 5.0, 3.0)});
+  EXPECT_EQ(mht.sharedBearingAssignments(), 0u);
+}
+
+// --- Per-sensor gate (backlog item 11, conveyor fix) --------------------
+
+TEST(MhtTracker, PerSensorGateSuppressesDuplicateBirth) {
+  // sc5 forensics: a bearing-drifted track sits 10–30 m off the truth;
+  // the sparse radar return then misses the global χ² gate, births a
+  // duplicate tree, and identity hands off (45 of 48 near-truth
+  // confirmations had a live track within 50 m). With a per-sensor
+  // wide gate on the radar entry the same return gates back into the
+  // existing tree instead of birthing.
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+
+  for (const bool wide : {false, true}) {
+    auto det = std::make_shared<navtracker::FixedSensorDetectionModel>(
+        navtracker::DetectionParams{0.9, 1e-4});
+    navtracker::DetectionParams radar{0.8, 1e-5};
+    if (wide) radar.gate_threshold = 200.0;
+    det->set(navtracker::SensorKind::ArpaTtm,
+             MeasurementModel::Position2D, radar);
+
+    MhtTracker::Config cfg;  // global gate_threshold 9
+    MhtTracker mht(ekf, cfg, det);
+
+    Measurement m1 = positionMeas(0.0, 0.0, 1.0);
+    m1.sensor = navtracker::SensorKind::ArpaTtm;
+    Measurement m2 = positionMeas(0.0, 0.0, 2.0);
+    m2.sensor = navtracker::SensorKind::ArpaTtm;
+    mht.processBatch({m1});
+    mht.processBatch({m2});
+    ASSERT_EQ(mht.treeCount(), 1u);
+
+    // Drifted-track situation: the next return is 12 m off the
+    // prediction — outside the global gate, inside the wide one.
+    Measurement m3 = positionMeas(12.0, 0.0, 3.0);
+    m3.sensor = navtracker::SensorKind::ArpaTtm;
+    mht.processBatch({m3});
+    EXPECT_EQ(mht.treeCount(), wide ? 1u : 2u) << "wide=" << wide;
+  }
+}
+
+TEST(MhtTracker, RecaptureGatePreventsDuplicateBirthAfterBearingCoast) {
+  // The sc5 conveyor end-to-end: a track carried by camera bearings
+  // since its last radar fix must widen its POSITION gate with anchor
+  // age so the next radar return re-anchors it instead of birthing a
+  // duplicate alongside.
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+
+  for (const bool adaptive : {false, true}) {
+    MhtTracker::Config cfg;  // global gate 9
+    if (adaptive) {
+      cfg.gate_recapture_tau_s = 0.1;
+      cfg.gate_recapture_max_scale = 8.0;
+    }
+    MhtTracker mht(ekf, cfg);
+
+    Measurement p1 = positionMeas(100.0, 0.0, 1.0);
+    Measurement p2 = positionMeas(100.0, 0.0, 2.0);
+    mht.processBatch({p1});
+    mht.processBatch({p2});
+    ASSERT_EQ(mht.treeCount(), 1u);
+
+    // Bearing-only scans: track stays alive, position anchor ages.
+    Measurement b1;
+    b1.time = Timestamp::fromSeconds(2.2);
+    b1.sensor = navtracker::SensorKind::EoIr;
+    b1.model = MeasurementModel::Bearing2D;
+    b1.value = Eigen::VectorXd::Constant(1, 0.0);
+    b1.covariance = Eigen::MatrixXd::Identity(1, 1) * 0.0025;
+    Measurement b2 = b1;
+    b2.time = Timestamp::fromSeconds(2.4);
+    mht.processBatch({b1});
+    mht.processBatch({b2});
+    ASSERT_EQ(mht.treeCount(), 1u);
+
+    // Radar return 10 m off after 0.6 s of bearing coast: with the
+    // adaptive recapture gate it re-anchors the existing tree; with
+    // the fixed gate it births a duplicate.
+    Measurement p3 = positionMeas(110.0, 0.0, 2.6);
+    mht.processBatch({p3});
+    EXPECT_EQ(mht.treeCount(), adaptive ? 1u : 2u)
+        << "adaptive=" << adaptive;
+  }
+}

@@ -557,3 +557,93 @@ TEST(TrackTree, MissBranchIgnoresOutOfSectorSensor) {
   ASSERT_NE(miss, nullptr);
   EXPECT_NEAR(miss->score, 0.0, 1e-12);
 }
+
+TEST(TrackTree, PerSensorGateOverrideWidensGate) {
+  // Backlog item 11 (conveyor diagnosis): sparse position sensors must
+  // be able to recapture a drifted track, so DetectionParams can widen
+  // the gate per sensor. A return at Δ = 10 m (χ² ≈ 30 against the
+  // predicted S) is outside the global gate 9 but inside the sensor's
+  // declared 100 → the hit branch must exist with the override and must
+  // NOT exist without it.
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+
+  navtracker::Measurement z;
+  z.time = navtracker::Timestamp::fromSeconds(1.0);
+  z.model = navtracker::MeasurementModel::Position2D;
+  z.sensor = navtracker::SensorKind::ArpaTtm;
+  z.value = Eigen::Vector2d(10.0, 0.0);
+  z.covariance = Eigen::Matrix2d::Identity();
+
+  for (const bool wide : {false, true}) {
+    navtracker::FixedSensorDetectionModel det(
+        navtracker::DetectionParams{0.9, 1e-4});
+    navtracker::DetectionParams radar{0.8, 1e-5};
+    if (wide) radar.gate_threshold = 100.0;
+    det.set(navtracker::SensorKind::ArpaTtm,
+            navtracker::MeasurementModel::Position2D, radar);
+
+    TrackTree tt(TrackId{40}, rootNode(0.0, 0.0));
+    TrackTree::BranchParams p{&det, 9.0};
+    tt.branch(ekf, {z}, navtracker::Timestamp::fromSeconds(1.0), p);
+
+    bool has_hit = false;
+    for (const auto& n : tt.nodes())
+      if (n.is_leaf && n.is_hit) has_hit = true;
+    EXPECT_EQ(has_hit, wide) << "wide=" << wide;
+  }
+}
+
+TEST(TrackTree, RecaptureGateScalesWithPositionAnchorAge) {
+  // Conveyor fix, adaptive variant: the position-sensor gate widens
+  // with the age of the leaf's last position anchor. A bearing-carried
+  // leaf (anchor stale) accepts a 10 m-off radar return; a leaf that
+  // was position-anchored moments ago keeps the tight gate and rejects
+  // the same return (clutter protection where recapture isn't needed).
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+  navtracker::FixedSensorDetectionModel det(
+      navtracker::DetectionParams{0.9, 1e-4});
+
+  navtracker::Measurement pos0;
+  pos0.time = navtracker::Timestamp::fromSeconds(1.0);
+  pos0.model = navtracker::MeasurementModel::Position2D;
+  pos0.sensor = navtracker::SensorKind::ArpaTtm;
+  pos0.value = Eigen::Vector2d(100.0, 0.0);
+  pos0.covariance = Eigen::Matrix2d::Identity();
+
+  navtracker::Measurement brg = pos0;
+  brg.model = navtracker::MeasurementModel::Bearing2D;
+  brg.sensor = navtracker::SensorKind::EoIr;
+  brg.value = Eigen::VectorXd::Constant(1, 0.0);
+  brg.covariance = Eigen::MatrixXd::Identity(1, 1) * 0.0025;
+
+  navtracker::Measurement late = pos0;
+  late.time = navtracker::Timestamp::fromSeconds(1.2);
+  late.value = Eigen::Vector2d(110.0, 0.0);  // 10 m off the prediction
+
+  for (const bool bearing_carried : {true, false}) {
+    TrackTree tt(TrackId{41}, rootNode(100.0, 0.0));
+    TrackTree::BranchParams p{&det, 9.0};
+    p.recapture_tau_s = 0.25;
+    p.recapture_max_scale = 8.0;
+
+    // Scan 1 (t = 1.0): bearing-carried keeps the anchor at the root's
+    // time (0.0); position-carried refreshes it to 1.0.
+    tt.branch(ekf, {bearing_carried ? brg : pos0},
+              navtracker::Timestamp::fromSeconds(1.0), p);
+    // Keep only the hit branch to make scan 2 deterministic.
+    for (auto& n : tt.mutableNodes())
+      if (n.is_leaf && !n.is_hit) n.is_leaf = false;
+
+    // Scan 2 (t = 1.2): radar return 10 m off. Bearing-carried leaf has
+    // anchor age 1.2 → gate ≈ 9·(1 + 1.2/0.25) = 52 → recaptured.
+    // Position-anchored leaf has age 0.2 → gate ≈ 16 → rejected.
+    tt.branch(ekf, {late}, navtracker::Timestamp::fromSeconds(1.2), p);
+    bool recaptured = false;
+    for (const auto& n : tt.nodes())
+      if (n.is_leaf && n.is_hit && n.scan_idx == 2) recaptured = true;
+    EXPECT_EQ(recaptured, bearing_carried)
+        << "bearing_carried=" << bearing_carried;
+  }
+}

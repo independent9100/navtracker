@@ -48,6 +48,9 @@ TrackTreeNode rootFromMeasurement(const IEstimator& estimator,
   root.is_leaf = true;
   root.is_hit = true;  // root was born from a measurement
   root.scan_meas_idx = TrackTreeNode::kNoMeasurement;
+  // Births come from position-capable measurements (canInitiateTrack),
+  // so the seed measurement is itself the first range anchor.
+  root.last_position_anchor = z.time;
   return root;
 }
 
@@ -85,11 +88,19 @@ struct GlobalAssignment {
 // arbitrarily worse it is — in cooperative cases that means every
 // "miss instead of hit" alternative is kept, doubling tree size each
 // scan. <= 0 disables the filter (every K alternative protected).
+//
+// `non_exclusive` (may be empty = none): measurements exempted from
+// exclusivity (shared ambiguous bearings, Config::
+// share_ambiguous_bearings). A hit leaf on such a measurement maps to
+// the tree's PRIVATE column (M + t) instead of the shared measurement
+// column, so it competes only against that tree's own miss/shared
+// alternatives and any number of trees can consume the measurement.
 GlobalAssignment solveGlobalHypothesis(
     const std::vector<TrackTree>& trees,
     std::size_t scan_size,
     int k_best,
-    double score_delta_threshold) {
+    double score_delta_threshold,
+    const std::vector<bool>& non_exclusive = {}) {
   GlobalAssignment out;
   const std::size_t T = trees.size();
   out.chosen_leaf.assign(T, TrackTreeNode::kNoParent);
@@ -116,7 +127,9 @@ GlobalAssignment solveGlobalHypothesis(
       if (nodes[li].scan_meas_idx == TrackTreeNode::kNoMeasurement) {
         col = M + t;  // miss slot for this tree
       } else if (nodes[li].scan_meas_idx < M) {
-        col = nodes[li].scan_meas_idx;
+        const std::size_t mi = nodes[li].scan_meas_idx;
+        // Shared ambiguous bearing: private column, no exclusivity.
+        col = (mi < non_exclusive.size() && non_exclusive[mi]) ? M + t : mi;
       } else {
         continue;  // stale (shouldn't happen since branch just ran)
       }
@@ -228,7 +241,9 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
       cfg_.ipda_persistence,
       cfg_.ipda_gate_probability_mass,
       cfg_.visibility_persistence,
-      cfg_.visibility_recovery};
+      cfg_.visibility_recovery,
+      cfg_.gate_recapture_tau_s,
+      cfg_.gate_recapture_max_scale};
   for (TrackTree& tt : trees_) {
     tt.branch(estimator_, scan, t, bp);
     tt.pruneKLocal(cfg_.k_max_leaves);
@@ -252,10 +267,25 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
   // from the global-hypothesis solve below — birth precedes assignment.)
   std::vector<bool> measurement_explained(scan.size(), false);
   for (std::size_t j = 0; j < scan.size(); ++j) {
+    // Per-sensor gate override (DetectionParams::gate_threshold) plus
+    // the adaptive recapture scaling — the same gate branch() used, so
+    // a return that can extend a tree never births a duplicate next to
+    // it.
+    const double dp_gate =
+        detection_model_->paramsFor(scan[j]).gate_threshold;
+    const double base_gate = dp_gate > 0.0 ? dp_gate : cfg_.gate_threshold;
     bool gated_to_any = false;
     for (TrackTree& tt : trees_) {
       const std::size_t best = tt.bestLeafIndex();
       if (best == TrackTreeNode::kNoParent) continue;
+      double gate = base_gate;
+      if (cfg_.gate_recapture_tau_s > 0.0 &&
+          canInitiateTrack(scan[j].model)) {
+        const double age = std::max(
+            0.0, t.secondsSince(tt.nodes()[best].last_position_anchor));
+        gate *= std::min(cfg_.gate_recapture_max_scale,
+                         1.0 + age / cfg_.gate_recapture_tau_s);
+      }
       Track gate_tr;
       gate_tr.state = tt.nodes()[best].state;
       gate_tr.covariance = tt.nodes()[best].covariance;
@@ -265,7 +295,7 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
       // TrackTreeNode (only on the Track during branch()). For birth
       // gating that's acceptable; the per-tree branch loop above uses
       // estimator.gate() with the full IMM state.
-      if (estimator_.gate(gate_tr, scan[j], cfg_.gate_threshold)) {
+      if (estimator_.gate(gate_tr, scan[j], gate)) {
         gated_to_any = true;
         break;
       }
@@ -399,13 +429,42 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
     }
   }
 
+  // Shared ambiguous bearings (Config::share_ambiguous_bearings): a
+  // Bearing2D measurement whose hit branches exist in ≥ 2 trees is
+  // angularly unresolved — it can't support identity, and the camera
+  // detection genuinely merges both targets at small separations.
+  // Mark it non-exclusive so the solve below lets every gating tree
+  // consume it (identity stays with the exclusive position sensors).
+  std::vector<bool> shared_bearing(
+      cfg_.share_ambiguous_bearings ? scan.size() : 0, false);
+  if (cfg_.share_ambiguous_bearings) {
+    std::vector<int> tree_count(scan.size(), 0);
+    for (const TrackTree& tt : trees_) {
+      std::vector<bool> seen(scan.size(), false);  // one vote per tree
+      for (const TrackTreeNode& n : tt.nodes()) {
+        if (!n.is_leaf || !n.is_hit) continue;
+        if (n.scan_meas_idx == TrackTreeNode::kNoMeasurement ||
+            n.scan_meas_idx >= scan.size() || seen[n.scan_meas_idx])
+          continue;
+        seen[n.scan_meas_idx] = true;
+        ++tree_count[n.scan_meas_idx];
+      }
+    }
+    for (std::size_t j = 0; j < scan.size(); ++j) {
+      shared_bearing[j] =
+          scan[j].model == MeasurementModel::Bearing2D && tree_count[j] >= 2;
+    }
+  }
+
   // Global hypothesis: pick one leaf per tree such that no scan
-  // measurement is consumed by more than one tree. K>1 also collects
-  // alternative-top-K leaves for downstream deferred-commitment
-  // (consumed by callers that want to protect those leaves from
-  // pruning; the reported track itself comes from the K=1 best).
+  // measurement is consumed by more than one tree (shared ambiguous
+  // bearings excepted). K>1 also collects alternative-top-K leaves for
+  // downstream deferred-commitment (consumed by callers that want to
+  // protect those leaves from pruning; the reported track itself comes
+  // from the K=1 best).
   const GlobalAssignment assign = solveGlobalHypothesis(
-      trees_, scan.size(), cfg_.k_best, cfg_.score_delta_threshold);
+      trees_, scan.size(), cfg_.k_best, cfg_.score_delta_threshold,
+      shared_bearing);
 
   // Clear all stale is_protected flags from the previous scan, then
   // set them fresh on this scan's top-K leaves and their ancestor
@@ -523,6 +582,10 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
           n.scan_meas_idx < scan.size()) {
         claim_r[n.scan_meas_idx] =
             std::max(claim_r[n.scan_meas_idx], n.existence_probability);
+        if (n.scan_meas_idx < shared_bearing.size() &&
+            shared_bearing[n.scan_meas_idx]) {
+          ++shared_bearing_assignments_;
+        }
       }
     }
     // Births: roots carry no scan_meas_idx, so credit the seeding
