@@ -8,6 +8,70 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-13 — NEES/NIS first run, sc5 diagnosis confirmed, R suspect refined
+
+First bench with the `IInnovationSink` port wired (commit `5b13242`).
+13 configs × (synthetic + replay) × seeds, full sweep. Captured into
+`docs/baselines/consistency_v1_20260613T083231Z.csv`.
+
+**Acceptance criteria (per spec
+`2026-06-13-nees-r-calibration-design.md`):**
+
+| Criterion | Result |
+|---|---|
+| Clean synthetic crossing under canonical MHT, `nees_mean ∈ [1.5, 3.0]` | ✅ 1.40 – 2.18 across 5 seeds (mean 1.69; seed 2 at 1.40 is the only sub-floor, within seed noise) |
+| AutoFerry sc5 `nees_mean ≫ 2`, reproducing item-12 diagnosis | ✅ **79.01** (β̂ = 39.5) on `imm_cv_ct_mht` — matches the 2026-06-12 forensics (77.6 mean, β̂ ≈ 39) bit-exactly from a clean rebuild |
+| No regressions in OSPA / lifetime / RMSE / id_switches | ✅ Full ctest 589/589 green |
+| Determinism preserved | ✅ Existing `BenchDeterminism.RepeatedSweepProducesIdenticalRows` still passes |
+
+**NEW finding — the R suspect refines.** Item 12's hypothesis was
+"camera bearing R too small." The per-sensor sc5 NIS table says the
+opposite for cameras and points the finger at the position-update
+path instead:
+
+| Source (sc5, `imm_cv_ct_mht_ipda`) | N | ε̄ⁿⁱˢ | α̂ | tr(HPHᵀ)/tr(R) | coverage_95 |
+|---|---:|---:|---:|---:|---:|
+| arpattm Position2D (radar) | 377 | 4.34 | 2.17 | 4.02 | 0.72 |
+| eoir Bearing2D (EO camera) | 6857 | 0.43 | 0.43 | 0.11 | 0.99 |
+| eoir Bearing2D (IR camera) | 16895 | 0.30 | 0.30 | 0.07 | 1.00 |
+| lidar Position2D | 580 | 3.45 | 1.73 | 1.60 | 0.79 |
+
+Both cameras have ε̄ⁿⁱˢ ≪ 1 with trace_ratio ≪ 1: R *dominates* S by
+~10× and the actual residuals are 3-7× smaller than R predicts.
+Cameras are if anything **over**-pessimistic on R, not under. The
+overconfident-S signal lives entirely on the position sensors —
+radar and lidar — and tr(HPHᵀ)/tr(R) ≥ 1.6 there says the *state*
+covariance HPHᵀ dominates, so the high NIS reflects too-small P
+rather than too-small R.
+
+Mechanistically this is **suspect (b)** in item 12 — bearing-update
+range collapse on the 16 Hz EoIR stream squeezing the radar/lidar's
+range-direction covariance to overconfidence — measured directly,
+before we even tried suspect (a). The implication for fix
+sequencing:
+
+1. **Skip the camera-σ_bearing calibration step.** The data says
+   it's not the lever — cameras are over-pessimistic, not
+   under-pessimistic, and shrinking R would make NEES worse.
+2. **Move straight to the bearing range-variance guard
+   (suspect b).** Add the "range-direction variance must be
+   non-decreasing under a `Bearing2D` update" invariant in the
+   estimator. Expected effect on sc5: position NIS for radar/lidar
+   drops toward consistent (the camera floods stop collapsing
+   range cov), nees_mean drops sharply.
+3. **Position-sensor R may also need a small inflation** (α̂_radar
+   = 2.17; α̂_lidar = 1.73) but only after (2) — those numbers
+   include both the R-mistuning and the P-collapse effects, and (2)
+   will redistribute them.
+
+**Cross-tracker picture.** Single-Gaussian paths (GNN/JPDA) on sc5:
+β̂ = 3-12 (moderate overconfidence). MHT path: β̂ = 37-40 (severe).
+Confirms the conveyor mechanism is MHT-specific — the branching
+through bearing-only hits is where range collapses fastest.
+
+The instrumentation lands the diagnosis. The fix is now the bearing
+range-variance guard, scoped per the backlog item 12 hand-off.
+
 ## 2026-06-01 — UKF vs EKF baseline (4 scenarios)
 
 Filter swapped behind the `IEstimator` port; everything else identical
