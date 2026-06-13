@@ -13,6 +13,7 @@
 #include <numeric>
 #include <unordered_set>
 
+#include "core/scenario/Gospa.hpp"
 #include "core/scenario/Ospa.hpp"
 
 namespace navtracker {
@@ -52,6 +53,33 @@ std::vector<double> computeOspaPerStep(const BenchResult& result,
     est.reserve(step.tracks.size());
     for (const auto& tr : step.tracks) est.push_back(tr.position);
     out.push_back(ospaGreedy(truth, est, cutoff_m));
+  }
+  return out;
+}
+
+// Math:        per-step GOSPA at p=α=2, cutoff cutoff_m, via greedy
+//              assignment (gospaGreedy).
+// Assumptions: same as computeOspaPerStep — positions in metres, ENU.
+// Rationale:   GOSPA is the conventional metric for PMBM and the
+//              autoferry literature (Helgesen 2022). Unlike OSPA it
+//              does not divide by max(|X|, |Y|), so missed and false
+//              tracks contribute c²/2 each — cardinality errors stop
+//              hiding behind a saturated per-step cutoff.
+// Improve next: T-GOSPA (trajectory-level, time-weighted) — directly
+//               measures track fragmentation; needs trajectory-aware
+//               step bundling, queued in the PMBM plan phase 4.
+std::vector<double> computeGospaPerStep(const BenchResult& result,
+                                        double cutoff_m) {
+  std::vector<double> out;
+  out.reserve(result.steps.size());
+  for (const auto& step : result.steps) {
+    std::vector<Eigen::Vector2d> truth;
+    truth.reserve(step.truth.size());
+    for (const auto& t : step.truth) truth.push_back(t.position);
+    std::vector<Eigen::Vector2d> est;
+    est.reserve(step.tracks.size());
+    for (const auto& tr : step.tracks) est.push_back(tr.position);
+    out.push_back(gospaGreedy(truth, est, cutoff_m));
   }
   return out;
 }
@@ -303,6 +331,10 @@ MetricsResult computeMetrics(const BenchResult& result,
   const auto per_step = computeOspaPerStep(result, params.ospa_cutoff_m);
   m.ospa_mean = mean(per_step);
   m.ospa_p95 = percentile(per_step, 0.95);
+  const auto gospa_per_step =
+      computeGospaPerStep(result, params.gospa_cutoff_m);
+  m.gospa_mean = mean(gospa_per_step);
+  m.gospa_p95 = percentile(gospa_per_step, 0.95);
   const auto assigns = assignPerStep(result, params.assoc_gate_m);
   const auto cont = computeContinuity(result, assigns);
   m.lifetime_ratio = cont.lifetime_ratio;

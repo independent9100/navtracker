@@ -52,6 +52,7 @@ add_library(navtracker_core
   core/pipeline/MhtTracker.cpp
   core/scenario/Builders.cpp
   core/scenario/Ospa.cpp
+  core/scenario/Gospa.cpp
   core/scenario/Harness.cpp
   core/scenario/HarnessBatched.cpp
   core/scenario/HarnessBatchedMht.cpp
@@ -177,6 +178,7 @@ add_executable(navtracker_tests
   tests/adapters/test_end_to_end.cpp
   tests/scenario/test_builders.cpp
   tests/scenario/test_ospa.cpp
+  tests/scenario/test_gospa.cpp
   tests/scenario/test_harness.cpp
   tests/scenario/test_harness_batched.cpp
   tests/scenario/test_parallel_targets.cpp

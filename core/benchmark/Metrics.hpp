@@ -13,6 +13,13 @@ namespace benchmark {
 struct MetricsResult {
   double ospa_mean{0.0};        // metres
   double ospa_p95{0.0};         // metres
+  // Generalized OSPA (Rahmathullah et al. 2017). Same per-step grid as
+  // OSPA, but missed/false targets are charged c^p / α each so the
+  // metric grows with cardinality error instead of saturating at c.
+  // Convention here matches the PMBM / autoferry literature: c = 30 m,
+  // p = α = 2 (Helgesen et al. 2022).
+  double gospa_mean{0.0};       // metres
+  double gospa_p95{0.0};        // metres
   double lifetime_ratio{0.0};   // [0, 1]
   double track_breaks{0.0};     // count, mean across truth
   double id_switches{0.0};      // count, mean across truth
@@ -23,12 +30,21 @@ struct MetricsResult {
 
 struct MetricsParams {
   double ospa_cutoff_m{500.0};
+  // GOSPA cutoff (default 30 m matches Helgesen et al. 2022 on the
+  // AutoFerry dataset — the convention we want to reproduce). Smaller
+  // than the OSPA cutoff because GOSPA isn't trying to bound cardinality
+  // penalty into a per-step ceiling.
+  double gospa_cutoff_m{30.0};
   double assoc_gate_m{100.0};
 };
 
 // Per-step OSPA values across the run (one per step in result.steps).
 std::vector<double> computeOspaPerStep(const BenchResult& result,
                                        double cutoff_m);
+
+// Per-step GOSPA values (p=2, alpha=2 per literature convention).
+std::vector<double> computeGospaPerStep(const BenchResult& result,
+                                        double cutoff_m);
 
 double mean(const std::vector<double>& v);
 
