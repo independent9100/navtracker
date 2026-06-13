@@ -90,7 +90,11 @@ BenchStep snapshotAt(const TrackManager& manager, const TruthGroup& g) {
     const Eigen::Vector2d vel = tr.state.size() >= 4
         ? Eigen::Vector2d(tr.state(2), tr.state(3))  // CV2D layout [px,py,vx,vy]
         : Eigen::Vector2d::Zero();
-    step.tracks.push_back(TrackStateSnapshot{tr.id, pos, vel});
+    TrackStateSnapshot snap{tr.id, pos, vel};
+    if (tr.covariance.rows() >= 2 && tr.covariance.cols() >= 2) {
+      snap.pos_covariance = tr.covariance.topLeftCorner<2, 2>();
+    }
+    step.tracks.push_back(std::move(snap));
   }
   return step;
 }
@@ -166,7 +170,11 @@ BenchStep snapshotAtMht(const MhtTracker& tracker, const TruthGroup& g) {
     const Eigen::Vector2d vel = tr.state.size() >= 4
         ? Eigen::Vector2d(tr.state(2), tr.state(3))
         : Eigen::Vector2d::Zero();
-    step.tracks.push_back(TrackStateSnapshot{tr.id, pos, vel});
+    TrackStateSnapshot snap{tr.id, pos, vel};
+    if (tr.covariance.rows() >= 2 && tr.covariance.cols() >= 2) {
+      snap.pos_covariance = tr.covariance.topLeftCorner<2, 2>();
+    }
+    step.tracks.push_back(std::move(snap));
   }
   return step;
 }

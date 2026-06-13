@@ -493,6 +493,62 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
         assign.top_k_leaves[ti].size());
   }
 
+  // Emit InnovationEvents for the global hypothesis just chosen — one
+  // per surviving tree whose chosen leaf is a hit. The pre-update
+  // predicted state is reconstructed by re-running estimator.predict on
+  // the parent leaf's stored state up to the scan time; deterministic
+  // and bit-exact to what TrackTree::branch passed to estimator.update.
+  if (innov_sink_ != nullptr) {
+    for (std::size_t ti = 0; ti < trees_.size(); ++ti) {
+      std::size_t leaf = assign.chosen_leaf[ti];
+      if (leaf == TrackTreeNode::kNoParent) {
+        leaf = trees_[ti].bestLeafIndex();
+      }
+      if (leaf == TrackTreeNode::kNoParent) continue;
+      const TrackTreeNode& n = trees_[ti].nodes()[leaf];
+      if (!n.is_hit) continue;  // miss-branch — no innovation
+      if (n.parent == TrackTreeNode::kNoParent) continue;  // root spawn — no prior
+      if (n.scan_meas_idx == TrackTreeNode::kNoMeasurement ||
+          n.scan_meas_idx >= scan.size()) {
+        continue;
+      }
+      const Measurement& z = scan[n.scan_meas_idx];
+      const TrackTreeNode& p = trees_[ti].nodes()[n.parent];
+      Track tr_pred;
+      tr_pred.id = trees_[ti].externalId();
+      tr_pred.state = p.state;
+      tr_pred.covariance = p.covariance;
+      tr_pred.imm_means = p.imm_means;
+      tr_pred.imm_covariances = p.imm_covariances;
+      tr_pred.imm_mode_probabilities = p.imm_mode_probabilities;
+      tr_pred.last_update = p.time;
+      estimator_.predict(tr_pred, n.time);
+      const auto pred = predictMeasurement(z.model, tr_pred.state,
+                                           z.sensor_position_enu);
+      if (pred.z_pred.size() == 0 || pred.H.rows() == 0) continue;
+      const Eigen::VectorXd nu =
+          measurementResidual(z.model, z.value, pred.z_pred);
+      if (z.covariance.rows() < nu.size() || z.covariance.cols() < nu.size()) {
+        continue;
+      }
+      const Eigen::MatrixXd R =
+          z.covariance.topLeftCorner(nu.size(), nu.size());
+      const Eigen::MatrixXd S =
+          pred.H * tr_pred.covariance * pred.H.transpose() + R;
+      InnovationEvent ev;
+      ev.time = z.time;
+      ev.track_id = trees_[ti].externalId();
+      ev.sensor = z.sensor;
+      ev.source_id = z.source_id;
+      ev.model = z.model;
+      ev.residual = nu;
+      ev.S = S;
+      ev.R = R;
+      ev.dim = static_cast<std::size_t>(nu.size());
+      innov_sink_->onInnovation(ev);
+    }
+  }
+
   tracks_.clear();
   tracks_.reserve(trees_.size());
   for (std::size_t ti = 0; ti < trees_.size(); ++ti) {

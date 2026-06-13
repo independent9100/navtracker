@@ -38,6 +38,12 @@ const std::vector<std::string>& canonicalMetrics() {
   static const std::vector<std::string> v = {
       "ospa_mean",       "ospa_p95",     "lifetime_ratio", "track_breaks",
       "id_switches",     "pos_rmse_m",   "sog_rmse_mps",   "cog_rmse_deg",
+      // Filter consistency (backlog item 12). nees_mean is the headline:
+      // β̂ ≈ 1 means honest position covariance; sc5 measured 39 before
+      // R calibration. nees_p95 catches tail overconfidence. Per-source
+      // nis_* rows arrive after the canonical block in first-seen order.
+      "nees_mean",       "nees_p95",     "nees_coverage_95", "nees_beta_hat",
+      "nees_n",
   };
   return v;
 }

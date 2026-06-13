@@ -86,6 +86,7 @@ add_library(navtracker_benchmark
   core/benchmark/Placeholder.hpp  # header-only at this stage
   core/benchmark/BenchSink.cpp
   core/benchmark/BenchRunner.cpp
+  core/benchmark/Consistency.cpp
   core/benchmark/Metrics.cpp
   core/benchmark/Config.cpp
   core/benchmark/Sweep.cpp
@@ -156,8 +157,10 @@ add_executable(navtracker_tests
   tests/ports/test_edge_ports.cpp
   tests/pipeline/test_tracker.cpp
   tests/pipeline/test_tracker_bearing_innovation_emit.cpp
+  tests/pipeline/test_tracker_innovation_emit.cpp
   tests/pipeline/test_mht_tracker.cpp
   tests/pipeline/test_mht_cross_merge.cpp
+  tests/pipeline/test_mht_innovation_emit.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
   tests/adapters/own_ship/test_own_ship_provider.cpp
@@ -235,6 +238,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_bench_sink.cpp
   tests/benchmark/test_bench_runner.cpp
   tests/benchmark/test_metrics.cpp
+  tests/benchmark/test_consistency.cpp
   tests/benchmark/test_config.cpp
   tests/benchmark/test_sim_scenario_run.cpp
   tests/benchmark/test_replay_scenario_run.cpp

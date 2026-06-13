@@ -11,6 +11,7 @@
 #include "core/types/Measurement.hpp"
 #include "core/types/Track.hpp"
 #include "ports/IEstimator.hpp"
+#include "ports/IInnovationSink.hpp"
 #include "ports/ISensorDetectionModel.hpp"
 
 namespace navtracker {
@@ -244,6 +245,14 @@ class MhtTracker {
 
   void processBatch(const std::vector<Measurement>& scan);
 
+  // Optional. When non-null, every surviving tree whose chosen leaf is
+  // a HIT (took a measurement this scan) emits one InnovationEvent
+  // computed from the parent leaf's state re-predicted to scan_time —
+  // bit-exact reproduction of the pre-update state TrackTree::branch()
+  // applied estimator.update against. Pruned alternative branches emit
+  // nothing — we want the innovation of the filter the world saw.
+  void setInnovationSink(IInnovationSink* sink) { innov_sink_ = sink; }
+
   const std::vector<Track>& tracks() const { return tracks_; }
   std::size_t treeCount() const { return trees_.size(); }
 
@@ -297,6 +306,7 @@ class MhtTracker {
   bool using_default_detection_model_{false};
   bool default_detection_warning_{false};
   std::set<std::pair<SensorKind, MeasurementModel>> seen_sensor_keys_;
+  IInnovationSink* innov_sink_{nullptr};
 };
 
 }  // namespace navtracker

@@ -33,6 +33,7 @@
 
 #include "core/benchmark/BenchRunner.hpp"
 #include "core/benchmark/BenchSink.hpp"
+#include "core/benchmark/Consistency.hpp"
 #include "core/pipeline/Tracker.hpp"
 #include "core/tracking/ClutterMapDetectionModel.hpp"
 #include "core/tracking/SensorDetectionModels.hpp"
@@ -42,12 +43,54 @@ namespace navtracker {
 namespace benchmark {
 
 namespace {
+
+const char* sensorName(SensorKind s) {
+  switch (s) {
+    case SensorKind::Unknown:  return "unknown";
+    case SensorKind::Ais:      return "ais";
+    case SensorKind::ArpaTtm:  return "arpattm";
+    case SensorKind::ArpaTll:  return "arpatll";
+    case SensorKind::EoIr:     return "eoir";
+    case SensorKind::OwnShip:  return "ownship";
+    case SensorKind::Lidar:    return "lidar";
+  }
+  return "unknown";
+}
+
+const char* modelName(MeasurementModel m) {
+  switch (m) {
+    case MeasurementModel::Position2D:         return "pos2d";
+    case MeasurementModel::PositionVelocity2D: return "posvel2d";
+    case MeasurementModel::RangeBearing2D:     return "rb2d";
+    case MeasurementModel::Bearing2D:          return "b2d";
+  }
+  return "unknown";
+}
+
+// Compact source label "<sensor>_<model>[_<source_id>]". Used as a
+// metric-name suffix so the long-format CSV stays key-value while
+// still differentiating per-(SensorKind, MeasurementModel, source_id)
+// breakdowns (per design spec §3 — granularity matches item 4's
+// SourceKey).
+std::string sourceLabel(const ConsistencySourceKey& k) {
+  std::string s = sensorName(std::get<0>(k));
+  s += "_";
+  s += modelName(std::get<1>(k));
+  const std::string& sid = std::get<2>(k);
+  if (!sid.empty()) {
+    s += "_";
+    s += sid;
+  }
+  return s;
+}
+
 void emit(std::vector<MetricRow>& out,
           const SweepParams& p,
           const std::string& config,
           const std::string& scenario,
           std::uint64_t seed,
-          const MetricsResult& m) {
+          const MetricsResult& m,
+          const ConsistencyResult& c) {
   out.push_back({p.run_id, config, scenario, seed, "ospa_mean", m.ospa_mean, "m"});
   out.push_back({p.run_id, config, scenario, seed, "ospa_p95", m.ospa_p95, "m"});
   out.push_back({p.run_id, config, scenario, seed, "lifetime_ratio", m.lifetime_ratio, "ratio"});
@@ -56,6 +99,33 @@ void emit(std::vector<MetricRow>& out,
   out.push_back({p.run_id, config, scenario, seed, "pos_rmse_m", m.pos_rmse_m, "m"});
   out.push_back({p.run_id, config, scenario, seed, "sog_rmse_mps", m.sog_rmse_mps, "m/s"});
   out.push_back({p.run_id, config, scenario, seed, "cog_rmse_deg", m.cog_rmse_deg, "deg"});
+  // NEES aggregate (position, Confirmed-only via BenchStep::tracks).
+  out.push_back({p.run_id, config, scenario, seed, "nees_mean", c.nees.mean, "ratio"});
+  out.push_back({p.run_id, config, scenario, seed, "nees_p95", c.nees.p95, "ratio"});
+  out.push_back({p.run_id, config, scenario, seed, "nees_coverage_95", c.nees.coverage_95, "ratio"});
+  out.push_back({p.run_id, config, scenario, seed, "nees_beta_hat", c.nees.beta_hat, "ratio"});
+  out.push_back({p.run_id, config, scenario, seed, "nees_n",
+                 static_cast<double>(c.nees.n), "count"});
+  out.push_back({p.run_id, config, scenario, seed, "nees_dropped_singular",
+                 static_cast<double>(c.nees.dropped_singular), "count"});
+  // Per-source NIS breakdown. One row per stat per source key — the
+  // long-format schema absorbs any sensor mix without column churn.
+  for (const auto& [key, s] : c.per_source) {
+    const std::string sl = sourceLabel(key);
+    out.push_back({p.run_id, config, scenario, seed,
+                   "nis_mean:" + sl, s.mean, "ratio"});
+    out.push_back({p.run_id, config, scenario, seed,
+                   "nis_coverage_95:" + sl, s.coverage_95, "ratio"});
+    out.push_back({p.run_id, config, scenario, seed,
+                   "nis_alpha_hat:" + sl, s.alpha_hat, "ratio"});
+    out.push_back({p.run_id, config, scenario, seed,
+                   "nis_trace_ratio:" + sl, s.trace_ratio_HPH_over_R, "ratio"});
+    out.push_back({p.run_id, config, scenario, seed,
+                   "nis_n:" + sl, static_cast<double>(s.n), "count"});
+    out.push_back({p.run_id, config, scenario, seed,
+                   "nis_dropped_singular:" + sl,
+                   static_cast<double>(s.dropped_singular), "count"});
+  }
 }
 }  // namespace
 
@@ -102,6 +172,7 @@ std::vector<MetricRow> runSweep(
       for (const auto& config : configs) {
         auto est = config.build_estimator();
         BenchResult result;
+        NisCollector nis;
         if (config.tracker_kind == TrackerKind::Mht) {
           MhtTracker::Config cfg =
               config.mht_config ? config.mht_config() : MhtTracker::Config{};
@@ -113,6 +184,7 @@ std::vector<MetricRow> runSweep(
           auto det = detectionModelFor(desc, cfg, config.use_clutter_map);
           if (!det) cfg.clutter_density = desc.clutter_density;
           MhtTracker tracker(*est, cfg, std::move(det));
+          tracker.setInnovationSink(&nis);
           result = runBenchMht(scen, tracker);
         } else {
           auto asc = config.build_associator();
@@ -120,12 +192,15 @@ std::vector<MetricRow> runSweep(
               static_cast<int>(params.track_manager_min_misses),
               static_cast<int>(params.track_manager_max_misses));
           Tracker tracker(*est, *asc, mgr, params.tracker_init_gate_m);
+          tracker.setInnovationSink(&nis);
           BenchSink sink;
           result = runBench(scen, tracker, mgr, sink);
         }
         const auto m = computeMetrics(result, params.metrics);
+        const auto c =
+            computeConsistency(nis, result, params.metrics.assoc_gate_m);
         emit(rows, params, config.label, desc.label,
-             static_cast<std::uint64_t>(seed), m);
+             static_cast<std::uint64_t>(seed), m, c);
       }
     }
   }

@@ -44,13 +44,22 @@ TEST(Sweep, RowCountMatchesMatrix) {
   p.synthetic_seeds = 2;
 
   const auto rows = runSweep(configs, scenarios, p);
-  // 1 config * 1 scenario * 2 seeds * 8 metrics = 16 rows
-  EXPECT_EQ(rows.size(), 16u);
+  // 1 config * 1 scenario * 2 seeds → some number of metric rows.
+  // 8 kinematic/quality metrics + 6 NEES metrics + 6 NIS metrics per
+  // (sensor, model, source_id) source key contributing innovations.
+  // TinyStraightLine has one source; total per seed = 8 + 6 + 6 = 20.
+  EXPECT_EQ(rows.size(), 2u * 20u);
+  std::size_t nees_seen = 0;
+  std::size_t nis_seen = 0;
   for (const auto& r : rows) {
     EXPECT_EQ(r.run_id, "test_run");
     EXPECT_EQ(r.config, "ekf_cv_gnn");
     EXPECT_EQ(r.scenario, "tiny_line");
+    if (r.metric.rfind("nees_", 0) == 0) ++nees_seen;
+    if (r.metric.rfind("nis_", 0) == 0) ++nis_seen;
   }
+  EXPECT_EQ(nees_seen, 12u);  // 6 NEES * 2 seeds
+  EXPECT_GE(nis_seen, 12u);   // ≥ 6 NIS * 2 seeds (≥ 1 source)
 }
 
 // --- Per-scenario per-sensor detection tables -----------------------------

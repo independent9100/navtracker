@@ -21,6 +21,11 @@ struct TrackStateSnapshot {
   TrackId id;
   Eigen::Vector2d position;  // ENU metres
   Eigen::Vector2d velocity;  // ENU m/s
+  // 2x2 position-block covariance of the kinematic state at snapshot
+  // time. Zero matrix when the underlying track has no kinematic
+  // covariance (state.size() < 2 already filters those out). Used by
+  // bench-side NEES (see core/benchmark/Consistency.hpp).
+  Eigen::Matrix2d pos_covariance{Eigen::Matrix2d::Zero()};
 };
 
 // Per truth snapshot at a single evaluation timestamp.

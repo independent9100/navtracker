@@ -6,6 +6,7 @@
 #include "ports/IBearingInnovationSink.hpp"
 #include "ports/IDataAssociator.hpp"
 #include "ports/IEstimator.hpp"
+#include "ports/IInnovationSink.hpp"
 
 namespace navtracker {
 
@@ -35,6 +36,13 @@ class Tracker {
     bearing_innov_sink_ = sink;
   }
 
+  // Optional. When non-null, every successful HARD-match update emits a
+  // generic InnovationEvent (ν, S, R, key, model) computed from the
+  // pre-update predicted state — across all measurement kinds. JPDA
+  // soft-update emission is out of scope here (same footnote as
+  // IBearingInnovationSink). Used by the bench's NIS aggregator.
+  void setInnovationSink(IInnovationSink* sink) { innov_sink_ = sink; }
+
   // Stale-input guard, ON by default. The engine is time-driven: a
   // measurement older than the high-water mark of everything already
   // processed would be applied against newer state (predict is a dt≤0
@@ -51,6 +59,7 @@ class Tracker {
   TrackManager& manager_;
   double miss_timeout_seconds_;
   IBearingInnovationSink* bearing_innov_sink_{nullptr};
+  IInnovationSink* innov_sink_{nullptr};
   bool reject_stale_{true};
   std::size_t stale_dropped_{0};
   bool has_high_water_{false};

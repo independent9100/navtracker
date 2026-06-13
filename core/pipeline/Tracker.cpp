@@ -54,6 +54,42 @@ void emitBearingInnovationIfApplicable(IBearingInnovationSink* sink,
   sink->onBearingInnovation(obs);
 }
 
+// General-purpose innovation emission. The estimator's update used
+// (z, R, predicted P); we reproduce ν = z − h(x̂⁻), H = ∂h/∂x at x̂⁻,
+// and S = HPHᵀ + R from the same pre-update state so the consumer sees
+// exactly the innovation the filter saw. Skips the soft-update path
+// (gating soft-update emission to the bearing-only port until a
+// β-weighted variant is designed; see IInnovationSink rationale).
+void emitInnovation(IInnovationSink* sink, const Track& tr_pred,
+                    const Measurement& z) {
+  if (sink == nullptr) return;
+  const auto pred = predictMeasurement(z.model, tr_pred.state,
+                                       z.sensor_position_enu);
+  if (pred.z_pred.size() == 0 || pred.H.rows() == 0) return;
+  const Eigen::VectorXd nu =
+      measurementResidual(z.model, z.value, pred.z_pred);
+  // R must exist at the right shape; an adapter that left covariance
+  // empty has already failed validation upstream. Bail out on shape
+  // mismatch rather than silently injecting zeros.
+  if (z.covariance.rows() < nu.size() || z.covariance.cols() < nu.size()) {
+    return;
+  }
+  const Eigen::MatrixXd R = z.covariance.topLeftCorner(nu.size(), nu.size());
+  const Eigen::MatrixXd S =
+      pred.H * tr_pred.covariance * pred.H.transpose() + R;
+  InnovationEvent e;
+  e.time = z.time;
+  e.track_id = tr_pred.id;
+  e.sensor = z.sensor;
+  e.source_id = z.source_id;
+  e.model = z.model;
+  e.residual = nu;
+  e.S = S;
+  e.R = R;
+  e.dim = static_cast<std::size_t>(nu.size());
+  sink->onInnovation(e);
+}
+
 }  // namespace
 
 Tracker::Tracker(const IEstimator& estimator,
@@ -86,6 +122,7 @@ void Tracker::process(const Measurement& z) {
     const std::size_t ti = result.matches.front().first;
     Track& tr = manager_.mutableTracks()[ti];
     emitBearingInnovationIfApplicable(bearing_innov_sink_, tr, z);
+    emitInnovation(innov_sink_, tr, z);
     estimator_.update(tr, z);
     {
       Track::SourceTouch touch;
@@ -207,6 +244,7 @@ void Tracker::processBatch(const std::vector<Measurement>& scan) {
       const std::size_t mi = m.second;
       Track& tr = manager_.mutableTracks()[ti];
       emitBearingInnovationIfApplicable(bearing_innov_sink_, tr, scan[mi]);
+      emitInnovation(innov_sink_, tr, scan[mi]);
       estimator_.update(tr, scan[mi]);
       {
         const Measurement& z = scan[mi];
