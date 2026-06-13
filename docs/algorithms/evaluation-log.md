@@ -8,6 +8,61 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-13 (later) — Bearing range-variance guard measured: not the lever
+
+Implemented the classical BOT bearing range-variance guard (Aidala-
+style, post-update LOS clamp) as `imm_cv_ct_mht_bearguard` ablation
+(commit `03e16ee`). Math correct, unit tests pass, full ctest 592/592
+green. Re-ran the bench (`docs/baselines/bearguard_20260613T111159Z.csv`,
+3 seeds, 14 configs × scenarios).
+
+**Result — guard does not move sc5 NEES meaningfully:**
+
+| Config | sc5 nees_mean | β̂ | OSPA | id_sw |
+|---|---:|---:|---:|---:|
+| `imm_cv_ct_mht` (default, no guard) | 79.01 | 39.5 | 414 | 91 |
+| `imm_cv_ct_mht_bearguard` (guard on) | 78.44 | 39.2 | 420 | 92 |
+| Δ | **−0.7 %** | −0.7 % | +1.5 % | +1 |
+
+Clean synthetics: bit-identical (1.51171 → 1.51171 across all 5
+seeds). The guard fires only on `Bearing2D`, so position-only
+synthetics never trigger it.
+
+**Why it doesn't help on sc5 (re-read the NIS table):**
+
+Cameras have ε̄ⁿⁱˢ = 0.30 (IR) and 0.43 (EO) — bearing innovations are
+1.6–1.8× tighter than R predicts. That means the EKF gain K is tiny
+(R dominates S 10×), so the Joseph posterior barely changes P. The
+along-LOS collapse mechanism the guard targets is never large enough
+to clamp.
+
+**Real driver of sc5 overconfidence (refined diagnosis):** the radar
+NIS regime `(α̂=2.17, trace_ratio=4.02)` puts tr(HPHᵀ) at 4× tr(R)
+on every Position2D update — P_xy is too tight *at the moment a
+radar update arrives*. Cameras don't shrink P (tiny K), so the
+tightening must come from somewhere else. Sequence:
+
+1. Radar at scan t₀ → P_xy posterior is OK.
+2. ~0.4–1.6 s of bearing updates (16 Hz EO/IR) follow, K ≈ 0, P_xy
+   essentially unchanged.
+3. Predict step grows P_xy by Q·Δt — but only by Q·Δt.
+4. Radar at scan t₁ arrives. If Q is small relative to actual
+   harbour maneuvering, the predicted P_xy is still much smaller
+   than the true posterior should be → high radar NIS, high
+   position NEES.
+
+So the working hypothesis is now **process-noise calibration**:
+`kImmCv5AccelPsd = 0.5 m²/s³` and `kImmCtAccelPsd` are tuned for
+synthetic CV/CT, not for real harbour maneuvering. Q is the only
+mechanism that grows P between updates; the data points there.
+
+**Decision:** keep `imm_cv_ct_mht_bearguard` as an opt-in ablation
+(the math is correct and the BOT pathology is real in principle; the
+guard costs essentially nothing when it's a no-op) but **do not**
+promote to default. Move on to Q calibration as the next item-12
+suspect (c — explicitly listed in the spec). Wire AutoFerry NEES as
+the lever and sweep Q PSDs; measure sc5 nees_mean directly.
+
 ## 2026-06-13 — NEES/NIS first run, sc5 diagnosis confirmed, R suspect refined
 
 First bench with the `IInnovationSink` port wired (commit `5b13242`).
