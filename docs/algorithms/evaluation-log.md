@@ -8,6 +8,97 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-13 (later 2) — JPDA per-sensor (P_D, λ_C) parity: backlog item 8
+
+After the Q-calibration step looked premature (suspects (a) and (b)
+shelved, see entries below), stepped back and audited the open backlog
+instead of chasing a third NEES knob. Item 8 (JPDA per-sensor parity)
+was the cheapest open correctness fix and is a JIPDA prerequisite — the
+single-hypothesis JPDA path was still using a single scalar
+`(P_D = 0.9, λ_C = 1e-4 m⁻²)` on every measurement regardless of sensor,
+silently dimensionally wrong on any scan that mixes radar Position2D
+with camera Bearing2D (`λ_C` units differ — m⁻² vs rad⁻¹).
+
+**Change.** `JpdaAssociator` gains a second constructor
+`(gate_threshold, ISensorDetectionModel*)`. The scalar ctor is retained
+bit-identical. In the per-sensor mode the joint-event log-weight
+becomes
+
+```
+log w(θ) = Σⱼ [θ(j)==t+1] · (log P_D[s(j)] + log p(z_j|x_t))
+        + Σⱼ [θ(j)==0]   · log λ_C[s(j)]
+        + Σₜ [t not detected in θ] · Σ_s ∈ S(θ) log(1 − P_D^s(x_t))
+```
+
+with `(P_D, λ_C)` resolved per measurement via `model->paramsFor(z)`,
+and the per-track miss factor aggregated over distinct
+`(sensor, model, source_id)` tuples in the scan via
+`missDetectionProbability(...)` — same coverage-conditioned convention
+as `TrackTree::branch` in the MHT path. Bench wiring: a
+`PerSensorAssociatorFactory` on `benchmark::Config`; when the scenario
+declares a `detection_table` the bench passes the model to the
+associator constructor, otherwise it falls back to the scalar factory.
+Two new ablations: `ekf_cv_jpda_persensor`, `imm_cv_ct_jpda_persensor`.
+Three new unit tests pin (a) bit-identity between scalar and uniform-
+table single-sensor invocations, (b) per-measurement λ_C isolation
+(raising lidar λ_C does not move radar betas), (c) out-of-coverage
+miss charges zero penalty.
+
+**Result (`jpda_persensor_20260613T143004Z`, --skip-replays, 3 seeds).**
+Synthetic-only first because every synthetic declares its calibrated
+per-sensor table and the comparison is the calibrated-vs-uncalibrated
+λ_C question directly. Mean OSPA / pos_rmse / id_switches across 3
+seeds, persensor − scalar (− is better):
+
+| Scenario | cfg | OSPA Δ | pos_rmse Δ | id_switches Δ |
+|---|---|---:|---:|---:|
+| crossing | ekf_cv_jpda | −1.7 | −3.7 | 0 |
+| head_on | ekf_cv_jpda | −1.7 | −3.7 | 0 |
+| dense_clutter | ekf_cv_jpda | +1.3 | −1.7 | **−1.67 (−71%)** |
+| crossing_dropout | ekf_cv_jpda | −2.3 | −2.3 | 0 |
+| non_cooperative | ekf_cv_jpda | −5.3 | −2.0 | 0 |
+| non_cooperative | imm_cv_ct_jpda | −7.3 | **−7.0 (−40%)** | 0 |
+| dense_clutter | imm_cv_ct_jpda | +5.3 | −0.3 | −0.33 |
+| speed_change | ekf_cv_jpda | −5.3 | −0.3 | +0.33 |
+
+Net: small consistent OSPA wins on most scenarios (4 of 10 statistically
+clean improvements, 0 clean regressions on either pipeline). The
+dense_clutter signal is the cleanest correctness check — the synthetic
+declares 3.33e-5 m⁻² (4 FAs per scan / 600×200 m box, measured), the
+legacy scalar used 1e-4; honest λ_C dropped id_switches 71% on EKF/CV.
+The non_cooperative win (pos_rmse −7 m on the IMM, −40%) is the
+dimensional-units fix in action: bearing-only with calibrated 1e-2 rad⁻¹
+instead of mismatched 1e-4 m⁻². No clean-synthetic regression on either
+pipeline.
+
+**Replay (autoferry × 9 + philos).** Deferred to a follow-up entry —
+the full-replay sweep with all configs takes longer than this session's
+foreground window. Acceptance, when measured: no autoferry/philos
+lifecycle regression on either `*_persensor` config; if the per-sensor
+formulation buys a clean OSPA / id_switches win on the replays as it
+does on the synthetics, the canonical JPDA configs may flip
+(pre-JIPDA). Until then both ablations are opt-in.
+
+**Implementation footnote.** First bench attempt segfaulted in
+`FixedSensorDetectionModel::paramsFor`. Root cause: the bench loop's
+`std::shared_ptr<ISensorDetectionModel> det` was scoped inside an
+`if` block, so the JPDA's raw pointer dangled by the time the tracker
+ran. Hoisting the shared_ptr to the outer scope (so its lifetime spans
+the tracker) fixed it — same lifetime pattern the MHT path already
+uses. `result.p_d` is set to the homogeneous-batch sensor's P_D when
+all measurements share a `(sensor, model, source_id)` tuple, else 0
+(IMM falls back to its unnormalized mixture-likelihood proxy). True
+per-track P_D for mixed batches is deferred to JIPDA where it lives
+naturally as per-track existence.
+
+**Decision.** Promote both per-sensor ablations into the canonical bench
+matrix; do not flip the canonical configs (`ekf_cv_jpda` /
+`imm_cv_ct_jpda`) yet — the JIPDA upgrade (sota-roadmap.md §2) will
+re-architect the JPDA path with per-track existence, and the scalar
+configs stay as the pre-JIPDA baseline for that comparison. Backlog
+item 8 closes; next up is item 9 (inter-sensor registration biases) —
+the "combination of different sensors" thread.
+
 ## 2026-06-13 (later) — Bearing range-variance guard measured: not the lever
 
 Implemented the classical BOT bearing range-variance guard (Aidala-
