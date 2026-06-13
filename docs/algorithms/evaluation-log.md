@@ -71,13 +71,35 @@ dimensional-units fix in action: bearing-only with calibrated 1e-2 rad⁻¹
 instead of mismatched 1e-4 m⁻². No clean-synthetic regression on either
 pipeline.
 
-**Replay (autoferry × 9 + philos).** Deferred to a follow-up entry —
-the full-replay sweep with all configs takes longer than this session's
-foreground window. Acceptance, when measured: no autoferry/philos
-lifecycle regression on either `*_persensor` config; if the per-sensor
-formulation buys a clean OSPA / id_switches win on the replays as it
-does on the synthetics, the canonical JPDA configs may flip
-(pre-JIPDA). Until then both ablations are opt-in.
+**Replay (autoferry × 9 + philos, single-seed,
+`jpda_persensor_20260613T142623Z`).** Honest read: mixed. Lifetime
+preserved everywhere (within ±0.025 on every replay scenario), so no
+risk to drop in. OSPA / id_switches reshuffle: clean wins on some
+scenarios (sc22 OSPA −7.7 EKF / −6.3 IMM; sc17 −5.7 EKF / −5.7 IMM,
+id_sw −8 IMM; sc2 id_sw 24→18.5 EKF / 16→16.5 IMM; sc6 id_sw 30→18.5
+EKF), clean losses on others (sc3 id_sw +6 EKF / +7.5 IMM; sc13 pos_rmse
++4 EKF / +9 IMM; sc16 id_sw +7 EKF / +14 IMM; philos pos_rmse +13 m
+EKF / +8 m IMM). The pattern matches backlog item 4's recorded lesson:
+where the clutter is truly Poisson (clean synthetics, sc22, sc17) the
+calibrated table is the right operating point; where it isn't (urban
+shoreline structure on sc13/sc16, persistent unmatched plots on philos),
+the honest per-sensor λ pays the same urban-camera penalty the MHT
+path absorbs via VIMM + clutter map and the single-hypothesis JPDA
+doesn't have those buffers. NEES moves with bigger amplitude — most
+scenarios improve modestly (sc6 EKF 82 → 56; sc22 IMM 240 → 119) but
+sc22 EKF blows up (27 → 6954, camera-dominated, no IMM mode-switching
+to dilate R against bursty residuals). Bottom line: the math is right,
+but the *single-hypothesis* JPDA path was relying on the wrong-but-
+forgiving scalar λ_C to smooth over upstream model mismatch — the same
+upstream mismatch the MHT canonical config already absorbs.
+
+**Decision.** Keep both `*_persensor` configs as opt-in ablations
+(promoted into the canonical bench matrix, not into the canonical
+configs). The canonical JPDA configs stay on scalar λ_C as the
+pre-JIPDA baseline; the upgrade target is JIPDA proper
+(sota-roadmap.md §2), where per-track existence and IMM mode-aware R
+provide the buffers the synthetic-only per-sensor wins demonstrate are
+needed before flipping the default.
 
 **Implementation footnote.** First bench attempt segfaulted in
 `FixedSensorDetectionModel::paramsFor`. Root cause: the bench loop's
