@@ -8,6 +8,69 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-13 (later 3) — GOSPA metric + Helgesen 2022 reference scaffold
+
+After the item-8 wrap a fair user question landed: how does navtracker
+compare to the original AutoFerry paper's own tracker? The dataset's
+README pointed at Helgesen, Vasstein, Brekke, Stahl 2022 ("Heterogeneous
+multi-sensor tracking for an autonomous surface vehicle in a littoral
+environment", *Ocean Engineering* 252 (2022) 111168) whose tracker
+(asynchronous multi-sensor VIMM-JIPDA) is essentially what
+sota-roadmap.md §2 (JIPDA upgrade) would become — so the paper is the
+right reference for "are we as good as the published baseline on the
+benchmark we use for ourselves." We did not have the answer.
+
+**Three gaps identified, three fixed:**
+
+1. **Metric mismatch.** Paper uses GOSPA; we used OSPA. Added
+   `core/scenario/Gospa.hpp` — greedy GOSPA with default (c, p, α) =
+   (30 m, 2, 2) per the GOSPA-on-AutoFerry literature convention.
+   8 unit tests pin the boundary cases (matched-pair, missed-only,
+   false-only, cardinality growth, α=1, asymmetric). Wired into
+   `MetricsResult` (`gospa_mean`, `gospa_p95`) and emitted by
+   `Sweep.cpp` alongside OSPA. `gospa_cutoff_m` defaults to 30 m in
+   `MetricsParams` — to be reconciled against the paper once we have
+   the paper's exact (c, p, α).
+2. **No paper reference table.** Added skeleton
+   `docs/baselines/helgesen2022_reference.md`. Paper PDF is paywalled
+   (Elsevier ScienceDirect) and outside the sandbox network whitelist,
+   so the per-scenario columns are placeholders pending manual
+   extraction from the published article.
+3. **OSPA c=500 compressing harbour-scale diffs.** Backlog item 10
+   already flagged this; the per-scenario GOSPA row will make this
+   visible (cardinality errors no longer hide under the saturated
+   cutoff).
+
+**Result (`gospa_20260613T162409Z`, single seed, canonical
+`imm_cv_ct_mht`).** GOSPA mean per scenario (c = 30 m, p = α = 2):
+
+| Scenario | GOSPA | GOSPA p95 | pos_rmse | breaks | lifetime |
+|---|---:|---:|---:|---:|---:|
+| sc2  | 55.4 | 95.0 | 8.6  | 1.5 | 0.958 |
+| sc3  | 67.0 | 87.6 | 25.7 | 1.5 | 0.872 |
+| sc4  | 60.0 | 90.3 | 11.4 | 0.5 | 0.937 |
+| sc5  | 60.3 | 92.5 | 19.4 | 1.5 | 0.913 |
+| sc6  | 61.7 | 93.6 | 34.2 | 3   | 0.908 |
+| sc13 | 35.3 | 47.5 | 9.9  | 1   | 0.773 |
+| sc16 | 41.2 | 52.5 | 10.8 | 1.5 | 0.851 |
+| sc17 | 45.7 | 56.2 | 36.3 | 2.5 | 0.902 |
+| sc22 | 69.0 | 85.9 | 32.2 | 3.5 | 0.837 |
+
+The GOSPA numbers split cleanly: env 1 (sc2-6, open water with target
+maneuvers) sit at 55-67 m; env 2 (sc13, 16, 17, urban channel) at
+35-46 m; sc22 (bridge-passage maneuver) is the env 2 outlier at 69 m.
+Cardinality penalty dominates — with c²/α = 450 per missed-step, every
+break contributes a √450 ≈ 21 m floor that drowns out the actual
+positional error (pos_rmse 9-36 m). This is what GOSPA was designed to
+do: cardinality errors surface instead of saturating under OSPA's c.
+
+**Paper column awaits user.** Once the user pastes the paper's
+per-scenario GOSPA / pos_rmse / track-break numbers into
+`docs/baselines/helgesen2022_reference.md` we have the Δ. Until then
+this is half a comparison — but the navtracker side now has the right
+metric to be compared with. Item 9 (inter-sensor registration biases)
+unblocked, queued next.
+
 ## 2026-06-13 (later 2) — JPDA per-sensor (P_D, λ_C) parity: backlog item 8
 
 After the Q-calibration step looked premature (suspects (a) and (b)
