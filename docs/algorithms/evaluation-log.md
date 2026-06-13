@@ -41,35 +41,64 @@ benchmark we use for ourselves." We did not have the answer.
    visible (cardinality errors no longer hide under the saturated
    cutoff).
 
-**Result (`gospa_20260613T162409Z`, single seed, canonical
-`imm_cv_ct_mht`).** GOSPA mean per scenario (c = 30 m, p = α = 2):
+**Paper numbers extracted (Helgesen 2022 §5.8, Tables 6 & 7).**
+GOSPA `c = 20 m`, `p = α = 2`, reported as RMS. Aggregated
+per-environment (env 1 = sc2-6, env 2 = sc13/16/17/22) not per
+scenario. Headline full-fusion (L,R,IR,EO) row:
 
-| Scenario | GOSPA | GOSPA p95 | pos_rmse | breaks | lifetime |
-|---|---:|---:|---:|---:|---:|
-| sc2  | 55.4 | 95.0 | 8.6  | 1.5 | 0.958 |
-| sc3  | 67.0 | 87.6 | 25.7 | 1.5 | 0.872 |
-| sc4  | 60.0 | 90.3 | 11.4 | 0.5 | 0.937 |
-| sc5  | 60.3 | 92.5 | 19.4 | 1.5 | 0.913 |
-| sc6  | 61.7 | 93.6 | 34.2 | 3   | 0.908 |
-| sc13 | 35.3 | 47.5 | 9.9  | 1   | 0.773 |
-| sc16 | 41.2 | 52.5 | 10.8 | 1.5 | 0.851 |
-| sc17 | 45.7 | 56.2 | 36.3 | 2.5 | 0.902 |
-| sc22 | 69.0 | 85.9 | 32.2 | 3.5 | 0.837 |
+| Env | Paper GOSPA RMS | Paper posRMSE | Paper Break.L | Paper ANEES |
+|---|---:|---|---:|---:|
+| 1 (open water)   | 20.37 | 38.91 / 9.43 (Havfruen / Gunnerus) | 86.3 s  | 15.84 |
+| 2 (urban channel)| 30.97 | 83.53 / 50.49 (Havfruen / Jetboat) | 200.2 s | 51.90 |
 
-The GOSPA numbers split cleanly: env 1 (sc2-6, open water with target
-maneuvers) sit at 55-67 m; env 2 (sc13, 16, 17, urban channel) at
-35-46 m; sc22 (bridge-passage maneuver) is the env 2 outlier at 69 m.
-Cardinality penalty dominates — with c²/α = 450 per missed-step, every
-break contributes a √450 ≈ 21 m floor that drowns out the actual
-positional error (pos_rmse 9-36 m). This is what GOSPA was designed to
-do: cardinality errors surface instead of saturating under OSPA's c.
+**Bench adjusted to match.** `MetricsParams::gospa_cutoff_m` 30 → 20.
+Added `MetricsResult::gospa_rms` (RMS aggregation, paper convention).
+`Sweep.cpp` emits `gospa_rms` alongside `gospa_mean` / `gospa_p95`.
+Test pin updated (22 → 23 metric rows per scenario).
 
-**Paper column awaits user.** Once the user pastes the paper's
-per-scenario GOSPA / pos_rmse / track-break numbers into
-`docs/baselines/helgesen2022_reference.md` we have the Δ. Until then
-this is half a comparison — but the navtracker side now has the right
-metric to be compared with. Item 9 (inter-sensor registration biases)
-unblocked, queued next.
+**Result (`gospa20m_20260613T174620Z`, single seed, canonical
+`imm_cv_ct_mht`, c = 20 m).** GOSPA mean and RMS per scenario:
+
+| Sc | env | GOSPA mean | GOSPA RMS | pos_rmse | breaks | lifetime |
+|---|---|---:|---:|---:|---:|---:|
+| 2  | 1 | 37.5 | 40.9 | 8.6  | 1.5 | 0.958 |
+| 3  | 1 | 45.5 | 46.4 | 25.7 | 1.5 | 0.872 |
+| 4  | 1 | 40.6 | 42.8 | 11.4 | 0.5 | 0.937 |
+| 5  | 1 | 41.2 | 42.4 | 19.4 | 1.5 | 0.913 |
+| 6  | 1 | 41.7 | 44.4 | 34.2 | 3   | 0.908 |
+| 13 | 2 | 24.2 | 24.6 | 9.9  | 1   | 0.773 |
+| 16 | 2 | 27.8 | 28.4 | 10.8 | 1.5 | 0.851 |
+| 17 | 2 | 31.0 | 31.3 | 36.3 | 2.5 | 0.902 |
+| 22 | 2 | 46.4 | 47.0 | 32.2 | 3.5 | 0.837 |
+
+**Per-env aggregate (RMS-of-per-scenario-RMS, see helgesen2022_reference.md
+for caveat):**
+
+| Env | navtracker GOSPA RMS | Paper GOSPA RMS | Δ |
+|---|---:|---:|---:|
+| 1 | 43.4 | 20.37 | +23 m (≈ 2.1×) |
+| 2 | 33.9 | 30.97 | +3 m (≈ 1.1×) |
+
+**Verdict.** navtracker is essentially **on par with the published
+baseline on env 2** (urban channel: 33.9 vs 31.0), and **~2× worse on
+env 1** (open water: 43.4 vs 20.4). On positional error alone we look
+better (pos_rmse env 1 ~ 20 m vs paper's Havfruen 38.91 m driven by
+the documented coalescence failure mode); the env 1 GOSPA gap is
+therefore cardinality-driven — track breaks dominate the metric, and
+the paper's VIMM-JIPDA recovers from misses on something the IMM-MHT
+configuration we run does not. Filter consistency (ANEES / nees_mean)
+is worse than the paper on both envs and matches what backlog item 12
+documents.
+
+Closest algorithmic levers (in priority order):
+1. JIPDA upgrade (sota-roadmap §2) — the paper's tracker, the
+   single biggest algorithmic-class gap.
+2. Inter-sensor registration biases (backlog item 9) — what the
+   paper calibrates against RTK-GNSS and we currently do not.
+3. NEES calibration (item 12) — honest covariances widen gates and
+   reduce the spurious breaks that drive env 1's GOSPA penalty.
+
+The detour is done; item 9 starts next.
 
 ## 2026-06-13 (later 2) — JPDA per-sensor (P_D, λ_C) parity: backlog item 8
 

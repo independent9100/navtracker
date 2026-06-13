@@ -62,6 +62,7 @@ This matches the documentation standard in `CLAUDE.md`
 | 17 | [Multi-sensor fusion and bias](17-multi-sensor-and-bias.md)             | Combining different sensors. Heading bias estimator.     |
 | 18 | [CPA and collision risk](18-cpa-and-collision-risk.md)                  | Closest Point of Approach. The user-facing output.       |
 | 19 | [Glossary](19-glossary.md)                                              | Every symbol and acronym in one place.                   |
+| 20 | [Tracker performance metrics](20-tracker-metrics.md)                    | RMSE / OSPA / GOSPA / lifetime. How we score a tracker.  |
 
 ## A note on diagrams
 

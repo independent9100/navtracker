@@ -23,3 +23,6 @@ CMakeUserPresets.json
 /vids/
 /tests/fixtures/
 /.claude/
+
+# Paywalled / copyrighted papers fetched locally — do not commit.
+/1-s2.0-*.pdf

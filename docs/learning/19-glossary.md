@@ -78,7 +78,8 @@
 | NIS      | Normalised Innovation Squared                                   | 16            |
 | NMEA     | National Marine Electronics Association (sensor message format) | 10, 17        |
 | OOSM     | Out-Of-Sequence Measurement                                     | 10            |
-| OSPA     | Optimal SubPattern Assignment (multi-target metric)             | 14, scenarios |
+| OSPA     | Optimal SubPattern Assignment (bounded multi-target metric)     | 20            |
+| GOSPA    | Generalised OSPA — decomposable, unbounded multi-target metric  | 20            |
 | PD       | Probability of Detection                                        | 13            |
 | PDA      | Probabilistic Data Association (single-target JPDA)             | 12            |
 | PDAF     | PDA Filter (PDA + KF update)                                    | 12            |

@@ -335,6 +335,12 @@ MetricsResult computeMetrics(const BenchResult& result,
       computeGospaPerStep(result, params.gospa_cutoff_m);
   m.gospa_mean = mean(gospa_per_step);
   m.gospa_p95 = percentile(gospa_per_step, 0.95);
+  // RMS over per-step GOSPA: matches Helgesen 2022's aggregation.
+  double sumsq = 0.0;
+  for (double v : gospa_per_step) sumsq += v * v;
+  m.gospa_rms = gospa_per_step.empty()
+                    ? 0.0
+                    : std::sqrt(sumsq / static_cast<double>(gospa_per_step.size()));
   const auto assigns = assignPerStep(result, params.assoc_gate_m);
   const auto cont = computeContinuity(result, assigns);
   m.lifetime_ratio = cont.lifetime_ratio;

@@ -16,10 +16,14 @@ struct MetricsResult {
   // Generalized OSPA (Rahmathullah et al. 2017). Same per-step grid as
   // OSPA, but missed/false targets are charged c^p / α each so the
   // metric grows with cardinality error instead of saturating at c.
-  // Convention here matches the PMBM / autoferry literature: c = 30 m,
-  // p = α = 2 (Helgesen et al. 2022).
-  double gospa_mean{0.0};       // metres
+  // Convention matches Helgesen et al. 2022 on AutoFerry: c = 20 m,
+  // p = α = 2.
+  double gospa_mean{0.0};       // metres, arithmetic mean over steps
   double gospa_p95{0.0};        // metres
+  // RMS over per-step GOSPA: √(mean(GOSPA_k²)). This is the aggregation
+  // Helgesen 2022 reports in Tables 6 / 7 ("GOSPA is reported as RMS")
+  // and is what to compare against the paper's headline numbers.
+  double gospa_rms{0.0};        // metres
   double lifetime_ratio{0.0};   // [0, 1]
   double track_breaks{0.0};     // count, mean across truth
   double id_switches{0.0};      // count, mean across truth
@@ -30,11 +34,12 @@ struct MetricsResult {
 
 struct MetricsParams {
   double ospa_cutoff_m{500.0};
-  // GOSPA cutoff (default 30 m matches Helgesen et al. 2022 on the
-  // AutoFerry dataset — the convention we want to reproduce). Smaller
-  // than the OSPA cutoff because GOSPA isn't trying to bound cardinality
+  // GOSPA cutoff. 20 m matches Helgesen et al. 2022 §5.8 ("a Cartesian
+  // distance cut-off parameter of 20 m to match the track-truth
+  // assignment threshold used in other metrics"). Smaller than the
+  // OSPA cutoff because GOSPA isn't trying to bound cardinality
   // penalty into a per-step ceiling.
-  double gospa_cutoff_m{30.0};
+  double gospa_cutoff_m{20.0};
   double assoc_gate_m{100.0};
 };
 

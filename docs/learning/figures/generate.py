@@ -940,6 +940,33 @@ def fig_cpa_hysteresis():
     save(fig, "18-cpa-hysteresis.png")
 
 
+def fig_ospa_vs_gospa():
+    """OSPA vs GOSPA growth with number of missed targets."""
+    c = 20.0
+    d = 5.0
+    n_miss_range = np.arange(0, 11)
+    ospa, gospa = [], []
+    for k in n_miss_range:
+        n = max(1, 1 + k)
+        ospa.append(np.sqrt((d * d + k * c * c) / n))
+        gospa.append(np.sqrt(d * d + k * c * c / 2.0))
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(n_miss_range, ospa, marker="o", color="#aa3333", linewidth=2,
+            markersize=8, label=f"OSPA (c={int(c)} m, p=2)")
+    ax.plot(n_miss_range, gospa, marker="s", color="#1f3a5f", linewidth=2,
+            markersize=8, label=f"GOSPA (c={int(c)} m, p=alpha=2)")
+    ax.axhline(c, color="#aa3333", linestyle=":", linewidth=1.2,
+               label=f"OSPA bound = c = {int(c)} m")
+    ax.set_xlabel("number of missed truths (1 matched pair, error d=5 m)")
+    ax.set_ylabel("metric value (m)")
+    ax.set_title("OSPA saturates at c; GOSPA grows — cardinality errors surface")
+    ax.set_xticks(n_miss_range)
+    ax.set_ylim(0, max(gospa) * 1.05)
+    ax.legend(loc="upper left")
+    ax.grid(True, linestyle=":", alpha=0.4)
+    save(fig, "20-ospa-vs-gospa-cardinality.png")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 
 def main():
@@ -966,6 +993,7 @@ def main():
     fig_nis_timeseries()
     fig_cpa_geometry()
     fig_cpa_hysteresis()
+    fig_ospa_vs_gospa()
     print("done.")
 
 

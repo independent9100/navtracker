@@ -1,106 +1,154 @@
-# Helgesen et al. 2022 — paper reference table
+# Helgesen et al. 2022 — paper reference + comparison
 
 Helgesen, Vasstein, Brekke, Stahl, "Heterogeneous multi-sensor tracking
 for an autonomous surface vehicle in a littoral environment",
 *Ocean Engineering* 252 (2022) 111168.
-[ScienceDirect (paywalled)](https://www.sciencedirect.com/science/article/pii/S0029801822005753)
+[ScienceDirect (paywalled)](https://www.sciencedirect.com/science/article/pii/S0029801822005753).
 
 Dataset: <https://github.com/Autoferry/sensor_fusion_dataset>.
 
-This file holds the paper's published per-scenario numbers — the
-reference we benchmark navtracker against on the AutoFerry replays.
-**Paper PDF is paywalled and outside the sandbox network whitelist;
-numbers below are placeholders to be filled from the published tables.**
+## Paper methodology (extracted from §5.8 and §7)
 
-## What we expect to find
+- **GOSPA** with `c = 20 m`, `p = α = 2`, reported **as RMS** across
+  time steps (paper §5.8 lines 935-938, Tables 6/7 captions). The 20 m
+  cutoff is chosen to match the track-truth assignment threshold used
+  elsewhere in the paper.
+- Tracker: **asynchronous multi-sensor VIMM-JIPDA**. Their full-fusion
+  headline configuration is `L,R,IR,EO` = lidar + radar + EO cameras +
+  IR cameras (the same physical sensors navtracker's autoferry replay
+  exposes).
+- Aggregation: results reported **per environment**, not per scenario.
+  Env 1 = scenarios 2-6 (open water). Env 2 = scenarios 13/16/17/22
+  (urban channel).
+- posRMSE reported per target (Havfruen ; Gunnerus in env 1;
+  Havfruen ; Jetboat in env 2).
+- "Break.L" is break *length* in seconds (cumulative duration of
+  track-loss intervals across the env). We do not have a directly
+  comparable metric — `track_breaks` is *count* of break intervals
+  per truth.
 
-The paper evaluates an asynchronous multi-sensor JIPDA-IMM (the same
-algorithm class that sits at `sota-roadmap.md §2`, our planned JIPDA
-upgrade). Performance is reported per scenario, per sensor
-configuration, on the metrics catalogued in the master's thesis (Ch. 7):
+navtracker side: bench run
+`docs/baselines/gospa20m_20260613T174620Z.csv`, single seed, canonical
+config `imm_cv_ct_mht` (IMM CV+CT inside TOMHT with IPDA+VIMM
+lifecycle and per-sensor detection tables). `MetricsParams` now
+defaults to `gospa_cutoff_m = 20.0` to match the paper. `gospa_rms` is
+the new aggregate matching the paper's "GOSPA reported as RMS".
 
-- **GOSPA mean** — assumed c = 30 m, p = 2, α = 2 (literature default;
-  confirm against the paper's §6 / §7).
-- **Position RMSE** — per ground-truth target, m.
-- **Track-loss / break counts** — per ground-truth target.
-- **OSPA mean** is also given in the thesis. The paper may or may not
-  include OSPA alongside GOSPA — confirm.
+## Per-scenario navtracker numbers (`imm_cv_ct_mht`, c = 20 m, p = α = 2)
 
-We care about the **all-sensor fused** numbers (radar + lidar + EO + IR),
-which the paper presents as the headline configuration. Single-sensor
-ablations may also be tabulated; useful as a sanity check but not the
-target.
+| Sc | env | GOSPA mean | GOSPA RMS | GOSPA p95 | pos_rmse | breaks (count) | lifetime |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 2  | 1 | 37.5 | 40.9 | 63.4 | 8.6  | 1.5 | 0.958 |
+| 3  | 1 | 45.5 | 46.4 | 58.6 | 25.7 | 1.5 | 0.872 |
+| 4  | 1 | 40.6 | 42.8 | 60.4 | 11.4 | 0.5 | 0.937 |
+| 5  | 1 | 41.2 | 42.4 | 61.7 | 19.4 | 1.5 | 0.913 |
+| 6  | 1 | 41.7 | 44.4 | 63.3 | 34.2 | 3.0 | 0.908 |
+| 13 | 2 | 24.2 | 24.6 | 31.8 | 9.9  | 1.0 | 0.773 |
+| 16 | 2 | 27.8 | 28.4 | 35.5 | 10.8 | 1.5 | 0.851 |
+| 17 | 2 | 31.0 | 31.3 | 37.5 | 36.3 | 2.5 | 0.902 |
+| 22 | 2 | 46.4 | 47.0 | 58.3 | 32.2 | 3.5 | 0.837 |
 
-## Per-scenario table
+For reference (not in paper): **philos** GOSPA RMS = 76.3, pos_rmse =
+38.4 m, lifetime = 0.295 — the low lifetime is honest (most philos
+vessels report AIS only twice ~10 s apart in this 20-s fixture).
 
-Source: bench run `docs/baselines/gospa_20260613T162409Z.csv` (single
-seed, all 9 autoferry scenarios + philos, with GOSPA wired and
-defaults c = 30 m, p = α = 2). Canonical navtracker config is
-`imm_cv_ct_mht` (IMM CV+CT inside TOMHT with IPDA+VIMM lifecycle).
+## Per-environment aggregate (RMS-of-per-scenario-RMS proxy)
 
-| Scenario | navtracker GOSPA mean | navtracker GOSPA p95 | navtracker pos_rmse | navtracker breaks | navtracker lifetime | paper GOSPA mean | paper pos_rmse | paper breaks | Δ GOSPA |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| sc2  | 55.4   | 95.0  | 8.6  | 1.5 | 0.958 | — | — | — | — |
-| sc3  | 67.0   | 87.6  | 25.7 | 1.5 | 0.872 | — | — | — | — |
-| sc4  | 60.0   | 90.3  | 11.4 | 0.5 | 0.937 | — | — | — | — |
-| sc5  | 60.3   | 92.5  | 19.4 | 1.5 | 0.913 | — | — | — | — |
-| sc6  | 61.7   | 93.6  | 34.2 | 3   | 0.908 | — | — | — | — |
-| sc13 | 35.3   | 47.5  | 9.9  | 1   | 0.773 | — | — | — | — |
-| sc16 | 41.2   | 52.5  | 10.8 | 1.5 | 0.851 | — | — | — | — |
-| sc17 | 45.7   | 56.2  | 36.3 | 2.5 | 0.902 | — | — | — | — |
-| sc22 | 69.0   | 85.9  | 32.2 | 3.5 | 0.837 | — | — | — | — |
+| Env | Scenarios | navtracker GOSPA RMS | navtracker pos_rmse (mean per scenario) | navtracker breaks (count per scenario) |
+|---|---|---:|---:|---:|
+| 1 (open water)   | sc2-6        | **43.4** | 19.8 | 1.6 |
+| 2 (urban channel)| sc13/16/17/22| **33.9** | 22.3 | 2.1 |
 
-For context (not a paper scenario, single-seed): **philos** under the
-same canonical config — GOSPA mean 106.5 m, p95 152.0 m, pos_rmse
-38.4 m, lifetime 0.295 (the low lifetime is honest: most philos
-vessels report AIS only twice ~10 s apart in this ~20 s fixture, so
-confirming at the second fix already costs half the presence window).
+**Caveat.** A perfectly apples-to-apples aggregate would pool every
+per-step GOSPA across an environment's scenarios and then RMS those.
+The bench currently emits only per-scenario summaries. RMS-of-per-
+scenario-RMS is equivalent only when scenarios share equal step
+counts, which they do not. Treat the aggregate column as a proxy.
+T-GOSPA (PMBM plan phase 4) would give a principled cross-scenario
+trajectory metric.
 
-**Reading the navtracker column:**
+## Comparison vs Helgesen 2022 (L,R,IR,EO full fusion)
 
-- env 1 scenarios (sc2-6): GOSPA mean 55-67 m, lifetime 0.87-0.96. The
-  bulk of GOSPA cost is the cardinality penalty — with ~2-3 truth
-  vessels per scenario and 1-3 track breaks each, every dropped truth
-  contributes c²/α = 450 to cost² → √450 = 21 m floor per missed-step.
-  Even a perfect-position tracker that drops one of two truths once
-  would sit at ~15 m GOSPA.
-- env 2 (sc13, 16, 17): GOSPA 35-46 m, somewhat lower despite the urban
-  channel — explained partly by shorter duration (less time to
-  accumulate breaks). sc22 is the env 2 outlier (69 m).
-- pos_rmse is the *positional* term divorced from cardinality: 9-36 m.
-  sc3, sc6, sc17, sc22 are the outliers (>25 m) — the maneuvering /
-  obscuration scenarios where the filter momentarily diverges before
-  catching up.
-- track_breaks 0.5-3.5 per scenario — this is the key driver of the
-  GOSPA cardinality penalty.
+| Env | Paper GOSPA RMS | navtracker GOSPA RMS | Δ |
+|---|---:|---:|---:|
+| 1 (open water)   | 20.37 | 43.4 | **+23 m (≈ 2.1×)** |
+| 2 (urban channel)| 30.97 | 33.9 | +3 m (≈ 1.1×)      |
 
-## Methodology cross-checks (TODO)
+| Env | Paper posRMSE Havf./other | navtracker posRMSE (per-sc mean) |
+|---|---|---:|
+| 1 | 38.91 / 9.43  (Havfruen / Gunnerus) | 19.8 |
+| 2 | 83.53 / 50.49 (Havfruen / Jetboat)  | 22.3 |
 
-When numbers are filled in, verify the comparison is apples-to-apples:
+| Env | Paper Break.L (s) | navtracker breaks (count/sc) |
+|---|---:|---:|
+| 1 | 86.3  | 1.6 |
+| 2 | 200.2 | 2.1 |
 
-- **Truth assignment.** Paper uses RTK-GNSS truth at scenario rate.
-  navtracker uses the JSON GT-track frame-aligned at evaluation
-  timestamps (`adapters/replay/AutoferryJsonReplay.cpp` reads the same
-  scenarioN_groundTruth.json the dataset ships). Should match.
-- **GOSPA parameters.** Confirm paper's (c, p, α) match our defaults
-  (30 m / 2 / 2 in `core/benchmark/Metrics.hpp`); if not, adjust the
-  bench param to match the paper, not the other way around.
-- **Sensor selection.** Paper headline = all-sensor fusion. Our bench
-  enables EO/IR bearings via `AutoferryLoadOptions::include_bearings`
-  (currently true in `defaultAutoferryScenarios()`). Match.
-- **Track-loss definition.** Paper likely uses "track absent for ≥ N
-  seconds" or similar. Our `track_breaks` metric uses the
-  `BenchSink` lifecycle events. Document any definition gap.
-- **Scenario subset.** The paper may evaluate more or fewer scenarios
-  than the 9 we mirror. Note which scenarios overlap and skip the
-  others from the comparison.
+| Env | Paper ANEES | navtracker nees_mean (per scenario, range) |
+|---|---:|---|
+| 1 | 15.84 | 4-80 (sc2-6 range, sc5 ≈ 80; see eval log 2026-06-13) |
+| 2 | 51.90 | 20-1000+ (sc22 NEES ≈ 1000, sc17 ≈ 470) |
 
-## How to fill this in
+### Read
 
-Open the paper's results section. For each row above, paste the
-paper's GOSPA-mean, pos-rmse, and track-loss numbers. Re-run the bench
-(commit `0519a78` and onwards) to populate the navtracker column from
-the latest `docs/baselines/jpda_persensor_*.csv`. Compute the delta.
-Add a paragraph below the table summarizing what the comparison says
-and which gaps (algorithmic / configuration / metric-definition)
-explain the delta.
+- **Env 2 (urban channel): navtracker is essentially on par** with
+  the paper on GOSPA (33.9 vs 31.0). pos_rmse is much better — but
+  partly because the paper averages Havfruen + Jetboat and Jetboat
+  was particularly hard for them (50.49 m alone) due to track
+  divergence onto docked-boat EO returns (paper Fig. 25). navtracker
+  doesn't yet replay individual targets separately to confirm a
+  fully apples-to-apples per-target comparison.
+- **Env 1 (open water): navtracker is ~2× worse on GOSPA** (43.4 vs
+  20.4). pos_rmse is ostensibly better (19.8 vs 38.91/9.43 mean
+  24.2) — but the paper's high Havfruen RMSE (38.91 m) comes
+  specifically from "track coalescence on Gunnerus" in scenarios 2
+  and 5 (paper Fig. 24) where the IR cameras lock Havfruen's track
+  onto Gunnerus. navtracker doesn't exhibit that failure mode but
+  pays a much larger GOSPA penalty for *cardinality* errors — track
+  breaks (1.6 count/scenario for us, but at 87 s of cumulative break
+  length for them across the environment we don't have a directly
+  comparable scalar to know which is worse in total).
+- **Filter consistency is worse on both envs.** Paper env 1 ANEES =
+  15.84, env 2 = 51.90 — both well above the χ²-floor of 2 for a
+  consistent filter (paper also runs hot, but less so than us). Our
+  sc5 NEES = 80, sc22 ≈ 1000. The eval-log 2026-06-13 entries
+  document this as backlog item 12 (filter overconfidence on real
+  bearing-dominated data). Both trackers underestimate uncertainty;
+  ours more aggressively.
+
+### Where the env 1 gap likely sits
+
+GOSPA at `c = 20 m` charges `c²/α = 200` per missed truth per step.
+With our 1.5-2 breaks per scenario and breaks lasting some seconds,
+the cardinality penalty dominates. The paper's headline VIMM-JIPDA
+configuration sits at GOSPA 20 — which means *over the same evaluation
+clock* their cardinality penalty is much smaller, either because (a)
+their tracks recover faster from misses, (b) their breaks happen
+during low-cardinality stretches that contribute less, or (c) their
+break-length integration captures something we count differently.
+Confirming this requires per-step GOSPA breakdown — queued.
+
+## What can move navtracker's number toward the paper
+
+In priority order:
+
+1. **JIPDA upgrade** (sota-roadmap §2). The paper's tracker *is*
+   VIMM-JIPDA. We have IMM-MHT instead — a different but related
+   class. Closing this gap is the obvious next algorithmic step.
+2. **Inter-sensor registration biases** (backlog item 9). The paper
+   carefully calibrates each sensor's mounting offset against
+   GNSS-RTK truth; we do not, and unmodelled biases show up as
+   posRMSE and inflated NEES.
+3. **Item 12 (NEES calibration)** — we are over-confident on real
+   bearing-dominated data; honest covariances widen gates and reduce
+   spurious breaks.
+4. **T-GOSPA + per-target separation** in the bench so the
+   comparison can be per-target like the paper.
+
+## Per-target separation (TODO)
+
+The paper's posRMSE column is `(Havfruen ; second_target)`. Our bench
+aggregates pos_rmse across all assigned truths and reports a single
+number per scenario. Adding per-truth posRMSE to MetricsResult would
+let us compare per-target. AutoFerry's `truth.id` distinguishes the
+vessels so the bookkeeping is small.

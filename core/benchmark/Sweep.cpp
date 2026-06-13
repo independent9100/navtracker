@@ -95,6 +95,7 @@ void emit(std::vector<MetricRow>& out,
   out.push_back({p.run_id, config, scenario, seed, "ospa_p95", m.ospa_p95, "m"});
   out.push_back({p.run_id, config, scenario, seed, "gospa_mean", m.gospa_mean, "m"});
   out.push_back({p.run_id, config, scenario, seed, "gospa_p95", m.gospa_p95, "m"});
+  out.push_back({p.run_id, config, scenario, seed, "gospa_rms", m.gospa_rms, "m"});
   out.push_back({p.run_id, config, scenario, seed, "lifetime_ratio", m.lifetime_ratio, "ratio"});
   out.push_back({p.run_id, config, scenario, seed, "track_breaks", m.track_breaks, "count"});
   out.push_back({p.run_id, config, scenario, seed, "id_switches", m.id_switches, "count"});
