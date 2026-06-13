@@ -95,6 +95,29 @@ std::shared_ptr<IEstimator> makeImmCvCt() {
                                         kImmInitSpeedStd, kImmInitOmegaStd);
 }
 
+// Same canonical IMM but with the bearing range-variance guard ON.
+// Backlog item 12 suspect (b): the Joseph-form EKF/IMM bearing update
+// can drive along-LOS position variance below its predicted value
+// through cross-coupling, leaving the filter overconfident in range
+// it never measured. The guard restores the predicted LOS-direction
+// variance post-update while preserving the legitimate cross-LOS
+// reduction. See core/estimation/BearingRangeGuard.hpp.
+std::shared_ptr<IEstimator> makeImmCvCtBearGuard() {
+  std::vector<std::shared_ptr<IMotionModel>> motions = {
+      std::make_shared<ConstantVelocity5State>(kImmCv5AccelPsd,
+                                               kImmCv5OmegaPsd),
+      std::make_shared<CoordinatedTurn>(kImmCtAccelPsd, kImmCtOmegaPsd)};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05,
+        0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 0.5, 0.5;
+  return std::make_shared<ImmEstimator>(motions, pi, mu0,
+                                        kImmInitSpeedStd, kImmInitOmegaStd,
+                                        /*noise=*/nullptr,
+                                        /*bearing_range_guard=*/true);
+}
+
 // 3-mode IMM: CV5State (cruising), CoordinatedTurn (turning),
 // noisy CV5State (unmodelled motion). The standard Mazor 1998
 // maritime recipe — see docs/algorithms/algorithm-review-2026-06-07.md
@@ -218,6 +241,13 @@ std::vector<Config> defaultConfigs() {
   configs.push_back({"imm_cv_ct_mht_cmap", &makeImmCvCt, &makeJpda,
                      TrackerKind::Mht, &makeMhtConfig,
                      /*use_clutter_map=*/true});
+  // Canonical plus the bearing range-variance guard (backlog item 12
+  // suspect b). Isolates the BOT pathology fix without changing any
+  // other tracker mechanism. Expected effect on AutoFerry sc5:
+  // position NIS (radar / lidar) drops toward consistent; nees_mean
+  // collapses from ~80 toward O(few).
+  configs.push_back({"imm_cv_ct_mht_bearguard", &makeImmCvCtBearGuard,
+                     &makeJpda, TrackerKind::Mht, &makeMhtConfig});
   // JPDA/GNN-style ablations (single-hypothesis Tracker pipeline).
   configs.push_back({"ekf_cv_gnn", &makeEkfCv, &makeGnn});
   configs.push_back({"ekf_cv_jpda", &makeEkfCv, &makeJpda});

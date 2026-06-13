@@ -20,7 +20,8 @@ class EkfEstimator : public IEstimator {
  public:
   EkfEstimator(std::shared_ptr<const IMotionModel> motion,
                double init_speed_std = 10.0,
-               std::shared_ptr<const IMeasurementNoiseModel> noise = nullptr);
+               std::shared_ptr<const IMeasurementNoiseModel> noise = nullptr,
+               bool bearing_range_guard = false);
 
   void predict(Track& track, Timestamp to) const override;
   void update(Track& track, const Measurement& z) const override;
@@ -38,6 +39,7 @@ class EkfEstimator : public IEstimator {
   std::shared_ptr<const IMotionModel> motion_;
   double init_speed_std_;
   std::shared_ptr<const IMeasurementNoiseModel> noise_;
+  bool bearing_range_guard_;
 };
 
 }  // namespace navtracker

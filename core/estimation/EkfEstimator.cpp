@@ -6,16 +6,19 @@
 
 #include <Eigen/Dense>
 
+#include "core/estimation/BearingRangeGuard.hpp"
 #include "core/estimation/MeasurementModels.hpp"
 
 namespace navtracker {
 
 EkfEstimator::EkfEstimator(std::shared_ptr<const IMotionModel> motion,
                            double init_speed_std,
-                           std::shared_ptr<const IMeasurementNoiseModel> noise)
+                           std::shared_ptr<const IMeasurementNoiseModel> noise,
+                           bool bearing_range_guard)
     : motion_(std::move(motion)),
       init_speed_std_(init_speed_std),
-      noise_(std::move(noise)) {}
+      noise_(std::move(noise)),
+      bearing_range_guard_(bearing_range_guard) {}
 
 void EkfEstimator::predict(Track& track, Timestamp to) const {
   const double dt = to.secondsSince(track.last_update);
@@ -28,6 +31,8 @@ void EkfEstimator::predict(Track& track, Timestamp to) const {
 }
 
 void EkfEstimator::update(Track& track, const Measurement& z) const {
+  const Eigen::VectorXd x_pred = track.state;
+  const Eigen::MatrixXd P_pred = track.covariance;
   const MeasurementPrediction pred = predictMeasurement(z.model, track.state, z.sensor_position_enu);
   const Eigen::VectorXd y = measurementResidual(z.model, z.value, pred.z_pred);
   const Eigen::MatrixXd& h = pred.H;
@@ -48,6 +53,10 @@ void EkfEstimator::update(Track& track, const Measurement& z) const {
   const Eigen::MatrixXd ikh = id - k * h;
   track.covariance = ikh * track.covariance * ikh.transpose() +
                      k * R * k.transpose();
+  if (bearing_range_guard_ && z.model == MeasurementModel::Bearing2D) {
+    track.covariance = applyBearingRangeGuard(P_pred, track.covariance, x_pred,
+                                              z.sensor_position_enu);
+  }
   track.last_update = z.time;
 }
 

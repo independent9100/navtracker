@@ -7,6 +7,7 @@
 #include <Eigen/LU>
 #include <unsupported/Eigen/MatrixFunctions>
 
+#include "core/estimation/BearingRangeGuard.hpp"
 #include "core/estimation/CoordinatedTurn.hpp"
 #include "core/estimation/MeasurementModels.hpp"
 
@@ -17,13 +18,15 @@ ImmEstimator::ImmEstimator(std::vector<std::shared_ptr<IMotionModel>> motions,
                            Eigen::VectorXd initial_mode_probabilities,
                            double init_speed_std,
                            double init_omega_std,
-                           std::shared_ptr<const IMeasurementNoiseModel> noise)
+                           std::shared_ptr<const IMeasurementNoiseModel> noise,
+                           bool bearing_range_guard)
     : motions_(std::move(motions)),
       pi_(std::move(transition_matrix)),
       mu0_(std::move(initial_mode_probabilities)),
       init_speed_std_(init_speed_std),
       init_omega_std_(init_omega_std),
-      noise_(std::move(noise)) {}
+      noise_(std::move(noise)),
+      bearing_range_guard_(bearing_range_guard) {}
 
 void ImmEstimator::projectMixtureToTrack(Track& track) const {
   const int K = static_cast<int>(track.imm_means.cols());
@@ -162,9 +165,15 @@ void ImmEstimator::update(Track& track, const Measurement& z) const {
     const Eigen::MatrixXd I = Eigen::MatrixXd::Identity(n, n);
     // Joseph form: P = (I-KH) P (I-KH)' + K R K'.
     const Eigen::MatrixXd IKH = I - K_gain * H;
-    const Eigen::MatrixXd P_new =
+    Eigen::MatrixXd P_new =
         IKH * P_j * IKH.transpose() +
         K_gain * R * K_gain.transpose();
+    if (bearing_range_guard_ && z.model == MeasurementModel::Bearing2D) {
+      // Guard per mode: each P_j has its own pre/post pair. The
+      // per-mode predicted state x_j is the right LOS reference for
+      // the mode-conditioned bearing.
+      P_new = applyBearingRangeGuard(P_j, P_new, x_j, z.sensor_position_enu);
+    }
     track.imm_means.col(j) = x_new;
     track.imm_covariances[j] = P_new;
 

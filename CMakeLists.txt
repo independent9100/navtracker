@@ -25,6 +25,7 @@ add_library(navtracker_core
   core/estimation/MeasurementModels.cpp
   core/estimation/EstimatorDefaults.cpp
   core/estimation/EkfEstimator.cpp
+  core/estimation/BearingRangeGuard.cpp
   core/estimation/SigmaPoints.cpp
   core/estimation/UkfEstimator.cpp
   core/estimation/Resampling.cpp
@@ -135,6 +136,7 @@ add_executable(navtracker_tests
   tests/estimation/test_imm_estimator.cpp
   tests/estimation/test_measurement_models.cpp
   tests/estimation/test_ekf_estimator.cpp
+  tests/estimation/test_bearing_range_guard.cpp
   tests/estimation/test_sigma_points.cpp
   tests/estimation/test_ukf_estimator.cpp
   tests/estimation/test_resampling.cpp

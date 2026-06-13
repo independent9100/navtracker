@@ -38,7 +38,8 @@ class ImmEstimator : public IEstimator {
                Eigen::VectorXd initial_mode_probabilities,
                double init_speed_std = 10.0,
                double init_omega_std = 0.1,
-               std::shared_ptr<const IMeasurementNoiseModel> noise = nullptr);
+               std::shared_ptr<const IMeasurementNoiseModel> noise = nullptr,
+               bool bearing_range_guard = false);
 
   void predict(Track& track, Timestamp to) const override;
   void update(Track& track, const Measurement& z) const override;
@@ -78,6 +79,7 @@ class ImmEstimator : public IEstimator {
   double init_speed_std_;
   double init_omega_std_;
   std::shared_ptr<const IMeasurementNoiseModel> noise_;
+  bool bearing_range_guard_;
 };
 
 }  // namespace navtracker
