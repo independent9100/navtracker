@@ -7,6 +7,7 @@
 
 #include "core/association/GnnAssociator.hpp"
 #include "core/association/JpdaAssociator.hpp"
+#include "ports/ISensorDetectionModel.hpp"
 #include "core/estimation/ConstantVelocity2D.hpp"
 #include "core/estimation/ConstantVelocity5State.hpp"
 #include "core/estimation/CoordinatedTurn.hpp"
@@ -171,6 +172,15 @@ std::shared_ptr<IDataAssociator> makeJpda() {
                                           kJpdaClutterDensity);
 }
 
+// Per-sensor JPDA: the model is the scenario's per-sensor (P_D, λ_C)
+// table, looked up per measurement instead of one scalar pair. Brings
+// JPDA to parity with MHT on per-sensor units (backlog item 8). Reuses
+// the same gate threshold kJpdaGate.
+std::shared_ptr<IDataAssociator> makeJpdaPerSensor(
+    const std::shared_ptr<ISensorDetectionModel>& model) {
+  return std::make_shared<JpdaAssociator>(kJpdaGate, model.get());
+}
+
 }  // namespace
 
 namespace {
@@ -251,9 +261,23 @@ std::vector<Config> defaultConfigs() {
   // JPDA/GNN-style ablations (single-hypothesis Tracker pipeline).
   configs.push_back({"ekf_cv_gnn", &makeEkfCv, &makeGnn});
   configs.push_back({"ekf_cv_jpda", &makeEkfCv, &makeJpda});
+  // Per-sensor JPDA (backlog item 8): same EKF/CV pipeline, but JPDA
+  // looks up (P_D, λ_C) per measurement from the scenario's table.
+  // Bit-identical to ekf_cv_jpda on scenarios with no detection table
+  // (the bench falls back to the scalar factory in that case).
+  {
+    Config c{"ekf_cv_jpda_persensor", &makeEkfCv, &makeJpda};
+    c.build_associator_per_sensor = &makeJpdaPerSensor;
+    configs.push_back(std::move(c));
+  }
   configs.push_back({"ukf_cv_gnn", &makeUkfCv, &makeGnn});
   configs.push_back({"ukf_ct_gnn", &makeUkfCt, &makeGnn});
   configs.push_back({"imm_cv_ct_jpda", &makeImmCvCt, &makeJpda});
+  {
+    Config c{"imm_cv_ct_jpda_persensor", &makeImmCvCt, &makeJpda};
+    c.build_associator_per_sensor = &makeJpdaPerSensor;
+    configs.push_back(std::move(c));
+  }
   configs.push_back({"imm_cv_ct_noisy_jpda", &makeImmCvCtNoisy, &makeJpda});
   // Other MHT ablations (MhtTracker pipeline). associator factory unused;
   // we still pass it because the Config struct ergonomics expect it

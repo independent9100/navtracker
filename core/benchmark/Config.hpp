@@ -8,6 +8,7 @@
 #include "core/pipeline/MhtTracker.hpp"
 #include "ports/IDataAssociator.hpp"
 #include "ports/IEstimator.hpp"
+#include "ports/ISensorDetectionModel.hpp"
 
 namespace navtracker {
 namespace benchmark {
@@ -18,6 +19,15 @@ using EstimatorFactory = std::function<std::shared_ptr<IEstimator>()>;
 
 // Factory for a fresh associator instance. Each call must return a new object.
 using AssociatorFactory = std::function<std::shared_ptr<IDataAssociator>()>;
+
+// Per-sensor associator factory: the scenario's per-sensor detection
+// model is forwarded so the associator can use (P_D, λ_C) lookup per
+// measurement instead of a single scalar. Used for the per-sensor JPDA
+// ablation (backlog item 8). The shared_ptr's lifetime is owned by the
+// caller of the sweep (Sweep.cpp).
+using PerSensorAssociatorFactory =
+    std::function<std::shared_ptr<IDataAssociator>(
+        const std::shared_ptr<ISensorDetectionModel>&)>;
 
 // Which tracker pipeline drives this config:
 //   - JpdaStyle: `Tracker` + `TrackManager` (GNN/JPDA/JIPDA — i.e. per-
@@ -47,6 +57,12 @@ struct Config {
   // online from unassociated returns). Mht only; no effect when the
   // scenario declares no detection table.
   bool use_clutter_map{false};
+  // When set and the scenario declares a per-sensor detection table,
+  // this takes precedence over `build_associator` — the scenario's
+  // model is passed into the associator constructor (per-sensor JPDA,
+  // backlog item 8). Falls back to `build_associator` when no table is
+  // present. Single-hypothesis path only.
+  PerSensorAssociatorFactory build_associator_per_sensor{};
 };
 
 // Returns the five baseline configurations in fixed order:

@@ -187,7 +187,25 @@ std::vector<MetricRow> runSweep(
           tracker.setInnovationSink(&nis);
           result = runBenchMht(scen, tracker);
         } else {
-          auto asc = config.build_associator();
+          // Per-sensor associator if the scenario has a table and the
+          // config opts in; otherwise the scalar factory. Detection
+          // model is built from the scenario the same way the MHT path
+          // builds it. `det` must out-live the associator — JpdaAssociator
+          // holds a raw pointer into it (matches the MhtTracker pattern,
+          // where the tracker owns the shared_ptr).
+          std::shared_ptr<ISensorDetectionModel> det;
+          std::shared_ptr<IDataAssociator> asc;
+          if (config.build_associator_per_sensor) {
+            MhtTracker::Config carrier;
+            det = detectionModelFor(desc, carrier, /*use_clutter_map=*/false);
+            if (det) {
+              asc = config.build_associator_per_sensor(det);
+            } else {
+              asc = config.build_associator();
+            }
+          } else {
+            asc = config.build_associator();
+          }
           TrackManager mgr(
               static_cast<int>(params.track_manager_min_misses),
               static_cast<int>(params.track_manager_max_misses));

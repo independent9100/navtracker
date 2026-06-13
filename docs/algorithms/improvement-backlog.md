@@ -229,13 +229,33 @@ structure — same uniform-λ limitation as the AutoFerry urban cameras
 
 ## 8. JPDA path parity: per-sensor (P_D, λ_C)
 
-**Problem.** `JpdaAssociator(gate, P_D, λ)` takes scalars; the
-single-hypothesis pipeline never sees the per-sensor detection port.
-Fine for single-sensor, inconsistent for fusion.
+**STATUS: DONE (2026-06-13).** Second `JpdaAssociator` ctor
+`(gate, ISensorDetectionModel*)`: each gated measurement contributes
+`log P_D[s] + log p(z|x) − log λ_C[s]` in its sensor's natural units
+(m⁻² / (m·rad)⁻¹ / rad⁻¹), and the per-track miss factor is aggregated
+over distinct `(sensor, model, source_id)` tuples in the scan via
+`missDetectionProbability(...)` — same coverage-conditioned convention
+as `TrackTree::branch`. Two new bench ablations
+(`ekf_cv_jpda_persensor`, `imm_cv_ct_jpda_persensor`) opt into the
+scenario's detection table via a `PerSensorAssociatorFactory` on
+`benchmark::Config`. Scalar ctor + existing scalar configs untouched
+and bit-identical. Measured on the synthetic sweep
+(`jpda_persensor_20260613T143004Z`): dense_clutter id_switches −71%
+on EKF/CV (honest 3.33e-5 m⁻² vs legacy 1e-4), non_cooperative
+pos_rmse −40% on IMM/CV+CT (calibrated 1e-2 rad⁻¹ vs mismatched
+1e-4 m⁻²); no clean-synthetic regressions on either pipeline.
+Replay measurement pending; see evaluation-log 2026-06-13 (later 2).
 
-**Change.** Pass `ISensorDetectionModel` into the JPDA β computation
-(per-measurement λ in its own units). This is also the first step of
-the JIPDA upgrade already specced in `sota-roadmap.md` §2.
+**Open follow-ups:** (a) per-sensor batch decomposition (true
+sequential multi-sensor fusion) so mixed-sensor IMM gets a proper
+per-batch P_D in the mixture-likelihood normalization instead of the
+homogeneous-batch shortcut; deferred until JIPDA where per-track
+existence covers it natively. (b) JIPDA (sota-roadmap.md §2): augment
+each track with `r(k)` and run lifecycle off it on the JPDA path too.
+
+**Problem (original).** `JpdaAssociator(gate, P_D, λ)` takes scalars;
+the single-hypothesis pipeline never saw the per-sensor detection
+port. Fine for single-sensor, dimensionally wrong on mixed sensors.
 
 ## 9. Inter-sensor registration biases
 

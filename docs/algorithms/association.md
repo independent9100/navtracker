@@ -87,6 +87,39 @@ configuration; they should match the sensor's empirical detection and
 clutter characteristics. All gated measurements share a measurement model
 (`softUpdate` uses `H`, `R` from the first).
 
+**Per-sensor (P_D, λ_C) — JpdaAssociator multi-sensor mode (backlog
+item 8, 2026-06-13).** The scalar `(P_D, λ_C)` is dimensionally incorrect
+across mixed sensors: `log p(z|x) − log λ_C` is only dimensionless when
+`λ_C` shares the measurement-model's natural units (m⁻² / (m·rad)⁻¹ /
+rad⁻¹), and a single scalar cannot satisfy that for a radar + bearing
+scan. The per-sensor ctor `JpdaAssociator(gate, ISensorDetectionModel*)`
+resolves each measurement's `(P_D, λ_C)` via `model->paramsFor(z)` —
+same port the MHT path uses, so a scenario's per-sensor detection table
+drives both pipelines identically. Joint-event log-weight becomes
+
+```
+log w(θ) = Σⱼ [θ(j)==t+1] · (log P_D[s(j)] + log p(z_j|x_t))
+        + Σⱼ [θ(j)==0]   · log λ_C[s(j)]
+        + Σₜ [t not detected in θ] · Σ_s ∈ S(θ) log(1 − P_D^s(x_t))
+```
+
+where the per-track miss factor is aggregated over distinct `(sensor,
+model, source_id)` tuples present in the scan via
+`missDetectionProbability(...)` — coverage-conditioned (out-of-range or
+out-of-sector charges no miss penalty), same convention as
+`TrackTree::branch` in the MHT path. The single-Gaussian fallback path
+(no estimator) sees `result.p_d = P_D` of the first measurement when the
+batch is homogeneous, otherwise 0 → `ImmEstimator::softUpdate` falls
+back to its unnormalized mixture-likelihood proxy. The scalar ctor is
+retained unchanged and bit-identical to the legacy code path.
+
+**Rationale.** This is step 1 of the JIPDA upgrade (sota-roadmap.md §2):
+per-track existence math needs per-sensor (P_D, λ_C) wired before
+existence can be updated correctly under multi-sensor batches. It also
+closes the single-hypothesis half of the AutoFerry calibration story —
+the MHT path has been honestly multi-sensor since 2026-06-11, JPDA was
+silently using one global λ_C on the same scenes.
+
 **Rationale.** GNN commits to a hard pairing per scan; in clutter or
 near-crossing geometries it commits wrong and the wrong measurement
 contaminates the track, leading to ID switches and ghost tracks from
@@ -104,7 +137,14 @@ per-track existence probability, ties in with M-of-N lifecycle.
 others fall back to the no-op default). (4) Per-measurement-model
 `R`-and-`H` support in `softUpdate` (currently assumes uniform model
 across the gated set). (5) MHT as the natural next step — defers
-commitment further by maintaining a hypothesis tree.
+commitment further by maintaining a hypothesis tree. (6) Per-sensor
+batch decomposition in `associate(...)` — process each sensor's
+measurements as a sequential JPDA scan instead of one joint event
+over the union, the textbook multi-sensor fusion. The current
+homogeneous-batch shortcut for `result.p_d` makes this almost free for
+the common case (single-sensor scans); the gain is on mixed-sensor
+scans where today's per-track miss aggregation is exact but the IMM
+mixture normalization falls back to the proxy.
 
 **Measured behaviour.** See `docs/algorithms/evaluation-log.md`.
 

@@ -4,14 +4,39 @@
 
 namespace navtracker {
 
+class ISensorDetectionModel;
+
 // Classical Joint Probabilistic Data Association. For each (track,
 // measurement) pair within the validation gate, computes the marginal
 // probability beta_jt by enumerating all feasible joint assignments.
+//
+// Two modes:
+//
+//  - Scalar (P_D, λ_C): the historical single-sensor formulation. Use for
+//    unit tests and single-sensor pipelines. λ_C must be in the
+//    measurement-model's natural units (m^-2 / (m·rad)^-1 / rad^-1).
+//
+//  - Per-sensor via ISensorDetectionModel: the multi-sensor formulation.
+//    Each gated measurement contributes log P_D^s + log p(z|x) − log λ_C^s
+//    in its own sensor's units (this is what makes
+//    log p(z|x) − log λ_C dimensionally consistent across mixed sensors,
+//    see ports/ISensorDetectionModel.hpp). The per-track miss factor is
+//    aggregated over distinct (sensor, model, source_id) tuples present
+//    in the scan via missDetectionProbability — the same convention used
+//    by TrackTree::branch in the MHT path. Brings the single-hypothesis
+//    JPDA path to parity with MHT on per-sensor (P_D, λ_C); step 1 of the
+//    JIPDA upgrade (sota-roadmap.md §2).
 class JpdaAssociator : public IDataAssociator {
  public:
+  // Scalar form: legacy single-sensor JPDA.
   JpdaAssociator(double gate_threshold,
                  double probability_of_detection,
                  double clutter_density);
+
+  // Per-sensor form: P_D and λ_C resolved per measurement via the model.
+  // The pointer must outlive the associator.
+  JpdaAssociator(double gate_threshold,
+                 const ISensorDetectionModel* detection_model);
 
   AssociationResult associate(
       const std::vector<Track>& tracks,
@@ -22,6 +47,7 @@ class JpdaAssociator : public IDataAssociator {
   double gate_threshold_;
   double p_d_;
   double lambda_c_;
+  const ISensorDetectionModel* detection_model_{nullptr};
 };
 
 }  // namespace navtracker
