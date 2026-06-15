@@ -84,6 +84,14 @@ int main(int argc, char** argv) {
     }
     auto autoferry = defaultAutoferryScenarios();
     for (auto& s : autoferry) replay_scenarios.push_back(std::move(s));
+    // Item 9 option 1: AutoFerry scenarios with a synthetic
+    // truth-derived AIS anchor injected so SensorBiasEstimator has
+    // pair observations. Labelled "autoferry_scenarioN_anchored" so
+    // they coexist with the canonical no-anchor scenarios in the
+    // bench output and are comparable side-by-side.
+    auto autoferry_anchored = defaultAutoferryScenariosAnchored();
+    for (auto& s : autoferry_anchored)
+      replay_scenarios.push_back(std::move(s));
   }
 
   std::vector<std::unique_ptr<ScenarioRun>> all;

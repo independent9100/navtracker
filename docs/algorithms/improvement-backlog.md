@@ -348,3 +348,41 @@ guard if (b) confirmed.
 item-11 knob sweeps — expect conveyor births to vanish at the BASE
 gate (honest P keeps radar returns in gate), sc5/sc6 switches to
 collapse without lifetime loss.
+
+## 13. Cross-sensor anchored bias (AIS-less deployment)
+
+**Problem.** `SensorBiasEstimator` (item 9) needs an unbiased anchor
+to learn each sensor's mounting offset; today the only anchor it
+consumes is AIS. Real maritime deployment is full of non-cooperative
+targets (sailing boats, kayaks, jet skis, illegal vessels) that
+broadcast no AIS. The tracker itself handles non-cooperative targets
+fine — but the bias *calibration* path is blocked. Without
+calibration the per-sensor offsets fold silently into pos_rmse and
+gate sizes (the gap the Helgesen 2022 comparison surfaced).
+
+**Change.** Cross-sensor anchoring: when no AIS contribution exists
+on a track, use a high-confidence converged-track position sourced
+from sensors *other than* the one being calibrated. Lidar tracks
+calibrate radar bias and vice versa. The cyclic-anchor problem (a
+track using sensor X cannot anchor X's bias) is sidestepped because
+the anchor sensor differs from the sensor under calibration.
+
+**Eligibility gates.** A contribution from sensor Y is anchor-
+eligible for sensor X iff: (i) Y ≠ X (no self-anchoring),
+(ii) the track has `existence_probability ≥ 0.95`, (iii) the track's
+2x2 position covariance trace is below a tight threshold
+(e.g. ≤ 25 m²), (iv) no other Y on the track this cycle (avoid
+double-anchoring through the same sensor twice).
+
+**Coupling.** Both biases are unknown, so a single pair gives one
+equation in two unknowns. Two paths: (a) freeze one sensor's bias
+once it has converged on an AIS subset (then it anchors the others),
+(b) joint coordinate-descent across the (X, Y) bias pair, alternating
+which is "anchor" each iteration. (a) is the simpler bootstrap; (b)
+the steady-state solution.
+
+**Test.** AutoFerry env 1 GOSPA RMS drops measurably from the AIS-
+anchored option-1 baseline (target: 5-15% additional reduction once
+the AIS-less anchor pulls in the AIS-absent stretches). Synthetic
+non_cooperative scenario: estimator publishes a non-trivial bias
+without AIS in the input stream.

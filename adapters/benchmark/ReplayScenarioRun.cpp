@@ -167,10 +167,15 @@ class HaxrScenarioRun : public ScenarioRun {
 // cwd, mirroring the philos/haxr fixture-absent behaviour.
 class AutoferryScenarioRun : public ScenarioRun {
  public:
-  explicit AutoferryScenarioRun(std::string label) : label_(std::move(label)) {}
+  AutoferryScenarioRun(std::string label, bool inject_truth_anchor)
+      : label_(std::move(label)),
+        inject_truth_anchor_(inject_truth_anchor) {}
 
   ScenarioDescriptor descriptor() const override {
-    ScenarioDescriptor d{"autoferry_" + label_, /*is_multi_seed=*/false,
+    const std::string suffix =
+        inject_truth_anchor_ ? "_anchored" : "";
+    ScenarioDescriptor d{"autoferry_" + label_ + suffix,
+                         /*is_multi_seed=*/false,
                          /*seed_count=*/1};
     // Per-sensor detection table, calibrated against the published
     // ground truth (matching gate 15 m position / 0.15 rad bearing):
@@ -231,12 +236,14 @@ class AutoferryScenarioRun : public ScenarioRun {
     // (canInitiateTrack), matching the paper's active-only initiation.
     navtracker::replay::AutoferryLoadOptions opts;
     opts.include_bearings = true;
+    opts.inject_truth_anchor = inject_truth_anchor_;
     return navtracker::replay::loadAutoferryScenario(
         std::string("data/autoferry/") + label_, label_, opts);
   }
 
  private:
   std::string label_;
+  bool inject_truth_anchor_{false};
 };
 
 }  // namespace
@@ -258,7 +265,25 @@ std::vector<std::unique_ptr<ScenarioRun>> defaultAutoferryScenarios() {
                                    "scenario16", "scenario17", "scenario22"};
   std::vector<std::unique_ptr<ScenarioRun>> out;
   for (const char* label : kLabels)
-    out.push_back(std::make_unique<AutoferryScenarioRun>(label));
+    out.push_back(
+        std::make_unique<AutoferryScenarioRun>(label,
+                                                /*inject_truth_anchor=*/false));
+  return out;
+}
+
+std::vector<std::unique_ptr<ScenarioRun>> defaultAutoferryScenariosAnchored() {
+  // AutoFerry with synthetic AIS-style truth anchor enabled — the
+  // dataset itself ships no AIS, so this is the path that lets the
+  // SensorBiasEstimator actually converge. Used by the
+  // imm_cv_ct_mht_biascal_anchored bench config (item 9 option 1).
+  static const char* kLabels[] = {"scenario2",  "scenario3",  "scenario4",
+                                   "scenario5",  "scenario6",  "scenario13",
+                                   "scenario16", "scenario17", "scenario22"};
+  std::vector<std::unique_ptr<ScenarioRun>> out;
+  for (const char* label : kLabels)
+    out.push_back(
+        std::make_unique<AutoferryScenarioRun>(label,
+                                                /*inject_truth_anchor=*/true));
   return out;
 }
 

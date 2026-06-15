@@ -355,6 +355,32 @@ Scenario loadAutoferryScenario(const std::string& dir,
                             }),
                 s.truth.end());
 
+  // Optional: inject synthetic AIS-style anchor measurements per
+  // (target, truth scan) from the deduplicated ground truth. One
+  // Measurement per TruthSample, σ = truth_anchor_std_m (1-sigma per
+  // axis, isotropic) — analogous to RTK-GNSS in the paper's
+  // calibration setup. Re-sort the measurement vector to preserve
+  // BenchRunner's monotonic-timestamp precondition.
+  if (opts.inject_truth_anchor) {
+    const double v =
+        opts.truth_anchor_std_m * opts.truth_anchor_std_m;
+    for (const TruthSample& ts : s.truth) {
+      Measurement m;
+      m.time = ts.time;
+      m.sensor = SensorKind::Ais;
+      m.source_id = "autoferry_truth_anchor";
+      m.model = MeasurementModel::Position2D;
+      m.value = ts.position;
+      m.covariance = (Eigen::Matrix2d() << v, 0.0, 0.0, v).finished();
+      m.hints.mmsi = static_cast<std::uint32_t>(ts.truth_id);
+      s.measurements.push_back(std::move(m));
+    }
+    std::stable_sort(s.measurements.begin(), s.measurements.end(),
+                     [](const Measurement& a, const Measurement& b) {
+                       return a.time < b.time;
+                     });
+  }
+
   // The dataset carries positions only; derive per-target velocity by
   // finite differences so SOG/COG metrics compare against real target
   // kinematics instead of the zero vector. Central difference at

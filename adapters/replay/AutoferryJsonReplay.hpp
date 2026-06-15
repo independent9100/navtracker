@@ -52,6 +52,17 @@ struct AutoferryLoadOptions {
   double lidar_pos_std_m = 2.0;
   double radar_pos_std_m = 5.0;
   double bearing_std_rad = 0.0873;  // ~5°, matches observed EO/IR residual
+
+  // Inject synthetic AIS-style position measurements derived from the
+  // ground-truth file, one per (target, scan). Used as an unbiased
+  // anchor for the SensorBiasEstimator (item 9). Off by default — the
+  // AutoFerry dataset itself ships no AIS; turning this on adds a
+  // Position2D measurement per truth sample with σ ≈
+  // truth_anchor_std_m. Conceptually the role RTK-GNSS plays in
+  // Helgesen 2022's per-sensor calibration. The injected sensor uses
+  // SensorKind::Ais and source_id == "autoferry_truth_anchor".
+  bool inject_truth_anchor = false;
+  double truth_anchor_std_m = 5.0;
 };
 
 // Load one AutoFerry scenario directory (e.g. data/autoferry/scenario2).
