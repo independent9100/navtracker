@@ -88,6 +88,7 @@
 | PSD      | Power Spectral Density                                          | 08            |
 | RBPF     | Rao-Blackwellised Particle Filter                               | 07            |
 | RFS      | Random Finite Set                                               | 14            |
+| Reg.bias | Inter-sensor registration bias (per-sensor mounting offset)     | 21            |
 | RTS      | Rauch-Tung-Striebel smoother                                    | 05            |
 | SNR      | Signal-to-Noise Ratio                                           | 05            |
 | SOG      | Speed Over Ground                                               | 17            |

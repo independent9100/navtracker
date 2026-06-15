@@ -10,6 +10,42 @@
 namespace navtracker {
 namespace {
 
+// Apply the published per-sensor bias to an incoming measurement. When
+// the provider is null or the bias is not published yet, returns z
+// unchanged. Otherwise:
+//   - Position2D / RangeBearing2D: subtract position bias from the
+//     ENU components ([0],[1] for Position2D; not yet wired for
+//     RangeBearing2D since it has no direct ENU components — only the
+//     bearing component gets the bearing bias).
+//   - Bearing2D: subtract bearing bias.
+// The correction is deterministic; bias covariance is not folded into
+// z.covariance (deferred to Schmidt-KF, sota-roadmap §5).
+Measurement applyBiasCorrection(const Measurement& z,
+                                const ISensorBiasProvider* provider) {
+  if (provider == nullptr) return z;
+  const SensorBiasKey key{z.sensor, z.source_id};
+  Measurement out = z;
+  if (z.model == MeasurementModel::Position2D && z.value.size() >= 2) {
+    const auto pb = provider->positionBias(key);
+    if (pb.is_published) {
+      out.value(0) -= pb.bias_enu_m.x();
+      out.value(1) -= pb.bias_enu_m.y();
+    }
+  } else if (z.model == MeasurementModel::Bearing2D && z.value.size() >= 1) {
+    const auto bb = provider->bearingBias(key);
+    if (bb.is_published) {
+      out.value(0) -= bb.bias_rad;
+    }
+  } else if (z.model == MeasurementModel::RangeBearing2D &&
+             z.value.size() >= 2) {
+    const auto bb = provider->bearingBias(key);
+    if (bb.is_published) {
+      out.value(1) -= bb.bias_rad;
+    }
+  }
+  return out;
+}
+
 // `weight` is the JPDA β for this measurement (1.0 for hard matches). The
 // effective observation variance is scaled by 1/weight to encode "this
 // measurement only β-likely came from this track" — small β means the
@@ -101,16 +137,18 @@ Tracker::Tracker(const IEstimator& estimator,
       manager_(manager),
       miss_timeout_seconds_(miss_timeout_seconds) {}
 
-void Tracker::process(const Measurement& z) {
-  if (has_high_water_ && z.time < high_water_) {
+void Tracker::process(const Measurement& z_in) {
+  if (has_high_water_ && z_in.time < high_water_) {
     if (reject_stale_) {
       ++stale_dropped_;
       return;
     }
   } else {
-    high_water_ = z.time;
+    high_water_ = z_in.time;
     has_high_water_ = true;
   }
+
+  const Measurement z = applyBiasCorrection(z_in, bias_provider_);
 
   manager_.predictAll(estimator_, z.time);
 
@@ -171,17 +209,27 @@ void Tracker::process(const Measurement& z) {
   for (const TrackId id : stale) manager_.recordMiss(id);
 }
 
-void Tracker::processBatch(const std::vector<Measurement>& scan) {
-  if (scan.empty()) return;
-  const Timestamp t = scan.front().time;
+void Tracker::processBatch(const std::vector<Measurement>& scan_in) {
+  if (scan_in.empty()) return;
+  const Timestamp t = scan_in.front().time;
   if (has_high_water_ && t < high_water_) {
     if (reject_stale_) {
-      stale_dropped_ += scan.size();
+      stale_dropped_ += scan_in.size();
       return;
     }
   } else {
     high_water_ = t;
     has_high_water_ = true;
+  }
+
+  std::vector<Measurement> scan;
+  if (bias_provider_ != nullptr) {
+    scan.reserve(scan_in.size());
+    for (const auto& z : scan_in) {
+      scan.push_back(applyBiasCorrection(z, bias_provider_));
+    }
+  } else {
+    scan = scan_in;
   }
 
   manager_.predictAll(estimator_, t);

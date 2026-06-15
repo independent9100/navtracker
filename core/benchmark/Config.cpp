@@ -287,6 +287,24 @@ std::vector<Config> defaultConfigs() {
                      TrackerKind::Mht, &makeMhtConfig});
   configs.push_back({"imm_cv_ct_noisy_mht", &makeImmCvCtNoisy, &makeJpda,
                      TrackerKind::Mht, &makeMhtConfig});
+  // Canonical plus inter-sensor registration bias estimation (item 9).
+  // Per-(SensorKind, source_id) position bias on radar / lidar, fed by
+  // AIS-anchored pair extraction after each scan. Deterministic shift
+  // application; Schmidt-KF covariance inflation deferred (sota-roadmap
+  // §5). Expected effect on AutoFerry env 1: GOSPA RMS drops from 43 m
+  // toward 35-40 m as the unmodelled mounting offsets are absorbed.
+  {
+    Config c;
+    c.label = "imm_cv_ct_mht_biascal";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Mht;
+    c.mht_config = &makeMhtConfig;
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
   return configs;
 }
 

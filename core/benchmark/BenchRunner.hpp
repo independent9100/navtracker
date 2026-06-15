@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include <Eigen/Core>
@@ -67,7 +68,13 @@ BenchResult runBench(const Scenario& scenario,
 // stays empty; the kinematic snapshots in BenchStep::tracks are still
 // the load-bearing input to the metrics, so OSPA / RMSE / continuity
 // all work for like-for-like comparison with the JpdaStyle pipeline.
-BenchResult runBenchMht(const Scenario& scenario, MhtTracker& tracker);
+// Optional post-scan hook. Invoked after every processBatch with the
+// scan's timestamp; sees the tracker's updated `tracks()` snapshot. Use
+// to feed per-cycle observers (e.g. SensorBiasEstimator pair extraction).
+using PostScanHook = std::function<void(const MhtTracker&, Timestamp)>;
+
+BenchResult runBenchMht(const Scenario& scenario, MhtTracker& tracker,
+                        const PostScanHook& post_scan_hook = {});
 
 }  // namespace benchmark
 }  // namespace navtracker

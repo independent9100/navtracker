@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "core/bias/SensorBiasEstimator.hpp"
 #include "core/pipeline/MhtTracker.hpp"
 #include "ports/IDataAssociator.hpp"
 #include "ports/IEstimator.hpp"
@@ -63,6 +64,12 @@ struct Config {
   // backlog item 8). Falls back to `build_associator` when no table is
   // present. Single-hypothesis path only.
   PerSensorAssociatorFactory build_associator_per_sensor{};
+  // Optional inter-sensor registration bias estimator factory (item 9).
+  // When set, Sweep constructs a fresh estimator per cell, wires it as
+  // the tracker's bias provider, and runs the post-scan pair extractor
+  // to feed it observations. Null = no bias estimation (legacy).
+  std::function<std::shared_ptr<SensorBiasEstimator>()>
+      build_sensor_bias_estimator{};
 };
 
 // Returns the five baseline configurations in fixed order:

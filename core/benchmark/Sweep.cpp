@@ -34,6 +34,7 @@
 #include "core/benchmark/BenchRunner.hpp"
 #include "core/benchmark/BenchSink.hpp"
 #include "core/benchmark/Consistency.hpp"
+#include "core/bias/SensorBiasPairExtractor.hpp"
 #include "core/pipeline/Tracker.hpp"
 #include "core/tracking/ClutterMapDetectionModel.hpp"
 #include "core/tracking/SensorDetectionModels.hpp"
@@ -188,7 +189,23 @@ std::vector<MetricRow> runSweep(
           if (!det) cfg.clutter_density = desc.clutter_density;
           MhtTracker tracker(*est, cfg, std::move(det));
           tracker.setInnovationSink(&nis);
-          result = runBenchMht(scen, tracker);
+          // Item 9: optional per-sensor registration bias estimator.
+          // Pair extraction runs after each scan; observations feed the
+          // estimator, whose published estimates are then applied to
+          // subsequent scans' incoming measurements via the provider hook.
+          std::shared_ptr<SensorBiasEstimator> bias_est;
+          PostScanHook post_scan;
+          if (config.build_sensor_bias_estimator) {
+            bias_est = config.build_sensor_bias_estimator();
+            tracker.setSensorBiasProvider(bias_est.get());
+            post_scan = [bias_est](const MhtTracker& t, Timestamp scan_t) {
+              bias_est->predictTo(scan_t);
+              const auto pairs =
+                  extractPositionPairs(t.tracks(), scan_t);
+              for (const auto& p : pairs) bias_est->observe(p);
+            };
+          }
+          result = runBenchMht(scen, tracker, post_scan);
         } else {
           // Per-sensor associator if the scenario has a table and the
           // config opts in; otherwise the scalar factory. Detection

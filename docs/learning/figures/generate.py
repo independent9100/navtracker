@@ -940,6 +940,58 @@ def fig_cpa_hysteresis():
     save(fig, "18-cpa-hysteresis.png")
 
 
+def fig_sensor_bias_convergence():
+    """KF posterior shrinking toward a true 2-D bias as paired
+    observations arrive. Shows the 1-sigma covariance ellipse and the
+    current b_hat after n in {0, 1, 5, 20} observations."""
+    rng = np.random.default_rng(42)
+    true_b = np.array([3.0, -2.0])
+    P = np.eye(2) * 25.0  # initial prior (5 m 1-sigma)
+    R_obs = np.eye(2) * (1.0 * 1.0 + 2.0 * 2.0)  # AIS + sensor
+    b_hat = np.array([0.0, 0.0])
+
+    snapshots = {0: (b_hat.copy(), P.copy())}
+    n_obs = 20
+    for i in range(1, n_obs + 1):
+        z = true_b + rng.multivariate_normal([0, 0], R_obs)
+        S = P + R_obs
+        K = P @ np.linalg.inv(S)
+        b_hat = b_hat + K @ (z - b_hat)
+        P = (np.eye(2) - K) @ P
+        if i in (1, 5, 20):
+            snapshots[i] = (b_hat.copy(), P.copy())
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.plot(*true_b, marker="x", color="#aa3333", markersize=14,
+            markeredgewidth=3, label="true bias")
+    colors = ["#cccccc", "#a8b6c8", "#5278a3", "#1f3a5f"]
+    for (n, (bh, Pn)), c in zip(snapshots.items(), colors):
+        vals, vecs = np.linalg.eigh(Pn)
+        order = np.argsort(vals)[::-1]
+        vals, vecs = vals[order], vecs[:, order]
+        ang = np.degrees(np.arctan2(vecs[1, 0], vecs[0, 0]))
+        w, h = 2 * np.sqrt(vals)
+        ell = Ellipse(bh, w, h, angle=ang,
+                              fill=False, edgecolor=c, linewidth=2,
+                              label=f"n={n}")
+        ax.add_patch(ell)
+        ax.plot(*bh, marker="o", color=c, markersize=7)
+
+    ax.set_xlim(-7, 9)
+    ax.set_ylim(-9, 7)
+    ax.set_aspect("equal")
+    ax.set_xlabel("bias_x (m)")
+    ax.set_ylabel("bias_y (m)")
+    ax.set_title(
+        "Per-sensor position-bias KF: posterior shrinks toward true b\n"
+        "1-sigma covariance ellipse vs number of paired observations")
+    ax.axhline(0, color="#bbbbbb", linewidth=0.7)
+    ax.axvline(0, color="#bbbbbb", linewidth=0.7)
+    ax.grid(True, linestyle=":", alpha=0.4)
+    ax.legend(loc="upper left")
+    save(fig, "21-sensor-bias-convergence.png")
+
+
 def fig_ospa_vs_gospa():
     """OSPA vs GOSPA growth with number of missed targets."""
     c = 20.0
@@ -994,6 +1046,7 @@ def main():
     fig_cpa_geometry()
     fig_cpa_hysteresis()
     fig_ospa_vs_gospa()
+    fig_sensor_bias_convergence()
     print("done.")
 
 

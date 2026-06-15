@@ -200,18 +200,47 @@ GlobalAssignment solveGlobalHypothesis(
 
 }  // namespace
 
-void MhtTracker::processBatch(const std::vector<Measurement>& scan) {
-  if (scan.empty()) return;
-  const Timestamp t = scan.front().time;
+void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
+  if (scan_in.empty()) return;
+  const Timestamp t = scan_in.front().time;
   if (has_high_water_ && t < high_water_) {
     if (cfg_.reject_stale_measurements) {
-      stale_dropped_ += scan.size();
+      stale_dropped_ += scan_in.size();
       return;
     }
   } else {
     high_water_ = t;
     has_high_water_ = true;
   }
+
+  // Apply per-sensor registration bias correction (item 9). Null
+  // provider = bit-identical to legacy.
+  std::vector<Measurement> scan_corrected;
+  if (bias_provider_ != nullptr) {
+    scan_corrected.reserve(scan_in.size());
+    for (const auto& z : scan_in) {
+      const SensorBiasKey key{z.sensor, z.source_id};
+      Measurement zc = z;
+      if (z.model == MeasurementModel::Position2D && z.value.size() >= 2) {
+        const auto pb = bias_provider_->positionBias(key);
+        if (pb.is_published) {
+          zc.value(0) -= pb.bias_enu_m.x();
+          zc.value(1) -= pb.bias_enu_m.y();
+        }
+      } else if (z.model == MeasurementModel::Bearing2D &&
+                 z.value.size() >= 1) {
+        const auto bb = bias_provider_->bearingBias(key);
+        if (bb.is_published) zc.value(0) -= bb.bias_rad;
+      } else if (z.model == MeasurementModel::RangeBearing2D &&
+                 z.value.size() >= 2) {
+        const auto bb = bias_provider_->bearingBias(key);
+        if (bb.is_published) zc.value(1) -= bb.bias_rad;
+      }
+      scan_corrected.push_back(std::move(zc));
+    }
+  }
+  const std::vector<Measurement>& scan =
+      bias_provider_ != nullptr ? scan_corrected : scan_in;
 
   // Footgun diagnostic: ≥2 distinct sensor keys on the auto-installed
   // single-default detection model (see defaultDetectionModelWarning).

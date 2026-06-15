@@ -110,6 +110,14 @@ is only a tiebreaker hint.
 This is a deliberate architecture decision. See CLAUDE.md
 "Stable track identity".
 
+> The heading bias is **one** type of bias the heterogeneous
+> sensor stack must deal with. There is a second layer:
+> per-sensor mounting offsets that remain after heading bias is
+> removed. Chapter 21 covers
+> [inter-sensor registration biases](21-sensor-registration-bias.md)
+> — same KF pattern, one estimator per (sensor, source_id), AIS
+> as the anchor.
+
 ## 4. The heading bias problem
 
 The own-ship gyrocompass drifts. Over hours, the reported

@@ -7,6 +7,7 @@
 #include "ports/IDataAssociator.hpp"
 #include "ports/IEstimator.hpp"
 #include "ports/IInnovationSink.hpp"
+#include "ports/ISensorBiasProvider.hpp"
 
 namespace navtracker {
 
@@ -43,6 +44,15 @@ class Tracker {
   // IBearingInnovationSink). Used by the bench's NIS aggregator.
   void setInnovationSink(IInnovationSink* sink) { innov_sink_ = sink; }
 
+  // Optional. When non-null, every incoming measurement is corrected by
+  // the provider's per-(sensor, source_id) published bias before
+  // predict/associate/update. Null = pre-bias behavior. The correction
+  // is deterministic; the residual bias uncertainty is not inflated
+  // into per-track covariance in this revision (Schmidt-KF, deferred).
+  void setSensorBiasProvider(const ISensorBiasProvider* provider) {
+    bias_provider_ = provider;
+  }
+
   // Stale-input guard, ON by default. The engine is time-driven: a
   // measurement older than the high-water mark of everything already
   // processed would be applied against newer state (predict is a dt≤0
@@ -60,6 +70,7 @@ class Tracker {
   double miss_timeout_seconds_;
   IBearingInnovationSink* bearing_innov_sink_{nullptr};
   IInnovationSink* innov_sink_{nullptr};
+  const ISensorBiasProvider* bias_provider_{nullptr};
   bool reject_stale_{true};
   std::size_t stale_dropped_{0};
   bool has_high_water_{false};

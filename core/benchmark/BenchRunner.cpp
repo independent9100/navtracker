@@ -181,7 +181,8 @@ BenchStep snapshotAtMht(const MhtTracker& tracker, const TruthGroup& g) {
 
 }  // namespace
 
-BenchResult runBenchMht(const Scenario& scenario, MhtTracker& tracker) {
+BenchResult runBenchMht(const Scenario& scenario, MhtTracker& tracker,
+                        const PostScanHook& post_scan_hook) {
   BenchResult result;
   const auto truth_groups = groupTruth(scenario.truth);
   const auto& meas = scenario.measurements;
@@ -194,6 +195,7 @@ BenchResult runBenchMht(const Scenario& scenario, MhtTracker& tracker) {
         ++mi;
       }
       tracker.processBatch(scan);
+      if (post_scan_hook) post_scan_hook(tracker, scan_t);
     }
   };
 
@@ -210,6 +212,7 @@ BenchResult runBenchMht(const Scenario& scenario, MhtTracker& tracker) {
       ++mi;
     }
     tracker.processBatch(scan);
+    if (post_scan_hook) post_scan_hook(tracker, scan_t);
   }
   // sink_events intentionally empty: MhtTracker has no sink today.
   return result;

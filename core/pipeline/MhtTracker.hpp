@@ -12,6 +12,7 @@
 #include "core/types/Track.hpp"
 #include "ports/IEstimator.hpp"
 #include "ports/IInnovationSink.hpp"
+#include "ports/ISensorBiasProvider.hpp"
 #include "ports/ISensorDetectionModel.hpp"
 
 namespace navtracker {
@@ -253,6 +254,14 @@ class MhtTracker {
   // nothing — we want the innovation of the filter the world saw.
   void setInnovationSink(IInnovationSink* sink) { innov_sink_ = sink; }
 
+  // Optional. When non-null, every incoming measurement in a scan is
+  // corrected by the provider's per-(sensor, source_id) published bias
+  // before MHT processing. Null = pre-bias behavior; bit-identical to
+  // legacy. See Tracker::setSensorBiasProvider for the same contract.
+  void setSensorBiasProvider(const ISensorBiasProvider* provider) {
+    bias_provider_ = provider;
+  }
+
   const std::vector<Track>& tracks() const { return tracks_; }
   std::size_t treeCount() const { return trees_.size(); }
 
@@ -307,6 +316,7 @@ class MhtTracker {
   bool default_detection_warning_{false};
   std::set<std::pair<SensorKind, MeasurementModel>> seen_sensor_keys_;
   IInnovationSink* innov_sink_{nullptr};
+  const ISensorBiasProvider* bias_provider_{nullptr};
 };
 
 }  // namespace navtracker

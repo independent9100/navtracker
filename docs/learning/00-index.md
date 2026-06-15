@@ -63,6 +63,7 @@ This matches the documentation standard in `CLAUDE.md`
 | 18 | [CPA and collision risk](18-cpa-and-collision-risk.md)                  | Closest Point of Approach. The user-facing output.       |
 | 19 | [Glossary](19-glossary.md)                                              | Every symbol and acronym in one place.                   |
 | 20 | [Tracker performance metrics](20-tracker-metrics.md)                    | RMSE / OSPA / GOSPA / lifetime. How we score a tracker.  |
+| 21 | [Inter-sensor registration bias](21-sensor-registration-bias.md)        | Per-sensor mounting offsets. The next layer after heading. |
 
 ## A note on diagrams
 

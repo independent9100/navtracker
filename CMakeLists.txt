@@ -32,6 +32,8 @@ add_library(navtracker_core
   core/estimation/ParticleFilterEstimator.cpp
   core/bias/HeadingBiasEstimator.cpp
   core/bias/AisArpaPairExtractor.cpp
+  core/bias/SensorBiasEstimator.cpp
+  core/bias/SensorBiasPairExtractor.cpp
   core/own_ship/UereEstimator.cpp
   core/own_ship/OwnShipVelocityEstimator.cpp
   core/collision/Cpa.cpp
@@ -226,6 +228,7 @@ add_executable(navtracker_tests
   tests/bias/test_heading_bias_multi_source.cpp
   tests/bias/test_heading_bias_permutations.cpp
   tests/bias/test_ais_arpa_pair_extractor.cpp
+  tests/bias/test_sensor_bias_estimator.cpp
   tests/own_ship/test_uere_estimator.cpp
   tests/own_ship/test_own_ship_velocity_estimator.cpp
   tests/output/test_track_output.cpp

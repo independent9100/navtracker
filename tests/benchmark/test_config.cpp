@@ -10,7 +10,7 @@ using navtracker::benchmark::defaultConfigs;
 
 TEST(Config, DefaultConfigsHaveUniqueLabels) {
   const auto configs = defaultConfigs();
-  ASSERT_EQ(configs.size(), 16u);
+  ASSERT_EQ(configs.size(), 17u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   std::set<std::string> labels;
@@ -19,7 +19,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 16u);
+  EXPECT_EQ(labels.size(), 17u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_robust"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_ipda"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_mofn"), 1u);
@@ -36,6 +36,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   EXPECT_EQ(labels.count("ekf_cv_mht"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_noisy_mht"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_mht_biascal"), 1u);
 }
 
 // Backlog item 5 ablation: the clutter-map config is the canonical MHT

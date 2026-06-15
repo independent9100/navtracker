@@ -257,15 +257,27 @@ each track with `r(k)` and run lifecycle off it on the JPDA path too.
 the single-hypothesis pipeline never saw the per-sensor detection
 port. Fine for single-sensor, dimensionally wrong on mixed sensors.
 
-## 9. Inter-sensor registration biases
+## 9. Inter-sensor registration biases — DONE (2026-06-15)
 
 **Problem.** Only own-ship heading bias is estimated. Radar↔lidar↔
 camera mounting offsets / range biases are unmodelled; on AutoFerry
 they fold into pos_rmse and gate sizes.
 
-**Change.** Per-sensor bias states (Schmidt-KF consideration already
-sketched in `sota-roadmap.md` §5) fed by AIS-anchored residuals, like
-the heading-bias estimator's v1 pair flow.
+**Change shipped.** Per-(sensor, source_id) bias filters fed by
+AIS-anchored cross-sensor pair extraction. Position bias (2-D) on
+radar / lidar; bearing bias (scalar) on EO / IR cameras. Random-walk
+dynamics with very small Q. Three observability gates (time, range,
+innovation) modelled directly on `HeadingBiasEstimator` G1-G2-G3.
+Deterministic shift application — Schmidt-KF "considered" treatment
+of `P_b` in the per-track update remains in `sota-roadmap.md` §5,
+deferred until pos_rmse plateaus.
+
+New ports / types: `ISensorBiasProvider`, `SensorBiasKey`,
+`SensorBiasEstimator`, `NullBiasProvider`, `SensorBiasPairExtractor`.
+Tracker / MhtTracker gained `setSensorBiasProvider`. New bench config
+`imm_cv_ct_mht_biascal` wires the estimator post-scan. Spec:
+`docs/superpowers/specs/2026-06-13-inter-sensor-registration-bias-design.md`.
+Learning chapter: `docs/learning/21-sensor-registration-bias.md`.
 
 ## 10. Benchmark hygiene
 
