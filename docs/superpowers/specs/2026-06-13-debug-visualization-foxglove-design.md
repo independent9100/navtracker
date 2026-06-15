@@ -36,6 +36,12 @@ In:
   Plot panels.
 - Composition-root wiring in `app/` that tees each `Measurement` to
   the recorder before `tracker.process(m)`.
+- A small **read-only accessor on the associator** exposing the gate
+  threshold `γ` (per measurement dimension) and the predicted
+  innovation covariance `S` it used, so the `/gates` ellipse is
+  faithful to the actual association decision. This is the one piece
+  outside `adapters/foxglove/` that the recorder depends on; covariance
+  (`P`) and innovation (`ν, S, R`) data is already emitted.
 - Unit tests (serializers), an MCAP round-trip test, a determinism
   test, and a smoke test driving an existing replay fixture.
 - `docs/debug-visualization.md` (channel reference + how to open) and
@@ -121,7 +127,7 @@ single-sink setter intact.)
 | `/detections` | `foxglove.SceneUpdate` | `recordMeasurement` | per-`Measurement` marker + 2σ covariance ellipse, color by `SensorKind`/`source_id`; text label with model + default-cov flag |
 | `/tracks` | `foxglove.SceneUpdate` | `ITrackSnapshotSink` | track position, 2σ covariance ellipse, velocity arrow, id + status label, color by `TrackStatus` |
 | `/associations` | `foxglove.SceneUpdate` | snapshot + measurement step | line from each detection to the track it updated this step |
-| `/gates` | `foxglove.SceneUpdate` | snapshot | gating ellipse per track (toggleable layer; off by default) |
+| `/gates` | `foxglove.SceneUpdate` | snapshot + associator | gating ellipse per track. **Always recorded**; the shipped Lichtblick layout ships with this topic's visibility **off**, so enabling it is a single checkbox with no re-run. Requires the associator accessor below. |
 | `/map/tracks`, `/map/detections` | `foxglove.LocationFix` / GeoJSON | snapshot + measurement | lat/lon for the Map panel (via `toGeodeticWithCov` / datum) |
 | `/tf` | `foxglove.FrameTransform` | `recordOwnShip` + datum events | own-ship pose; datum recenter emits an updated transform |
 | `/log` | `foxglove.Log` | `ITrackSink`, CPA, datum | lifecycle transitions, CPA Entered/Exited, datum-recenter notes |
@@ -147,6 +153,13 @@ Plot panels read by field path.
   `aᵢ = k·√λᵢ`, orientation `θ = atan2(V[1,0], V[0,0])`. Default
   `k = 2` (≈ 2σ). Rendered as an oriented Foxglove primitive (scaled
   flat cylinder / ellipse line-loop) at the ENU position, z≈0.
+- **Gate ellipse** (the `/gates` layer): the validation region
+  `{ z : (z − ẑ)ᵀ S⁻¹ (z − ẑ) ≤ γ }` centered on the predicted
+  measurement `ẑ`, with semi-axes `√(γ·λᵢ(S))` and orientation from
+  the eigenvectors of `S`. `γ` and `S` come from the associator
+  accessor (see Scope); it is strictly larger than the `P`-based
+  covariance ellipse because `S` adds `R` and `γ` inflates by the χ²
+  bound.
 - **NIS** per innovation: `ε = νᵀ S⁻¹ ν`, computed by the recorder
   from `InnovationEvent.{residual, S}` (already carried — see
   `ports/IInnovationSink.hpp`). Emitted on `/diag/innovation` for
