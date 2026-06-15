@@ -179,9 +179,56 @@ TEST(SensorBiasPairExtractor, EmitsPairFromAisAndLidarContributions) {
   EXPECT_NEAR(pairs[0].z_sensor_enu.x(), 502.0, 1e-9);
 }
 
-// Tracker bit-identity when bias_provider == nullptr is exercised by
-// the existing tracker tests (they never wire a provider). No explicit
-// regression assertion needed here.
+// FixedSensorBiasProvider: known offsets publish immediately.
+TEST(FixedSensorBiasProvider, ConfiguredKeyPublishesKnownOffset) {
+  FixedSensorBiasProvider prov;
+  const SensorBiasKey lidar{SensorKind::Lidar, "lidar0"};
+  prov.setPositionBias(lidar, Eigen::Vector2d(1.5, -0.8));
+  const auto pb = prov.positionBias(lidar);
+  EXPECT_TRUE(pb.is_published);
+  EXPECT_NEAR(pb.bias_enu_m.x(), 1.5, 1e-12);
+  EXPECT_NEAR(pb.bias_enu_m.y(), -0.8, 1e-12);
+
+  const SensorBiasKey unknown{SensorKind::Lidar, "neverseen"};
+  EXPECT_FALSE(prov.positionBias(unknown).is_published);
+}
+
+// setKnownPositionBias with tight prior: publishes immediately and the
+// estimate equals the seed.
+TEST(SensorBiasEstimator, SetKnownPositionBiasTightPriorPublishes) {
+  SensorBiasEstimator est;
+  const SensorBiasKey lidar{SensorKind::Lidar, "lidar0"};
+  est.setKnownPositionBias(lidar, Eigen::Vector2d(2.0, 0.0),
+                           Eigen::Matrix2d::Identity() * 0.25);
+  const auto pb = est.positionBias(lidar);
+  EXPECT_TRUE(pb.is_published);
+  EXPECT_NEAR(pb.bias_enu_m.x(), 2.0, 1e-12);
+  EXPECT_NEAR(pb.bias_enu_m.y(), 0.0, 1e-12);
+}
+
+// setKnownPositionBias with loose prior: observations dominate and pull
+// the posterior to the true bias. The "I have rough numbers, let
+// observations refine" workflow.
+TEST(SensorBiasEstimator, SetKnownPositionBiasLoosePriorRefines) {
+  SensorBiasEstimator est;
+  const SensorBiasKey lidar{SensorKind::Lidar, "lidar0"};
+  // Loose prior: σ = 5 m per axis. Observations (σ_obs ≈ √5 ≈ 2.2 m)
+  // dominate after ~20 pairs.
+  est.setKnownPositionBias(lidar, Eigen::Vector2d(0.0, 0.0),
+                           Eigen::Matrix2d::Identity() * 25.0);
+  const Eigen::Vector2d true_b(3.0, -2.0);
+  Eigen::Vector2d truth(200.0, 100.0);
+  for (int i = 0; i < 20; ++i) {
+    truth.x() += 1.0;
+    auto obs = makePosObs(lidar.sensor, lidar.source_id,
+                          tsSeconds(0.1 * (i + 1)), true_b, truth);
+    est.observe(obs);
+  }
+  const auto pb = est.positionBias(lidar);
+  EXPECT_NEAR(pb.bias_enu_m.x(), true_b.x(), 0.4);
+  EXPECT_NEAR(pb.bias_enu_m.y(), true_b.y(), 0.4);
+  EXPECT_TRUE(pb.is_published);
+}
 
 }  // namespace
 }  // namespace navtracker

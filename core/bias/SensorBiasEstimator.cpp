@@ -162,6 +162,26 @@ void SensorBiasEstimator::observe(const BearingBiasPairObservation& obs) {
   ++acc_brg_;
 }
 
+void SensorBiasEstimator::setKnownPositionBias(
+    const SensorBiasKey& key,
+    const Eigen::Vector2d& bias_enu_m,
+    const Eigen::Matrix2d& covariance_m2) {
+  PositionState& s = posStateFor(key);
+  s.b_hat = bias_enu_m;
+  s.P = covariance_m2;
+  s.has_update = true;
+  // last_predict left at default (0); the next observe() call will
+  // initialize it to obs.time, same as a fresh entry.
+}
+
+void SensorBiasEstimator::setKnownBearingBias(
+    const SensorBiasKey& key, double bias_rad, double variance_rad2) {
+  BearingState& s = brgStateFor(key);
+  s.b_hat = bias_rad;
+  s.P = variance_rad2;
+  s.has_update = true;
+}
+
 PositionBiasEstimate
 SensorBiasEstimator::positionBias(const SensorBiasKey& key) const {
   PositionBiasEstimate out;

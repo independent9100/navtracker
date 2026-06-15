@@ -82,6 +82,19 @@ class SensorBiasEstimator : public ISensorBiasProvider {
   void observe(const PositionBiasPairObservation& obs);
   void observe(const BearingBiasPairObservation& obs);
 
+  // Seed a per-key prior from external knowledge (calibration
+  // documentation, factory survey, plan drawings). The bias is
+  // immediately treated as "has_update == true", so it publishes
+  // through ISensorBiasProvider as soon as the covariance is below
+  // the publish threshold. Subsequent observations continue to
+  // refine it via the KF update path; the entry behaves identically
+  // to one built from observations once seeded.
+  void setKnownPositionBias(const SensorBiasKey& key,
+                            const Eigen::Vector2d& bias_enu_m,
+                            const Eigen::Matrix2d& covariance_m2);
+  void setKnownBearingBias(const SensorBiasKey& key, double bias_rad,
+                           double variance_rad2);
+
   // ISensorBiasProvider
   PositionBiasEstimate positionBias(const SensorBiasKey& key) const override;
   BearingBiasEstimate bearingBias(const SensorBiasKey& key) const override;
