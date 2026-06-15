@@ -8,6 +8,76 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-15 — Item 9 (inter-sensor registration bias) — shipped but anchor-starved on every available scenario
+
+Implementation landed: `SensorBiasEstimator`, `SensorBiasPairExtractor`,
+`ISensorBiasProvider`, Tracker / MhtTracker `setSensorBiasProvider`
+hook, `imm_cv_ct_mht_biascal` bench config. 7 new unit tests pin
+convergence (20 pair observations → b̂ within 0.3 m of truth), the
+range and outlier gates, per-key independence, the bearing variant,
+the unobserved-key path, and pair extraction. Full suite (611
+tests) green; bit-identical when `bias_provider == nullptr`.
+
+MhtTracker gained `recent_contributions` population (~40 lines)
+matching what Tracker.cpp already does — every chosen-leaf hit
+appends a SourceTouch with a 2-second sliding window. Without it
+the pair extractor saw empty lists; the canonical Tracker pipeline
+already populated this. All MHT-style tests, including
+`BenchDeterminism.RepeatedSweepProducesIdenticalRows`, stayed green.
+
+**The bench bit-identical result is the real finding.** Bench run
+`docs/baselines/biascal_v2_20260615T171638Z.csv` shows every
+(scenario, metric) pair bit-identical between `imm_cv_ct_mht` and
+`imm_cv_ct_mht_biascal`. The estimator never published a non-zero
+bias on any of the 20 scenarios because **no pair observations
+were ever emitted**. Two independent reasons:
+
+1. **AutoFerry replay has no AIS.** Grep:
+   `adapters/replay/AutoferryJsonReplay.cpp` produces only
+   `SensorKind::Lidar / ArpaTtm / EoIr`. There is no AIS feed in
+   the replay path. The Helgesen 2022 paper calibrates against
+   *RTK-GNSS truth*, which our pipeline doesn't expose as a
+   measurement. So the spec's acceptance criterion 4 — "GOSPA env
+   1 drops 43 → 35-40 m" — cannot be measured on AutoFerry
+   without first solving the anchor-source problem.
+2. **Synthetic radars emit RangeBearing2D, not Position2D.**
+   `sim/Builders.cpp::makeRangeBearingMeasurement` is the
+   ArpaTtm path on synthetics; the extractor's
+   `isPositionalNonAnchor` check matches but `SourceTouch.value_enu`
+   is only populated by Tracker / MhtTracker for Position2D (the
+   range-bearing → ENU projection lives in the estimator, not the
+   touch path). So even the synthetic scenarios that *do* have AIS
+   yield no AIS-vs-radar pairs.
+
+**Not regressions to investigate; design surface to extend.** The
+estimator is correct (unit tests pin convergence) and the wiring
+is correct (bit-identity preserved when null, full suite green).
+What is missing is the *anchor-source* / *measurement-conversion*
+layer between the existing measurement stream and the extractor.
+
+Next options, in priority order:
+
+1. **Synthesize an AIS-style anchor from truth in the AutoFerry
+   replay adapter.** That is what the paper does with RTK-GNSS;
+   it is not "cheating" any more than the paper is — the bias
+   estimator is calibration infrastructure, not a tracker input.
+   Smallest delta, most direct test of acceptance criterion 4.
+2. **Project RangeBearing2D contributions into ENU before
+   appending to SourceTouch**, so synthetic radars feed the
+   extractor too. One change to Tracker / MhtTracker; restores
+   the synthetic test path.
+3. **Track-anchored fallback** (the deferred spec item). Cross-
+   sensor anchoring — lidar tracks calibrate radar bias and vice
+   versa — sidesteps the cyclic-anchor problem. More invasive.
+
+The implementation is committed (`cae4378`) and the contribution-
+population fix to MhtTracker is the follow-up commit. Both
+preserve bit-identity on the legacy path. Whether to land (1),
+(2), (3) or all three is a scope call for the next session.
+
+Backlog item 9 implementation is DONE; its *measurable benefit
+on AutoFerry* awaits an anchor-source extension.
+
 ## 2026-06-13 (later 3) — GOSPA metric + Helgesen 2022 reference scaffold
 
 After the item-8 wrap a fair user question landed: how does navtracker

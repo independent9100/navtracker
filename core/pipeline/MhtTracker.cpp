@@ -578,6 +578,49 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
     }
   }
 
+  // Per-tree contribution history: append a SourceTouch for this scan's
+  // chosen-leaf hit (if any), then prune entries older than the window.
+  // Mirrors what Tracker.cpp does for the single-hypothesis pipeline so
+  // downstream pair extractors (AisArpaPairExtractor,
+  // SensorBiasPairExtractor) see equivalent track provenance.
+  {
+    const std::int64_t window_ns =
+        static_cast<std::int64_t>(kContributionWindowSec * 1e9);
+    for (std::size_t ti = 0; ti < trees_.size(); ++ti) {
+      std::size_t leaf = assign.chosen_leaf[ti];
+      if (leaf == TrackTreeNode::kNoParent) continue;
+      const TrackTreeNode& n = trees_[ti].nodes()[leaf];
+      if (!n.is_hit) continue;
+      if (n.scan_meas_idx == TrackTreeNode::kNoMeasurement ||
+          n.scan_meas_idx >= scan.size()) {
+        continue;
+      }
+      const Measurement& z = scan[n.scan_meas_idx];
+      Track::SourceTouch touch;
+      touch.sensor = z.sensor;
+      touch.source_id = z.source_id;
+      touch.time = z.time;
+      if (z.model == MeasurementModel::Position2D && z.value.size() >= 2) {
+        touch.value_enu = z.value.head<2>();
+        if (z.covariance.rows() >= 2 && z.covariance.cols() >= 2) {
+          touch.covariance = z.covariance.topLeftCorner<2, 2>();
+        }
+      }
+      touch.sensor_position_enu = z.sensor_position_enu;
+      touch.own_position_std_m = z.sensor_position_std_m;
+      touch.covariance_is_default = z.covariance_is_default;
+      auto& history = contribution_history_[trees_[ti].externalId()];
+      history.push_back(std::move(touch));
+      // Prune.
+      auto first_keep = std::find_if(
+          history.begin(), history.end(),
+          [&](const Track::SourceTouch& st) {
+            return (t.nanos() - st.time.nanos()) <= window_ns;
+          });
+      history.erase(history.begin(), first_keep);
+    }
+  }
+
   tracks_.clear();
   tracks_.reserve(trees_.size());
   for (std::size_t ti = 0; ti < trees_.size(); ++ti) {
@@ -640,7 +683,22 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
         trees_[ti].nodes()[leaf].existence_probability;
     view.visibility_given_exists =
         trees_[ti].nodes()[leaf].visibility_given_exists;
+    auto hit = contribution_history_.find(trees_[ti].externalId());
+    if (hit != contribution_history_.end()) {
+      view.recent_contributions = hit->second;
+    }
     tracks_.push_back(std::move(view));
+  }
+  // Drop history for trees that no longer exist (kept above with the
+  // history map; trees_ may have shrunk).
+  {
+    std::set<TrackId> alive;
+    for (const auto& tt : trees_) alive.insert(tt.externalId());
+    for (auto it = contribution_history_.begin();
+         it != contribution_history_.end();) {
+      if (alive.count(it->first) == 0) it = contribution_history_.erase(it);
+      else ++it;
+    }
   }
 
   // Feed the scan outcome to the detection model, labeled from the

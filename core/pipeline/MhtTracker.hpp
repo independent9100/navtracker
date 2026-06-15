@@ -317,6 +317,15 @@ class MhtTracker {
   std::set<std::pair<SensorKind, MeasurementModel>> seen_sensor_keys_;
   IInnovationSink* innov_sink_{nullptr};
   const ISensorBiasProvider* bias_provider_{nullptr};
+  // Per-tree contribution history keyed by externalId. Each scan we
+  // append the SourceTouch for the chosen leaf's measurement (if it
+  // was a hit) and prune entries older than kContributionWindowSec.
+  // The Track views built each scan copy from this so consumers
+  // (SensorBiasPairExtractor, AisArpaPairExtractor) see the same
+  // contracts as the single-hypothesis Tracker pipeline.
+  std::map<TrackId, std::vector<Track::SourceTouch>>
+      contribution_history_;
+  static constexpr double kContributionWindowSec = 2.0;
 };
 
 }  // namespace navtracker
