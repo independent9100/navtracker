@@ -160,6 +160,7 @@ add_executable(navtracker_tests
   tests/tracking/test_datum_shift.cpp
   tests/pipeline/test_reorder_buffer.cpp
   tests/ports/test_edge_ports.cpp
+  tests/pipeline/test_source_touch_populate.cpp
   tests/pipeline/test_tracker.cpp
   tests/pipeline/test_tracker_bearing_innovation_emit.cpp
   tests/pipeline/test_tracker_innovation_emit.cpp

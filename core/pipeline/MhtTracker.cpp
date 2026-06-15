@@ -1,4 +1,5 @@
 #include "core/pipeline/MhtTracker.hpp"
+#include "core/pipeline/SourceTouchPopulate.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -600,12 +601,7 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
       touch.sensor = z.sensor;
       touch.source_id = z.source_id;
       touch.time = z.time;
-      if (z.model == MeasurementModel::Position2D && z.value.size() >= 2) {
-        touch.value_enu = z.value.head<2>();
-        if (z.covariance.rows() >= 2 && z.covariance.cols() >= 2) {
-          touch.covariance = z.covariance.topLeftCorner<2, 2>();
-        }
-      }
+      fillSourceTouchEnu(touch, z);
       touch.sensor_position_enu = z.sensor_position_enu;
       touch.own_position_std_m = z.sensor_position_std_m;
       touch.covariance_is_default = z.covariance_is_default;

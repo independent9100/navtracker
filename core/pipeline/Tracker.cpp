@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "core/estimation/MeasurementModels.hpp"
+#include "core/pipeline/SourceTouchPopulate.hpp"
 #include "core/tracking/TrackManager.hpp"
 
 namespace navtracker {
@@ -167,12 +168,7 @@ void Tracker::process(const Measurement& z_in) {
       touch.sensor = z.sensor;
       touch.source_id = z.source_id;
       touch.time = z.time;
-      if (z.model == MeasurementModel::Position2D && z.value.size() >= 2) {
-        touch.value_enu = z.value.head<2>();
-        if (z.covariance.rows() >= 2 && z.covariance.cols() >= 2) {
-          touch.covariance = z.covariance.topLeftCorner<2, 2>();
-        }
-      }
+      fillSourceTouchEnu(touch, z);
       touch.sensor_position_enu = z.sensor_position_enu;
       touch.own_position_std_m = z.sensor_position_std_m;
       touch.covariance_is_default = z.covariance_is_default;
@@ -270,12 +266,7 @@ void Tracker::processBatch(const std::vector<Measurement>& scan_in) {
         touch.sensor = gz.sensor;
         touch.source_id = gz.source_id;
         touch.time = gz.time;
-        if (gz.model == MeasurementModel::Position2D && gz.value.size() >= 2) {
-          touch.value_enu = gz.value.head<2>();
-          if (gz.covariance.rows() >= 2 && gz.covariance.cols() >= 2) {
-            touch.covariance = gz.covariance.topLeftCorner<2, 2>();
-          }
-        }
+        fillSourceTouchEnu(touch, gz);
         touch.sensor_position_enu = gz.sensor_position_enu;
         touch.own_position_std_m = gz.sensor_position_std_m;
         touch.covariance_is_default = gz.covariance_is_default;
@@ -300,12 +291,7 @@ void Tracker::processBatch(const std::vector<Measurement>& scan_in) {
         touch.sensor = z.sensor;
         touch.source_id = z.source_id;
         touch.time = z.time;
-        if (z.model == MeasurementModel::Position2D && z.value.size() >= 2) {
-          touch.value_enu = z.value.head<2>();
-          if (z.covariance.rows() >= 2 && z.covariance.cols() >= 2) {
-            touch.covariance = z.covariance.topLeftCorner<2, 2>();
-          }
-        }
+        fillSourceTouchEnu(touch, z);
         touch.sensor_position_enu = z.sensor_position_enu;
         touch.own_position_std_m = z.sensor_position_std_m;
         tr.recent_contributions.push_back(std::move(touch));
