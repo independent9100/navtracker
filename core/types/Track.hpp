@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -60,6 +61,12 @@ struct Track {
     Eigen::Vector2d sensor_position_enu{Eigen::Vector2d::Zero()};
     double own_position_std_m{0.0};
     bool covariance_is_default{false};
+    // Bearing-only payload (populated only when the contributing
+    // measurement is Bearing2D). NaN sentinel means "this touch did
+    // not contribute a bearing"; consumers must check before reading.
+    // ENU convention: α = atan2(dy, dx) measured from east-axis CCW.
+    double alpha_rad{std::numeric_limits<double>::quiet_NaN()};
+    double alpha_var_rad2{0.0};
   };
   std::vector<SourceTouch> recent_contributions;
 

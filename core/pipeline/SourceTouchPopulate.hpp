@@ -59,9 +59,16 @@ inline void fillSourceTouchEnu(Track::SourceTouch& touch,
       }
       break;
     case MeasurementModel::Bearing2D:
-      // No range observation; leave touch.value_enu at the
-      // default zero. The bearing-bias path reads bearings from
-      // the measurement, not from the touch.
+      // No range observation, so value_enu stays at the default
+      // zero. We do carry the bearing itself so the bias-pair
+      // extractor can compose (AIS-anchor position) × (bearing
+      // contribution) into a BearingBiasPairObservation downstream.
+      if (z.value.size() >= 1) {
+        touch.alpha_rad = z.value(0);
+        if (z.covariance.rows() >= 1 && z.covariance.cols() >= 1) {
+          touch.alpha_var_rad2 = z.covariance(0, 0);
+        }
+      }
       break;
   }
 }

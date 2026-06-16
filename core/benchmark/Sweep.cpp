@@ -223,9 +223,12 @@ std::vector<MetricRow> runSweep(
             tracker.setSensorBiasProvider(bias_est.get());
             post_scan = [bias_est](const MhtTracker& t, Timestamp scan_t) {
               bias_est->predictTo(scan_t);
-              const auto pairs =
+              const auto pos_pairs =
                   extractPositionPairs(t.tracks(), scan_t);
-              for (const auto& p : pairs) bias_est->observe(p);
+              for (const auto& p : pos_pairs) bias_est->observe(p);
+              const auto brg_pairs =
+                  extractBearingPairs(t.tracks(), scan_t);
+              for (const auto& p : brg_pairs) bias_est->observe(p);
             };
           }
           result = runBenchMht(scen, tracker, post_scan);

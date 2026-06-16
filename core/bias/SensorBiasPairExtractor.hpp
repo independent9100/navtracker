@@ -25,10 +25,28 @@ struct SensorBiasPairExtractorConfig {
 // least one *other* Position2D contribution (radar, lidar, ARPA), emit
 // one PositionBiasPairObservation per (AIS, non-AIS) pair.
 //
-// Bearing-only contributions (EO/IR Bearing2D) are not extracted here;
-// they need a different observation kind, which a future iteration
-// adds via extractBearingPairs(...).
 std::vector<PositionBiasPairObservation> extractPositionPairs(
+    const std::vector<Track>& tracks,
+    Timestamp cycle_time,
+    SensorBiasPairExtractorConfig cfg = {});
+
+// Extract bearing-bias pair observations. For each track whose
+// `recent_contributions` (within cycle_window_seconds of cycle_time)
+// include both an AIS Position2D contribution and at least one
+// Bearing2D contribution (EO / IR), emit one BearingBiasPairObservation
+// per (AIS, bearing) pair.
+//
+// The bearing residual is computed as r = wrap(α_obs − α_pred), where
+// α_pred is the bearing from the camera's sensor position to the
+// AIS anchor's reported ENU position. The bias estimator's bearing
+// update consumes this residual directly.
+//
+// Why this exists separately from the heading-bias estimator's bearing
+// path: heading bias is shared across all sensors on the platform; the
+// per-sensor mounting bias is sensor-specific. Both can coexist —
+// heading bias is removed upstream by OwnShipProvider; the residual
+// per-sensor bearing offset is what this estimator catches.
+std::vector<BearingBiasPairObservation> extractBearingPairs(
     const std::vector<Track>& tracks,
     Timestamp cycle_time,
     SensorBiasPairExtractorConfig cfg = {});

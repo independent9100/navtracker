@@ -195,6 +195,62 @@ TEST(FixedSensorBiasProvider, ConfiguredKeyPublishesKnownOffset) {
 
 // setKnownPositionBias with tight prior: publishes immediately and the
 // estimate equals the seed.
+TEST(SensorBiasPairExtractor, EmitsBearingPairFromAisAndEoirContributions) {
+  Track tr;
+  tr.id = TrackId{42};
+  // Anchor at (100, 0) ENU, camera at origin → predicted α = 0.
+  Track::SourceTouch ais;
+  ais.sensor = SensorKind::Ais;
+  ais.source_id = "ais0";
+  ais.time = tsSeconds(1.0);
+  ais.value_enu = Eigen::Vector2d(100.0, 0.0);
+  ais.covariance = iso(5.0);
+  tr.recent_contributions.push_back(ais);
+  // EO measurement reports 0.05 rad → bearing-bias observation of +0.05.
+  Track::SourceTouch eo;
+  eo.sensor = SensorKind::EoIr;
+  eo.source_id = "eo0";
+  eo.time = tsSeconds(1.05);
+  eo.sensor_position_enu = Eigen::Vector2d(0.0, 0.0);
+  eo.alpha_rad = 0.05;
+  eo.alpha_var_rad2 = 1e-3;
+  tr.recent_contributions.push_back(eo);
+
+  std::vector<Track> tracks{tr};
+  const auto pairs = extractBearingPairs(tracks, tsSeconds(1.05));
+  ASSERT_EQ(pairs.size(), 1u);
+  EXPECT_EQ(pairs[0].key.sensor, SensorKind::EoIr);
+  EXPECT_EQ(pairs[0].key.source_id, "eo0");
+  EXPECT_NEAR(pairs[0].alpha_observed_rad, 0.05, 1e-12);
+  EXPECT_NEAR(pairs[0].alpha_meas_var_rad2, 1e-3, 1e-15);
+  EXPECT_NEAR(pairs[0].anchor_target_position_enu.x(), 100.0, 1e-12);
+  EXPECT_GT(pairs[0].anchor_position_std_m, 0.0);
+}
+
+TEST(SensorBiasPairExtractor, SkipsBearingTouchesWithoutAlphaPayload) {
+  // A Bearing2D touch whose alpha_rad is still NaN (e.g. a legacy
+  // populator that never ran the bearing branch) must not crash the
+  // extractor; the pair is simply skipped.
+  Track tr;
+  tr.id = TrackId{1};
+  Track::SourceTouch ais;
+  ais.sensor = SensorKind::Ais;
+  ais.time = tsSeconds(1.0);
+  ais.value_enu = Eigen::Vector2d(100.0, 0.0);
+  ais.covariance = iso(5.0);
+  tr.recent_contributions.push_back(ais);
+  Track::SourceTouch eo;
+  eo.sensor = SensorKind::EoIr;
+  eo.source_id = "eo0";
+  eo.time = tsSeconds(1.05);
+  // alpha_rad left as default NaN.
+  tr.recent_contributions.push_back(eo);
+
+  std::vector<Track> tracks{tr};
+  const auto pairs = extractBearingPairs(tracks, tsSeconds(1.05));
+  EXPECT_EQ(pairs.size(), 0u);
+}
+
 TEST(SensorBiasEstimator, SetKnownPositionBiasTightPriorPublishes) {
   SensorBiasEstimator est;
   const SensorBiasKey lidar{SensorKind::Lidar, "lidar0"};
