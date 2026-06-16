@@ -1,4 +1,5 @@
 #include "core/pipeline/MhtTracker.hpp"
+#include "core/pipeline/BiasCorrection.hpp"
 #include "core/pipeline/SourceTouchPopulate.hpp"
 
 #include <algorithm>
@@ -214,30 +215,14 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
     has_high_water_ = true;
   }
 
-  // Apply per-sensor registration bias correction (item 9). Null
-  // provider = bit-identical to legacy.
+  // Apply per-sensor registration bias correction (item 9) + Schmidt-KF
+  // R-inflation (item 9 acceptance criterion 5). Null provider =
+  // bit-identical to legacy.
   std::vector<Measurement> scan_corrected;
   if (bias_provider_ != nullptr) {
     scan_corrected.reserve(scan_in.size());
     for (const auto& z : scan_in) {
-      const SensorBiasKey key{z.sensor, z.source_id};
-      Measurement zc = z;
-      if (z.model == MeasurementModel::Position2D && z.value.size() >= 2) {
-        const auto pb = bias_provider_->positionBias(key);
-        if (pb.is_published) {
-          zc.value(0) -= pb.bias_enu_m.x();
-          zc.value(1) -= pb.bias_enu_m.y();
-        }
-      } else if (z.model == MeasurementModel::Bearing2D &&
-                 z.value.size() >= 1) {
-        const auto bb = bias_provider_->bearingBias(key);
-        if (bb.is_published) zc.value(0) -= bb.bias_rad;
-      } else if (z.model == MeasurementModel::RangeBearing2D &&
-                 z.value.size() >= 2) {
-        const auto bb = bias_provider_->bearingBias(key);
-        if (bb.is_published) zc.value(1) -= bb.bias_rad;
-      }
-      scan_corrected.push_back(std::move(zc));
+      scan_corrected.push_back(applyBiasCorrection(z, bias_provider_));
     }
   }
   const std::vector<Measurement>& scan =
