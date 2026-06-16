@@ -46,11 +46,20 @@ struct AutoferryLoadOptions {
   bool include_bearings = false;
 
   // Per-sensor measurement-noise std used to synthesize covariance (the
-  // dataset ships detections without per-point R). Defaults follow the
-  // sensor stack in the paper: Velodyne VLP-16 lidar is the most precise
-  // active sensor, the Simrad 4G broadband radar the coarser one.
-  double lidar_pos_std_m = 2.0;
-  double radar_pos_std_m = 5.0;
+  // dataset ships detections without per-point R). Defaults updated
+  // 2026-06-16 (item 12 (a)) from the empirical per-sensor residual
+  // analysis in tools/autoferry_r_calibration.py — the original
+  // sensor-spec values (lidar 2 m, radar 5 m) under-estimated the
+  // *operational* noise the autoferry fixture actually exhibits,
+  // driving NEES to 77 on sc5. Empirical pooled / env-1 σ:
+  //   lidar  σ_iso = 7.1 m / 8.1 m vs configured 2.0 m   → 3.5-4× too tight
+  //   radar  σ_iso = 5.9 m / 6.5 m vs configured 5.0 m   → modestly too tight
+  //   IR/EO  σ_β ≈ 0.07-0.09 rad vs configured 0.087 rad → essentially right
+  // Updated defaults sit slightly below the env-1 numbers so the
+  // urban-channel scenarios (env 2, where actual σ is smaller) are
+  // not over-relaxed too far.
+  double lidar_pos_std_m = 7.0;
+  double radar_pos_std_m = 6.0;
   double bearing_std_rad = 0.0873;  // ~5°, matches observed EO/IR residual
 
   // Inject synthetic AIS-style position measurements derived from the
