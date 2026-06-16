@@ -218,3 +218,28 @@ TEST(Metrics, ComputeMetricsBundlesAll) {
   EXPECT_NEAR(m.track_breaks, 0.0, 1e-9);
   EXPECT_NEAR(m.id_switches, 0.0, 1e-9);
 }
+
+TEST(Metrics, PerTruthBreakdownReflectsIndividualTargets) {
+  // Two targets across three steps. Target 1 is tracked perfectly
+  // (pos_rmse = 0). Target 2 is offset by 4 m every step. Aggregate
+  // pos_rmse = mean(0, 4) = 2; per-truth pos_rmse must split them.
+  BenchResult r;
+  for (int k = 0; k < 3; ++k) {
+    BenchStep s;
+    s.time = Timestamp::fromSeconds(k);
+    s.truth.push_back({1, {0.0, 0.0}, {0, 0}});
+    s.truth.push_back({2, {100.0, 0.0}, {0, 0}});
+    s.tracks.push_back({TrackId{10}, {0.0, 0.0}, {0, 0}});
+    s.tracks.push_back({TrackId{20}, {104.0, 0.0}, {0, 0}});
+    r.steps.push_back(s);
+  }
+  const auto m = benchmark::computeMetrics(r, {});
+  EXPECT_NEAR(m.pos_rmse_m, 2.0, 1e-6);
+  ASSERT_EQ(m.per_truth.size(), 2u);
+  EXPECT_NEAR(m.per_truth.at(1).pos_rmse_m, 0.0, 1e-6);
+  EXPECT_NEAR(m.per_truth.at(2).pos_rmse_m, 4.0, 1e-6);
+  EXPECT_NEAR(m.per_truth.at(1).lifetime_ratio, 1.0, 1e-9);
+  EXPECT_NEAR(m.per_truth.at(2).lifetime_ratio, 1.0, 1e-9);
+  EXPECT_EQ(m.per_truth.at(1).rmse_n, 3u);
+  EXPECT_EQ(m.per_truth.at(2).rmse_n, 3u);
+}

@@ -47,20 +47,25 @@ TEST(Sweep, RowCountMatchesMatrix) {
   // 1 config * 1 scenario * 2 seeds → some number of metric rows.
   // 11 kinematic/quality metrics (OSPA mean/p95 + GOSPA mean/p95/rms +
   // lifetime/breaks/switches/RMSE × 4) + 6 NEES metrics + 6 NIS metrics
-  // per (sensor, model, source_id) source key contributing innovations.
-  // TinyStraightLine has one source; total per seed = 11 + 6 + 6 = 23.
-  EXPECT_EQ(rows.size(), 2u * 23u);
+  // per (sensor, model, source_id) source key contributing innovations
+  // + 7 per-truth metrics (lifetime/breaks/switches/RMSE × 4 + rmse_n)
+  // per truth_id. TinyStraightLine has one source and one truth target;
+  // total per seed = 11 + 6 + 6 + 7 = 30.
+  EXPECT_EQ(rows.size(), 2u * 30u);
   std::size_t nees_seen = 0;
   std::size_t nis_seen = 0;
+  std::size_t per_truth_seen = 0;
   for (const auto& r : rows) {
     EXPECT_EQ(r.run_id, "test_run");
     EXPECT_EQ(r.config, "ekf_cv_gnn");
     EXPECT_EQ(r.scenario, "tiny_line");
     if (r.metric.rfind("nees_", 0) == 0) ++nees_seen;
     if (r.metric.rfind("nis_", 0) == 0) ++nis_seen;
+    if (r.metric.find(":truth_") != std::string::npos) ++per_truth_seen;
   }
   EXPECT_EQ(nees_seen, 12u);  // 6 NEES * 2 seeds
   EXPECT_GE(nis_seen, 12u);   // ≥ 6 NIS * 2 seeds (≥ 1 source)
+  EXPECT_EQ(per_truth_seen, 14u);  // 7 per-truth * 1 truth * 2 seeds
 }
 
 // --- Per-scenario per-sensor detection tables -----------------------------

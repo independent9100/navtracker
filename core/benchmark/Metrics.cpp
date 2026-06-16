@@ -224,13 +224,15 @@ ContinuityCounts computeContinuity(const BenchResult& result,
       p.prev = std::nullopt;
     }
   }
-  if (per.empty()) return {0, 0, 0};
+  if (per.empty()) return {0, 0, 0, {}};
 
   ContinuityCounts c{};
   for (const auto& [id, p] : per) {
-    if (p.present > 0.0) c.lifetime_ratio += p.assigned / p.present;
+    const double lr = (p.present > 0.0) ? p.assigned / p.present : 0.0;
+    c.lifetime_ratio += lr;
     c.track_breaks += p.breaks;
     c.id_switches += p.switches;
+    c.per_truth[id] = PerTruthContinuity{lr, p.breaks, p.switches};
   }
   const double n = static_cast<double>(per.size());
   c.lifetime_ratio /= n;
@@ -297,16 +299,21 @@ RmseResult computeRmse(const BenchResult& result,
     }
   }
 
-  RmseResult out{0, 0, 0};
+  RmseResult out{0, 0, 0, {}};
   std::size_t contributing = 0;
   for (const auto& [id, acc] : per) {
     if (acc.n == 0) continue;
-    out.pos_rmse_m += std::sqrt(acc.pos_se / static_cast<double>(acc.n));
-    out.sog_rmse_mps += std::sqrt(acc.sog_se / static_cast<double>(acc.n));
-    out.cog_rmse_deg += std::sqrt(acc.cog_se / static_cast<double>(acc.n));
+    const double n = static_cast<double>(acc.n);
+    const double pr = std::sqrt(acc.pos_se / n);
+    const double sr = std::sqrt(acc.sog_se / n);
+    const double cr = std::sqrt(acc.cog_se / n);
+    out.pos_rmse_m += pr;
+    out.sog_rmse_mps += sr;
+    out.cog_rmse_deg += cr;
+    out.per_truth[id] = PerTruthRmse{pr, sr, cr, acc.n};
     ++contributing;
   }
-  if (contributing == 0) return {0, 0, 0};
+  if (contributing == 0) return {0, 0, 0, {}};
   out.pos_rmse_m /= static_cast<double>(contributing);
   out.sog_rmse_mps /= static_cast<double>(contributing);
   out.cog_rmse_deg /= static_cast<double>(contributing);
@@ -350,6 +357,24 @@ MetricsResult computeMetrics(const BenchResult& result,
   m.pos_rmse_m = rmse.pos_rmse_m;
   m.sog_rmse_mps = rmse.sog_rmse_mps;
   m.cog_rmse_deg = rmse.cog_rmse_deg;
+  // Per-truth-id breakdown: union the continuity and RMSE per-truth
+  // maps. A truth id present in continuity but missing from RMSE means
+  // it appeared in step.truth but no Confirmed track was assigned to
+  // it within the gate (no kinematic samples) — we still report its
+  // lifetime / breaks / switches; RMSE fields stay zero with n=0.
+  for (const auto& [id, c] : cont.per_truth) {
+    auto& pt = m.per_truth[id];
+    pt.lifetime_ratio = c.lifetime_ratio;
+    pt.track_breaks = c.track_breaks;
+    pt.id_switches = c.id_switches;
+  }
+  for (const auto& [id, r] : rmse.per_truth) {
+    auto& pt = m.per_truth[id];
+    pt.pos_rmse_m = r.pos_rmse_m;
+    pt.sog_rmse_mps = r.sog_rmse_mps;
+    pt.cog_rmse_deg = r.cog_rmse_deg;
+    pt.rmse_n = r.n;
+  }
   return m;
 }
 

@@ -103,6 +103,29 @@ void emit(std::vector<MetricRow>& out,
   out.push_back({p.run_id, config, scenario, seed, "pos_rmse_m", m.pos_rmse_m, "m"});
   out.push_back({p.run_id, config, scenario, seed, "sog_rmse_mps", m.sog_rmse_mps, "m/s"});
   out.push_back({p.run_id, config, scenario, seed, "cog_rmse_deg", m.cog_rmse_deg, "deg"});
+  // Per-truth-id breakdown of the kinematic + continuity metrics.
+  // Suffix pattern mirrors NIS per-source: "<metric>:truth_<id>". This
+  // makes it possible to see which target is dragging a scenario's
+  // mean without re-running. truth_id is the canonical truth slot
+  // identifier from the scenario; for replays it is the dataset's
+  // ground-truth track id.
+  for (const auto& [tid, pt] : m.per_truth) {
+    const std::string sfx = ":truth_" + std::to_string(tid);
+    out.push_back({p.run_id, config, scenario, seed,
+                   "lifetime_ratio" + sfx, pt.lifetime_ratio, "ratio"});
+    out.push_back({p.run_id, config, scenario, seed,
+                   "track_breaks" + sfx, pt.track_breaks, "count"});
+    out.push_back({p.run_id, config, scenario, seed,
+                   "id_switches" + sfx, pt.id_switches, "count"});
+    out.push_back({p.run_id, config, scenario, seed,
+                   "pos_rmse_m" + sfx, pt.pos_rmse_m, "m"});
+    out.push_back({p.run_id, config, scenario, seed,
+                   "sog_rmse_mps" + sfx, pt.sog_rmse_mps, "m/s"});
+    out.push_back({p.run_id, config, scenario, seed,
+                   "cog_rmse_deg" + sfx, pt.cog_rmse_deg, "deg"});
+    out.push_back({p.run_id, config, scenario, seed,
+                   "rmse_n" + sfx, static_cast<double>(pt.rmse_n), "count"});
+  }
   // NEES aggregate (position, Confirmed-only via BenchStep::tracks).
   out.push_back({p.run_id, config, scenario, seed, "nees_mean", c.nees.mean, "ratio"});
   out.push_back({p.run_id, config, scenario, seed, "nees_p95", c.nees.p95, "ratio"});

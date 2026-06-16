@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -9,6 +10,21 @@
 
 namespace navtracker {
 namespace benchmark {
+
+// Per-truth-id breakdown of the metrics computeContinuity and
+// computeRmse already compute internally. Exposed so the bench can
+// emit one CSV row per (scenario, truth_id, metric) — surfaces "is
+// every target tracked, or is one bad target dragging the scenario
+// mean" without re-running the bench.
+struct PerTruthMetrics {
+  double lifetime_ratio{0.0};   // [0, 1]
+  double track_breaks{0.0};     // count, this truth only
+  double id_switches{0.0};      // count, this truth only
+  double pos_rmse_m{0.0};       // metres
+  double sog_rmse_mps{0.0};     // metres/second
+  double cog_rmse_deg{0.0};     // degrees
+  std::size_t rmse_n{0};        // # contributing samples (Confirmed only)
+};
 
 struct MetricsResult {
   double ospa_mean{0.0};        // metres
@@ -30,6 +46,9 @@ struct MetricsResult {
   double pos_rmse_m{0.0};       // metres
   double sog_rmse_mps{0.0};     // metres/second
   double cog_rmse_deg{0.0};     // degrees
+  // Per-truth-id breakdown — same numbers, sliced by truth slot.
+  // Ordered map (truth_id ascending) so CSV emission is deterministic.
+  std::map<std::uint64_t, PerTruthMetrics> per_truth;
 };
 
 struct MetricsParams {
@@ -64,10 +83,16 @@ using StepAssignment = std::vector<std::optional<TrackId>>;
 std::vector<StepAssignment> assignPerStep(const BenchResult& result,
                                           double gate_m);
 
+struct PerTruthContinuity {
+  double lifetime_ratio{0.0};
+  double track_breaks{0.0};
+  double id_switches{0.0};
+};
 struct ContinuityCounts {
   double lifetime_ratio;  // mean across truths in [0, 1]
   double track_breaks;    // mean count per truth
   double id_switches;     // mean count per truth
+  std::map<std::uint64_t, PerTruthContinuity> per_truth;  // by truth_id
 };
 // Continuity keyed by truth_id (read from result.steps[k].truth), so it
 // supports time-varying truth cardinality and per-step slot reordering.
@@ -76,10 +101,17 @@ struct ContinuityCounts {
 ContinuityCounts computeContinuity(const BenchResult& result,
                                    const std::vector<StepAssignment>& assigns);
 
+struct PerTruthRmse {
+  double pos_rmse_m{0.0};
+  double sog_rmse_mps{0.0};
+  double cog_rmse_deg{0.0};
+  std::size_t n{0};
+};
 struct RmseResult {
   double pos_rmse_m;
   double sog_rmse_mps;
   double cog_rmse_deg;
+  std::map<std::uint64_t, PerTruthRmse> per_truth;  // by truth_id
 };
 
 RmseResult computeRmse(const BenchResult& result,
