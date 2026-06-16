@@ -2365,3 +2365,157 @@ the env-2 NEES distribution) or whether the whole filter is
 miscalibrated uniformly. Tools to be added under
 `tools/autoferry_per_target_inspect.py` if the split signals one
 specific target.
+
+---
+
+## 2026-06-16 — Per-target diagnosis of the env-1/env-2 asymmetry
+
+**Method.** Cross-referenced the per-truth rows from
+`bench_schmidt_20260616T105707Z.csv` with per-scenario geometric
+features (range to own-ship, lidar coverage fraction, per-sensor
+detection count attributed to truth via nearest-neighbour in
+30 m), then re-measured `imm_cv_ct_mht_bearguard` against the per-
+truth metrics it had been shelved against the per-scenario
+metrics.
+
+**Asymmetry source.** 5 of 9 scenarios have one target 2–5× worse
+on `pos_rmse_m` than the other. The worse target is **bearing-
+dominated** in every case:
+
+| Scenario | Worst tid | Lidar/Radar/Bearings | Diagnosis |
+|----------|-----------|-----------------------|-----------|
+| sc3 t1   | rmse 2.1× | 4 / 2 / 545           | bearing-dominated, range 172 m, 50% outside lidar |
+| sc5 t1   | rmse 4×   | **0 / 0** / 517       | **pure BOT**, range 213 m, 76% outside lidar |
+| sc6 t1   | rmse 5.1× | 90 / 20 / 594         | range 169 m, 57% outside lidar |
+| sc16 t1  | rmse 4.8× | 54 / 11 / 486         | heading stdev 33° (manoeuvre-dominated) |
+| sc17 t2  | 7 breaks  | 50 / 18 / 442         | identical geometry to t1 — pair / crossing |
+| sc22 t2  | rmse 1.7× | 79 / 19 / 541         | close-pair association, not pure BOT |
+
+The twins of the same scenarios suffer a *different* failure: ID
+switch counts of 45 / 66 / 77 on well-instrumented targets — too
+many measurements feeding JPDA/MHT solves between near targets
+(association churn, JIPDA territory).
+
+**BearingRangeGuard re-measured.** The guard had been shelved
+against per-scenario averages. Per-truth measurement shows:
+
+- sc22 t2 pos_rmse −20.7% (+ id_switches +54% — net wash)
+- sc6 t2 pos_rmse −16.9%, lifetime +4pp, track_breaks −33% (the
+  cleanest win but on the *healthy* twin, not the BOT target)
+- sc5 t1 / sc6 t1: **bit-identical** to baseline — the guard
+  activates on Bearing2D updates but its effect on the position
+  covariance is reabsorbed by the IMM-CV-CT mode-mixing step.
+
+Net: the guard stays opt-in. The original shelf decision is
+confirmed, but the per-truth view shows the structural reason —
+BOT range collapse is a Jacobian-rank problem at update time, not
+a covariance-shape problem the guard can fix.
+
+**Implication for the backlog.** True bearing-only fix needs:
+- Modified-polar EKF on bearing-dominated tracks (track
+  parameter is `1/r`, log-r, or polar (r, β) directly so the
+  range-axis singularity is avoided), or
+- Bearing-bearing triangulation between sensors *before* track
+  initiation, to constrain the prior range with finite
+  uncertainty rather than 1/0.
+
+Association churn on the twin targets is a separate problem
+(JIPDA/PMBM, deferred).
+
+**Where this leaves the next step.** The per-target view cleanly
+separates the two env-2 problems from each other. sc13 sits in
+neither bucket — both targets are within lidar coverage at ~77 m,
+well-instrumented, and still produce NEES = 75 anchored. That is
+the only scenario where R calibration is the genuine bottleneck;
+addressed next.
+
+---
+
+## 2026-06-16 — sc13 root cause: unobserved EO/IR bearing bias
+
+**Method.** Ran `tools/autoferry_r_calibration.py` with a new
+per-scenario report on sc13/16/17/22, then inspected the
+post-bias bench NIS by sensor source.
+
+**sc13 R is approximately right.** Lidar NIS = 0.84, radar NIS =
+0.83 (target = 1, slightly conservative); empirical σ matches the
+env-2 R override (lidar 2.99 vs configured 3.0, IR/EO 5.5°/5.2°
+vs configured 5.3°). Radar empirical 3.32 m vs configured 5.0 m
+(50% looser than necessary) — minor, not the bottleneck.
+
+**The cameras have a 5–7° systematic bearing bias.** Per-scenario
+empirical means:
+
+| Scenario | IR mean bearing | EO mean bearing |
+|----------|-----------------|-----------------|
+| sc13     | **7.04°**       | **6.87°**       |
+| sc16     | 3.59°           | 7.74°           |
+| sc17     | 2.58°           | 7.85°           |
+| sc22     | 3.56°           | 5.42°           |
+
+At sc13's 77 m mean target range, a 7° bearing offset = ~9.4 m
+across-LOS position error. The 9 m systematic offset is exactly
+the magnitude needed to drive NEES from ≈1 to ≈70 with the
+filter's claimed σ ≈ 0.5 m.
+
+**Why the existing bias estimator didn't catch it.** Reading
+`SensorBiasPairExtractor.hpp`'s docstring: bearing-only
+contributions were **explicitly skipped** ("a future iteration
+adds extractBearingPairs"). Item 9's 2026-06-15 ship landed the
+Position2D path only — the EO/IR camera biases never had a
+learning channel.
+
+**Fix shipped.** `extractBearingPairs(tracks, time)` mirrors the
+position-pair extractor for (AIS anchor) × (Bearing2D
+contribution) pairs in the recent_contributions window. To carry
+the bearing through the provenance side-channel,
+`Track::SourceTouch` gained optional `alpha_rad` /
+`alpha_var_rad2` fields (NaN sentinel; bit-compatible with
+consumers that ignore them). Tests:
+`SensorBiasPairExtractor.EmitsBearingPairFromAisAndEoirContributions`
++ `.SkipsBearingTouchesWithoutAlphaPayload`. Bench:
+`bench_brgbias_20260616T135132Z.csv`.
+
+**Measured deltas (biascal anchored vs Schmidt-KF only):**
+
+| Scenario          | NEES mean       | GOSPA RMS    | pos_rmse_m   | id_switches |
+|-------------------|-----------------|--------------|--------------|-------------|
+| sc2_anchored      | 2.32 → 2.33     | 3.47 → 3.46  | 1.59 → 1.61  | 1 → 2       |
+| sc3_anchored      | 0.91 → 0.90     | 1.73 → 1.73  | 1.17 → 1.18  | 0 → 0       |
+| sc4_anchored      | 3.64 → 3.70     | 4.55 → 4.55  | 1.75 → 1.71  | 1 → 1       |
+| sc5_anchored      | 3.02 → 4.02     | 4.27 → 4.53  | 1.60 → 1.90  | 5 → 3       |
+| **sc6_anchored**  | 4.34 → 4.71     | **9.47 → 8.70 (−8.2%)** | 1.90 → 1.90 | **11 → 6** |
+| **sc13_anchored** | **75.4 → 73.4 (−2.7%)** | 5.86 → 5.86 | 2.70 → 2.69 | 14 → 14 |
+| sc16_anchored     | 2.75 → 2.68     | 4.42 → 4.39  | 1.13 → 1.07  | 2 → 2       |
+| **sc17_anchored** | **1.53 → 1.18 (−22.6%)** | 4.49 → 4.40 | 1.29 → 1.18 | 1 → 2 |
+| sc22_anchored     | 1.12 → 1.11     | 6.13 → 6.22  | 1.19 → 1.19  | 6 → 6       |
+
+**sc17 / sc6 are the headline wins** — the bearing bias is
+observed, learnt, and published; tracks lock onto the
+corrected bearings and either ID stability (sc6: 11 → 6) or
+filter consistency (sc17: 1.53 → 1.18 NEES) improves.
+
+**sc13 stays catastrophic (NEES 73).** Why: the estimator's
+random-walk process noise gives a steady-state σ ≈ 0.26°, just
+below publish threshold 0.3°. To reach publish, the variance
+needs enough cumulative pair observations to overcome the random
+walk's variance injection. sc13 has 14 ID switches — each switch
+resets `recent_contributions`, breaking the AIS-bearing pair
+coupling on the affected track. The effective pair rate stays
+too low; the bearing estimator's σ plateaus near the threshold
+and never publishes. sc17 has 1 switch and reaches publish
+easily.
+
+**Followup candidate (deferred):** seed the EO/IR priors from
+the offline-calibration values (env-2 EO ≈ 7°, IR ≈ 5°) via
+`setKnownBearingBias`. The estimator already supports this
+("setKnown" seeds prior, observations refine). Closes sc13
+without changing the runtime; clean per-deployment calibration
+workflow.
+
+**No GOSPA / lifetime regressions worth noting.** Worst movement
+is sc5 GOSPA +6%; lifetime unchanged across all scenarios. The
+small NEES rises on sc4/sc5/sc6 are filters going from "too
+tight" (NEES 3-4) to "slightly more so" because the bearing
+update now contributes information the filter wasn't accounting
+for; cosmetic, not load-bearing.

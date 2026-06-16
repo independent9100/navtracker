@@ -257,7 +257,7 @@ each track with `r(k)` and run lifecycle off it on the JPDA path too.
 the single-hypothesis pipeline never saw the per-sensor detection
 port. Fine for single-sensor, dimensionally wrong on mixed sensors.
 
-## 9. Inter-sensor registration biases — DONE (2026-06-15, Schmidt-KF added 2026-06-16)
+## 9. Inter-sensor registration biases — DONE (2026-06-15; Schmidt-KF + bearing pairs added 2026-06-16)
 
 **Problem.** Only own-ship heading bias is estimated. Radar↔lidar↔
 camera mounting offsets / range biases are unmodelled; on AutoFerry
@@ -282,6 +282,21 @@ AIS-anchored pairs disjoint from per-track filter observations.
 Implementation: `core/pipeline/BiasCorrection.hpp` (shared between
 `Tracker` and `MhtTracker`). Unit tests:
 `tests/bias/test_bias_correction.cpp`. Learning chapter §6.
+
+**Bearing-pair extraction (2026-06-16).** The 2026-06-15 ship
+extracted only Position2D pairs; EO/IR bearing biases were
+unobserved. Per-target diagnostic on sc13_anchored revealed a
+systematic ~7° camera bias that the bias estimator never saw —
+sc13 NEES stayed at 75 anchored while sc16/17/22 dropped to 1–3.
+Fixed: `extractBearingPairs(tracks, time)` walks the same
+`recent_contributions` window for (AIS anchor) × (Bearing2D
+contribution) pairs and emits `BearingBiasPairObservation`. To
+carry the bearing payload through the SourceTouch side-channel,
+`Track::SourceTouch` gained optional `alpha_rad` / `alpha_var_rad2`
+fields (NaN sentinel = "this touch was not a bearing");
+`fillSourceTouchEnu`'s Bearing2D case now populates them. Sweep's
+PostScanHook calls both extractors. Tests:
+`tests/bias/test_sensor_bias_estimator.cpp::SensorBiasPairExtractor.*`.
 
 New ports / types: `ISensorBiasProvider`, `SensorBiasKey`,
 `SensorBiasEstimator`, `NullBiasProvider`, `SensorBiasPairExtractor`.

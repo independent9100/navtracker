@@ -243,6 +243,16 @@ def main():
     print('=== Pooled empirical noise — all scenarios ===')
     report(all_res)
 
+    # Per-scenario report so we can spot single-scenario R outliers
+    # (sc13 is suspected of needing a per-scenario refinement).
+    print()
+    print('=== Per-scenario empirical noise (sc13 spotlight) ===')
+    for sc in ['scenario13', 'scenario16', 'scenario17', 'scenario22']:
+        if sc not in per_scenario:
+            continue
+        print(f'\n--- {sc} ---')
+        report(per_scenario[sc][0])
+
     # Also per environment (env 1 = sc2..sc6, env 2 = sc13/16/17/22).
     for env_name, scs in [('env1 (open water, sc2-6)',
                             ['scenario2', 'scenario3', 'scenario4',

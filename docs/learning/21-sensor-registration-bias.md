@@ -325,6 +325,37 @@ The estimator's behaviour on no-AIS scenarios is the honest one:
 the bias stays at the prior, `is_published == false`, the
 deterministic shift is zero. No regression on synthetics.
 
+## 9a. Bearing pairs (added 2026-06-16)
+
+The 2026-06-15 first cut extracted only Position2D pairs (AIS ↔
+lidar/radar). On AutoFerry's urban-channel scenarios this turned
+out to miss the dominant bias source: the EO/IR cameras have a
+mean 5–7° bearing offset (a mounting / mast-deflection
+calibration error). The pair extractor now also emits
+`BearingBiasPairObservation` for (AIS anchor) × (Bearing2D
+contribution) pairs in a track's recent_contributions window:
+
+- AIS gives the truth position `p_truth` (ENU)
+- The camera sits at `p_sensor` (ENU)
+- The predicted bearing is `α_pred = atan2(p_truth − p_sensor)`
+- The bearing residual `r = wrap(α_obs − α_pred)` is a scalar
+  measurement of the camera's mounting bias
+
+The `SensorBiasEstimator` already had a bearing-variant update
+path (`observe(BearingBiasPairObservation)`); only the extractor
+side was new.
+
+To carry the bearing through the provenance side-channel,
+`Track::SourceTouch` gained two optional fields:
+
+- `alpha_rad` (NaN sentinel = "this touch was not a bearing")
+- `alpha_var_rad2` (the sensor's σ²_α)
+
+These are populated only on the `Bearing2D` branch of
+`fillSourceTouchEnu`. Everything else stays untouched, so the
+`recent_contributions` API is bit-compatible with consumers that
+ignore the new fields.
+
 ## 9. Where this lives in the repo
 
 - `ports/ISensorBiasProvider.hpp` — the port and the
