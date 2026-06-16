@@ -201,6 +201,19 @@ MhtTracker::Config makeMhtConfig() {
   return cfg;
 }
 
+// Adaptive recapture-gate ablation (backlog item 11). Position gate
+// scales with the hypothesis' position-anchor age: gate = base ·
+// min(max_scale, 1 + age/τ). Targets the bearing-carried-drift +
+// radar-miss + duplicate-birth conveyor. Measured June 12 to drop
+// sc5 ID switches 91 → 43 but at heavy lifetime cost (sc3 0.87 →
+// 0.63) — pre item-12(a). Re-measuring with honest per-env R.
+MhtTracker::Config makeMhtRecaptureConfig() {
+  MhtTracker::Config cfg = makeMhtConfig();
+  cfg.gate_recapture_tau_s = 2.0;       // June-12 value
+  cfg.gate_recapture_max_scale = 8.0;   // default
+  return cfg;
+}
+
 // IPDA-only ablation: existence lifecycle without the visibility
 // channel — isolates what VIMM's obscuration handling adds on top of
 // plain Musicki 1994.
@@ -258,6 +271,14 @@ std::vector<Config> defaultConfigs() {
   // collapses from ~80 toward O(few).
   configs.push_back({"imm_cv_ct_mht_bearguard", &makeImmCvCtBearGuard,
                      &makeJpda, TrackerKind::Mht, &makeMhtConfig});
+  // Canonical plus the adaptive recapture-gate (backlog item 11).
+  // Position gate widens with the hypothesis' position-anchor age so a
+  // bearing-carried-drift track can still gate the next radar return.
+  // June-12 measurement showed strong sc5 ID-switch reduction but heavy
+  // lifetime cost; the latter was traced to overconfident covariance
+  // (item 12). Re-measured on top of per-env R defaults.
+  configs.push_back({"imm_cv_ct_mht_recapture", &makeImmCvCt,
+                     &makeJpda, TrackerKind::Mht, &makeMhtRecaptureConfig});
   // JPDA/GNN-style ablations (single-hypothesis Tracker pipeline).
   configs.push_back({"ekf_cv_gnn", &makeEkfCv, &makeGnn});
   configs.push_back({"ekf_cv_jpda", &makeEkfCv, &makeJpda});

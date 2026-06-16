@@ -328,6 +328,42 @@ every symptom above is downstream. Fix the covariance first, then
 re-evaluate these knobs (they may become unnecessary or finally
 default-able).
 
+**Re-measured 2026-06-16 on honest per-env R (item 12(a) landed).**
+
+Base canonical (no item-11 knobs) already captured most of the
+benefit:
+
+| Sc | id_switches OLD R | id_switches NEW R | Δ |
+|----|---:|---:|---:|
+| sc5 | 91   | **49.5** | −46% |
+| sc6 | 74.5 | **36.5** | −51% |
+| sc3 | 40.5 | **17.5** | −57% |
+| sc2 | 37.5 | **24.5** | −35% |
+
+The conveyor mechanism shrank as predicted: with the lidar gate now
+~4× wider (8 m vs 2 m R), more radar / lidar returns gate back into
+existing tracks, fewer duplicates spawn.
+
+Re-measuring `imm_cv_ct_mht_recapture` (τ = 2 s, max_scale = 8) on
+top of honest R confirms the June 12 trade-off persists:
+
+- GOSPA improves on **all 9** scenarios by 10–36% (sc3 −36%, sc22 −23%).
+- ID switches drop further on 8/9 (sc17 −94%, sc6 additional −48%).
+- BUT lifetime regresses: sc17 0.87 → 0.38 (catastrophic), sc3 0.88 → 0.66.
+- pos_rmse climbs 9–162%; NEES spikes on most scenarios (track-loss
+  events dominate the per-step average).
+
+Honest R did *not* eliminate the gate-recapture trade-off — it only
+shifted the operating point. The recapture knob makes a different
+kind of mistake (over-aggressive association → state error → track
+loss) instead of the original (gate too tight → duplicate birth).
+**Decision: leave as opt-in; do not promote to default.** Item 11
+closes here.
+
+The remaining sc17 lifetime / sc22 NEES residuals are deeper than
+gating — see SOTA-roadmap §2 (JIPDA, the paper's tracker class) and
+§5 (Schmidt-KF residual-bias treatment).
+
 ## 12. Filter consistency on real data (NEES calibration)
 
 **Problem (measured 2026-06-12, sc5).** Mean position NEES 77.6 vs
