@@ -238,7 +238,70 @@ saw only 2 measurements.
 If the bias lived inside each track's state vector, this
 cross-track pooling would be lost.
 
-## 6. Assumptions
+## 6. Schmidt-KF: "considered" bias treatment
+
+When the bias estimator publishes a new `(b̂, P_b)`, every subsequent
+measurement of that sensor is corrected by subtracting `b̂`. But
+`b̂` is itself uncertain — its covariance is `P_b`. If we ignore
+that uncertainty, the filter thinks it received a perfectly
+calibrated measurement and shrinks its track posterior more than
+it should. Right after the estimator first publishes — when `P_b`
+is still relatively wide — the result is overconfident tracks and
+NIS values that drift below 1.
+
+The cleanest cure is the **Schmidt-KF** trick (Schmidt 1966). It
+says: keep the bias outside the track filter (as we do), but
+when consuming a corrected measurement, inflate its noise
+covariance by however much the bias still wobbles:
+
+```
+R_eff = R + H_b · P_b · H_bᵀ
+```
+
+`H_b` is the Jacobian of the measurement with respect to the bias.
+For our additive bias model:
+
+- **Position2D** — `z = pos_true + b`. So `H_b = I_2` and
+  `R_eff = R + P_b`. We just add the two 2×2 covariances.
+- **Bearing2D** — `β = β_true + b_β`. So `H_b = 1` and
+  `R_eff[0,0] = R[0,0] + σ_b²`.
+- **RangeBearing2D** — only the bearing column is biased, so
+  `R_eff[1,1] += σ_b²`. Range is left alone (no range bias modelled).
+
+This is implemented in `core/pipeline/BiasCorrection.hpp`'s
+`applyBiasCorrection(z, provider)`, called by both `Tracker` and
+`MhtTracker` on every incoming measurement.
+
+### Why this is "considered" and not full Schmidt
+
+Full Schmidt-KF also carries a state-bias **cross-covariance**
+`P_{xb}` between every track and every bias state. That cross-cov
+captures the information that "this track's posterior and this
+sensor's bias estimate were jointly refined by the same
+observation". We deliberately skip it because:
+
+1. The bias estimator (item 9) only ingests **AIS-anchored**
+   pairs — observations the per-track filters do not see. So the
+   bias mean is updated by a *disjoint* data stream from the
+   track posteriors, and the cross-covariance is genuinely close
+   to zero. The Schmidt approximation is exact in the limit of
+   disjoint information streams.
+2. Carrying `P_{xb}` would require book-keeping proportional to
+   `target_count × sensor_count`, which is non-trivial inside an
+   MHT pipeline that already swims in covariances.
+
+The standard literature term for "Schmidt-KF without the cross
+covariance" is the **considered Kalman filter**.
+
+### Why we did not do this earlier
+
+Without an external bias estimator, there was no `P_b` to fold
+in — the bias didn't exist as a separate state at all. Item 9
+gave us `(b̂, P_b)`, item 9 §5 (Schmidt-KF acceptance criterion)
+wires its covariance into R. The two halves are designed to ship
+together.
+
+## 7. Assumptions
 
 | Assumption                                              | When it pinches                              |
 |---------------------------------------------------------|-----------------------------------------------|
@@ -248,7 +311,7 @@ cross-track pooling would be lost.
 | Cross-sensor pair counts are sufficient                 | Sparse-AIS scenarios may never reach the publish threshold; the estimator stays at the broad prior. |
 | Heading bias is already corrected upstream              | The estimator sees the disagreement *after* the heading bias is removed by `OwnShipProvider`. Otherwise the heading bias would leak into the position bias. |
 
-## 7. Why this fits our problem
+## 8. Why this fits our problem
 
 AutoFerry env 1 (open water) has 2 AIS-broadcasting vessels and
 runs for ~60 s — well over the threshold for convergence. The
@@ -262,7 +325,7 @@ The estimator's behaviour on no-AIS scenarios is the honest one:
 the bias stays at the prior, `is_published == false`, the
 deterministic shift is zero. No regression on synthetics.
 
-## 8. Where this lives in the repo
+## 9. Where this lives in the repo
 
 - `ports/ISensorBiasProvider.hpp` — the port and the
   `SensorBiasKey` primary key.
@@ -280,18 +343,19 @@ deterministic shift is zero. No regression on synthetics.
 - `docs/superpowers/specs/2026-06-13-inter-sensor-registration-bias-design.md`
   — the full design spec (math, alternatives, acceptance).
 
-## 9. What we did not pick, and why
+## 10. What we did not pick, and why
 
 - **Augmented per-track state.** Carrying the bias inside each
   track's state vector. One copy per track, no cross-track
   sharing, slow dynamics polluting the fast filter. Rejected.
-- **Schmidt-KF "considered" treatment** of `P_b` inside the
-  per-track update. Theoretically the right thing — it inflates
-  R by `H · P_b · Hᵀ`. Deferred to `sota-roadmap §5` because (a)
-  it requires augmenting every per-track update with a 2×2
-  block and a cross-covariance, and (b) once converged the
-  contribution is small compared to the disagreement we are
-  fixing. Revisit when posRMSE plateaus.
+- **Full Schmidt-KF with state-bias cross-covariance.** We use the
+  *considered* simplification (R_eff = R + H_b·P_b·H_bᵀ, no
+  `P_{xb}`). The full version is theoretically nicer when bias is
+  observable through the same measurements that update the
+  tracks; in our wiring the bias is observed only through
+  AIS-anchored pairs, so the cross-covariance is genuinely
+  near-zero and skipping it costs essentially nothing. See §6 for
+  the implementation we did pick.
 - **Range / scale biases on the radar.** Multiplicative
   (range_observed = (1+α) · range_true). Different
   parameterisation, different observation projection. Add when

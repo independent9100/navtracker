@@ -164,7 +164,13 @@ filter: `β̂ ≈ 1`; sc5 measured `β̂ ≈ 39`).
   source NIS metrics encode the source key as a suffix on the
   metric name (`nis_mean:ais_pos2d`,
   `nis_alpha_hat:eoir_b2d_cam0`, …). Adds zero schema churn and any
-  sensor mix flows through.
+  sensor mix flows through. **Per-target metrics use the same
+  pattern**: `pos_rmse_m:truth_42`, `lifetime_ratio:truth_3`, …
+  one row per (truth_id, metric). The truth_id is the canonical
+  identifier of the truth slot in the scenario (synthetic scenarios
+  assign sequential ids; replays use the dataset's ground-truth
+  track id). Surfaces "which specific target is dragging the
+  scenario mean" without re-running the bench.
 - **Offline R-calibration report over an online adaptive R.** Adaptive
   `R` is a one-way door: replays stop being deterministic in the
   same way, and the per-sensor measurement-noise table loses its

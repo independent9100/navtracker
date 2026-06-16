@@ -257,7 +257,7 @@ each track with `r(k)` and run lifecycle off it on the JPDA path too.
 the single-hypothesis pipeline never saw the per-sensor detection
 port. Fine for single-sensor, dimensionally wrong on mixed sensors.
 
-## 9. Inter-sensor registration biases — DONE (2026-06-15)
+## 9. Inter-sensor registration biases — DONE (2026-06-15, Schmidt-KF added 2026-06-16)
 
 **Problem.** Only own-ship heading bias is estimated. Radar↔lidar↔
 camera mounting offsets / range biases are unmodelled; on AutoFerry
@@ -268,9 +268,20 @@ AIS-anchored cross-sensor pair extraction. Position bias (2-D) on
 radar / lidar; bearing bias (scalar) on EO / IR cameras. Random-walk
 dynamics with very small Q. Three observability gates (time, range,
 innovation) modelled directly on `HeadingBiasEstimator` G1-G2-G3.
-Deterministic shift application — Schmidt-KF "considered" treatment
-of `P_b` in the per-track update remains in `sota-roadmap.md` §5,
-deferred until pos_rmse plateaus.
+
+**Schmidt-KF follow-up (2026-06-16).** The 2026-06-15 ship applied
+only the mean `b̂` to incoming measurements; `P_b` was published but
+unused. That makes the filter overconfident exactly when the bias
+estimator has just published with `P_b` still wide. Fixed: the bias
+correction now inflates the measurement covariance by
+`H_b · P_b · H_bᵀ` — `R + P_b` for Position2D, `R + σ_b²` on the
+bearing component for Bearing2D / RangeBearing2D. The state-bias
+cross-covariance is dropped (the "considered" simplification);
+that's exact here because the bias estimator only ingests
+AIS-anchored pairs disjoint from per-track filter observations.
+Implementation: `core/pipeline/BiasCorrection.hpp` (shared between
+`Tracker` and `MhtTracker`). Unit tests:
+`tests/bias/test_bias_correction.cpp`. Learning chapter §6.
 
 New ports / types: `ISensorBiasProvider`, `SensorBiasKey`,
 `SensorBiasEstimator`, `NullBiasProvider`, `SensorBiasPairExtractor`.

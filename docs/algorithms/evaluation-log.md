@@ -2268,3 +2268,100 @@ bearing-dominated data (suspects: camera R calibration, bearing-update
 range collapse, synthetic-tuned process noise). Until item 12 lands,
 none of the item-11 knobs is promotable — with honest covariance the
 conveyor should not form at the base gate at all.
+
+---
+
+## 2026-06-16 — Schmidt-KF (item 9 follow-up) + per-target bench metrics
+
+**What.** Two complementary changes:
+1. **Per-target metrics.** Bench harness now emits per-truth-id rows
+   for `lifetime_ratio`, `track_breaks`, `id_switches`, `pos_rmse_m`,
+   `sog_rmse_mps`, `cog_rmse_deg`, `rmse_n` — suffix pattern
+   `:truth_<id>`, mirroring the existing per-source NIS rows. Exposes
+   "is the scenario mean dragged by one bad target or do all targets
+   look the same" without re-running. Implementation in
+   `core/benchmark/Metrics.{hpp,cpp}` + `Sweep.cpp`.
+2. **Schmidt-KF "considered" bias treatment.** `applyBiasCorrection`
+   used to subtract `b̂` but ignore `P_b`. Now it also inflates `R`:
+   Position2D `R_eff = R + P_b`, Bearing2D/RangeBearing2D
+   `R_eff[β,β] += σ_b²`. Extracted to shared
+   `core/pipeline/BiasCorrection.hpp` so Tracker and MhtTracker
+   cannot drift. Closes item 9 acceptance criterion 5.
+
+**Why.** Without `P_b` folded in, the filter treats every corrected
+measurement as if it had a perfect calibration — NIS dips below 1
+right after the bias estimator first publishes (the exact regime
+where `P_b` is still wide). The Schmidt correction restores
+calibration in that window without re-introducing the bias state
+into every track filter.
+
+**Measured (`bench_schmidt_20260616T105707Z` vs the same biascal
+config in `bench_perenv5_20260616T091213Z`).** Configs:
+`imm_cv_ct_mht_biascal` on the AIS-anchored AutoFerry scenarios.
+
+| Scenario       | GOSPA RMS   | GOSPA mean  | id_switches | NEES mean |
+|----------------|-------------|-------------|-------------|-----------|
+| sc2_anchored   | 3.465 →3.465 (–0.0%) | 2.255 →2.255 | 1 →1 | 2.32 →2.32 |
+| sc3_anchored   | 1.731 →1.731 | 1.472 →1.472 | 0 →0 | 0.91 →0.91 |
+| sc4_anchored   | 4.552 →4.552 | 2.718 →2.718 | 1 →1 | 3.64 →3.64 |
+| sc5_anchored   | 4.274 →4.274 | 2.690 →2.689 | 5 →5 | 3.02 →3.02 |
+| sc6_anchored   | 9.474 →9.473 | 6.189 →6.189 | 11 →11 | 4.34 →4.34 |
+| sc13_anchored  | 5.845 →5.858 (+0.2%) | 3.244 →3.248 | **16 →14 (–12.5%)** | 67.0 →75.4 (+12.5%) |
+| sc16_anchored  | 4.420 →4.419 | 2.417 →2.415 | 2 →2 | 2.76 →2.75 |
+| sc17_anchored  | 4.493 →4.493 | 2.714 →2.713 | 1 →1 | 1.53 →1.53 |
+| **sc22_anchored** | **6.744 →6.125 (–9.2%)** | 3.827 →3.452 (–9.8%) | **6.5 →6.0 (–7.7%)** | 1.13 →1.12 |
+
+**NIS (mean → 1.0 is ideal):** shifts are small (third/second
+decimal) but consistently **toward** the larger value on
+non-anchor sources, i.e. inflated R lowers the normalised
+innovation — the expected direction. The bias estimator publishes
+with `P_b` already tight (default isotropic 0.01 m² after the
+convergence window), so `R + P_b ≈ R` and the kinematic effect is
+modest. The headline win is sc22: a 9% GOSPA RMS drop on the worst
+anchored scenario without changing the filter.
+
+**sc13 NEES +12.5% caveat.** sc13 already runs at NEES ≈ 67, far
+above χ² ≈ 2. With looser R the gate accepts marginally more
+measurements; on a structurally overconfident filter (R baseline
+too tight, item 12 still partially open), some of the new
+admissions degrade NEES further. id_switches improving by 12.5%
+in the same scenario shows the gate-widening is net positive on
+identity, just not on consistency — a known direction Schmidt-KF
+alone cannot fix.
+
+**Takeaway.** Schmidt-KF is a **correctness fix**, not a
+performance lever. After it lands the filter is honest about bias
+uncertainty; on anchored scenarios where `P_b` converges to small
+values, the kinematic delta is correspondingly small. The big
+arrow is the bias estimator itself (item 9, already shipped); the
+Schmidt-KF block keeps that work from inverting calibration right
+after the estimator publishes.
+
+**Risk realised: low.** Added covariance only loosens gates; no
+scenario regressed on GOSPA RMS by more than 0.2%, none lost
+lifetime.
+
+---
+
+## 2026-06-16 — Per-target metrics shipped
+
+**What.** `MetricsResult.per_truth` exposes per-truth-id values
+for `lifetime_ratio`, `track_breaks`, `id_switches`, `pos_rmse_m`,
+`sog_rmse_mps`, `cog_rmse_deg`, `rmse_n`. Bench emits one row per
+(truth_id, metric) with the suffix pattern `<metric>:truth_<id>`,
+mirroring the per-source NIS rows. Bench row count rose from
+50628 → 79482 on the standard matrix; no schema change.
+
+**Why.** Until this lands, "scenario mean of 67 NEES" was a single
+number that hid whether one target was catastrophic or all targets
+were bad. The per-target breakdown lets us read sc13's NEES,
+sc17's `id_switches`, and the truth-anchor injection's effect
+per ground-truth track id from the same CSV.
+
+**Next.** Use the per-target NEES split on sc13 / sc17 / sc22 to
+isolate whether the existing item-12 R calibration needs a
+per-target refinement (e.g., a single small/far target dragging
+the env-2 NEES distribution) or whether the whole filter is
+miscalibrated uniformly. Tools to be added under
+`tools/autoferry_per_target_inspect.py` if the split signals one
+specific target.
