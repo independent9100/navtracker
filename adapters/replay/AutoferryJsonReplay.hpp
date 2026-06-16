@@ -50,17 +50,21 @@ struct AutoferryLoadOptions {
   // 2026-06-16 (item 12 (a)) from the empirical per-sensor residual
   // analysis in tools/autoferry_r_calibration.py — the original
   // sensor-spec values (lidar 2 m, radar 5 m) under-estimated the
-  // *operational* noise the autoferry fixture actually exhibits,
-  // driving NEES to 77 on sc5. Empirical pooled / env-1 σ:
-  //   lidar  σ_iso = 7.1 m / 8.1 m vs configured 2.0 m   → 3.5-4× too tight
-  //   radar  σ_iso = 5.9 m / 6.5 m vs configured 5.0 m   → modestly too tight
-  //   IR/EO  σ_β ≈ 0.07-0.09 rad vs configured 0.087 rad → essentially right
-  // Updated defaults sit slightly below the env-1 numbers so the
-  // urban-channel scenarios (env 2, where actual σ is smaller) are
-  // not over-relaxed too far.
-  double lidar_pos_std_m = 7.0;
-  double radar_pos_std_m = 6.0;
-  double bearing_std_rad = 0.0873;  // ~5°, matches observed EO/IR residual
+  // *operational* noise the env-1 fixture actually exhibits, driving
+  // NEES to 77 on sc5. Empirical per-env σ measured on the fixture:
+  //   sensor   env-1 σ   env-2 σ   pooled σ
+  //   lidar     8.1 m     2.8 m     7.1 m
+  //   radar     6.5 m     4.8 m     5.9 m
+  //   IR        0.05 rad  0.088 r   0.068 rad
+  //   EO        0.06 rad  0.095 r   0.090 rad
+  // Defaults below sit at the env-1 values — that is where the NEES
+  // pathology was. For env 2 (sc 13/16/17/22) the operational σ is
+  // smaller and the scenario factories in adapters/benchmark/
+  // ReplayScenarioRun.cpp tighten these explicitly. Direct callers of
+  // loadAutoferryScenario(... env-2 ...) should also override.
+  double lidar_pos_std_m = 8.0;
+  double radar_pos_std_m = 6.5;
+  double bearing_std_rad = 0.0873;  // ~5°, both envs bracket this
 
   // Inject synthetic AIS-style position measurements derived from the
   // ground-truth file, one per (target, scan). Used as an unbiased

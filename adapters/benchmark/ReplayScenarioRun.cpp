@@ -237,6 +237,16 @@ class AutoferryScenarioRun : public ScenarioRun {
     navtracker::replay::AutoferryLoadOptions opts;
     opts.include_bearings = true;
     opts.inject_truth_anchor = inject_truth_anchor_;
+    // Per-env R override (item 12 (a) refinement). The header defaults
+    // match env 1; env 2's operational σ is meaningfully smaller, so
+    // we override down for the urban-channel scenarios.
+    const bool urban = (label_ == "scenario13" || label_ == "scenario16" ||
+                        label_ == "scenario17" || label_ == "scenario22");
+    if (urban) {
+      opts.lidar_pos_std_m = 3.0;
+      opts.radar_pos_std_m = 5.0;
+      opts.bearing_std_rad = 0.0925;  // ~5.3°, slightly above env-2 σ
+    }
     return navtracker::replay::loadAutoferryScenario(
         std::string("data/autoferry/") + label_, label_, opts);
   }
