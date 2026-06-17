@@ -428,6 +428,31 @@ TEST(SensorBiasPairExtractor, CrossSensorSameHardwareAnchorsOnThirdSensor) {
   }
 }
 
+// Finding 2: emission order is deterministic (the calibrated keys come
+// out in SensorBiasKey operator< order, independent of the order the
+// contributions appear in recent_contributions). The sequential KF
+// gate makes the fold order-sensitive at the margins, so a stable order
+// is required by the determinism invariant.
+TEST(SensorBiasPairExtractor, CrossSensorEmitsKeysInDeterministicOrder) {
+  using namespace cross_sensor;
+  // Insert contributions in a deliberately unsorted order.
+  auto tr = makeTrack(
+      0.99, 4.0,
+      {posTouch(SensorKind::Lidar, "lidar0", tsSeconds(1.0),
+                Eigen::Vector2d(501.0, 101.0)),
+       posTouch(SensorKind::ArpaTll, "radar1", tsSeconds(1.0),
+                Eigen::Vector2d(503.0, 98.0)),
+       posTouch(SensorKind::ArpaTtm, "radar0", tsSeconds(1.0),
+                Eigen::Vector2d(500.0, 100.0))});
+  const auto pairs = extractCrossSensorPositionPairs(
+      {tr}, tsSeconds(1.0), nullptr);
+  ASSERT_EQ(pairs.size(), 3u);
+  for (std::size_t i = 1; i < pairs.size(); ++i) {
+    EXPECT_TRUE(pairs[i - 1].key < pairs[i].key)
+        << "observations must be emitted in ascending SensorBiasKey order";
+  }
+}
+
 // Low-existence tracks are not eligible to anchor.
 TEST(SensorBiasPairExtractor, CrossSensorSkipsLowExistenceTrack) {
   using namespace cross_sensor;

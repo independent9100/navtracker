@@ -2,7 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
-#include <unordered_map>
+#include <map>
 
 #include "core/types/Ids.hpp"
 
@@ -155,7 +155,14 @@ std::vector<PositionBiasPairObservation> extractCrossSensorPositionPairs(
     // Dedupe by SensorBiasKey: at most one contribution per key per
     // cycle (avoid double-anchoring through the same sensor twice).
     // When multiple are present we keep the most recent.
-    std::unordered_map<SensorBiasKey, const Track::SourceTouch*> latest;
+    //
+    // std::map (not unordered_map) so the emission order is the keys'
+    // operator< order — deterministic across STL implementations. The
+    // sequential KF folds observations in this order; the outlier gate
+    // (which branches on running state) makes the result order-sensitive
+    // at the margins, and CLAUDE.md invariant #4 requires deterministic
+    // replay. The sibling extractors already iterate a vector in order.
+    std::map<SensorBiasKey, const Track::SourceTouch*> latest;
     for (const auto& t : tr.recent_contributions) {
       const std::int64_t age = cycle_time.nanos() - t.time.nanos();
       if (age < 0 || age > window_ns) continue;
