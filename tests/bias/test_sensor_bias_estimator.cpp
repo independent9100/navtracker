@@ -380,6 +380,54 @@ TEST(SensorBiasPairExtractor, CrossSensorEmitsOneObservationPerKey) {
   EXPECT_EQ(tll, 1);
 }
 
+// 1B: contributions from the *same physical sensor* must not anchor
+// each other. ARPA TTM and TLL carry distinct SensorKinds but share
+// the adapter's source_id ("arpa") — they are the same hardware and
+// therefore share the same mounting/registration bias. Cross-anchoring
+// them yields a near-zero residual regardless of the true common
+// offset, masking it. With these two as the only positional keys there
+// is no valid partner for either, so no pairs are emitted.
+TEST(SensorBiasPairExtractor, CrossSensorSkipsSameSourceIdHardware) {
+  using namespace cross_sensor;
+  auto tr = makeTrack(
+      0.99, 4.0,
+      {posTouch(SensorKind::ArpaTtm, "arpa", tsSeconds(1.0),
+                Eigen::Vector2d(500.0, 100.0)),
+       posTouch(SensorKind::ArpaTll, "arpa", tsSeconds(1.0),
+                Eigen::Vector2d(503.0, 98.0))});
+  EXPECT_TRUE(extractCrossSensorPositionPairs(
+                  {tr}, tsSeconds(1.0), nullptr)
+                  .empty());
+}
+
+// 1B: with a third sensor on a different source_id, the same-hardware
+// pair (TTM/TLL "arpa") still never anchors itself, but each can be
+// calibrated against the independent lidar. Each of the three keys
+// emits one observation, and the two "arpa" keys are anchored on the
+// lidar (only valid partner), never on each other.
+TEST(SensorBiasPairExtractor, CrossSensorSameHardwareAnchorsOnThirdSensor) {
+  using namespace cross_sensor;
+  const Eigen::Vector2d lidar_val(490.0, 110.0);
+  auto tr = makeTrack(
+      0.99, 4.0,
+      {posTouch(SensorKind::ArpaTtm, "arpa", tsSeconds(1.0),
+                Eigen::Vector2d(500.0, 100.0)),
+       posTouch(SensorKind::ArpaTll, "arpa", tsSeconds(1.0),
+                Eigen::Vector2d(503.0, 98.0)),
+       posTouch(SensorKind::Lidar, "lidar0", tsSeconds(1.0), lidar_val)});
+  const auto pairs = extractCrossSensorPositionPairs(
+      {tr}, tsSeconds(1.0), nullptr);
+  ASSERT_EQ(pairs.size(), 3u);
+  for (const auto& p : pairs) {
+    if (p.key.sensor == SensorKind::ArpaTtm ||
+        p.key.sensor == SensorKind::ArpaTll) {
+      // Only valid anchor is the lidar (no provider bias → raw value).
+      EXPECT_NEAR(p.z_anchor_enu.x(), lidar_val.x(), 1e-9);
+      EXPECT_NEAR(p.z_anchor_enu.y(), lidar_val.y(), 1e-9);
+    }
+  }
+}
+
 // Low-existence tracks are not eligible to anchor.
 TEST(SensorBiasPairExtractor, CrossSensorSkipsLowExistenceTrack) {
   using namespace cross_sensor;

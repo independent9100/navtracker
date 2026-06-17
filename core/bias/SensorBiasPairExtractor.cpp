@@ -196,6 +196,16 @@ std::vector<PositionBiasPairObservation> extractCrossSensorPositionPairs(
       for (auto it_y = latest.begin(); it_y != latest.end(); ++it_y) {
         if (it_y == it_x) continue;  // no self-anchoring
         const SensorBiasKey& key_y = it_y->first;
+        // No anchoring across the *same physical sensor*. ARPA TTM and
+        // TLL share a source_id but are distinct SensorKinds; they are
+        // the same hardware and share one mounting/registration bias.
+        // Pairing them gives r ≈ noise no matter the true common
+        // offset, which would mask it. Cross-sensor calibration is only
+        // observable in *relative* bias between independent sensors;
+        // any common-mode component is unobservable and pinned to zero
+        // by the estimator's prior, so we must not let a shared-hardware
+        // pair pretend to measure it.
+        if (key_y.source_id == key_x.source_id) continue;
         const Track::SourceTouch& y = *it_y->second;
 
         Eigen::Vector2d b_anchor = Eigen::Vector2d::Zero();

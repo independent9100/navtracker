@@ -186,14 +186,41 @@ has not yet published (`is_published = false`) we treat `b̂_Y = 0`
 and `P_b_Y = 0` — equivalent to the naive pair, which is correct at
 cold start before any sensor has converged.
 
-The extractor emits **both** `(X, Y)` and `(Y, X)` for each unordered
-pair of distinct keys. The bias estimator's zero-mean prior
-(`σ_init = 5 m`) breaks the otherwise-underdetermined "one
-equation, two unknowns" symmetry by pulling each bias toward zero.
-Joint coordinate descent across cycles then converges to the
-solution that minimises both the pair residuals and the prior
-penalty: `b̂_X − b̂_Y` is determined by the data; `b̂_X + b̂_Y` is
-determined by the prior.
+The extractor emits **exactly one observation per calibrated key per
+cycle**. Each key `X` is anchored on its single most-trusted partner
+`Y` — the eligible key (different physical sensor) with the smallest
+trace of the post-fold `R_anchor = R_Y + P_b_Y`. For `N = 2` keys this
+produces the symmetric pair `X←Y` and `Y←X`; for `N ≥ 3` each sensor's
+single sample is used exactly once.
+
+> **Why one-per-key (not every ordered pair).** A sensor contributes a
+> *single* sample `z_X` per cycle. Pairing it against every other key
+> and folding each as an independent KF update replays `z_X` (and its
+> noise) `N − 1` times — the residuals `r_{X,Y}` all share `z_X`'s
+> noise term, so they are correlated, not independent. Treating them as
+> independent collapses `P_X` far too fast and triggers premature
+> `is_published`. Anchoring `X` on its single best partner uses the
+> sample once and keeps the covariance honest.
+
+The bias estimator's zero-mean prior (`σ_init = 5 m`) breaks the
+otherwise-underdetermined "one equation, two unknowns" symmetry by
+pulling each bias toward zero. Joint coordinate descent across cycles
+then converges to the solution that minimises both the pair residuals
+and the prior penalty: `b̂_X − b̂_Y` is determined by the data;
+`b̂_X + b̂_Y` is determined by the prior.
+
+**Common-mode bias is unobservable.** Cross-sensor anchoring only sees
+the *relative* offset `b_X − b_Y`. Any bias component shared by both
+sensors cancels in `r` and is pinned to zero by the prior — there is no
+information in the pairs to recover it. The acute case is two
+contributions from the **same physical sensor** (ARPA TTM and TLL share
+one `source_id` but carry distinct `SensorKind`s, hence two
+`SensorBiasKey`s). Their residual is `≈ noise` regardless of the true
+shared mounting offset, so pairing them would *mask* a genuine common
+radar bias and report near-zero for both. The extractor therefore
+refuses to anchor across keys with the same `source_id`; recovering the
+absolute (common-mode) calibration requires an external truth anchor
+(AIS or survey).
 
 ### Eligibility gates
 
@@ -203,8 +230,10 @@ Per spec §13 — `CrossSensorEligibilityConfig`:
 |---|---|---|
 | `existence_probability ≥ 0.95` | 0.95 | Tentative tracks are too noisy to anchor anything |
 | 2×2 position cov trace ≤ `25 m²` | 25.0 | Loose tracks would feed too much uncertainty into `R_anchor` — the bias update would be near-no-op |
-| `Y ≠ X` (by `SensorBiasKey`) | hard | No self-anchoring; two sensors of the same kind+source_id share the bias |
+| `Y ≠ X` (by `SensorBiasKey`) | hard | No self-anchoring |
+| `Y.source_id ≠ X.source_id` | hard | No anchoring across the same physical sensor (TTM/TLL) — would mask common-mode bias (see Math) |
 | One contribution per key per cycle | hard | Avoid double-anchoring through the same physical sensor twice in the same scan |
+| One observation emitted per key per cycle | hard | A single sample must not be folded as multiple independent updates (see Math) |
 | Track has no AIS contribution this cycle | hard | When AIS is present, the existing AIS-anchored path is strictly more informative |
 
 ### Bootstrap → steady state
