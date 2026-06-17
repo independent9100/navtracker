@@ -168,24 +168,36 @@ std::vector<PositionBiasPairObservation> extractCrossSensorPositionPairs(
     }
     if (latest.size() < 2) continue;  // need two distinct keys to pair
 
-    // Ordered pairs over distinct keys: each direction emits one
-    // observation. (X, Y) gives the bias estimator a measurement of
-    // b_X anchored on (Y − b_Y); (Y, X) the mirror. The coordinate
-    // descent across the two unknown biases needs both.
+    // One observation per calibrated key per cycle. The sensor's own
+    // contribution `x` is a *single* measurement; pairing it against
+    // every other key and folding each as an independent KF update
+    // would replay the same sample N−1 times and over-shrink the bias
+    // covariance (the N−1 residuals all share x's noise — they are
+    // correlated, not independent). Instead each key X is calibrated
+    // against its single most-trusted partner Y — the one with the
+    // smallest effective anchor covariance trace after the Schmidt
+    // fold. For N=2 this reduces to the original symmetric pair (X←Y
+    // and Y←X); for N≥3 every sample is used exactly once.
     for (auto it_x = latest.begin(); it_x != latest.end(); ++it_x) {
-      for (auto it_y = latest.begin(); it_y != latest.end(); ++it_y) {
-        if (it_x == it_y) continue;  // no self-anchoring
+      const SensorBiasKey& key_x = it_x->first;
+      const Track::SourceTouch& x = *it_x->second;
 
-        const SensorBiasKey& key_x = it_x->first;
+      // Select the best anchor Y ≠ X. "Best" = smallest trace of
+      // R_anchor = R_Y_measurement + P_b_Y, i.e. the reference we
+      // trust most. The Schmidt fold subtracts Y's current bias
+      // estimate from the anchor measurement and inflates R_anchor by
+      // Y's bias covariance; when the provider is null or Y has not
+      // published, b̂_Y = 0 and P_b_Y = 0 — a naive pair, which is
+      // what we want at cold start.
+      const Track::SourceTouch* best_y = nullptr;
+      Eigen::Vector2d best_b_anchor = Eigen::Vector2d::Zero();
+      Eigen::Matrix2d best_R_anchor = Eigen::Matrix2d::Zero();
+      double best_trace = 0.0;
+      for (auto it_y = latest.begin(); it_y != latest.end(); ++it_y) {
+        if (it_y == it_x) continue;  // no self-anchoring
         const SensorBiasKey& key_y = it_y->first;
-        const Track::SourceTouch& x = *it_x->second;
         const Track::SourceTouch& y = *it_y->second;
 
-        // Schmidt-KF fold: subtract Y's current bias estimate from
-        // the anchor measurement and inflate R_anchor by Y's
-        // bias covariance. When provider is null or Y has not
-        // published, b̂_Y = 0 and P_b_Y = 0 — this collapses to a
-        // naive pair, which is what we want at cold start.
         Eigen::Vector2d b_anchor = Eigen::Vector2d::Zero();
         Eigen::Matrix2d P_anchor = Eigen::Matrix2d::Zero();
         if (bias_provider != nullptr) {
@@ -195,24 +207,29 @@ std::vector<PositionBiasPairObservation> extractCrossSensorPositionPairs(
             P_anchor = est_y.covariance_m2;
           }
         }
-
-        PositionBiasPairObservation obs;
-        obs.time = cycle_time;
-        obs.key = key_x;
-        obs.z_sensor_enu = x.value_enu;
-        obs.z_anchor_enu = y.value_enu - b_anchor;
-        obs.R_sensor =
-            covWithFallback(x.covariance, cfg.sensor_position_std_fallback_m);
-        // R_anchor = R_Y_measurement + P_b_Y. The first term is Y's
-        // per-contribution noise; the second is Schmidt-KF residual
-        // bias treatment so that uncertainty in our knowledge of b_Y
-        // does not pretend to be measurement signal.
-        obs.R_anchor =
+        const Eigen::Matrix2d R_anchor =
             covWithFallback(y.covariance, cfg.sensor_position_std_fallback_m) +
             P_anchor;
-        obs.own_position_enu = x.sensor_position_enu;
-        out.push_back(std::move(obs));
+        const double tr_anchor = R_anchor.trace();
+        if (best_y == nullptr || tr_anchor < best_trace) {
+          best_y = &y;
+          best_b_anchor = b_anchor;
+          best_R_anchor = R_anchor;
+          best_trace = tr_anchor;
+        }
       }
+      if (best_y == nullptr) continue;  // no eligible partner
+
+      PositionBiasPairObservation obs;
+      obs.time = cycle_time;
+      obs.key = key_x;
+      obs.z_sensor_enu = x.value_enu;
+      obs.z_anchor_enu = best_y->value_enu - best_b_anchor;
+      obs.R_sensor =
+          covWithFallback(x.covariance, cfg.sensor_position_std_fallback_m);
+      obs.R_anchor = best_R_anchor;
+      obs.own_position_enu = x.sensor_position_enu;
+      out.push_back(std::move(obs));
     }
   }
   return out;

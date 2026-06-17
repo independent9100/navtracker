@@ -348,6 +348,38 @@ TEST(SensorBiasPairExtractor, CrossSensorEmitsSymmetricPairs) {
   EXPECT_TRUE(saw_radar_anchored_on_lidar);
 }
 
+// 1A: each calibrated key gets exactly ONE observation per cycle, even
+// when N>=3 positional contributions are present. The sensor's own
+// sample is a single measurement; replaying it against every other
+// anchor as independent KF updates double-counts it and over-shrinks
+// the bias covariance. Three distinct keys must yield three
+// observations (one per calibrated key), not N*(N-1)=6.
+TEST(SensorBiasPairExtractor, CrossSensorEmitsOneObservationPerKey) {
+  using namespace cross_sensor;
+  auto tr = makeTrack(
+      0.99, 4.0,
+      {posTouch(SensorKind::Lidar, "lidar0", tsSeconds(1.0),
+                Eigen::Vector2d(500.0, 100.0)),
+       posTouch(SensorKind::ArpaTtm, "radar0", tsSeconds(1.0),
+                Eigen::Vector2d(503.0, 98.0)),
+       posTouch(SensorKind::ArpaTll, "radar1", tsSeconds(1.0),
+                Eigen::Vector2d(501.0, 101.0))});
+  const auto pairs = extractCrossSensorPositionPairs(
+      {tr}, tsSeconds(1.0), /*bias_provider=*/nullptr);
+  ASSERT_EQ(pairs.size(), 3u);
+  int lidar = 0, ttm = 0, tll = 0;
+  for (const auto& p : pairs) {
+    if (p.key.sensor == SensorKind::Lidar) ++lidar;
+    else if (p.key.sensor == SensorKind::ArpaTtm) ++ttm;
+    else if (p.key.sensor == SensorKind::ArpaTll) ++tll;
+    // The chosen anchor must never be the calibrated key itself.
+    EXPECT_NE(p.z_sensor_enu, p.z_anchor_enu);
+  }
+  EXPECT_EQ(lidar, 1);
+  EXPECT_EQ(ttm, 1);
+  EXPECT_EQ(tll, 1);
+}
+
 // Low-existence tracks are not eligible to anchor.
 TEST(SensorBiasPairExtractor, CrossSensorSkipsLowExistenceTrack) {
   using namespace cross_sensor;
