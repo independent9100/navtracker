@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "core/bias/SensorBiasEstimator.hpp"
 #include "core/scenario/Truth.hpp"
 #include "ports/ISensorDetectionModel.hpp"
 
@@ -62,6 +63,15 @@ class ScenarioRun {
   virtual ~ScenarioRun() = default;
   virtual ScenarioDescriptor descriptor() const = 0;
   virtual Scenario generate(std::uint64_t seed) = 0;
+
+  // Optional hook: seed per-scenario knowledge into the sensor-bias
+  // estimator before any measurements are processed. Used by replay
+  // scenarios with known offline calibration (e.g. AutoFerry env-2
+  // cameras carry a documented 5-7° EO/IR bearing offset). Default is
+  // no-op so synthetic and unprepared scenarios behave exactly as
+  // before. Called once per (config × scenario × seed) cell, just
+  // after the estimator is constructed.
+  virtual void seedSensorBiasEstimator(SensorBiasEstimator& /*est*/) const {}
 };
 
 }  // namespace benchmark

@@ -244,8 +244,23 @@ std::vector<Config> defaultConfigs() {
   // baseline PMBM will be measured against. The remaining configs are
   // ablations that isolate one axis (estimator / motion model /
   // associator / lifecycle) away from it.
-  configs.push_back({"imm_cv_ct_mht", &makeImmCvCt, &makeJpda,
-                     TrackerKind::Mht, &makeMhtConfig});
+  //
+  // The canonical wires the per-(sensor, source_id) registration
+  // bias estimator (item 9: position pairs via AIS anchor; bearing
+  // pairs via the bearing-bias variant). On scenarios with no AIS
+  // source the estimator stays at its prior and `is_published` is
+  // false — Tracker / MhtTracker's bias-correction call site
+  // returns measurements unchanged. The cost is one extra factory
+  // construction + a PostScanHook closure per cell; bit-identical
+  // to the legacy null-provider path until an anchor appears.
+  {
+    Config c{"imm_cv_ct_mht", &makeImmCvCt, &makeJpda,
+             TrackerKind::Mht, &makeMhtConfig};
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
   // Same as canonical but with Student-t robust updates — the ablation
   // that isolates the heavy-tailed-measurement (EO/IR clutter) axis.
   configs.push_back({"imm_cv_ct_mht_robust", &makeImmCvCtRobust, &makeJpda,
@@ -308,24 +323,6 @@ std::vector<Config> defaultConfigs() {
                      TrackerKind::Mht, &makeMhtConfig});
   configs.push_back({"imm_cv_ct_noisy_mht", &makeImmCvCtNoisy, &makeJpda,
                      TrackerKind::Mht, &makeMhtConfig});
-  // Canonical plus inter-sensor registration bias estimation (item 9).
-  // Per-(SensorKind, source_id) position bias on radar / lidar, fed by
-  // AIS-anchored pair extraction after each scan. Deterministic shift
-  // application; Schmidt-KF covariance inflation deferred (sota-roadmap
-  // §5). Expected effect on AutoFerry env 1: GOSPA RMS drops from 43 m
-  // toward 35-40 m as the unmodelled mounting offsets are absorbed.
-  {
-    Config c;
-    c.label = "imm_cv_ct_mht_biascal";
-    c.build_estimator = &makeImmCvCt;
-    c.build_associator = &makeJpda;
-    c.tracker_kind = TrackerKind::Mht;
-    c.mht_config = &makeMhtConfig;
-    c.build_sensor_bias_estimator = []() {
-      return std::make_shared<SensorBiasEstimator>();
-    };
-    configs.push_back(std::move(c));
-  }
   return configs;
 }
 

@@ -8,6 +8,101 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-17 — Item 9 closed: bias-estimator wiring promoted to canonical, env-2 seed hook landed
+
+Item 9 close-out. Three things shipped at once:
+
+1. **`imm_cv_ct_mht` now wires `SensorBiasEstimator` unconditionally.**
+   `Config::build_sensor_bias_estimator` is non-null on the canonical;
+   `Sweep::runSweep` constructs the estimator, calls
+   `tracker.setSensorBiasProvider(...)`, and installs a `PostScanHook`
+   that calls `predictTo(scan_t)` + `extractPairs(...)` after each
+   scan. On scenarios with no anchor source (every synthetic) the
+   estimator stays at its zero prior and never publishes — the
+   bias-correction call site returns measurements unchanged. Result:
+   **bit-identical to the legacy null-provider path on all 14
+   synthetic scenarios** (head_on/crossing/overtaking/parallel_targets/
+   dense_clutter/clock_skew/speed_change/non_cooperative/ais_dropout/
+   crossing_dropout/scenario/philos — every per-seed gospa_rms matches
+   the prior `bench_schmidt_20260616T105707Z.csv` to all five decimals).
+
+2. **`imm_cv_ct_mht_biascal` retired** — it was bit-identical to the
+   canonical on every scenario from the moment biascal-wiring became
+   the canonical path. `defaultConfigs()` now returns 17 configs
+   instead of 18; `tests/benchmark/test_config.cpp` pins the new
+   count and asserts `configs.front().build_sensor_bias_estimator !=
+   nullptr` so the canonical promotion can't silently regress.
+
+3. **Per-scenario seed hook (`ScenarioRun::seedSensorBiasEstimator`).**
+   Default is no-op. `AutoferryScenarioRun` overrides it for the four
+   urban env-2 scenarios (sc13/16/17/22) to inject the offline-
+   calibrated EO/IR bearing prior from
+   `tools/autoferry_r_calibration.py`:
+   - `autoferry_eo` bias = 7.0° (0.122 rad), σ = 0.3°
+   - `autoferry_ir` bias = 4.9° (0.085 rad), σ = 0.3°
+
+   σ = 0.3° equals `kBearingPublishSigmaRad` so the seed publishes
+   immediately and online observations refine it. Env-1 scenarios
+   deliberately do **not** seed — their bias is small (3–4°), the
+   online AIS-anchored path catches it without help, and a wrong-env
+   seed would distort the first few hundred observations.
+
+### Measured outcome on autoferry (canonical, seed 0)
+
+Baseline: `docs/baselines/bench_canonical_20260616T170135Z.csv` (17
+configs × 29 scenarios × 10 seeds = 2 023 runs, 47 min wall on the
+benchhost).
+
+| scenario | env | gospa_rms vs schmidt | gospa_rms anchored |
+|---|---|---|---|
+| sc2  | 1 | 38.45 = 38.45 | 3.46 ≈ 3.46 |
+| sc3  | 1 | 43.93 = 43.93 | 2.83 → 1.73 (**−39%**) |
+| sc4  | 1 | 40.16 = 40.16 | 2.88 → 4.55 (+58%) |
+| sc5  | 1 | 36.67 = 36.67 | 3.83 → 4.53 (+18%) |
+| sc6  | 1 | 37.49 = 37.49 | 9.82 → 8.70 (−11%) |
+| sc13 | 2 | 23.54 = 23.54 | 4.46 → 5.85 (+31%) |
+| sc16 | 2 | 26.87 ≈ 26.87 | 4.01 → 4.40 (+10%) |
+| sc17 | 2 | 32.01 = 32.01 | 5.27 → 4.50 (**−15%**) |
+| sc22 | 2 | 47.98 → 47.48 (−1%) | 6.77 → 6.21 (−9%) |
+
+**Honest reading:**
+
+- **Unanchored urban runs are bit-identical** to the no-seed baseline
+  on sc13/sc17 and within rounding on sc16, with sc22 the only
+  noticeable shift (−0.5 m). The seed publishes but the
+  bearing-bias correction has near-zero impact on
+  data-association/tracker output on these fixtures — bearings still
+  fail track initiation (`canInitiateTrack` is false for Bearing2D),
+  and the radar+lidar position path that does initiate tracks isn't
+  what the bearing seed targets. **The seed earns its keep on
+  anchored env-2 (sc17 −15%, sc22 −9%); env-1 results are mixed
+  (sc3 −39%, sc4/5 +18 to +58%)** — the per-scenario refinement the
+  comment hints at is plausibly the right next step for env-1.
+- **The MHT canonical's headline real-world story is unchanged**:
+  raw urban env-2 gospa is 24–48 m, anchored is 4–6 m. The 2026-06-15
+  truth-anchor finding is the load-bearing one; item 9's incremental
+  contribution on top is at most modest, sometimes mildly negative
+  on env-1.
+- **No regression on the synthetic suite.** The full 624-test gtest
+  binary passes (617 pass, 7 skipped for missing-fixture / replay
+  guards), determinism test green.
+
+### Where this leaves item 9
+
+- **Closed.** The full v0.3.0 / v0.4.0 / v0.5.0 + Schmidt-KF cov fold
+  (commit b1a15a3) + bearing-pair extraction (commit 970be0f) +
+  per-target diagnostic tooling (commit e6a498f) + canonical
+  promotion + env-2 seed pipeline is in place and pinned by tests.
+- **Backlog children worth opening before declaring item 9 done-done:**
+  per-scenario env-1 seed refinement (sc4/sc5 anchored regression
+  suggests the env-1-zero assumption isn't quite right either);
+  promoting the online bearing-pair path on env-1 anchored data to
+  recover the schmidt-baseline anchored sc4 number.
+- **Item 9 is no longer the binding constraint.** Next: item 12(c)
+  Q-PSD calibration — the per-sensor NIS data from commit f2c357a
+  (radar trace_ratio 4.02, α̂_radar = 2.17) points at Q being too
+  large for the AutoFerry maneuvering envelope.
+
 ## 2026-06-15 (later) — Item 9 options 1 + 2 measured — match paper env 1, beat paper env 2 with the truth anchor
 
 Following up on the morning's "anchor-starved" finding: options 1

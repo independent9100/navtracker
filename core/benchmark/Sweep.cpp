@@ -220,6 +220,11 @@ std::vector<MetricRow> runSweep(
           PostScanHook post_scan;
           if (config.build_sensor_bias_estimator) {
             bias_est = config.build_sensor_bias_estimator();
+            // Per-scenario seeding (offline calibration hand-off):
+            // e.g. AutoFerry env-2 cameras carry a known ~7° EO/IR
+            // bias measured by tools/autoferry_r_calibration.py.
+            // Default no-op for scenarios that don't override.
+            scenario_ptr->seedSensorBiasEstimator(*bias_est);
             tracker.setSensorBiasProvider(bias_est.get());
             post_scan = [bias_est](const MhtTracker& t, Timestamp scan_t) {
               bias_est->predictTo(scan_t);

@@ -251,6 +251,44 @@ class AutoferryScenarioRun : public ScenarioRun {
         std::string("data/autoferry/") + label_, label_, opts);
   }
 
+  // Seed the bias estimator with the offline-calibrated EO/IR bearing
+  // bias for env-2 scenarios. Numbers from tools/autoferry_r_calibration.py
+  // (per-scenario report, 2026-06-16): env-2 IR mean ≈ 4.9°, EO mean ≈
+  // 7.0° (pooled across sc13/16/17/22). Per-scenario refinement is
+  // possible but the pooled prior is already tight enough that the
+  // online refinement (anchor pairs) takes it the rest of the way in
+  // tens of observations.
+  //
+  // Why seed at all: sc13's 14 ID switches keep resetting the
+  // recent_contributions window, so the bearing estimator's online
+  // path never accumulates enough effective pairs to publish (its
+  // variance plateaus at σ ≈ 0.26°, just below the 0.3° publish
+  // threshold, but only after enough convergence which doesn't happen).
+  // A seeded prior with publish-immediately variance closes that
+  // chicken-and-egg loop. setKnownBearingBias is the supported API.
+  //
+  // Env-1 scenarios deliberately skip the seed: their bias is small
+  // (3-4°), the online path catches it without help, and a wrong-env
+  // seed would actively distort the first few hundred observations.
+  void seedSensorBiasEstimator(SensorBiasEstimator& est) const override {
+    const bool urban = (label_ == "scenario13" || label_ == "scenario16" ||
+                        label_ == "scenario17" || label_ == "scenario22");
+    if (!urban) return;
+    // 0.3° σ → variance 2.7e-5 rad², equal to the publish threshold:
+    // the seed publishes immediately and online observations
+    // refine. We do not over-tighten the prior — the offline
+    // calibration is "right environment, wrong scenario in detail",
+    // so the online path needs room to adjust.
+    constexpr double kSigmaSeedRad = 5.2e-3;  // 0.3°
+    constexpr double kVarSeedRad2 = kSigmaSeedRad * kSigmaSeedRad;
+    constexpr double kEoBiasRad = 0.122;  // 7.0°
+    constexpr double kIrBiasRad = 0.085;  // 4.9°
+    est.setKnownBearingBias({SensorKind::EoIr, "autoferry_eo"},
+                            kEoBiasRad, kVarSeedRad2);
+    est.setKnownBearingBias({SensorKind::EoIr, "autoferry_ir"},
+                            kIrBiasRad, kVarSeedRad2);
+  }
+
  private:
   std::string label_;
   bool inject_truth_anchor_{false};

@@ -10,16 +10,22 @@ using navtracker::benchmark::defaultConfigs;
 
 TEST(Config, DefaultConfigsHaveUniqueLabels) {
   const auto configs = defaultConfigs();
-  ASSERT_EQ(configs.size(), 18u);
+  // 17: the canonical now embeds the bias-estimator wiring (item 9
+  // 2026-06-16); the standalone imm_cv_ct_mht_biascal that was
+  // bit-identical to it has been removed.
+  ASSERT_EQ(configs.size(), 17u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
+  // Canonical wires the bias estimator unconditionally; the
+  // null-anchor path stays bit-identical to legacy by construction.
+  EXPECT_NE(configs.front().build_sensor_bias_estimator, nullptr);
   std::set<std::string> labels;
   for (const auto& c : configs) {
     labels.insert(c.label);
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 18u);
+  EXPECT_EQ(labels.size(), 17u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_robust"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_ipda"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_mofn"), 1u);
@@ -36,8 +42,9 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   EXPECT_EQ(labels.count("ekf_cv_mht"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_noisy_mht"), 1u);
-  EXPECT_EQ(labels.count("imm_cv_ct_mht_biascal"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_recapture"), 1u);
+  // biascal label removed — its wiring is now the canonical.
+  EXPECT_EQ(labels.count("imm_cv_ct_mht_biascal"), 0u);
 }
 
 // Backlog item 5 ablation: the clutter-map config is the canonical MHT
