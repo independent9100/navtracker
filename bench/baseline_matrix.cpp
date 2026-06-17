@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <fstream>
@@ -42,6 +43,8 @@ int main(int argc, char** argv) {
         << "Usage: navtracker_bench_baseline [--run-id ID] [--out DIR]\n"
            "                                 [--seeds N] [--skip-replays]\n"
            "                                 [--with-haxr]\n"
+           "                                 [--config-filter SUBSTR]\n"
+           "                                 [--scenario-filter SUBSTR]\n"
            "\n"
            "Writes <out>/<run-id>.csv containing one row per\n"
            "(config x scenario x seed x metric) plus a provenance header.\n"
@@ -50,9 +53,17 @@ int main(int argc, char** argv) {
            "omits them. The haxr full radar-hour (302k plots, ~169/scan) is\n"
            "off by default because the full-enumeration JPDA / MHT configs\n"
            "are intractable on it without cluster decomposition; pass\n"
-           "--with-haxr to include it (expect long runtime / high memory).\n";
+           "--with-haxr to include it (expect long runtime / high memory).\n"
+           "\n"
+           "--config-filter / --scenario-filter restrict the matrix to\n"
+           "entries whose label contains the given substring. Both filters\n"
+           "compose. Use for focused re-measurement against an existing\n"
+           "pinned baseline (e.g. --config-filter imm_cv_ct_mht\n"
+           "--scenario-filter autoferry_scenario2).\n";
     return 0;
   }
+  const std::string config_filter = argv_str(argc, argv, "--config-filter");
+  const std::string scenario_filter = argv_str(argc, argv, "--scenario-filter");
 
   const std::string run_id =
       argv_str(argc, argv, "--run-id").empty()
@@ -97,6 +108,29 @@ int main(int argc, char** argv) {
   std::vector<std::unique_ptr<ScenarioRun>> all;
   for (auto& s : sim_scenarios) all.push_back(std::move(s));
   for (auto& s : replay_scenarios) all.push_back(std::move(s));
+
+  // Apply optional filters (substring match on labels). Lets the user
+  // re-measure a small slice against an existing pinned baseline
+  // without paying for the full 47-min matrix.
+  if (!config_filter.empty()) {
+    configs.erase(
+        std::remove_if(configs.begin(), configs.end(),
+                       [&](const Config& c) {
+                         return c.label.find(config_filter) == std::string::npos;
+                       }),
+        configs.end());
+  }
+  if (!scenario_filter.empty()) {
+    all.erase(
+        std::remove_if(all.begin(), all.end(),
+                       [&](const std::unique_ptr<ScenarioRun>& s) {
+                         return s->descriptor().label.find(scenario_filter) ==
+                                std::string::npos;
+                       }),
+        all.end());
+  }
+  std::cout << "Running " << configs.size() << " configs x " << all.size()
+            << " scenarios\n";
 
   SweepParams sp;
   sp.run_id = run_id;

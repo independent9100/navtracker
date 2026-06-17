@@ -411,7 +411,7 @@ item-11 knob sweeps — expect conveyor births to vanish at the BASE
 gate (honest P keeps radar returns in gate), sc5/sc6 switches to
 collapse without lifetime loss.
 
-## 13. Cross-sensor anchored bias (AIS-less deployment)
+## 13. Cross-sensor anchored bias (AIS-less deployment) — DONE 2026-06-17 (math correct, fires; AutoFerry gospa-invariant)
 
 **Problem.** `SensorBiasEstimator` (item 9) needs an unbiased anchor
 to learn each sensor's mounting offset; today the only anchor it
@@ -448,3 +448,81 @@ anchored option-1 baseline (target: 5-15% additional reduction once
 the AIS-less anchor pulls in the AIS-absent stretches). Synthetic
 non_cooperative scenario: estimator publishes a non-trivial bias
 without AIS in the input stream.
+
+**Outcome (2026-06-17).** Shipped (`extractCrossSensorPositionPairs`
++ unit tests + canonical wiring + design-doc + eval-log entry). The
+math is correct and the path fires on every AIS-less AutoFerry
+scenario (~100-1000 pairs per run; estimator publishes biases of the
+right magnitude). **The 5-15% GOSPA target was not met** — measured
+zero delta because cross-sensor coordinate descent under a symmetric
+zero-mean prior allocates the relative bias as `(b̂_X, b̂_Y) =
+(+δ/2, −δ/2)`, and a symmetric weighted-mean fusion is invariant
+under that allocation (the corrections cancel in the fused estimate).
+Item 13 unlocks value only when (a) intermittent AIS calibrates one
+sensor absolutely, (b) sensor variances are asymmetric, or (c) one
+sensor's bias is pre-seeded via `setKnownPositionBias` — none of
+which is true on AutoFerry env-1 raw. See `sensor-bias.md
+§Cross-sensor anchored extension` and eval-log 2026-06-17 (later).
+Latent value: leave enabled by default; when item 14 (per-
+measurement R) lands and produces asymmetric variance, item 13
+will start contributing.
+
+## 14. Sensor-provided per-measurement covariance (LOW PRIORITY)
+
+**Problem.** The current adapters write a fixed-per-sensor R into
+`Measurement::cov` (or leave it empty for the `pessimisticSensorDefaults`
+fallback). Many real sensors *do* publish per-detection uncertainty
+that we discard: AIS Class A position-accuracy categories, ARPA track-
+quality bits, modern EO/IR computer-vision detection bounding-box
+covariances, lidar per-cluster spread, GNSS HDOP/FOM. Throwing this
+away is information loss — a single bad-quality return weights the
+state estimate the same as a clean one.
+
+**Change.** Per-sensor adapter opt-in: when the sensor reports a
+covariance, populate `Measurement::cov` from it. The tracker enforces a
+**covariance floor** against the item-12(a) per-env calibrated R:
+`R_used = elementwise_max(R_reported, R_floor)` (or a more careful
+PSD-preserving variant — `R_used = R_reported + R_floor_residual` where
+`R_floor_residual = max(0, R_floor − R_reported)` along each eigen
+direction). The floor is the safety net: if a vendor reports
+optimistic noise we don't blindly trust it; if they report nothing
+we use the calibration. Diagnostic flag `covariance_is_reported` on
+output (alongside the existing `covariance_is_default`) so the eval
+log can distinguish the two paths.
+
+**Assumptions.** (a) Per-env calibrated R floors exist for every
+sensor kind we use (item 12(a) shipped them for AutoFerry); (b)
+adapter authors take responsibility for unit-converting the vendor
+value into m² / rad²; (c) the bias estimator's gate-by-covariance
+math is robust to per-measurement R variation (it already is, by
+construction — R enters as an additive term in the innovation).
+
+**Rationale.** Trusting sensor-reported R unconditionally is unsafe
+(vendor specs are optimistic, NMEA epsilon fields often zero), but
+trusting our fixed table when honest per-measurement noise is
+available leaves gain on the table. The `max(reported, floor)`
+policy gets the best of both: tight when the sensor knows, calibrated
+when it doesn't.
+
+**Test.** A synthetic scenario with sensor-quality variation per
+measurement (e.g. radar plot SNR variation) should out-perform the
+fixed-R baseline on pos_rmse. AutoFerry baseline numbers should not
+move on sensors that don't yet populate per-measurement covariance
+(bit-identity preserved).
+
+**Lift.** Small (per-sensor adapter changes + one floor-policy
+function in the tracker) — 1-2 days. Scheduling priority: LOW.
+File-level entry point is `Measurement::cov` and the per-sensor
+adapter populators in `adapters/`; the floor policy fits in
+`core/types/Measurement.hpp` or as a new
+`core/sensors/CovarianceFloor.hpp`.
+
+**Where the trade-off lives.** Vendor R-quality varies per sensor
+family. AIS Class A's position-accuracy enum is reasonably
+calibrated; NMEA RMC's epsilon fields are often hard-coded zero;
+ARPA quality bits are unstandardised across vendors. Start with the
+sensors whose reported R has known meaning (AIS, modern lidar,
+CV-based EO/IR with bbox covariance) and stay on the fixed table
+for legacy ARPA / dumb GNSS until per-vendor calibration exists.
+
+Raised 2026-06-17 in the item-9 closeout review.

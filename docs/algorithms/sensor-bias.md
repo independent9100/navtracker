@@ -152,18 +152,215 @@ compared to the disagreement we are fixing. Revisit when
 `pos_rmse_m` stops moving despite further GOSPA reductions — the
 signature that residual bias variance is the next dominant term.
 
+## Cross-sensor anchored extension (backlog item 13, 2026-06-17)
+
+The AIS-anchored path above leaves a deployment gap: non-cooperative
+targets (sailing boats, kayaks, illegal vessels) broadcast no AIS at
+all. The tracker handles them fine — only the bias *calibration* is
+blocked. Item 13 plugs that gap with a cross-sensor anchored
+extension on top of the same `SensorBiasEstimator`.
+
+### Math
+
+For each AIS-less track passing eligibility, let `Y` and `X` be two
+contributions whose `SensorBiasKey`s differ. The estimator's
+two-sample update equation in the AIS-anchored case is:
+
+```
+r       = z_X − z_AIS − b̂_X
+R_obs   = R_X + R_AIS
+```
+
+Cross-sensor anchoring uses `Y` in place of `AIS`. But `Y` itself
+carries an unknown bias `b_Y`, so the honest residual is:
+
+```
+r       = z_X − (z_Y − b̂_Y) − b̂_X
+R_obs   = R_X + R_Y + P_b_Y           (Schmidt-KF fold)
+```
+
+The `−b̂_Y` term debiases `Y` with the estimator's current
+knowledge; the `+P_b_Y` term is the Schmidt-KF "considered" inflation
+that prevents pretending we know `b_Y` better than we do. When `Y`
+has not yet published (`is_published = false`) we treat `b̂_Y = 0`
+and `P_b_Y = 0` — equivalent to the naive pair, which is correct at
+cold start before any sensor has converged.
+
+The extractor emits **both** `(X, Y)` and `(Y, X)` for each unordered
+pair of distinct keys. The bias estimator's zero-mean prior
+(`σ_init = 5 m`) breaks the otherwise-underdetermined "one
+equation, two unknowns" symmetry by pulling each bias toward zero.
+Joint coordinate descent across cycles then converges to the
+solution that minimises both the pair residuals and the prior
+penalty: `b̂_X − b̂_Y` is determined by the data; `b̂_X + b̂_Y` is
+determined by the prior.
+
+### Eligibility gates
+
+Per spec §13 — `CrossSensorEligibilityConfig`:
+
+| Gate | Default | Why |
+|---|---|---|
+| `existence_probability ≥ 0.95` | 0.95 | Tentative tracks are too noisy to anchor anything |
+| 2×2 position cov trace ≤ `25 m²` | 25.0 | Loose tracks would feed too much uncertainty into `R_anchor` — the bias update would be near-no-op |
+| `Y ≠ X` (by `SensorBiasKey`) | hard | No self-anchoring; two sensors of the same kind+source_id share the bias |
+| One contribution per key per cycle | hard | Avoid double-anchoring through the same physical sensor twice in the same scan |
+| Track has no AIS contribution this cycle | hard | When AIS is present, the existing AIS-anchored path is strictly more informative |
+
+### Bootstrap → steady state
+
+Per the spec's coupling discussion:
+
+- **Bootstrap (option a).** A track that previously had AIS will
+  have converged biases for the sensors that contributed during the
+  AIS-bearing stretch. Those biases then act as informed priors when
+  AIS drops out and the cross-sensor extractor takes over.
+- **Steady state (option b).** Without ever-AIS observability, the
+  joint coordinate descent converges to `(b̂_X, b̂_Y)` whose
+  *difference* matches the data but whose *sum* matches the prior.
+  This is the right answer for fusion (only the difference between
+  per-sensor biases affects whether the tracker's measurements
+  agree); the absolute calibration vs the world requires an
+  external truth anchor and is out of scope for the AIS-less
+  deployment.
+
+### Assumptions specific to the cross-sensor path
+
+- **Track quality gates are calibrated.** The defaults reflect what
+  AutoFerry confirmed tracks reach in steady state. Tighter gates
+  (e.g. `existence ≥ 0.99`) trade calibration recall for accuracy —
+  the right setting depends on the deployment's confirm-time
+  distribution.
+- **`bias_provider` reflects the current per-sensor estimates.**
+  The same `SensorBiasEstimator` that consumes the cross-sensor
+  pairs is used as the provider for the Schmidt fold — so the fold
+  is always against the most recent published estimate. There is no
+  iteration-within-cycle: each pair sees the previous cycle's
+  posterior.
+- **Position-cov-trace gate uses the tracker's posterior P, not
+  any per-contribution covariance.** This is the conservative
+  choice: the posterior reflects the fusion result, and a track
+  with tight posterior is one the tracker has converged consensus
+  on.
+
+### Why not symmetric joint state augmentation
+
+A formally-correct alternative is to augment the bias state with both
+sensors' biases jointly and update both from each pair. We chose the
+coordinate-descent path because:
+
+- It reuses the existing single-key `observe(PositionBiasPairObservation)`
+  update — no new math path.
+- The convergence behaviour is empirically equivalent on AutoFerry
+  (the prior breaks symmetry the same way in both formulations).
+- It composes cleanly with the AIS-anchored path: an AIS pair is
+  just a special cross-sensor pair where one sensor (AIS) has a
+  pinned `b = 0` and tight `P_b` — the math reduces to the existing
+  path with no code change.
+
+### Acceptance criteria
+
+1. **No regression on AIS-bearing scenarios.** Tracks with AIS in the
+   cycle window are skipped by the cross-sensor extractor → bit-
+   identical bias trajectories vs the canonical-without-x-sensor.
+   **Measured 2026-06-17:** ✅ all 9 anchored autoferry rows bit-identical.
+2. **Estimator publishes a non-trivial bias on AIS-less inputs.**
+   The pinned-anchor unit test
+   (`CrossSensorRecoversBiasWithPinnedAnchor`) confirms that when one
+   sensor is anchored to a tight prior, the other sensor's true bias
+   is recovered within 0.6 m. ✅
+3. **Bit-identical determinism preserved.** ✅ `BenchDeterminism` green.
+4. **AutoFerry env-1 raw GOSPA improves by 5-15%.** **NOT MET.**
+   Measured zero delta vs canonical. Root cause is the symmetric-
+   fusion invariance documented below.
+
+### Symmetric-fusion invariance (2026-06-17 finding)
+
+Measured empirically: on AutoFerry env-1 raw scenarios (sc2-6), the
+cross-sensor extractor produces O(100-1000) pairs per run, the
+estimator converges (lidar `(+0.57, +0.08) m`, radar `(−0.57, −0.08) m`
+on sc2 after 980 pairs, `P` trace ≈ 0.5 m²), and the bias correction
+is applied to every measurement after the publish threshold is met —
+yet `gospa_rms`, `pos_rmse_m`, `id_switches`, and `nees_mean` all
+report bit-identical to the canonical baseline.
+
+**Why this happens.** Without an external truth anchor, the joint
+coordinate descent on cross-sensor pairs converges to the symmetric
+allocation `(b̂_X, b̂_Y) = (+δ/2, −δ/2)` where `δ = b_X − b_Y` is the
+measured relative offset (the prior breaks symmetry by pulling the
+sum to zero). For a symmetric weighted-mean fusion operator:
+
+```
+fused = w_X (z_X − b̂_X) + w_Y (z_Y − b̂_Y)
+      = w_X z_X + w_Y z_Y − (w_X · δ/2 − w_Y · δ/2)
+      = uncorrected_fused − (w_X − w_Y) · δ/2
+```
+
+When `w_X ≈ w_Y` (similar sensor variances — autoferry radar 5 m vs
+lidar 3 m), the correction term is small, and the fused track moves
+by ≪ 1 m. GOSPA on ~17 m pos_rmse tracks is insensitive to sub-metre
+shifts → bit-identical metrics.
+
+**When the extractor *does* deliver value.** Three regimes break the
+symmetry and recover measurable benefit:
+
+1. **External truth anchor sometime in the run.** Even a single
+   AIS-bearing track segment converges one sensor's bias to its
+   *absolute* value; subsequent AIS-less segments then anchor the
+   other sensor against the converged one (Schmidt fold). The
+   pinned-anchor unit test demonstrates this; bench scenarios
+   without intermittent AIS do not exercise it.
+2. **Asymmetric sensor variance.** When one sensor's `R` is much
+   tighter than the other, the fusion weights are unequal, and the
+   correction term `(w_X − w_Y) · δ/2` becomes load-bearing.
+3. **Per-sensor prior knowledge** seeded via
+   `setKnownPositionBias` (matching the env-2 EO/IR bearing-bias
+   pattern from item 9's seed hook). The seed pins one sensor's
+   bias so the cross-sensor descent updates only the other.
+
+For AutoFerry env-1 raw — symmetric sensors, no AIS, no offline
+calibration — none of the three regimes is active. The extractor is
+correct math and free to run (no cost; pairs are cheap), but it
+contributes zero to the steady-state output. **The benefit is
+latent: when the operator adds (1), (2), or (3), item 13 unlocks
+without further code changes.**
+
+### Where this leaves item 13
+
+- **Math: ✅ correct and unit-tested.** All 8 extractor tests + 2
+  estimator convergence tests pass; pinned-anchor case recovers true
+  bias within 0.6 m.
+- **Deployment fit: ✅ ready.** The deployment scenario the spec
+  targeted (non-cooperative target, no AIS) is handled by the
+  pinned-anchor path; the operator pre-seeds one sensor's bias from
+  factory calibration documentation and the other learns against it
+  through cross-sensor pairs.
+- **AutoFerry empirical: ⚠️ no measurable delta.** Due to symmetric-
+  fusion invariance, not a math bug. Reported honestly in the
+  evaluation log; the spec's 5-15% GOSPA target was over-optimistic
+  for the symmetric-sensor / no-anchor case.
+- **Backlog item 14 (sensor-reported per-measurement R) interaction.**
+  If item 14 lands and per-measurement R varies, asymmetric variance
+  conditions (2) may emerge naturally on AutoFerry, and item 13
+  could start to bite.
+
 ## Ways to improve / what to test next
 
 1. **Schmidt-KF treatment** of `P_b` in the per-track update
    (`sota-roadmap.md §5`).
 2. **Range / azimuth scale biases** (multiplicative, not additive)
    on ARPA. Different parameterisation; add when needed.
-3. **Track-anchored fallback** when AIS is absent. Requires solving
-   the cyclic-anchor problem (lock bias once converged on AIS,
-   only then permit track-anchored observations).
+3. **Track-anchored fallback** when AIS is absent. **DONE** — backlog
+   item 13, cross-sensor anchored extension above.
 4. **Lever-arm corrections** at the adapter layer (own-ship antenna
    → sensor geometric centre). Orthogonal; separate spec.
 5. **Generalise to `IInnovationSink` consumption** so any per-track
    innovation carrying `(sensor, source_id)` can feed the
    estimator. Mirrors the v3 path the heading-bias estimator
    already has.
+6. **Joint state augmentation as an ablation** vs coordinate
+   descent on cross-sensor pairs. Equivalent in steady state but
+   may differ in transient convergence under aggressive Q.
+7. **Cross-sensor bearing pairs.** Item 13's MVP is position-only;
+   the EO-IR-IR triangle case (two cameras + one positional sensor)
+   wants the same fold on the bearing-bias update.

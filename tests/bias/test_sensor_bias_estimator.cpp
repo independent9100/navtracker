@@ -286,5 +286,231 @@ TEST(SensorBiasEstimator, SetKnownPositionBiasLoosePriorRefines) {
   EXPECT_TRUE(pb.is_published);
 }
 
+// --- Cross-sensor anchored extractor (backlog item 13) -------------
+
+namespace cross_sensor {
+
+Track::SourceTouch posTouch(SensorKind k, const std::string& src,
+                            Timestamp time,
+                            const Eigen::Vector2d& value) {
+  Track::SourceTouch t;
+  t.sensor = k;
+  t.source_id = src;
+  t.time = time;
+  t.value_enu = value;
+  t.covariance = iso(2.0);
+  t.sensor_position_enu = Eigen::Vector2d::Zero();
+  return t;
+}
+
+Track makeTrack(double existence, double pos_cov_per_axis,
+                std::vector<Track::SourceTouch> touches) {
+  Track tr;
+  tr.id = TrackId{1};
+  tr.existence_probability = existence;
+  tr.covariance = Eigen::MatrixXd::Zero(4, 4);
+  tr.covariance(0, 0) = pos_cov_per_axis;
+  tr.covariance(1, 1) = pos_cov_per_axis;
+  tr.recent_contributions = std::move(touches);
+  return tr;
+}
+
+}  // namespace cross_sensor
+
+// Eligibility: a converged AIS-less track with one radar + one lidar
+// contribution yields the two symmetric pairs.
+TEST(SensorBiasPairExtractor, CrossSensorEmitsSymmetricPairs) {
+  using namespace cross_sensor;
+  auto tr = makeTrack(
+      0.99, 4.0,
+      {posTouch(SensorKind::Lidar, "lidar0", tsSeconds(1.0),
+                Eigen::Vector2d(500.0, 100.0)),
+       posTouch(SensorKind::ArpaTtm, "radar0", tsSeconds(1.0),
+                Eigen::Vector2d(503.0, 98.0))});
+  const auto pairs = extractCrossSensorPositionPairs(
+      {tr}, tsSeconds(1.0), /*bias_provider=*/nullptr);
+  ASSERT_EQ(pairs.size(), 2u);
+  // Both directions present.
+  bool saw_lidar_anchored_on_radar = false;
+  bool saw_radar_anchored_on_lidar = false;
+  for (const auto& p : pairs) {
+    if (p.key.sensor == SensorKind::Lidar) {
+      saw_radar_anchored_on_lidar = true;
+      EXPECT_NEAR(p.z_sensor_enu.x(), 500.0, 1e-9);
+      EXPECT_NEAR(p.z_anchor_enu.x(), 503.0, 1e-9);
+    } else if (p.key.sensor == SensorKind::ArpaTtm) {
+      saw_lidar_anchored_on_radar = true;
+      EXPECT_NEAR(p.z_sensor_enu.x(), 503.0, 1e-9);
+      EXPECT_NEAR(p.z_anchor_enu.x(), 500.0, 1e-9);
+    }
+  }
+  EXPECT_TRUE(saw_lidar_anchored_on_radar);
+  EXPECT_TRUE(saw_radar_anchored_on_lidar);
+}
+
+// Low-existence tracks are not eligible to anchor.
+TEST(SensorBiasPairExtractor, CrossSensorSkipsLowExistenceTrack) {
+  using namespace cross_sensor;
+  auto tr = makeTrack(
+      0.5, 4.0,
+      {posTouch(SensorKind::Lidar, "lidar0", tsSeconds(1.0),
+                Eigen::Vector2d(500.0, 100.0)),
+       posTouch(SensorKind::ArpaTtm, "radar0", tsSeconds(1.0),
+                Eigen::Vector2d(503.0, 98.0))});
+  EXPECT_TRUE(extractCrossSensorPositionPairs(
+                  {tr}, tsSeconds(1.0), nullptr)
+                  .empty());
+}
+
+// Loose-position tracks are not eligible to anchor.
+TEST(SensorBiasPairExtractor, CrossSensorSkipsLoosePositionTrack) {
+  using namespace cross_sensor;
+  auto tr = makeTrack(
+      0.99, 50.0,
+      {posTouch(SensorKind::Lidar, "lidar0", tsSeconds(1.0),
+                Eigen::Vector2d(500.0, 100.0)),
+       posTouch(SensorKind::ArpaTtm, "radar0", tsSeconds(1.0),
+                Eigen::Vector2d(503.0, 98.0))});
+  EXPECT_TRUE(extractCrossSensorPositionPairs(
+                  {tr}, tsSeconds(1.0), nullptr)
+                  .empty());
+}
+
+// AIS contribution in the window suppresses the cross-sensor path —
+// the AIS-anchored extractor handles those tracks.
+TEST(SensorBiasPairExtractor, CrossSensorSkipsTracksWithAis) {
+  using namespace cross_sensor;
+  auto tr = makeTrack(
+      0.99, 4.0,
+      {posTouch(SensorKind::Ais, "ais0", tsSeconds(1.0),
+                Eigen::Vector2d(501.0, 99.0)),
+       posTouch(SensorKind::Lidar, "lidar0", tsSeconds(1.0),
+                Eigen::Vector2d(500.0, 100.0)),
+       posTouch(SensorKind::ArpaTtm, "radar0", tsSeconds(1.0),
+                Eigen::Vector2d(503.0, 98.0))});
+  EXPECT_TRUE(extractCrossSensorPositionPairs(
+                  {tr}, tsSeconds(1.0), nullptr)
+                  .empty());
+}
+
+// A single positional contribution gives nothing to pair with.
+TEST(SensorBiasPairExtractor, CrossSensorNoPairFromSingleContribution) {
+  using namespace cross_sensor;
+  auto tr = makeTrack(
+      0.99, 4.0,
+      {posTouch(SensorKind::Lidar, "lidar0", tsSeconds(1.0),
+                Eigen::Vector2d(500.0, 100.0))});
+  EXPECT_TRUE(extractCrossSensorPositionPairs(
+                  {tr}, tsSeconds(1.0), nullptr)
+                  .empty());
+}
+
+// Schmidt-KF fold: when the anchor's bias is published the extractor
+// debiases the anchor measurement and folds the bias covariance into
+// R_anchor.
+TEST(SensorBiasPairExtractor, CrossSensorAppliesSchmidtFoldFromProvider) {
+  using namespace cross_sensor;
+  FixedSensorBiasProvider prov;
+  const SensorBiasKey lidar_key{SensorKind::Lidar, "lidar0"};
+  prov.setPositionBias(lidar_key, Eigen::Vector2d(2.0, -1.0),
+                       Eigen::Matrix2d::Identity() * 0.5);
+  auto tr = makeTrack(
+      0.99, 4.0,
+      {posTouch(SensorKind::Lidar, "lidar0", tsSeconds(1.0),
+                Eigen::Vector2d(500.0, 100.0)),
+       posTouch(SensorKind::ArpaTtm, "radar0", tsSeconds(1.0),
+                Eigen::Vector2d(503.0, 98.0))});
+  const auto pairs = extractCrossSensorPositionPairs(
+      {tr}, tsSeconds(1.0), &prov);
+  ASSERT_EQ(pairs.size(), 2u);
+  // The radar-anchored-on-lidar observation has its anchor debiased.
+  for (const auto& p : pairs) {
+    if (p.key.sensor == SensorKind::ArpaTtm) {
+      // z_anchor = z_lidar - b_lidar = (500, 100) - (2, -1) = (498, 101)
+      EXPECT_NEAR(p.z_anchor_enu.x(), 498.0, 1e-9);
+      EXPECT_NEAR(p.z_anchor_enu.y(), 101.0, 1e-9);
+      // R_anchor includes the +0.5 inflation along the diagonal.
+      EXPECT_GE(p.R_anchor(0, 0), 4.5 - 1e-9);
+      EXPECT_GE(p.R_anchor(1, 1), 4.5 - 1e-9);
+    }
+  }
+}
+
+// Joint convergence: with the prior breaking symmetry, the bias
+// estimator on cross-sensor pairs converges to a near-zero-bias
+// solution when both sensors are actually unbiased (truth = no
+// mounting offset). This is the symmetry-breaking sanity check the
+// item-13 spec calls out.
+TEST(SensorBiasEstimator, CrossSensorPairsConvergeUnderPrior) {
+  using namespace cross_sensor;
+  SensorBiasEstimator est;
+  const SensorBiasKey lidar_key{SensorKind::Lidar, "lidar0"};
+  const SensorBiasKey radar_key{SensorKind::ArpaTtm, "radar0"};
+
+  // Walk the target through 50 cycles. Both sensors see the truth
+  // perfectly. The prior pulls each bias to zero.
+  Eigen::Vector2d truth(500.0, 100.0);
+  for (int i = 0; i < 50; ++i) {
+    truth.x() += 1.0;
+    auto tr = makeTrack(
+        0.99, 4.0,
+        {posTouch(SensorKind::Lidar, "lidar0",
+                  tsSeconds(0.1 * (i + 1)), truth),
+         posTouch(SensorKind::ArpaTtm, "radar0",
+                  tsSeconds(0.1 * (i + 1)), truth)});
+    const auto pairs = extractCrossSensorPositionPairs(
+        {tr}, tsSeconds(0.1 * (i + 1)), &est);
+    est.predictTo(tsSeconds(0.1 * (i + 1)));
+    for (const auto& p : pairs) est.observe(p);
+  }
+  // Expected: both biases land near zero (within ~0.5 m of truth).
+  const auto pb_l = est.positionBias(lidar_key);
+  const auto pb_r = est.positionBias(radar_key);
+  EXPECT_NEAR(pb_l.bias_enu_m.norm(), 0.0, 0.5);
+  EXPECT_NEAR(pb_r.bias_enu_m.norm(), 0.0, 0.5);
+}
+
+// Asymmetric bias recovery: when one sensor (radar) is unbiased and
+// has a tight prior pinning it, the cross-sensor extractor recovers
+// the OTHER sensor's (lidar) true bias through the cross-sensor
+// pairs. This is the deployment-relevant scenario: one sensor has
+// been calibrated via AIS earlier, the other is being calibrated
+// against it now.
+TEST(SensorBiasEstimator, CrossSensorRecoversBiasWithPinnedAnchor) {
+  using namespace cross_sensor;
+  SensorBiasEstimator est;
+  const SensorBiasKey lidar_key{SensorKind::Lidar, "lidar0"};
+  const SensorBiasKey radar_key{SensorKind::ArpaTtm, "radar0"};
+
+  // Pin radar bias to zero via a tight seed (simulates earlier AIS-
+  // anchored convergence).
+  est.setKnownPositionBias(radar_key, Eigen::Vector2d::Zero(),
+                           Eigen::Matrix2d::Identity() * 0.01);
+
+  const Eigen::Vector2d lidar_bias(3.0, -2.0);
+  Eigen::Vector2d truth(500.0, 100.0);
+  for (int i = 0; i < 60; ++i) {
+    truth.x() += 1.0;
+    // Lidar reports truth + bias; radar reports truth.
+    auto tr = makeTrack(
+        0.99, 4.0,
+        {posTouch(SensorKind::Lidar, "lidar0",
+                  tsSeconds(0.1 * (i + 1)), truth + lidar_bias),
+         posTouch(SensorKind::ArpaTtm, "radar0",
+                  tsSeconds(0.1 * (i + 1)), truth)});
+    const auto pairs = extractCrossSensorPositionPairs(
+        {tr}, tsSeconds(0.1 * (i + 1)), &est);
+    est.predictTo(tsSeconds(0.1 * (i + 1)));
+    for (const auto& p : pairs) est.observe(p);
+  }
+  const auto pb_l = est.positionBias(lidar_key);
+  // Lidar bias should be recovered (within ~0.6 m, looser tolerance
+  // than the AIS-anchored case because the radar's anchor-side noise
+  // still gets folded into R_anchor through Schmidt's path).
+  EXPECT_NEAR(pb_l.bias_enu_m.x(), lidar_bias.x(), 0.6);
+  EXPECT_NEAR(pb_l.bias_enu_m.y(), lidar_bias.y(), 0.6);
+  EXPECT_TRUE(pb_l.is_published);
+}
+
 }  // namespace
 }  // namespace navtracker

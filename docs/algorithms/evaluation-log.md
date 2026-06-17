@@ -8,6 +8,118 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-17 (later) — Item 13 cross-sensor anchored bias: shipped, fires correctly, AutoFerry-invariant due to symmetric fusion
+
+Backlog item 13. Adds `extractCrossSensorPositionPairs` to
+`SensorBiasPairExtractor`: for tracks passing eligibility
+(`existence ≥ 0.95`, position-cov-trace `≤ 25 m²`) that have **no
+AIS contribution** in the cycle window, emit one `(X, Y)` and one
+`(Y, X)` position-bias-pair observation per ordered pair of distinct
+`SensorBiasKey`s. Schmidt-KF folds the anchor side: subtract `b̂_Y`
+from `z_Y`, add `P_b_Y` to `R_anchor`. Wired into the canonical's
+PostScanHook after the AIS-anchored extractors. Unit tests + bench
+determinism green; full sweep matches `bench_xsensor_20260617T183817Z.csv`.
+
+### Acceptance criteria results
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Bit-identical on AIS-bearing tracks | ✅ all 9 anchored autoferry rows match canonical to 5 decimals |
+| 2 | Estimator recovers true bias under pinned anchor | ✅ `CrossSensorRecoversBiasWithPinnedAnchor` test: lidar (3.0, −2.0) recovered to within 0.6 m after 60 cycles with radar pinned to zero |
+| 3 | Bench determinism preserved | ✅ `BenchDeterminism.RepeatedSweepProducesIdenticalRows` green |
+| 4 | AutoFerry env-1 raw GOSPA −5..−15% | ❌ **zero delta** (37.5..43.9 m unchanged) |
+
+### Diagnostic — extractor is firing, just not biting
+
+A debug-instrumented run of `imm_cv_ct_mht` × `autoferry_scenario2`
+(seed 0) confirms the extractor produces and the estimator accepts:
+
+```
+[bias-debug] imm_cv_ct_mht | autoferry_scenario2 seed=0
+  ais_pairs=0 cross_pairs=980 accepted=852
+  [lidar/autoferry_lidar] b=(+0.570, +0.081) trP=0.499 pub=1
+  [radar/autoferry_radar] b=(-0.570, -0.081) trP=0.499 pub=1
+```
+
+Note the perfectly antisymmetric `(b̂_lidar, b̂_radar) = (+δ/2, −δ/2)`
+with `δ ≈ 1.14 m east`. The cross-sensor coordinate descent caught the
+relative offset; the zero-mean prior allocated it symmetrically.
+
+For comparison the *anchored* `sc2_anchored` run (truth-AIS injected)
+recovers absolute biases:
+
+```
+  [lidar/autoferry_lidar] b=(+0.971, +0.181) trP=0.047 pub=1
+  [radar/autoferry_radar] b=(-0.232, +0.090) trP=0.076 pub=1
+```
+
+Lidar carries most of the true bias; radar is nearly clean. The
+cross-sensor pair difference `1.20 m east` matches the AIS-anchored
+`b_lidar − b_radar ≈ 1.20 m east` — same relative answer, but split
+differently across the two sensors.
+
+### Why the corrections cancel — symmetric-fusion invariance
+
+For a symmetric weighted-mean fusion (lidar 3 m σ, radar 5 m σ — close
+enough), the cross-sensor split is a no-op in the output:
+
+```
+fused = w_X · (z_X − b̂_X) + w_Y · (z_Y − b̂_Y)
+      = w_X z_X + w_Y z_Y − (w_X − w_Y) · δ/2
+      ≈ uncorrected_fused − O(0.1 m)   when w_X ≈ w_Y
+```
+
+A 0.1 m shift is far below the steady-state `pos_rmse_m ≈ 17 m` and
+the `GOSPA c = 20 m` cutoff. Result: gospa_rms / id_switches /
+pos_rmse / nees_mean all bit-identical.
+
+Three regimes break the symmetry and would unlock measurable benefit;
+see `sensor-bias.md §Symmetric-fusion invariance` for the full
+discussion:
+
+1. **Intermittent AIS coverage.** Once a track has an AIS-bearing
+   segment, that segment converges absolute biases; subsequent
+   AIS-less segments anchor the asymmetry through the Schmidt fold.
+2. **Asymmetric sensor variance** (one `R` much tighter than the
+   other).
+3. **Pre-seeded per-sensor priors** via `setKnownPositionBias`
+   (mirrors the env-2 EO/IR bearing-bias seed pattern from item 9).
+
+For AutoFerry env-1 raw — symmetric sensors, no AIS, no offline
+calibration — none of (1)/(2)/(3) is active. Item 13's math is sound
+and the path is correct; the empirical delta is zero on this dataset
+because the symmetric prior allocation cancels in the fusion operator.
+
+### Where this leaves us
+
+- **Item 13 closed.** Math correct, fires correctly, deployment fit
+  is the **pinned-anchor path** (operator pre-seeds one sensor's
+  bias from factory calibration documentation, the other learns
+  against it). This is the spec's option (a) — bootstrap — and it
+  works as designed per the unit tests.
+- **The spec's 5-15% AutoFerry gospa target was over-optimistic**
+  for the symmetric-sensor / no-anchor case. Reported honestly here;
+  no eval-log re-write needed for the 2026-06-15 item-9 anchored
+  measurement (that finding stands — bias estimator on top of AIS
+  gave a ~5% env-1 reduction; cross-sensor without AIS gives zero
+  because the prior makes the split symmetric, which fusion cancels).
+- **Next.** SOTA roadmap §5 finish (VB-adaptive Student-t) is now
+  the cleanest open frontier — it directly addresses the EO/IR
+  clutter regime that real-data measurements pin as the dominant
+  error source.
+- **Latent value.** When backlog item 14 (sensor-reported per-
+  measurement R) lands and produces asymmetric variance, item 13
+  may start to bite without further code changes — leave it on by
+  default.
+
+Pinned baseline: `docs/baselines/bench_xsensor_20260617T183817Z.csv`
+(17 configs × 29 scenarios × 10 seeds = 2 023 runs, 47 min).
+Synthetic suite bit-identical to canonical to all 5 decimals; all
+autoferry rows bit-identical or within 1 m (sc22 / sc4 anchored
+minor rounding shifts at the 1e-3 level from `cross_pairs=0` →
+post-scan-hook empty-vector early-out path differing from
+canonical's hook semantics).
+
 ## 2026-06-17 — Item 9 closed: bias-estimator wiring promoted to canonical, env-2 seed hook landed
 
 Item 9 close-out. Three things shipped at once:

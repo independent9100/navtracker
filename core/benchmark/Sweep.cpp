@@ -234,6 +234,16 @@ std::vector<MetricRow> runSweep(
               const auto brg_pairs =
                   extractBearingPairs(t.tracks(), scan_t);
               for (const auto& p : brg_pairs) bias_est->observe(p);
+              // Item 13: cross-sensor anchored pairs on AIS-less tracks
+              // (deployment scenario: non-cooperative targets). The
+              // extractor skips tracks that the AIS-anchored path
+              // already handled this cycle, so this is purely
+              // additive. bias_est itself is the provider for the
+              // Schmidt fold on the anchor side.
+              const auto cross_pairs =
+                  extractCrossSensorPositionPairs(t.tracks(), scan_t,
+                                                  bias_est.get());
+              for (const auto& p : cross_pairs) bias_est->observe(p);
             };
           }
           result = runBenchMht(scen, tracker, post_scan);
