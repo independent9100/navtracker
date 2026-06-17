@@ -2726,3 +2726,51 @@ small NEES rises on sc4/sc5/sc6 are filters going from "too
 tight" (NEES 3-4) to "slightly more so" because the bearing
 update now contributes information the filter wasn't accounting
 for; cosmetic, not load-bearing.
+
+## 2026-06-17 — Item 13 cross-sensor extractor: review fixes (bench-neutral)
+
+Three correctness findings on the cross-sensor anchored extractor
+(`extractCrossSensorPositionPairs`, committed in `5d467cf`) were
+fixed:
+
+1. **One observation per calibrated key per cycle.** The original
+   walked every ordered pair, so each key `X` got `N−1` KF updates per
+   cycle all reusing the *same* sample `z_X` — correlated residuals
+   folded as independent → `P_X` collapses too fast → premature
+   publish. Now each key is anchored on its single most-trusted
+   partner. `N=2` is provably identical to before; only `N≥3` changes.
+2. **Never anchor across the same physical sensor.** ARPA TTM/TLL
+   share a `source_id` but are distinct `SensorKind`s → their pair
+   residual is ≈ noise regardless of the true shared offset, masking
+   common-mode radar bias. Same-`source_id` anchoring is now skipped.
+3. **Deterministic emission order** (`std::map`, not
+   `unordered_map`) per CLAUDE.md invariant #4.
+
+### Bench impact: none on the current matrix
+
+The synthetic + AutoFerry scenarios all carry **N=2 positional keys
+with distinct source_ids** (radar `autoferry_radar`, lidar
+`autoferry_lidar`; no TTM/TLL split). For `N=2` all three fixes are
+behavioral no-ops. Verified directly: rebuilt `5d467cf` (pre-fix) vs
+`d1c46a1` (post-fix) **on the same host/build** are **byte-identical**
+across `imm_cv_ct_mht × {sc2, sc2_anchored, sc22}` (cols
+config..unit). The fixes' real effect lives in the `N≥3` /
+same-hardware paths, which the matrix does not exercise — those are
+covered by the new unit tests (`CrossSensorEmitsOneObservationPerKey`,
+`CrossSensorSkipsSameSourceIdHardware`,
+`CrossSensorSameHardwareAnchorsOnThirdSensor`,
+`CrossSensorEmitsKeysInDeterministicOrder`). 637 ctest cases green.
+
+### Baseline-reproducibility caveat (pre-existing, not introduced here)
+
+The committed `docs/baselines/bench_xsensor_20260617T183817Z.csv` does
+**not** reproduce bit-for-bit on this host: e.g. `imm_cv_ct_mht / sc2 /
+nees_mean` reads `56.16` in the CSV but `1210.19` on a fresh rebuild of
+its *own* commit. The CSV's provenance header is
+`host/compiler/git_sha: unknown`, i.e. it was produced by a different
+build. AutoFerry MHT is chaotic (gating + Murty branch order), so
+sub-ULP FP differences between builds (FMA/`-march`/Eigen version)
+amplify into large swings on the already-pathological autoferry NEES
+(50–2340 across scenarios, both builds). This is a baseline-hygiene
+issue — when a bit-reproducible reference is needed, regenerate the
+full matrix on-host and pin the toolchain in the provenance block.
