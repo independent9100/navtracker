@@ -1,4 +1,5 @@
 #include "adapters/foxglove/FoxgloveDebugRecorder.hpp"
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include "adapters/foxglove/FoxgloveJson.hpp"
@@ -73,9 +74,56 @@ void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp
   w_->write("/diag/track_count", now, diag.dump());
 }
 
-// Remaining sink methods implemented in later tasks (Tasks 5-8). Provide
+void FoxgloveDebugRecorder::recordMeasurement(const Measurement& m) {
+  const Rgba col = colorForSensor(m.sensor, m.source_id);
+  std::vector<json> entities;
+  const std::string base = "det-" + m.source_id + "-" + std::to_string(m.time.nanos());
+
+  if (m.model == MeasurementModel::Bearing2D) {
+    const double alpha = m.value(0);
+    const double sigma = std::sqrt(m.covariance(0,0));
+    entities.push_back(lineEntity(base + "-ray",
+        bearingWedge(m.sensor_position_enu, alpha, sigma, /*length=*/2000.0, cfg_.ellipse_k), col));
+    if (bias_) {
+      const auto bb = bias_->bearingBias({m.sensor, m.source_id});
+      if (bb.is_published) {
+        Rgba c2 = col; c2.a = 0.4;
+        entities.push_back(lineEntity(base + "-ray-corr",
+            bearingWedge(m.sensor_position_enu, alpha + bb.bias_rad, sigma, 2000.0, cfg_.ellipse_k), c2));
+        w_->write("/diag/bias", m.time,
+                  json{{"time_ns", m.time.nanos()}, {"sensor", static_cast<int>(m.sensor)},
+                       {"source_id", m.source_id}, {"bearing_bias_rad", bb.bias_rad},
+                       {"is_published", true}}.dump());
+      }
+    }
+  } else {  // Position2D / PositionVelocity2D / RangeBearing2D: ENU point + ellipse
+    const Eigen::Vector2d p = m.value.head<2>();
+    entities.push_back(lineEntity(base + "-cov",
+        covarianceEllipse(p, m.covariance.topLeftCorner<2,2>(), cfg_.ellipse_k), col));
+    if (bias_) {
+      const auto pb = bias_->positionBias({m.sensor, m.source_id});
+      if (pb.is_published) {
+        const Eigen::Vector2d pc = p + pb.bias_enu_m;
+        Rgba c2 = col; c2.a = 0.4;
+        entities.push_back(lineEntity(base + "-cov-corr",
+            covarianceEllipse(pc, m.covariance.topLeftCorner<2,2>(), cfg_.ellipse_k), c2));
+        entities.push_back(arrowEntity(base + "-bias", {p.x(),p.y(),0}, {pc.x(),pc.y(),0}, c2));
+        w_->write("/diag/bias", m.time,
+                  json{{"time_ns", m.time.nanos()}, {"sensor", static_cast<int>(m.sensor)},
+                       {"source_id", m.source_id}, {"bias_e_m", pb.bias_enu_m.x()},
+                       {"bias_n_m", pb.bias_enu_m.y()}, {"is_published", true}}.dump());
+      }
+    }
+    const auto geo = toGeodeticWithCov(p, m.covariance.topLeftCorner<2,2>(), datum_);
+    std::array<double,9> cov{};
+    cov[0]=geo.position_covariance_m2(0,0); cov[4]=geo.position_covariance_m2(1,1);
+    w_->write("/map/detections", m.time, locationFix(m.time, geo.lat_deg, geo.lon_deg, cov).dump());
+  }
+  w_->write("/detections", m.time, sceneUpdate(m.time, entities).dump());
+}
+
+// Remaining sink methods implemented in later tasks (Tasks 6-8). Provide
 // empty bodies now so the class is concrete and links:
-void FoxgloveDebugRecorder::recordMeasurement(const Measurement&) {}
 void FoxgloveDebugRecorder::recordOwnShip(const OwnShipPose&) {}
 void FoxgloveDebugRecorder::onTrackInitiated(const TrackLifecycleEvent&) {}
 void FoxgloveDebugRecorder::onTrackConfirmed(const TrackLifecycleEvent&) {}

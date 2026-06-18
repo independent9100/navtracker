@@ -40,3 +40,32 @@ TEST(Recorder, TracksEmitSceneMapAndCount) {
   EXPECT_EQ(c["/map/tracks"], 2);          // one LocationFix per track
   EXPECT_EQ(c["/diag/track_count"], 1);
 }
+
+static Measurement posMeas(double e, double n) {
+  Measurement m; m.time = Timestamp{2000}; m.sensor = SensorKind::Ais; m.source_id = "ais-1";
+  m.model = MeasurementModel::Position2D; m.value = Eigen::Vector2d(e, n);
+  m.covariance = Eigen::Matrix2d::Identity() * 9.0;
+  return m;
+}
+static Measurement bearingMeas(double alpha) {
+  Measurement m; m.time = Timestamp{2001}; m.sensor = SensorKind::EoIr; m.source_id = "cam-1";
+  m.model = MeasurementModel::Bearing2D;
+  m.value = Eigen::VectorXd::Constant(1, alpha);
+  m.covariance = Eigen::MatrixXd::Constant(1,1, 0.01);
+  m.sensor_position_enu = Eigen::Vector2d(0,0);
+  return m;
+}
+
+TEST(Recorder, PositionAndBearingDetectionsEmit) {
+  const std::string path = navtracker::foxglove::test::tmpMcapPath("recorder_det");
+  {
+    FoxgloveDebugRecorder rec(path, geo::Datum(geo::Geodetic{59.9, 10.7}));
+    rec.recordMeasurement(posMeas(10, 20));
+    rec.recordMeasurement(bearingMeas(0.0));
+    rec.close();
+  }
+  auto c = countByTopic(path);
+  std::remove(path.c_str());
+  EXPECT_EQ(c["/detections"], 2);          // one SceneUpdate per measurement
+  EXPECT_EQ(c["/map/detections"], 1);      // only the position meas maps to lat/lon
+}
