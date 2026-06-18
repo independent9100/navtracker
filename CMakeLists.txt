@@ -8,6 +8,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Eigen3 REQUIRED)
 find_package(GTest REQUIRED)
 
+option(NAVTRACKER_BUILD_FOXGLOVE "Build the Foxglove/MCAP debug recorder adapter" ON)
+if(NAVTRACKER_BUILD_FOXGLOVE)
+  find_package(mcap REQUIRED)
+  find_package(nlohmann_json REQUIRED)
+endif()
+
 enable_testing()
 
 add_library(navtracker_core
@@ -124,6 +130,20 @@ add_library(navtracker_benchmark_adapters
 target_include_directories(navtracker_benchmark_adapters PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_benchmark_adapters
   PUBLIC navtracker_benchmark navtracker_core navtracker_sim navtracker_replay Eigen3::Eigen)
+
+if(NAVTRACKER_BUILD_FOXGLOVE)
+  add_library(navtracker_foxglove
+    adapters/foxglove/Geometry.cpp
+    adapters/foxglove/FoxgloveJson.cpp
+    adapters/foxglove/McapWriter.cpp
+    adapters/foxglove/FoxgloveDebugRecorder.cpp)
+  target_include_directories(navtracker_foxglove PUBLIC ${CMAKE_SOURCE_DIR})
+  target_link_libraries(navtracker_foxglove
+    PUBLIC navtracker_core Eigen3::Eigen
+    PRIVATE mcap::mcap nlohmann_json::nlohmann_json)
+  target_compile_definitions(navtracker_foxglove PRIVATE
+    NAVTRACKER_FOXGLOVE_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/adapters/foxglove/schemas")
+endif()
 
 add_executable(navtracker_tests
   tests/smoke_test.cpp
@@ -268,6 +288,16 @@ target_link_libraries(navtracker_tests PRIVATE
     navtracker_core navtracker_nmea navtracker_sim navtracker_replay navtracker_benchmark
     navtracker_benchmark_adapters
     GTest::gtest_main Eigen3::Eigen)
+
+if(NAVTRACKER_BUILD_FOXGLOVE)
+  target_sources(navtracker_tests PRIVATE
+    tests/adapters/foxglove/test_geometry.cpp
+    tests/adapters/foxglove/test_foxglove_json.cpp
+    tests/adapters/foxglove/test_mcap_writer.cpp
+    tests/adapters/foxglove/test_recorder.cpp
+    tests/adapters/foxglove/test_recorder_determinism.cpp)
+  target_link_libraries(navtracker_tests PRIVATE navtracker_foxglove mcap::mcap)
+endif()
 
 include(GoogleTest)
 gtest_discover_tests(navtracker_tests)
