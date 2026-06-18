@@ -43,8 +43,16 @@ void FoxgloveDebugRecorder::registerChannels() {
     w_->ensureChannel(t, kDiagSchema, "");
 }
 
+void FoxgloveDebugRecorder::ensureRootFrame(Timestamp t) {
+  if (root_frame_done_) return;
+  root_frame_done_ = true;
+  // Identity map->enu so the 3D panel has a frame for the enu-framed entities.
+  w_->write("/tf", t, frameTransform(t, "map", kRootFrame, 0.0, 0.0, 0.0, 0.0).dump());
+}
+
 void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp now) {
   last_time_ = now;
+  ensureRootFrame(now);
   std::vector<json> entities;
   int confirmed = 0, tentative = 0;
   for (const auto& t : tracks) {
@@ -82,7 +90,7 @@ void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp
           covarianceEllipse(p, sit->second.topLeftCorner<2,2>(), std::sqrt(cfg_.gate_gamma)),
           Rgba{0.4,0.4,1.0,0.6}));
     }
-    w_->write("/gates", now, sceneUpdate(now, gate_entities).dump());
+    w_->write("/gates", now, sceneUpdate(now, gate_entities, cfg_.entity_lifetime_sec).dump());
   }
   std::vector<json> assoc;
   for (const auto& t : tracks) {
@@ -100,8 +108,8 @@ void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp
           colorForSensor(st.sensor, st.source_id)));
     }
   }
-  w_->write("/associations", now, sceneUpdate(now, assoc).dump());
-  w_->write("/tracks", now, sceneUpdate(now, entities).dump());
+  w_->write("/associations", now, sceneUpdate(now, assoc, cfg_.entity_lifetime_sec).dump());
+  w_->write("/tracks", now, sceneUpdate(now, entities, cfg_.entity_lifetime_sec).dump());
   json diag{{"time_ns", now.nanos()}, {"confirmed", confirmed}, {"tentative", tentative},
             {"total", confirmed + tentative}};
   w_->write("/diag/track_count", now, diag.dump());
@@ -109,6 +117,7 @@ void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp
 
 void FoxgloveDebugRecorder::recordMeasurement(const Measurement& m) {
   last_time_ = m.time;
+  ensureRootFrame(m.time);
   const Rgba col = colorForSensor(m.sensor, m.source_id);
   std::vector<json> entities;
   const std::string base = "det-" + m.source_id + "-" + std::to_string(m.time.nanos());
@@ -159,7 +168,7 @@ void FoxgloveDebugRecorder::recordMeasurement(const Measurement& m) {
     cov[0]=geo.position_covariance_m2(1,1); cov[4]=geo.position_covariance_m2(0,0);
     w_->write("/map/detections", m.time, locationFix(m.time, geo.lat_deg, geo.lon_deg, cov).dump());
   }
-  w_->write("/detections", m.time, sceneUpdate(m.time, entities).dump());
+  w_->write("/detections", m.time, sceneUpdate(m.time, entities, cfg_.entity_lifetime_sec).dump());
 }
 
 void FoxgloveDebugRecorder::onTrackInitiated(const TrackLifecycleEvent& e) {
@@ -196,11 +205,12 @@ void FoxgloveDebugRecorder::onCollisionRisk(const CollisionRiskEvent& e) {
   std::vector<json> ents{ textEntity("cpa-" + std::to_string(e.other.value),
       {0,0,0}, std::string(kind) + " d=" + std::to_string(e.prediction.cpa_distance_m),
       {1.0,0.3,0.3,1.0}) };
-  w_->write("/cpa", e.time, sceneUpdate(e.time, ents).dump());
+  w_->write("/cpa", e.time, sceneUpdate(e.time, ents, cfg_.entity_lifetime_sec).dump());
 }
 
 void FoxgloveDebugRecorder::recordOwnShip(const OwnShipPose& pose) {
   last_time_ = pose.time;
+  ensureRootFrame(pose.time);
   // ENU position of own-ship relative to the datum.
   // heading_true_deg is clockwise-from-north; ENU yaw (CCW-from-east) = 90 - hdg.
   const Eigen::Vector3d p3 = datum_.toEnu(geo::Geodetic{pose.lat_deg, pose.lon_deg, 0.0});

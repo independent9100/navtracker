@@ -52,7 +52,8 @@ int main(int argc, char** argv) {
   Tracker tracker(ekf, gnn, mgr, /*miss_timeout_seconds=*/30.0);
 
   foxglove::RecorderConfig rc;
-  rc.gate_gamma = 20.0;  // match the associator's chi2 gate so /gates is faithful
+  rc.gate_gamma = 20.0;          // match the associator's chi2 gate so /gates is faithful
+  rc.entity_lifetime_sec = 2.0;  // expire stale 3D entities so the scene shows ~now, not all history
   foxglove::FoxgloveDebugRecorder recorder(out, datum, /*bias=*/nullptr, rc);
   mgr.setTrackSink(&recorder);
   tracker.setInnovationSink(&recorder);

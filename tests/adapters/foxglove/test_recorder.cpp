@@ -109,7 +109,7 @@ TEST(Recorder, LifecycleCpaOwnshipEmit) {
   std::remove(path.c_str());
   EXPECT_GE(c["/log"], 3);     // confirmed + deleted + cpa entered
   EXPECT_EQ(c["/cpa"], 1);
-  EXPECT_EQ(c["/tf"], 1);
+  EXPECT_EQ(c["/tf"], 2);  // static map->enu root frame + the own-ship transform
 }
 
 TEST(Recorder, AssociationsLineFromTouchToTrack) {

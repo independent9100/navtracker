@@ -21,7 +21,12 @@ nlohmann::json arrowEntity(const std::string& id, const Pt& a, const Pt& b,
                            const Rgba& color);
 
 // Wrap a list of entity json objects into a SceneUpdate message at time t.
-nlohmann::json sceneUpdate(Timestamp t, const std::vector<nlohmann::json>& entities);
+// Stamp `t` onto each entity and wrap into a SceneUpdate. When
+// lifetime_sec > 0 each entity is given that lifetime (Foxglove auto-expires
+// it that long after `t`), so the 3D panel shows recent state rather than the
+// whole accumulated history. lifetime_sec == 0 means "persist" (default).
+nlohmann::json sceneUpdate(Timestamp t, const std::vector<nlohmann::json>& entities,
+                           double lifetime_sec = 0.0);
 
 nlohmann::json locationFix(Timestamp t, double lat_deg, double lon_deg,
                            const std::array<double, 9>& cov_row_major);

@@ -65,9 +65,19 @@ json arrowEntity(const std::string& id, const Pt& a, const Pt& b, const Rgba& co
   return e;
 }
 
-json sceneUpdate(Timestamp t, const std::vector<json>& entities) {
+json sceneUpdate(Timestamp t, const std::vector<json>& entities, double lifetime_sec) {
   json ents = json::array();
-  for (auto& e : entities) { json ec = e; ec["timestamp"] = timeJson(t); ents.push_back(ec); }
+  json lifetime;
+  if (lifetime_sec > 0.0) {
+    const long long ns = static_cast<long long>(lifetime_sec * 1e9);
+    lifetime = json{{"sec", ns / 1'000'000'000LL}, {"nsec", ns % 1'000'000'000LL}};
+  }
+  for (auto& e : entities) {
+    json ec = e;
+    ec["timestamp"] = timeJson(t);
+    if (lifetime_sec > 0.0) ec["lifetime"] = lifetime;
+    ents.push_back(ec);
+  }
   return json{{"deletions", json::array()}, {"entities", ents}};
 }
 

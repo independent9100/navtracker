@@ -28,6 +28,8 @@ namespace navtracker::foxglove {
 struct RecorderConfig {
   double ellipse_k = 2.0;       // confidence multiplier for covariance ellipses
   double gate_gamma = 0.0;      // chi-square gate threshold; 0 disables /gates ellipses
+  double entity_lifetime_sec = 0.0;  // SceneUpdate entity lifetime; 0 = persist forever,
+                                     // >0 auto-expires stale entities (clean "now" view)
 };
 
 class FoxgloveDebugRecorder final
@@ -61,6 +63,10 @@ class FoxgloveDebugRecorder final
 
  private:
   void registerChannels();
+  // Publish a one-time identity map->enu transform so the 3D panel has a frame
+  // to anchor the enu-framed entities to (the Map panel needs no transform).
+  void ensureRootFrame(Timestamp t);
+  bool root_frame_done_{false};
   std::unique_ptr<McapWriter> w_;
   geo::Datum datum_;
   const ISensorBiasProvider* bias_;
