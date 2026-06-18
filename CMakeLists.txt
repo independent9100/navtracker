@@ -318,6 +318,10 @@ if(NAVTRACKER_BUILD_FOXGLOVE)
   target_compile_definitions(navtracker_example_foxglove PRIVATE NAVTRACKER_WITH_FOXGLOVE)
   target_link_libraries(navtracker_example_foxglove PRIVATE
     navtracker_core navtracker_foxglove Eigen3::Eigen)
+
+  add_executable(navtracker_foxglove_autoferry tools/foxglove_autoferry.cpp)
+  target_link_libraries(navtracker_foxglove_autoferry PRIVATE
+    navtracker_core navtracker_replay navtracker_foxglove Eigen3::Eigen)
 endif()
 
 add_subdirectory(bench)
