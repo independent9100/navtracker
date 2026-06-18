@@ -42,6 +42,20 @@ In:
   faithful to the actual association decision. This is the one piece
   outside `adapters/foxglove/` that the recorder depends on; covariance
   (`P`) and innovation (`ν, S, R`) data is already emitted.
+- **Sensor-bias visualization** (new since first draft — item 9/13).
+  The `Tracker`/`MhtTracker` now bias-correct each measurement before
+  fusion (`applyBiasCorrection(z, bias_provider_)`,
+  `core/pipeline/Tracker.cpp`). The recorder holds a nullable
+  `const ISensorBiasProvider*` and (a) draws both the **raw** and
+  **bias-corrected** detection so the applied registration offset is
+  visible, and (b) emits a `/diag/bias` channel tracking each
+  per-`SensorBiasKey` position/bearing bias estimate + `is_published`
+  as it converges. Null provider = no bias layer, no overhead.
+- **Per-model detection rendering.** `Measurement.model` may be
+  `Position2D` / `RangeBearing2D` (point + ellipse) **or** `Bearing2D`
+  (a ray with angular σ from `sensor_position_enu`, no position
+  ellipse). `/detections` branches on `model`; bearing-only sensors
+  (EO/IR) render as a wedge, not a point.
 - Unit tests (serializers), an MCAP round-trip test, a determinism
   test, and a smoke test driving an existing replay fixture.
 - `docs/debug-visualization.md` (channel reference + how to open) and
@@ -65,7 +79,9 @@ Out:
 ```
 adapters/foxglove/
   FoxgloveDebugRecorder.{hpp,cpp}   implements ITrackSnapshotSink, ITrackSink,
-                                    IInnovationSink, ICollisionRiskSink;
+                                    IInnovationSink, ICollisionRiskSink,
+                                    IDatumChangeSink (adapters/own_ship);
+                                    holds nullable const ISensorBiasProvider*;
                                     + recordMeasurement(const Measurement&),
                                       recordOwnShip(const OwnShipPose&)
   serialize/                        pure navtracker-type -> Foxglove JSON
@@ -97,22 +113,31 @@ detections as ingested we need the input stream. The composition root
 in `app/` already calls `tracker.process(m)`; it tees:
 
 ```cpp
-recorder.recordMeasurement(m);   // detection layer (per-sensor, with R)
-tracker.process(m);              // unchanged
+recorder.recordMeasurement(m);   // RAW detection (per-sensor, with R)
+tracker.process(m);              // unchanged; bias-corrects internally
 ```
 
 No core change, no new port — the tap is wiring in `app/`, consistent
 with refinement that the sensor stream "lives in main."
 
+The tee captures the **raw** measurement. Because the tracker now
+bias-corrects internally (and `Track` does *not* store the applied
+bias), the recorder reproduces the correction itself by querying its
+`ISensorBiasProvider` with the same `applyBiasCorrection` helper, so
+the `/detections` "corrected" marker is bit-faithful to what fusion
+saw. The provider snapshot is read at record time per measurement.
+
 ### Wiring summary (app composition root)
 
 ```cpp
-FoxgloveDebugRecorder recorder{"/path/run.mcap"};
+FoxgloveDebugRecorder recorder{"/path/run.mcap", &bias_provider};  // provider nullable
 mgr.setTrackSink(&recorder);                 // lifecycle -> /log
 sink_fanout.add(&recorder);                  // ITrackSnapshotSink -> /tracks,/map
 tracker.setInnovationSink(&recorder);        // -> /diag/innovation
 cpa.setCollisionRiskSink(&recorder);         // -> /cpa, /log
+provider.registerDatumSink(&recorder);       // onDatumRecentered -> /tf, /log
 // per measurement: recorder.recordMeasurement(m); recorder.recordOwnShip(pose);
+// (same &bias_provider the tracker uses via setSensorBiasProvider)
 ```
 
 (If a snapshot fan-out does not yet exist where a real sink is already
@@ -124,7 +149,7 @@ single-sink setter intact.)
 
 | Topic | Schema (well-known unless noted) | Source port | Content |
 |---|---|---|---|
-| `/detections` | `foxglove.SceneUpdate` | `recordMeasurement` | per-`Measurement` marker + 2σ covariance ellipse, color by `SensorKind`/`source_id`; text label with model + default-cov flag |
+| `/detections` | `foxglove.SceneUpdate` | `recordMeasurement` (+ bias provider) | per-`Measurement`, rendered by `model`: `Position2D`/`RangeBearing2D` → marker + 2σ ellipse; `Bearing2D` → ray/wedge with angular σ from `sensor_position_enu`. Draws **raw** and **bias-corrected** marker when a provider is present. Color by `SensorKind`/`source_id`; label with model + default-cov flag |
 | `/tracks` | `foxglove.SceneUpdate` | `ITrackSnapshotSink` | track position, 2σ covariance ellipse, velocity arrow, id + status label, color by `TrackStatus` |
 | `/associations` | `foxglove.SceneUpdate` | snapshot + measurement step | line from each detection to the track it updated this step |
 | `/gates` | `foxglove.SceneUpdate` | snapshot + associator | gating ellipse per track. **Always recorded**; the shipped Lichtblick layout ships with this topic's visibility **off**, so enabling it is a single checkbox with no re-run. Requires the associator accessor below. |
@@ -134,6 +159,7 @@ single-sink setter intact.)
 | `/cpa` | `foxglove.SceneUpdate` | `ICollisionRiskSink` | CPA geometry per (own-ship × track) pair |
 | `/diag/innovation` | **custom JSON scalars** | `IInnovationSink` | per-track NIS = νᵀS⁻¹ν, residual norm, keyed by `(sensor, source_id)` |
 | `/diag/track_count`, `/diag/gate_ratio` | **custom JSON scalars** | snapshot | confirmed/tentative counts, accepted/total gate ratio |
+| `/diag/bias` | **custom JSON scalars** | `ISensorBiasProvider` | per-`SensorBiasKey` position bias (ENU m) + bearing bias (rad) + `is_published`, sampled each cycle — Plot panel shows registration bias converging |
 
 Foxglove recognizes well-known schemas **by name** regardless of
 encoding, so JSON-encoded `SceneUpdate` etc. auto-render in Lichtblick
@@ -160,6 +186,16 @@ Plot panels read by field path.
   accessor (see Scope); it is strictly larger than the `P`-based
   covariance ellipse because `S` adds `R` and `γ` inflates by the χ²
   bound.
+- **Bearing-only detection** (`Bearing2D`): no position to plot — a ray
+  from `sensor_position_enu` along `α` with a half-angle wedge of
+  `k·σ_α` (`σ_α²` from the 1×1 `R`). `SourceTouch.alpha_rad` /
+  `alpha_var_rad2` carry the same convention (ENU, `α=atan2(dy,dx)`
+  from east CCW) for the `/associations` line back to the contributing
+  bearing.
+- **Bias correction** (detection layer): corrected = raw shifted by the
+  provider's `PositionBiasEstimate.bias_enu_m` (Position2D/RangeBearing2D)
+  or `BearingBiasEstimate.bias_rad` added to `α` (Bearing2D), exactly as
+  `applyBiasCorrection` does. Only applied/shown when `is_published`.
 - **NIS** per innovation: `ε = νᵀ S⁻¹ ν`, computed by the recorder
   from `InnovationEvent.{residual, S}` (already carried — see
   `ports/IInnovationSink.hpp`). Emitted on `/diag/innovation` for
@@ -167,8 +203,17 @@ Plot panels read by field path.
 
 ### Assumptions
 - `Track` exposes a 2D position state + covariance reachable the same
-  way `toTrackOutput` reaches it; tracks with no velocity emit no
-  velocity arrow (mirror `VelocityGeodeticWithSigma.is_valid`).
+  way `toTrackOutput` reaches it; the velocity arrow is drawn only when
+  `VelocityGeodeticWithSigma.is_valid`, which is now gated by
+  `Track.velocity_observed` (review #13) — a prior-only COG on a
+  freshly-initiated track is not drawn as a heading.
+- `Track` does **not** store the bias applied to its contributing
+  measurements, so the recorder re-derives the correction from the
+  `ISensorBiasProvider` snapshot (see Measurement tee). The provider is
+  read-only; querying it cannot perturb fusion.
+- The datum-recenter event is `IDatumChangeSink::onDatumRecentered`
+  (declared in `adapters/own_ship/OwnShipProvider.hpp`, not `ports/`);
+  the recorder registers via `OwnShipProvider::registerDatumSink`.
 - Datum shifts are infrequent (>30 km auto-recenter). On a shift,
   geometry already emitted stays in the *old* frame's coordinates; we
   emit a new `FrameTransform` and a `/log` note marking the
