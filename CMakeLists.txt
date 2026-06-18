@@ -139,8 +139,8 @@ if(NAVTRACKER_BUILD_FOXGLOVE)
     adapters/foxglove/FoxgloveDebugRecorder.cpp)
   target_include_directories(navtracker_foxglove PUBLIC ${CMAKE_SOURCE_DIR})
   target_link_libraries(navtracker_foxglove
-    PUBLIC navtracker_core Eigen3::Eigen
-    PRIVATE mcap::mcap nlohmann_json::nlohmann_json)
+    PUBLIC navtracker_core Eigen3::Eigen nlohmann_json::nlohmann_json
+    PRIVATE mcap::mcap)
   target_compile_definitions(navtracker_foxglove PRIVATE
     NAVTRACKER_FOXGLOVE_SCHEMA_DIR="${CMAKE_SOURCE_DIR}/adapters/foxglove/schemas")
 endif()
