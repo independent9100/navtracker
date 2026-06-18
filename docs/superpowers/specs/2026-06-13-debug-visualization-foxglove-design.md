@@ -36,12 +36,14 @@ In:
   Plot panels.
 - Composition-root wiring in `app/` that tees each `Measurement` to
   the recorder before `tracker.process(m)`.
-- A small **read-only accessor on the associator** exposing the gate
-  threshold `γ` (per measurement dimension) and the predicted
-  innovation covariance `S` it used, so the `/gates` ellipse is
-  faithful to the actual association decision. This is the one piece
-  outside `adapters/foxglove/` that the recorder depends on; covariance
-  (`P`) and innovation (`ν, S, R`) data is already emitted.
+- **Gate ellipse with no core change.** The recorder caches the latest
+  predicted innovation covariance `S` per track from the existing
+  `IInnovationSink` and draws the gate as `√γ · ellipse(S)` centered on
+  the track, with `γ` (the χ² gate threshold) supplied at construction.
+  No associator accessor is needed. Limitation: gates render only for
+  tracks that had an evaluated hard-match that scan (where an
+  `InnovationEvent` fired); a per-track gate emission covering
+  rejected/missed associations is a documented follow-up.
 - **Sensor-bias visualization** (new since first draft — item 9/13).
   The `Tracker`/`MhtTracker` now bias-correct each measurement before
   fusion (`applyBiasCorrection(z, bias_provider_)`,
@@ -152,7 +154,7 @@ single-sink setter intact.)
 | `/detections` | `foxglove.SceneUpdate` | `recordMeasurement` (+ bias provider) | per-`Measurement`, rendered by `model`: `Position2D`/`RangeBearing2D` → marker + 2σ ellipse; `Bearing2D` → ray/wedge with angular σ from `sensor_position_enu`. Draws **raw** and **bias-corrected** marker when a provider is present. Color by `SensorKind`/`source_id`; label with model + default-cov flag |
 | `/tracks` | `foxglove.SceneUpdate` | `ITrackSnapshotSink` | track position, 2σ covariance ellipse, velocity arrow, id + status label, color by `TrackStatus` |
 | `/associations` | `foxglove.SceneUpdate` | snapshot + measurement step | line from each detection to the track it updated this step |
-| `/gates` | `foxglove.SceneUpdate` | snapshot + associator | gating ellipse per track. **Always recorded**; the shipped Lichtblick layout ships with this topic's visibility **off**, so enabling it is a single checkbox with no re-run. Requires the associator accessor below. |
+| `/gates` | `foxglove.SceneUpdate` | snapshot + cached `IInnovationSink` `S` | gating ellipse per track = `√γ · ellipse(S)`. **Always recorded** when `γ>0`; the shipped Lichtblick layout ships with this topic's visibility **off**, so enabling it is a single checkbox with no re-run. |
 | `/map/tracks`, `/map/detections` | `foxglove.LocationFix` / GeoJSON | snapshot + measurement | lat/lon for the Map panel (via `toGeodeticWithCov` / datum) |
 | `/tf` | `foxglove.FrameTransform` | `recordOwnShip` + datum events | own-ship pose; datum recenter emits an updated transform |
 | `/log` | `foxglove.Log` | `ITrackSink`, CPA, datum | lifecycle transitions, CPA Entered/Exited, datum-recenter notes |
@@ -180,12 +182,12 @@ Plot panels read by field path.
   `k = 2` (≈ 2σ). Rendered as an oriented Foxglove primitive (scaled
   flat cylinder / ellipse line-loop) at the ENU position, z≈0.
 - **Gate ellipse** (the `/gates` layer): the validation region
-  `{ z : (z − ẑ)ᵀ S⁻¹ (z − ẑ) ≤ γ }` centered on the predicted
-  measurement `ẑ`, with semi-axes `√(γ·λᵢ(S))` and orientation from
-  the eigenvectors of `S`. `γ` and `S` come from the associator
-  accessor (see Scope); it is strictly larger than the `P`-based
-  covariance ellipse because `S` adds `R` and `γ` inflates by the χ²
-  bound.
+  `{ z : (z − ẑ)ᵀ S⁻¹ (z − ẑ) ≤ γ }` centered on the track position
+  (≈ `ẑ` for position sensors), with semi-axes `√(γ·λᵢ(S))` and
+  orientation from the eigenvectors of `S`. `S` is the cached latest
+  `InnovationEvent.S` for that track; `γ` is supplied at construction.
+  It is strictly larger than the `P`-based covariance ellipse because
+  `S` adds `R` and `γ` inflates by the χ² bound.
 - **Bearing-only detection** (`Bearing2D`): no position to plot — a ray
   from `sensor_position_enu` along `α` with a half-angle wedge of
   `k·σ_α` (`σ_α²` from the 1×1 `R`). `SourceTouch.alpha_rad` /
@@ -284,12 +286,17 @@ Plot panels read by field path.
 Add to `conanfile.txt`:
 
 ```
-mcap/<version>     # + transitive lz4, zstd for chunk compression
+mcap/<version>             # + transitive lz4, zstd for chunk compression
+nlohmann_json/<version>    # header-only JSON writer for the well-known schemas
 ```
 
-Confined to the `adapters/foxglove/` build target behind a CMake
-option `NAVTRACKER_BUILD_FOXGLOVE` (default ON). New CMake target
-`navtracker_foxglove` links `navtracker_core` + `mcap`. Consumers
+`nlohmann_json` (header-only) emits the JSON payloads — far cleaner
+than hand-rolling JSON strings, and idiomatic with `mcap`'s own JSON
+examples. Still **no protobuf**. Both deps are confined to the
+`adapters/foxglove/` build target behind a CMake option
+`NAVTRACKER_BUILD_FOXGLOVE` (default ON). New CMake target
+`navtracker_foxglove` links `navtracker_core` + `mcap` +
+`nlohmann_json`. Consumers
 linking only `navtracker_core` are unaffected; turning the option OFF
 drops the dep entirely. Verify `mcap` availability in Conan Center
 during the first plan step; if unavailable, vendor the single-header
