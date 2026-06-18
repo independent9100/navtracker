@@ -45,7 +45,7 @@ void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp
   std::vector<json> entities;
   int confirmed = 0, tentative = 0;
   for (const auto& t : tracks) {
-    if (t.state.size() < 2) continue;
+    if (t.state.size() < 2 || t.covariance.rows() < 2 || t.covariance.cols() < 2) continue;
     const Eigen::Vector2d p = xy(t.state);
     const Rgba col = (t.status == TrackStatus::Confirmed) ? Rgba{0.1,0.9,0.1,1.0}
                                                           : Rgba{0.9,0.9,0.1,1.0};
