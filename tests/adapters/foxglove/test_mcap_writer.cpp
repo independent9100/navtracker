@@ -4,12 +4,13 @@
 #include <mcap/reader.hpp>
 #include "adapters/foxglove/McapWriter.hpp"
 #include "adapters/foxglove/Schemas.hpp"
+#include "tests/adapters/foxglove/TmpPath.hpp"
 
 using namespace navtracker;
 using namespace navtracker::foxglove;
 
 TEST(McapWriter, RoundTripsOneMessage) {
-  const std::string path = std::string(std::tmpnam(nullptr)) + ".mcap";
+  const std::string path = test::tmpMcapPath("mcap_writer");
   {
     McapWriter w(path);
     w.ensureChannel("/diag/test", kDiagSchema, "");
