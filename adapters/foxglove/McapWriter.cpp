@@ -1,6 +1,10 @@
 #include "adapters/foxglove/McapWriter.hpp"
 #define MCAP_IMPLEMENTATION
 #include <mcap/writer.hpp>
+// Load-bearing: this is the single TU that defines MCAP_IMPLEMENTATION, so it
+// must also emit the header-only McapReader symbols that tests link against.
+// (Tests include <mcap/reader.hpp> WITHOUT the macro -> declarations only.)
+#include <mcap/reader.hpp>
 #include <stdexcept>
 
 namespace navtracker::foxglove {
