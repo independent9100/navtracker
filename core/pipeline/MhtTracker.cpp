@@ -14,6 +14,8 @@
 #include "core/association/Hungarian.hpp"
 #include "core/association/Murty.hpp"
 #include "core/estimation/MeasurementModels.hpp"
+#include "core/geo/Datum.hpp"
+#include "core/tracking/DatumShift.hpp"
 #include "core/tracking/SensorDetectionModels.hpp"
 
 namespace navtracker {
@@ -340,6 +342,13 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
           cfg_.use_visibility ? cfg_.visibility_init : 1.0;
     }
     trees_.emplace_back(id, std::move(root));
+    // Seed fused identity from the birth measurement. The root node
+    // carries no attributes, so identity must live alongside the tree
+    // (see tree_attributes_/tree_sources_); later committed hits refine
+    // it in the contribution loop below.
+    if (scan[j].hints.mmsi.has_value())
+      tree_attributes_[id].mmsi = scan[j].hints.mmsi;
+    tree_sources_[id].push_back(scan[j].source_id);
   }
 
   // NB: the detection-model observe() feed happens at the END of this
@@ -582,6 +591,17 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
         continue;
       }
       const Measurement& z = scan[n.scan_meas_idx];
+      // Refine fused identity from the committed hit (parity with the
+      // single-hypothesis Tracker, which sets mmsi on initiate and
+      // appends distinct source_ids on each hit).
+      const TrackId ext_id = trees_[ti].externalId();
+      if (z.hints.mmsi.has_value())
+        tree_attributes_[ext_id].mmsi = z.hints.mmsi;
+      {
+        auto& srcs = tree_sources_[ext_id];
+        if (std::find(srcs.begin(), srcs.end(), z.source_id) == srcs.end())
+          srcs.push_back(z.source_id);
+      }
       Track::SourceTouch touch;
       touch.sensor = z.sensor;
       touch.source_id = z.source_id;
@@ -668,6 +688,12 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
     if (hit != contribution_history_.end()) {
       view.recent_contributions = hit->second;
     }
+    // Fused identity + provenance (TrackTreeNode carries neither).
+    auto attr_it = tree_attributes_.find(trees_[ti].externalId());
+    if (attr_it != tree_attributes_.end()) view.attributes = attr_it->second;
+    auto src_it = tree_sources_.find(trees_[ti].externalId());
+    if (src_it != tree_sources_.end())
+      view.contributing_sources = src_it->second;
     tracks_.push_back(std::move(view));
   }
   // Drop history for trees that no longer exist (kept above with the
@@ -678,6 +704,14 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
     for (auto it = contribution_history_.begin();
          it != contribution_history_.end();) {
       if (alive.count(it->first) == 0) it = contribution_history_.erase(it);
+      else ++it;
+    }
+    for (auto it = tree_attributes_.begin(); it != tree_attributes_.end();) {
+      if (alive.count(it->first) == 0) it = tree_attributes_.erase(it);
+      else ++it;
+    }
+    for (auto it = tree_sources_.begin(); it != tree_sources_.end();) {
+      if (alive.count(it->first) == 0) it = tree_sources_.erase(it);
       else ++it;
     }
   }
@@ -762,6 +796,26 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
     for (auto& kv : by_sensor) bundle.push_back(std::move(kv.second));
     detection_model_->observe(bundle);
   }
+}
+
+void MhtTracker::onDatumRecentered(const geo::Datum& old_datum,
+                                   const geo::Datum& new_datum) {
+  for (TrackTree& tt : trees_) {
+    for (TrackTreeNode& n : tt.mutableNodes()) {
+      shiftStateOnDatumChange(n.state, n.covariance, n.imm_means,
+                              n.imm_covariances, old_datum, new_datum);
+    }
+  }
+  // The published Track views are rebuilt from tree nodes on the next
+  // processBatch; the live snapshot would otherwise be stale.
+  for (Track& tr : tracks_) {
+    shiftStateOnDatumChange(tr.state, tr.covariance, tr.imm_means,
+                            tr.imm_covariances, old_datum, new_datum);
+  }
+  // Transient bias-extraction history holds ENU positions in the old
+  // frame; it ages out within kContributionWindowSec, so drop it rather
+  // than shift (a recenter is rare and the bias path tolerates a gap).
+  contribution_history_.clear();
 }
 
 }  // namespace navtracker

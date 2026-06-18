@@ -1,5 +1,6 @@
 #include "core/pipeline/Tracker.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -92,6 +93,24 @@ void emitInnovation(IInnovationSink* sink, const Track& tr_pred,
   sink->onInnovation(e);
 }
 
+// Per-track contribution history must stay bounded: downstream bias
+// extractors only ever look back a fixed window, but nothing else trims
+// the vector, so without this it grows for the life of the mission
+// (and the O(n) extractor re-scans get costlier each cycle). Mirror the
+// MhtTracker's windowed prune (kContributionWindowSec). Drop touches
+// older than the window relative to the latest contribution.
+constexpr double kContributionWindowSec = 2.0;
+
+void pruneContributions(std::vector<Track::SourceTouch>& history, Timestamp now) {
+  const std::int64_t window_ns =
+      static_cast<std::int64_t>(kContributionWindowSec * 1e9);
+  auto first_keep = std::find_if(
+      history.begin(), history.end(), [&](const Track::SourceTouch& st) {
+        return (now.nanos() - st.time.nanos()) <= window_ns;
+      });
+  history.erase(history.begin(), first_keep);
+}
+
 }  // namespace
 
 Tracker::Tracker(const IEstimator& estimator,
@@ -138,6 +157,7 @@ void Tracker::process(const Measurement& z_in) {
       touch.own_position_std_m = z.sensor_position_std_m;
       touch.covariance_is_default = z.covariance_is_default;
       tr.recent_contributions.push_back(std::move(touch));
+      pruneContributions(tr.recent_contributions, z.time);
     }
     bool has_src = false;
     for (const auto& s : tr.contributing_sources) {
@@ -237,6 +257,7 @@ void Tracker::processBatch(const std::vector<Measurement>& scan_in) {
         touch.covariance_is_default = gz.covariance_is_default;
         tr.recent_contributions.push_back(std::move(touch));
       }
+      pruneContributions(tr.recent_contributions, t);
       const TrackId id = tr.id;
       manager_.recordHit(id);
       manager_.noteObservation(id, t);
@@ -260,6 +281,7 @@ void Tracker::processBatch(const std::vector<Measurement>& scan_in) {
         touch.sensor_position_enu = z.sensor_position_enu;
         touch.own_position_std_m = z.sensor_position_std_m;
         tr.recent_contributions.push_back(std::move(touch));
+        pruneContributions(tr.recent_contributions, z.time);
       }
       bool has_src = false;
       for (const auto& s : tr.contributing_sources) {

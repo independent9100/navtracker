@@ -17,6 +17,10 @@
 
 namespace navtracker {
 
+namespace geo {
+class Datum;
+}
+
 // Track-oriented MHT (TOMHT). Per scan:
 //   1. Branch each tree's leaves on every gated measurement + missed-detection.
 //   2. Prune K_local-worst leaves per tree.
@@ -262,6 +266,18 @@ class MhtTracker {
     bias_provider_ = provider;
   }
 
+  // Re-express all internal hypothesis state from `old_datum`'s ENU frame
+  // into `new_datum`'s. MhtTracker keeps authoritative kinematics in its
+  // own per-tree nodes (not a TrackManager), so the TrackManager-based
+  // shiftTracksOnDatumChange cannot reach it; wire an IDatumChangeSink
+  // that calls this instead when running the MHT pipeline with
+  // OwnShipProvider auto-recenter. Each node's (state, covariance, IMM
+  // means/covariances) is shifted via shiftStateOnDatumChange; the
+  // transient per-tree contribution history (≤2 s window, bias-extraction
+  // only) is cleared rather than shifted. No-op when no consumer wires it.
+  void onDatumRecentered(const geo::Datum& old_datum,
+                         const geo::Datum& new_datum);
+
   const std::vector<Track>& tracks() const { return tracks_; }
   std::size_t treeCount() const { return trees_.size(); }
 
@@ -326,6 +342,15 @@ class MhtTracker {
   std::map<TrackId, std::vector<Track::SourceTouch>>
       contribution_history_;
   static constexpr double kContributionWindowSec = 2.0;
+  // Per-tree fused identity, accumulated over the tree's lifetime and
+  // copied into the emitted Track view each scan (the canonical pipeline
+  // otherwise drops MMSI/provenance, since TrackTreeNode carries no
+  // attributes). `tree_attributes_` takes the latest mmsi hint seen on a
+  // committed (born or chosen-hit) measurement; `tree_sources_` is the
+  // ordered set of distinct contributing source_ids. Both are pruned when
+  // a tree dies, alongside contribution_history_.
+  std::map<TrackId, TrackAttributes> tree_attributes_;
+  std::map<TrackId, std::vector<std::string>> tree_sources_;
 };
 
 }  // namespace navtracker
