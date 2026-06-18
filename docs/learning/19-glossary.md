@@ -77,6 +77,7 @@
 | NEES     | Normalised Estimation Error Squared                             | 16            |
 | NIS      | Normalised Innovation Squared                                   | 16            |
 | NMEA     | National Marine Electronics Association (sensor message format) | 10, 17        |
+| MCAP     | Message-Container / Archive Protocol — time-indexed binary file format for robot/sensor data | debug-viz |
 | OOSM     | Out-Of-Sequence Measurement                                     | 10            |
 | OSPA     | Optimal SubPattern Assignment (bounded multi-target metric)     | 20            |
 | GOSPA    | Generalised OSPA — decomposable, unbounded multi-target metric  | 20            |
@@ -100,6 +101,17 @@
 | VS-IMM   | Variable Structure IMM                                          | 09            |
 | WGS84    | World Geodetic System 1984                                      | 10            |
 | χ²       | Chi-squared distribution                                        | 11, 16        |
+
+## Tools
+
+- **MCAP / Foxglove** — `.mcap` is a compressed, time-indexed
+  binary container for multi-channel sensor data. Foxglove Studio
+  and its open-source fork **Lichtblick** can open `.mcap` files
+  and display SceneUpdate geometry, maps, plot panels, and log
+  panels on a scrubbable timeline. navtracker's
+  `FoxgloveDebugRecorder` writes a `.mcap` containing the full
+  fusion pipeline (tracks, detections, gates, innovations, CPA)
+  for offline debugging. See `docs/debug-visualization.md`.
 
 ## Common phrases
 

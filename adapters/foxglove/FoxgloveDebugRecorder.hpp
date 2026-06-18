@@ -1,3 +1,13 @@
+// FoxgloveDebugRecorder — offline MCAP debug recorder for the navtracker
+// fusion pipeline.  Implements ITrackSnapshotSink / ITrackSink /
+// IInnovationSink / ICollisionRiskSink / IDatumChangeSink and two
+// input-side taps (recordMeasurement, recordOwnShip).  Open the output
+// .mcap in Lichtblick or Foxglove Studio for a scrubbable spatial view
+// of tracks, detections, gates, associations, NIS, bias, and CPA.
+//
+// Usage and channel table: docs/debug-visualization.md
+// How to read covariance vs gate ellipses, association lines, and NIS
+// plots: docs/learning/11-gating-gnn-hungarian.md §9
 #pragma once
 #include <memory>
 #include <string>

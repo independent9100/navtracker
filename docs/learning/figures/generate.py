@@ -992,6 +992,163 @@ def fig_sensor_bias_convergence():
     save(fig, "21-sensor-bias-convergence.png")
 
 
+def fig_seeing_the_tracker():
+    """Plan view (left) and NIS time series (right) that together explain
+    how to read a navtracker Foxglove session.
+
+    Left panel:
+      - A track position (navy filled circle) with a small P covariance
+        ellipse (navy, 2σ).
+      - A larger gate ellipse derived from S = H P H' + R (light blue).
+      - One in-gate detection (green) connected to the track by an
+        association line.
+      - One out-of-gate detection (red).
+      - A bearing wedge (green dashed lines) from a sensor in the
+        lower-left corner.
+
+    Right panel:
+      - Per-update NIS scatter + running mean + 95 % chi-squared band,
+        mirroring the explanation in chapter 16.
+    """
+    import numpy as np
+    from matplotlib.patches import Ellipse
+    from matplotlib.lines import Line2D
+
+    rng = np.random.default_rng(77)
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # ── left: plan view ────────────────────────────────────────────────
+    ax = axes[0]
+
+    track_pos = np.array([0.0, 0.0])
+
+    # P covariance (small, tilted)
+    P2 = np.array([[1.8, 0.6], [0.6, 0.9]])
+    # S = P + R adds isotropic measurement noise
+    R2 = np.array([[4.5, 0.0], [0.0, 4.5]])
+    S2 = P2 + R2
+    gamma = 9.21  # chi2 2-DOF 99%
+
+    def eigellipse(ax, cov, mu, scale, edgecolor, linestyle, linewidth, label=None):
+        vals, vecs = np.linalg.eigh(cov)
+        order = np.argsort(vals)[::-1]
+        vals, vecs = vals[order], vecs[:, order]
+        angle = np.degrees(np.arctan2(vecs[1, 0], vecs[0, 0]))
+        w = 2 * scale * np.sqrt(vals[0])
+        h = 2 * scale * np.sqrt(vals[1])
+        e = Ellipse(mu, w, h, angle=angle,
+                    edgecolor=edgecolor, facecolor="none",
+                    linestyle=linestyle, linewidth=linewidth, label=label)
+        ax.add_patch(e)
+
+    # Gate ellipse (larger, light blue)
+    eigellipse(ax, S2, track_pos, scale=np.sqrt(gamma),
+               edgecolor="#85bbdb", linestyle="-", linewidth=2.2,
+               label=r"Gate ellipse $\sqrt{\gamma}\,\mathrm{ellipse}(S)$")
+
+    # P covariance ellipse (small, dark navy)
+    eigellipse(ax, P2, track_pos, scale=2.0,
+               edgecolor="#1f3a5f", linestyle="-", linewidth=2.2,
+               label=r"$P$ ellipse (2$\sigma$ position covariance)")
+
+    # Track position marker
+    ax.plot(*track_pos, marker="o", markersize=12, color="#1f3a5f", zorder=5)
+    ax.text(track_pos[0] + 0.3, track_pos[1] + 0.3, "track", color="#1f3a5f", fontsize=11)
+
+    # In-gate detection (green)
+    z_in = np.array([1.5, -0.8])
+    ax.plot(*z_in, marker="o", markersize=12, color="#2d8659", zorder=5)
+    ax.text(z_in[0] + 0.2, z_in[1] - 0.5, "in-gate\ndetection", color="#2d8659",
+            fontsize=10, ha="left")
+    # Association line from in-gate detection to track
+    ax.annotate("", xy=track_pos, xytext=z_in,
+                arrowprops=dict(arrowstyle="-", color="#2d8659", linewidth=1.8,
+                                linestyle="solid"))
+
+    # Out-of-gate detection (red)
+    z_out = np.array([-5.5, 3.2])
+    ax.plot(*z_out, marker="o", markersize=12, color="#aa3333", zorder=5)
+    ax.text(z_out[0] - 0.2, z_out[1] + 0.4, "out-of-gate\ndetection",
+            color="#aa3333", fontsize=10, ha="right")
+
+    # Bearing wedge from sensor (lower-left)
+    sensor = np.array([-7.0, -6.0])
+    ax.plot(*sensor, marker="^", markersize=14, color="#2d8659", zorder=5)
+    ax.text(sensor[0] + 0.2, sensor[1] - 0.8, "sensor", color="#2d8659", fontsize=10)
+
+    alpha = np.arctan2(track_pos[1] - sensor[1], track_pos[0] - sensor[0])
+    sigma_b = np.radians(6.0)
+    k = 2.0
+    length = 13.0
+    for sign in [+1, -1]:
+        a_edge = alpha + sign * k * sigma_b
+        tip = sensor + length * np.array([np.cos(a_edge), np.sin(a_edge)])
+        ax.plot([sensor[0], tip[0]], [sensor[1], tip[1]],
+                color="#2d8659", linestyle="--", linewidth=1.6)
+    # Fill wedge lightly
+    theta_fill = np.linspace(alpha - k * sigma_b, alpha + k * sigma_b, 30)
+    xs = [sensor[0]] + list(sensor[0] + length * np.cos(theta_fill)) + [sensor[0]]
+    ys = [sensor[1]] + list(sensor[1] + length * np.sin(theta_fill)) + [sensor[1]]
+    ax.fill(xs, ys, color="#2d8659", alpha=0.10)
+
+    handles = [
+        Line2D([0], [0], color="#1f3a5f", linewidth=2, label=r"$P$ ellipse (2$\sigma$)"),
+        Line2D([0], [0], color="#85bbdb", linewidth=2,
+               label=r"gate ellipse $\sqrt{\gamma}\cdot\mathrm{ellipse}(S)$"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="#2d8659",
+               markersize=10, label="in-gate detection (association line shown)"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="#aa3333",
+               markersize=10, label="out-of-gate detection (dropped)"),
+        Line2D([0], [0], color="#2d8659", linestyle="--", linewidth=1.5,
+               label="bearing wedge (2σ half-angle)"),
+    ]
+    ax.legend(handles=handles, loc="upper right", fontsize=9, framealpha=0.95)
+
+    ax.set_xlim(-10, 8)
+    ax.set_ylim(-9, 7)
+    ax.set_aspect("equal")
+    ax.set_xlabel("east (m)")
+    ax.set_ylabel("north (m)")
+    ax.set_title("Plan view: covariance ellipse, gate, association line, bearing wedge")
+    ax.grid(True, linestyle=":", alpha=0.4)
+
+    # ── right: NIS time series ─────────────────────────────────────────
+    ax2 = axes[1]
+    N = 300
+    k_dim = 2  # measurement dimension
+    samples = rng.chisquare(k_dim, N)
+    # Insert two moderate spikes
+    samples[80] = 8.5
+    samples[210] = 9.8
+    cumulative_mean = np.cumsum(samples) / np.arange(1, N + 1)
+
+    t = np.arange(N)
+    ax2.scatter(t, samples, s=8, color="#1f3a5f", alpha=0.35,
+                label=r"per-update $\epsilon_{NIS}$")
+    ax2.plot(t, cumulative_mean, color="#aa3333", linewidth=2.0,
+             label="running mean")
+
+    n_arr = np.arange(1, N + 1)
+    var_nis = 2 * k_dim
+    upper = k_dim + 1.96 * np.sqrt(var_nis / n_arr)
+    lower = k_dim - 1.96 * np.sqrt(var_nis / n_arr)
+    ax2.fill_between(t, lower, upper, color="#9cc3e8", alpha=0.45,
+                     label="95 % band for running mean")
+    ax2.axhline(k_dim, color="#1f3a5f", linestyle="--", linewidth=1.4,
+                label=f"expected $m = {k_dim}$")
+
+    ax2.set_xlabel("update number")
+    ax2.set_ylabel(r"$\epsilon_{NIS}$")
+    ax2.set_title("NIS time series — running mean stays near m = 2 (consistent filter)")
+    ax2.set_ylim(0, 12)
+    ax2.legend(loc="upper right", fontsize=9)
+    ax2.grid(True, linestyle=":", alpha=0.4)
+
+    fig.suptitle("Seeing the tracker: reading Foxglove output", y=1.01, fontsize=14)
+    save(fig, "seeing-the-tracker.png")
+
+
 def fig_ospa_vs_gospa():
     """OSPA vs GOSPA growth with number of missed targets."""
     c = 20.0
@@ -1047,6 +1204,7 @@ def main():
     fig_cpa_hysteresis()
     fig_ospa_vs_gospa()
     fig_sensor_bias_convergence()
+    fig_seeing_the_tracker()
     print("done.")
 
 

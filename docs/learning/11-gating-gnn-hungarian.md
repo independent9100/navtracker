@@ -244,6 +244,92 @@ The library lets you pick the associator at composition time.
 - **Feature-aided gating** — fold in target size / class into the
   cost. Future work.
 
+## 9. Seeing the tracker in Foxglove
+
+The `FoxgloveDebugRecorder` adapter (`adapters/foxglove/`) writes the
+live pipeline to a `.mcap` file you can open in Lichtblick. What you
+see on the 3D panel links directly to the math in this chapter and in
+chapter 16 (NEES / NIS). Here is how to read the picture.
+
+### Covariance ellipse vs gate ellipse
+
+Every confirmed track shows two ellipses:
+
+- **Small `P` ellipse** — comes from the filter's posterior covariance
+  `P`. It says: "the filter thinks the target is somewhere inside
+  here." The semi-axes are `k·√λᵢ(P₂)` where `P₂` is the top-left
+  2×2 of `P` and `k = 2` by default (2-sigma).
+
+- **Larger `S` gate ellipse** — comes from the innovation covariance
+  `S = H P Hᵀ + R`. It says: "a new measurement must fall inside here
+  to be a candidate for this track." The semi-axes are `√(γ·λᵢ(S))`
+  where `γ` is the chi-squared gate threshold (e.g. 9.21 for 2-DOF
+  99 %).
+
+The gate is always larger than the `P` ellipse because `S` adds the
+measurement noise `R` on top of `P`. When `R` is big (noisy sensor),
+the gate grows. When `R` is small (accurate sensor), the gate stays
+close to the `P` ellipse.
+
+A measurement whose marker falls **inside the gate ellipse** is
+in-gate. A measurement whose marker falls outside is dropped — you
+will see it on `/detections` but not connected by an association line.
+
+### Association lines
+
+After each scan, the `/associations` channel carries a line from each
+contributing detection to the track it updated. An association line
+says: "this measurement was the one that moved the track this step."
+When many measurements arrive and only one line per track appears, you
+know the associator chose a single winner (GNN / Hungarian). When you
+see no association line on a track, the track coasted — it predicted
+forward without a measurement.
+
+### Bearing wedge
+
+EO/IR and other bearing-only sensors draw a **wedge** instead of an
+ellipse. The apex is at `sensor_position_enu`. The two edges are at
+angles `α ± k·σ_α` where `α` is the reported bearing and `σ_α²` is
+the bearing variance from `R`. The wedge visualizes the angular
+uncertainty: wide = noisy bearing, narrow = good bearing. When the
+bias provider is active, a second semi-transparent wedge shows the
+bias-corrected bearing side-by-side with the raw one.
+
+An association line from a bearing touch anchors at the **sensor
+position** (not a point target position), and runs to the track.
+
+### What NIS plots reveal
+
+The `/diag/innovation` channel emits `ε_NIS = νᵀ S⁻¹ ν` per update.
+Plot it over time with a horizontal reference line at `m` (measurement
+dimension):
+
+- **Mean near `m`** — filter is consistent. `R` and `Q` are honest.
+- **Mean well above `m`** — filter is overconfident. The covariance
+  ellipse is too small for the actual scatter. Causes: `R` too small,
+  `Q` too small, or a motion-model mismatch. The gate also becomes
+  too tight and real measurements get rejected (see chapter 16 §7).
+- **Mean well below `m`** — filter is underconfident. The ellipse is
+  too wide. Cause: `R` too big or `Q` too big.
+
+A healthy NIS series has noisy individual values (that is normal — see
+the time-series figure in chapter 16) but a running mean that stays
+near `m` throughout the run.
+
+![Seeing the tracker: covariance vs gate ellipse, association line, bearing wedge, NIS plot](figures/seeing-the-tracker.png)
+
+The figure shows (left) a plan view: a track's small `P` ellipse
+(dark), the larger `S` gate ellipse (blue), two detections (one
+in-gate in green with an association line, one out-of-gate in red),
+and a bearing wedge from a sensor. (Right) A synthetic NIS time series
+with a chi-squared band — the running mean stays near `m = 2`,
+indicating a well-tuned filter.
+
+### Reference
+
+Full channel table, wiring instructions, and panel layout:
+`docs/debug-visualization.md`.
+
 ---
 
 Previous: [10 — Measurements, frames, time](10-measurements-frames-time.md)
