@@ -144,7 +144,7 @@ void FoxgloveDebugRecorder::onTrackConfirmed(const TrackLifecycleEvent&) {}
 void FoxgloveDebugRecorder::onTrackUpdated(const TrackLifecycleEvent&) {}
 void FoxgloveDebugRecorder::onTrackDeleted(const TrackLifecycleEvent&) {}
 void FoxgloveDebugRecorder::onInnovation(const InnovationEvent& e) {
-  const double nis = e.residual.transpose() * e.S.ldlt().solve(e.residual);
+  const double nis = (e.residual.transpose() * e.S.ldlt().solve(e.residual)).value();
   last_S_[e.track_id.value] = e.S;
   w_->write("/diag/innovation", e.time,
             json{{"time_ns", e.time.nanos()}, {"track_id", e.track_id.value},
