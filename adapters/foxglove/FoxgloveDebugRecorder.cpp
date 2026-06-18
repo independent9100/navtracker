@@ -65,9 +65,10 @@ void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp
     (t.status == TrackStatus::Confirmed ? confirmed : tentative)++;
     // Map: lat/lon via the canonical helper.
     const auto geo = toGeodeticWithCov(p, pos2(t.covariance), datum_);
+    // NED (0=north,1=east) -> row-major ENU LocationFix (0=EE,1=EN,3=NE,4=NN).
     std::array<double,9> cov{};
-    cov[0] = geo.position_covariance_m2(0,0); cov[1] = geo.position_covariance_m2(0,1);
-    cov[3] = geo.position_covariance_m2(1,0); cov[4] = geo.position_covariance_m2(1,1);
+    cov[0] = geo.position_covariance_m2(1,1); cov[1] = geo.position_covariance_m2(1,0);
+    cov[3] = geo.position_covariance_m2(0,1); cov[4] = geo.position_covariance_m2(0,0);
     w_->write("/map/tracks", now, locationFix(now, geo.lat_deg, geo.lon_deg, cov).dump());
   }
   if (cfg_.gate_gamma > 0.0) {
@@ -121,8 +122,9 @@ void FoxgloveDebugRecorder::recordMeasurement(const Measurement& m) {
       const auto bb = bias_->bearingBias({m.sensor, m.source_id});
       if (bb.is_published) {
         Rgba c2 = col; c2.a = 0.4;
+        // Corrected = raw - bias, matching applyBiasCorrection (BiasCorrection.hpp).
         entities.push_back(lineEntity(base + "-ray-corr",
-            bearingWedge(m.sensor_position_enu, alpha + bb.bias_rad, sigma, 2000.0, cfg_.ellipse_k), c2));
+            bearingWedge(m.sensor_position_enu, alpha - bb.bias_rad, sigma, 2000.0, cfg_.ellipse_k), c2));
         w_->write("/diag/bias", m.time,
                   json{{"time_ns", m.time.nanos()}, {"sensor", static_cast<int>(m.sensor)},
                        {"source_id", m.source_id}, {"bearing_bias_rad", bb.bias_rad},
@@ -133,10 +135,13 @@ void FoxgloveDebugRecorder::recordMeasurement(const Measurement& m) {
     const Eigen::Vector2d p = m.value.head<2>();
     entities.push_back(lineEntity(base + "-cov",
         covarianceEllipse(p, m.covariance.topLeftCorner<2,2>(), cfg_.ellipse_k), col));
-    if (bias_) {
+    // Only Position2D carries a position bias in the pipeline; PositionVelocity2D
+    // gets no correction and RangeBearing2D is corrected on its bearing component
+    // (see BiasCorrection.hpp), so we draw the position-bias overlay for Position2D only.
+    if (bias_ && m.model == MeasurementModel::Position2D) {
       const auto pb = bias_->positionBias({m.sensor, m.source_id});
       if (pb.is_published) {
-        const Eigen::Vector2d pc = p + pb.bias_enu_m;
+        const Eigen::Vector2d pc = p - pb.bias_enu_m;  // corrected = raw - bias
         Rgba c2 = col; c2.a = 0.4;
         entities.push_back(lineEntity(base + "-cov-corr",
             covarianceEllipse(pc, m.covariance.topLeftCorner<2,2>(), cfg_.ellipse_k), c2));
@@ -148,8 +153,10 @@ void FoxgloveDebugRecorder::recordMeasurement(const Measurement& m) {
       }
     }
     const auto geo = toGeodeticWithCov(p, m.covariance.topLeftCorner<2,2>(), datum_);
+    // position_covariance_m2 is local NED (0=north,1=east); LocationFix expects
+    // row-major ENU (0=EE, 4=NN), so map east<-NED(1,1), north<-NED(0,0).
     std::array<double,9> cov{};
-    cov[0]=geo.position_covariance_m2(0,0); cov[4]=geo.position_covariance_m2(1,1);
+    cov[0]=geo.position_covariance_m2(1,1); cov[4]=geo.position_covariance_m2(0,0);
     w_->write("/map/detections", m.time, locationFix(m.time, geo.lat_deg, geo.lon_deg, cov).dump());
   }
   w_->write("/detections", m.time, sceneUpdate(m.time, entities).dump());

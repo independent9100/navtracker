@@ -194,10 +194,13 @@ Plot panels read by field path.
   `alpha_var_rad2` carry the same convention (ENU, `α=atan2(dy,dx)`
   from east CCW) for the `/associations` line back to the contributing
   bearing.
-- **Bias correction** (detection layer): corrected = raw shifted by the
-  provider's `PositionBiasEstimate.bias_enu_m` (Position2D/RangeBearing2D)
-  or `BearingBiasEstimate.bias_rad` added to `α` (Bearing2D), exactly as
-  `applyBiasCorrection` does. Only applied/shown when `is_published`.
+- **Bias correction** (detection layer): corrected = raw **−** bias,
+  matching `applyBiasCorrection` (`core/pipeline/BiasCorrection.hpp`).
+  Position2D subtracts `PositionBiasEstimate.bias_enu_m`; Bearing2D (and
+  the bearing component of RangeBearing2D) subtracts
+  `BearingBiasEstimate.bias_rad`; PositionVelocity2D gets no correction.
+  The overlay draws the Position2D and Bearing2D cases (the RangeBearing2D
+  bearing-shift overlay is a follow-up). Only shown when `is_published`.
 - **NIS** per innovation: `ε = νᵀ S⁻¹ ν`, computed by the recorder
   from `InnovationEvent.{residual, S}` (already carried — see
   `ports/IInnovationSink.hpp`). Emitted on `/diag/innovation` for
