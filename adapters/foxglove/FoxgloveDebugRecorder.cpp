@@ -39,7 +39,7 @@ void FoxgloveDebugRecorder::registerChannels() {
     w_->ensureChannel(t, kLocationFixSchema, loc);
   w_->ensureChannel("/tf", kFrameTransformSchema, tf);
   w_->ensureChannel("/log", kLogSchema, log);
-  for (const char* t : {"/diag/innovation","/diag/track_count","/diag/gate_ratio","/diag/bias"})
+  for (const char* t : {"/diag/innovation","/diag/track_count","/diag/bias"})
     w_->ensureChannel(t, kDiagSchema, "");
 }
 

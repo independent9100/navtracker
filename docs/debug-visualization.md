@@ -88,9 +88,8 @@ Call `recorder.close()` (or let the destructor run) when the session ends.
 | `/tf` | `foxglove.FrameTransform` | `recordOwnShip`, datum events | Own-ship pose as a transform from `enu` to `own_ship`. Datum recenters emit an updated transform and a `/log` note. |
 | `/log` | `foxglove.Log` | `ITrackSink`, CPA, datum | Track lifecycle transitions (Initiated / Confirmed / Deleted), CPA Entered/Exited with distance and TCPA, datum-recenter notes. |
 | `/cpa` | `foxglove.SceneUpdate` | `ICollisionRiskSink` | CPA marker per (own-ship × track) pair with distance and TCPA label. |
-| `/diag/innovation` | custom JSON scalars | `IInnovationSink` | Per-update NIS `ε = νᵀ S⁻¹ ν`, residual norm, `(track_id, sensor, source_id)`. Feed a Plot panel; add a horizontal reference line at `m` (measurement dimension) to see the chi-squared expectation. |
+| `/diag/innovation` | custom JSON scalars | `IInnovationSink` | Per-update NIS `nis = νᵀ S⁻¹ ν` and measurement dimension `dim`, keyed by `(track_id, sensor, source_id)`. Feed a Plot panel; add a horizontal reference line at `dim` to see the chi-squared expectation. |
 | `/diag/track_count` | custom JSON scalars | `ITrackSnapshotSink` | Confirmed + tentative + total count. Plot over time to see lifecycle health. |
-| `/diag/gate_ratio` | custom JSON scalars | `ITrackSnapshotSink` | Accepted / total gate ratio per scan. |
 | `/diag/bias` | custom JSON scalars | `ISensorBiasProvider` | Per-`SensorBiasKey` position bias (ENU m) and bearing bias (rad) plus `is_published`. Plot to watch registration bias converge after startup. |
 
 Foxglove recognizes well-known schemas **by name** regardless of
