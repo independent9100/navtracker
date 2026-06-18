@@ -1,7 +1,6 @@
 #include "adapters/foxglove/McapWriter.hpp"
 #define MCAP_IMPLEMENTATION
 #include <mcap/writer.hpp>
-#include <mcap/reader.hpp>
 #include <stdexcept>
 
 namespace navtracker::foxglove {
