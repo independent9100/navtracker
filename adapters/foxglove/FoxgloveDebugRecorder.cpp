@@ -83,6 +83,23 @@ void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp
     }
     w_->write("/gates", now, sceneUpdate(now, gate_entities).dump());
   }
+  std::vector<json> assoc;
+  for (const auto& t : tracks) {
+    if (t.state.size() < 2) continue;
+    const Eigen::Vector2d tp = xy(t.state);
+    int k = 0;
+    for (const auto& st : t.recent_contributions) {
+      Eigen::Vector2d from = st.value_enu;
+      if (std::isnan(st.alpha_rad) == false) {        // bearing-only touch: anchor at sensor
+        from = st.sensor_position_enu;
+      }
+      assoc.push_back(lineEntity(
+          "assoc-" + std::to_string(t.id.value) + "-" + std::to_string(k++),
+          {{from.x(),from.y(),0},{tp.x(),tp.y(),0}},
+          colorForSensor(st.sensor, st.source_id)));
+    }
+  }
+  w_->write("/associations", now, sceneUpdate(now, assoc).dump());
   w_->write("/tracks", now, sceneUpdate(now, entities).dump());
   json diag{{"time_ns", now.nanos()}, {"confirmed", confirmed}, {"tentative", tentative},
             {"total", confirmed + tentative}};

@@ -111,3 +111,20 @@ TEST(Recorder, LifecycleCpaOwnshipEmit) {
   EXPECT_EQ(c["/cpa"], 1);
   EXPECT_EQ(c["/tf"], 1);
 }
+
+TEST(Recorder, AssociationsLineFromTouchToTrack) {
+  const std::string path = navtracker::foxglove::test::tmpMcapPath("recorder_assoc");
+  {
+    FoxgloveDebugRecorder rec(path, geo::Datum(geo::Geodetic{59.9, 10.7}));
+    Track t = makeTrack(1, 100, 100);
+    Track::SourceTouch st; st.sensor = SensorKind::Ais; st.source_id = "ais-1";
+    st.time = Timestamp{5000}; st.value_enu = Eigen::Vector2d(105, 98);
+    // alpha_rad left at default NaN -> position touch (not bearing-only)
+    t.recent_contributions.push_back(st);
+    rec.onTracks({t}, Timestamp{5000});
+    rec.close();
+  }
+  auto c = countByTopic(path);
+  std::remove(path.c_str());
+  EXPECT_EQ(c["/associations"], 1);
+}
