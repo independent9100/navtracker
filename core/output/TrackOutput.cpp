@@ -93,7 +93,15 @@ TrackOutput toTrackOutput(const Track& track,
       track.covariance.cols() >= 4) {
     const Eigen::Vector2d v_enu(track.state(2), track.state(3));
     const Eigen::Matrix2d v_cov = track.covariance.block<2, 2>(2, 2);
-    const bool v_valid = v_cov.trace() > 0.0;
+    // Valid only when velocity has actually been observed (≥1 update past
+    // initiation, review #13) AND the velocity covariance is finite and
+    // positive-definite. A pure-init-prior velocity reports is_valid=false
+    // so a consumer never treats a fabricated COG/SOG as real.
+    // 2×2 PD via Sylvester: leading minors v_cov(0,0) > 0 and det > 0.
+    const double v_det = v_cov(0, 0) * v_cov(1, 1) - v_cov(0, 1) * v_cov(1, 0);
+    const bool v_cov_ok =
+        v_cov.allFinite() && v_cov(0, 0) > 0.0 && v_det > 0.0;
+    const bool v_valid = track.velocity_observed && v_cov_ok;
     out.velocity = toVelocityOutput(v_enu, v_cov, v_valid);
   } else {
     out.velocity = VelocityGeodeticWithSigma{};  // default: is_valid=false, zeros

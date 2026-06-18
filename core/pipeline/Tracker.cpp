@@ -147,6 +147,7 @@ void Tracker::process(const Measurement& z_in) {
     emitBearingInnovationIfApplicable(bearing_innov_sink_, tr, z);
     emitInnovation(innov_sink_, tr, z);
     estimator_.update(tr, z);
+    tr.velocity_observed = true;  // ≥1 update past init → velocity observed
     {
       Track::SourceTouch touch;
       touch.sensor = z.sensor;
@@ -246,6 +247,7 @@ void Tracker::processBatch(const std::vector<Measurement>& scan_in) {
       }
       const PdaContext ctx{result.p_d, result.gate_threshold};
       estimator_.softUpdate(tr, gated, betas_eig, result.beta_0(ti), ctx);
+      tr.velocity_observed = true;  // ≥1 update past init → velocity observed
       for (const auto& gz : gated) {
         Track::SourceTouch touch;
         touch.sensor = gz.sensor;
@@ -278,6 +280,7 @@ void Tracker::processBatch(const std::vector<Measurement>& scan_in) {
       emitBearingInnovationIfApplicable(bearing_innov_sink_, tr, scan[mi]);
       emitInnovation(innov_sink_, tr, scan[mi]);
       estimator_.update(tr, scan[mi]);
+      tr.velocity_observed = true;  // ≥1 update past init → velocity observed
       {
         const Measurement& z = scan[mi];
         Track::SourceTouch touch;
@@ -287,6 +290,7 @@ void Tracker::processBatch(const std::vector<Measurement>& scan_in) {
         fillSourceTouchEnu(touch, z);
         touch.sensor_position_enu = z.sensor_position_enu;
         touch.own_position_std_m = z.sensor_position_std_m;
+        touch.covariance_is_default = z.covariance_is_default;
         tr.recent_contributions.push_back(std::move(touch));
         pruneContributions(tr.recent_contributions, z.time);
       }

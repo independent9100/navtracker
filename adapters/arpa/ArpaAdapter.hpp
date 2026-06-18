@@ -13,6 +13,13 @@ namespace navtracker {
 
 struct ArpaAdapterConfig {
   double heading_std_deg{0.0};
+  // Position 1-σ (m) applied to TLL (absolute lat/lon) targets and as the
+  // range/cross-range measurement σ for TTM range/bearing projection.
+  // Defaults preserve the historically hardcoded radar noise; override per
+  // deployment without a recompile.
+  double position_std_m{50.0};
+  // Bearing 1-σ (deg) for TTM range/bearing projection.
+  double bearing_std_deg{1.0};
 };
 
 // Parses NMEA 0183 TTM (range/bearing) and TLL (target lat/lon) into

@@ -79,6 +79,15 @@ struct Track {
   // (more honest than the raw LLR score).
   double existence_probability{1.0};
   double visibility_given_exists{1.0};
+
+  // True once the track has had at least one measurement update after
+  // initiation. A freshly-initiated track carries a single position fix, so
+  // its velocity is pure initialization prior (no velocity information); the
+  // first update brings a second position in time, at which point velocity is
+  // genuinely observed. Set by the Tracker / MhtTracker update paths; gates
+  // TrackOutput.velocity.is_valid so consumers do not treat a prior-only COG
+  // as a real heading (review #13).
+  bool velocity_observed{false};
 };
 
 }  // namespace navtracker

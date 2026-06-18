@@ -225,6 +225,7 @@ TEST(TrackOutputTest, TrackOutputFor4DTrack) {
   t.attributes.name = std::string("MV TEST");
   t.attributes.vessel_type = std::string("CARGO");
   t.contributing_sources = {"ais", "arpa"};
+  t.velocity_observed = true;  // confirmed, updated track → velocity observed
 
   const TrackOutput out = toTrackOutput(t, datum);
 
@@ -261,6 +262,24 @@ TEST(TrackOutputTest, TrackOutputFor4DTrack) {
 
   // No SourceTouch with the flag set → false.
   EXPECT_FALSE(out.covariance_is_default);
+}
+
+TEST(TrackOutputTest, VelocityInvalidWhenNotObserved) {
+  // Review #13: a freshly-initiated track (velocity_observed=false) carries a
+  // pure-prior velocity, so is_valid must be false even though v_cov.trace()>0.
+  const Datum datum(Geodetic{53.5, 8.0, 0.0});
+  Track t = makeTrack(1000.0, 500.0, 5.0, 0.0, /*sigma_pos=*/5.0,
+                      /*sigma_vel=*/0.5);
+  ASSERT_FALSE(t.velocity_observed);  // default for a just-built track
+
+  const TrackOutput out = toTrackOutput(t, datum);
+  EXPECT_FALSE(out.velocity.is_valid);
+
+  // Flip the flag → valid (same kinematics).
+  t.velocity_observed = true;
+  const TrackOutput out2 = toTrackOutput(t, datum);
+  EXPECT_TRUE(out2.velocity.is_valid);
+  EXPECT_NEAR(out2.velocity.sog_m_per_s, 5.0, 1e-12);
 }
 
 TEST(TrackOutputTest, CovarianceIsDefaultForwardedFromRecentContributions) {

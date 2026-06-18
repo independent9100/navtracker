@@ -16,8 +16,12 @@ namespace navtracker {
 // Looks up the most recent OwnShipPose with pose.time <= t via
 // `provider.poseAtOrBefore(t)`, adds own-ship heading to the relative
 // bearing, and projects to ENU Position2D via projectRangeBearingToEnu.
-// Composes own-ship GPS position uncertainty from the looked-up pose
-// (sigma_heading is 0 for now — see spec §5 / plan Task 4 step 2).
+// Composes own-ship GPS position uncertainty from the looked-up pose.
+// sigma_heading is 0 by design: this builder models range + bearing +
+// GPS-position uncertainty only. Heading (gyro/compass) σ is folded into
+// bearing_std_rad upstream by the adapters that wire a HeadingBiasEstimator
+// (ArpaAdapter / EoIrAdapter); callers off that path should pre-inflate
+// bearing_std_rad by their σ_heading.
 //
 // If no pose at-or-before t is available, returns a Measurement with
 // empty value/covariance and `covariance_is_default == false`; callers

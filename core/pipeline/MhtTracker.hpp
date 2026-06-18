@@ -351,6 +351,9 @@ class MhtTracker {
   // a tree dies, alongside contribution_history_.
   std::map<TrackId, TrackAttributes> tree_attributes_;
   std::map<TrackId, std::vector<std::string>> tree_sources_;
+  // True once a tree has had ≥1 committed hit past birth → velocity observed
+  // (review #13). Pruned when a tree dies, alongside the maps above.
+  std::map<TrackId, bool> tree_velocity_observed_;
 };
 
 }  // namespace navtracker

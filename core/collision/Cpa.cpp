@@ -34,7 +34,7 @@ CpaResult computeCpa(const Track& a, const Track& b, Timestamp t_ref) {
 
   CpaResult r;
   const double dv2 = dv.dot(dv);
-  if (dv2 < 1e-12) {
+  if (dv2 < kEpsDv2) {
     // Parallel velocities -> constant separation. Not diverging.
     r.tcpa_seconds = 0.0;
     r.cpa_distance_m = dp.norm();

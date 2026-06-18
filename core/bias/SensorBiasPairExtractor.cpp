@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <set>
+#include <string>
 
 #include "core/types/Ids.hpp"
 
@@ -173,7 +175,14 @@ std::vector<PositionBiasPairObservation> extractCrossSensorPositionPairs(
         latest[k] = &t;
       }
     }
-    if (latest.size() < 2) continue;  // need two distinct keys to pair
+    // Need two distinct *source_ids* to pair, not just two keys: the
+    // same-source_id guard below (TTM+TLL on one radar share a source_id)
+    // rejects every pair from a single hardware source, so a track whose
+    // keys all share one source_id would pass a `latest.size() < 2` gate
+    // yet emit nothing. Count distinct source_ids to skip that wasted work.
+    std::set<std::string> distinct_sources;
+    for (const auto& kv : latest) distinct_sources.insert(kv.first.source_id);
+    if (distinct_sources.size() < 2) continue;
 
     // One observation per calibrated key per cycle. The sensor's own
     // contribution `x` is a *single* measurement; pairing it against

@@ -602,6 +602,11 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
         if (std::find(srcs.begin(), srcs.end(), z.source_id) == srcs.end())
           srcs.push_back(z.source_id);
       }
+      // A committed hit past birth means a second position in time →
+      // velocity is now observed, not pure init prior (review #13). The
+      // birth root has scan_meas_idx == kNoMeasurement and is skipped above,
+      // so this fires only on real updates.
+      tree_velocity_observed_[ext_id] = true;
       Track::SourceTouch touch;
       touch.sensor = z.sensor;
       touch.source_id = z.source_id;
@@ -694,6 +699,9 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
     auto src_it = tree_sources_.find(trees_[ti].externalId());
     if (src_it != tree_sources_.end())
       view.contributing_sources = src_it->second;
+    auto vobs_it = tree_velocity_observed_.find(trees_[ti].externalId());
+    if (vobs_it != tree_velocity_observed_.end())
+      view.velocity_observed = vobs_it->second;
     tracks_.push_back(std::move(view));
   }
   // Drop history for trees that no longer exist (kept above with the
@@ -712,6 +720,11 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
     }
     for (auto it = tree_sources_.begin(); it != tree_sources_.end();) {
       if (alive.count(it->first) == 0) it = tree_sources_.erase(it);
+      else ++it;
+    }
+    for (auto it = tree_velocity_observed_.begin();
+         it != tree_velocity_observed_.end();) {
+      if (alive.count(it->first) == 0) it = tree_velocity_observed_.erase(it);
       else ++it;
     }
   }

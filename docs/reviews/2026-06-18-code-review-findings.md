@@ -83,6 +83,32 @@ are frozen historical decision records and are intentionally left as-is;
 cross-comparing id_switches/OSPA across the #17 boundary is not
 apples-to-apples (see eval-log entry 2026-06-18).
 
+**Fixed: ranks 11–17 cleanup batch — #5, #6, #7, #8, #13, #14, #16.** Full
+suite 662/662; before/after sweep (28166 rows) **bit-for-bit identical**.
+- #5 → hard-batch path now sets `touch.covariance_is_default` (parity with
+  `process()` / soft path).
+- #6 → `MeasurementBuilders` documents *why* `sigma_heading_rad = 0` (heading
+  σ is folded into `bearing_std_rad` upstream by the adapters that wire a
+  HeadingBiasEstimator); header + call-site comments.
+- #7 → `Cpa::computeCpa` uses the named `kEpsDv2` instead of a bare `1e-12`.
+- #8 → cross-sensor extractor gate counts **distinct source_ids** (≥2), so a
+  track whose keys all share one source_id (TTM+TLL) no longer does wasted
+  pairing work that emits nothing.
+- #13 → new `Track.velocity_observed` (set by Tracker/MhtTracker on the first
+  update past birth); `TrackOutput.velocity.is_valid` now requires it **and**
+  a finite, PD velocity covariance, so a pure-init-prior COG/SOG reports
+  invalid. Bench-neutral (the harness reads the raw velocity vector, not
+  `is_valid`).
+- #14 → v1 AIS↔ARPA `observe` now applies the same outlier gate as v2/v3, but
+  **cold-start exempt** (only after the first accepted observation) — at cold
+  start the only reference is the tight 5° init prior, and gating against it
+  would reject a genuinely large uncalibrated bias forever on what is often
+  the primary calibration path. A converged estimate is now protected from a
+  single bad pair.
+- #16 → `ArpaAdapterConfig` exposes `position_std_m` (50 m) and
+  `bearing_std_deg` (1°); TTM/TLL pull from config instead of hardcoding.
+  Defaults preserve prior behavior.
+
 ## Ranked summary
 
 Ranked by impact × likelihood × blast radius. "Always-on" = triggers on
@@ -101,13 +127,13 @@ move, specific config).
 | 8 | 18 | Possible heading × per-sensor double-debias ✅ VERIFIED (no bug) | VERIFY | ARPA/EO-IR | Could double-correct one physical offset; needs a targeted test |
 | 9 | 12 | SigmaPoints ignores `llt.info()` ✅ FIXED | MINOR | non-PD cov | NaN sigma points poison the whole UKF/IMM step |
 | 10 | 9 | `TrackManager::index()` O(n) → O(n²)/cycle | PERF | many tracks | Fine now; bites at scale |
-| 11 | 13 | Velocity `is_valid` true whenever `trace>0` | MINOR | always-on | Consumers get a COG from pure init prior |
-| 12 | 14 | HeadingBias v1 AIS-ARPA path has no outlier gate | MINOR | bad pair | One bad pair enters bias state unfiltered |
-| 13 | 6 | Relative-bearing builder drops heading σ | MINOR | always-on | Under-reports projected covariance |
-| 14 | 16 | ArpaAdapter magic numbers bypass config | MINOR | always-on | No per-deployment noise tuning without recompile |
-| 15 | 8 | Cross-sensor extractor wasteful size gate | MINOR | rare | Harmless wasted work (TTM+TLL same source_id) |
-| 16 | 5 | Hard-batch path omits `covariance_is_default` | MINOR | batch mode | Diagnostic flag wrong in one path |
-| 17 | 7 | `Cpa.cpp` bare `1e-12` not `kEpsDv2` | MINOR | cosmetic | Constant-naming consistency |
+| 11 | 13 | Velocity `is_valid` true whenever `trace>0` ✅ FIXED | MINOR | always-on | Consumers get a COG from pure init prior |
+| 12 | 14 | HeadingBias v1 AIS-ARPA path has no outlier gate ✅ FIXED | MINOR | bad pair | One bad pair enters bias state unfiltered |
+| 13 | 6 | Relative-bearing builder drops heading σ ✅ FIXED (documented) | MINOR | always-on | Under-reports projected covariance |
+| 14 | 16 | ArpaAdapter magic numbers bypass config ✅ FIXED | MINOR | always-on | No per-deployment noise tuning without recompile |
+| 15 | 8 | Cross-sensor extractor wasteful size gate ✅ FIXED | MINOR | rare | Harmless wasted work (TTM+TLL same source_id) |
+| 16 | 5 | Hard-batch path omits `covariance_is_default` ✅ FIXED | MINOR | batch mode | Diagnostic flag wrong in one path |
+| 17 | 7 | `Cpa.cpp` bare `1e-12` not `kEpsDv2` ✅ FIXED | MINOR | cosmetic | Constant-naming consistency |
 | — | 10 | Hungarian BIG_M re-validation | RESOLVED | — | Murty already re-validates; non-issue |
 
 Suggested cut lines: **P0 = ranks 1–2**, **P1 = ranks 3–6**,
@@ -157,21 +183,21 @@ In `Tracker::processBatch`, the hard-match branch updates
 not. Under JPDA the provenance list is never filled even in the
 single-hypothesis pipeline.
 
-### [MINOR] 5. Hard-batch path omits `covariance_is_default`
+### [MINOR] 5. Hard-batch path omits `covariance_is_default` — ✅ FIXED 2026-06-18
 `Tracker.cpp:253-263` omits `touch.covariance_is_default = z.covariance_is_default;`
 which both `process()` (139) and the soft path (237) set.
 
-### [MINOR] 6. Relative-bearing builder drops heading uncertainty
+### [MINOR] 6. Relative-bearing builder drops heading uncertainty — ✅ FIXED 2026-06-18 (documented)
 `MeasurementBuilders` passes `sigma_heading_rad = 0.0` (line 63), zeroing
 the random heading component of the projected position covariance.
 Defensible if owned by `HeadingBiasEstimator`, but should be a real value
 or an explicit comment.
 
-### [MINOR] 7. `Cpa.cpp:37` uses bare `1e-12` instead of named `kEpsDv2`
+### [MINOR] 7. `Cpa.cpp:37` uses bare `1e-12` instead of named `kEpsDv2` — ✅ FIXED 2026-06-18
 The constant is defined (line 15) and used in `computeCpaWithUncertainty`
 but not in `computeCpa`.
 
-### [MINOR] 8. Cross-sensor extractor wasteful size gate
+### [MINOR] 8. Cross-sensor extractor wasteful size gate — ✅ FIXED 2026-06-18
 A track whose only two keys share a `source_id` (ARPA TTM+TLL) passes the
 `latest.size() < 2` gate (line 176) but emits nothing (both rejected by
 the same-`source_id` guard, line 215). Tighten gate to "≥2 distinct
@@ -222,14 +248,14 @@ constraint or size from `stateDim()` + propagate per particle.
 EKF and IMM guard their determinants; UKF's sigma path does not. Add an
 `info() == Success` check with a diagonal fallback.
 
-### [MINOR] 13. Velocity `is_valid` criterion is weak
+### [MINOR] 13. Velocity `is_valid` criterion is weak — ✅ FIXED 2026-06-18
 `TrackOutput.cpp:96` sets velocity valid whenever `v_cov.trace() > 0`,
 which is true even for a freshly-initiated track whose velocity is pure
 prior (no velocity observation yet). Consumers reading `is_valid` get a
 COG derived entirely from the init prior. Consider gating on a velocity
 σ threshold or an "observed velocity" flag.
 
-### [MINOR] 14. HeadingBiasEstimator v1 AIS-ARPA path has no outlier gate
+### [MINOR] 14. HeadingBiasEstimator v1 AIS-ARPA path has no outlier gate — ✅ FIXED 2026-06-18
 `observe(AisArpaPairObservation)` applies the KF update unconditionally
 (after the range guard), while the v2 `BearingInnovation` and all v3
 scalar paths apply an outlier-sigma rejection. A single bad AIS↔ARPA pair
@@ -268,7 +294,7 @@ magnetic variation/deviation — so the discipline exists but is applied
 inconsistently. Add a shared validate-at-edge helper and route all live
 adapters through it.
 
-### [MINOR] 16. ArpaAdapter magic numbers bypass config
+### [MINOR] 16. ArpaAdapter magic numbers bypass config — ✅ FIXED 2026-06-18
 TTM/TLL hardcode `sigma = 50.0 m` position std and `1.0°` bearing std
 (lines 63-64, 103) instead of pulling from `ArpaAdapterConfig`. Makes
 per-deployment noise tuning impossible without a recompile.

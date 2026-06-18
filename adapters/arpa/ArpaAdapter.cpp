@@ -64,7 +64,7 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
     m.source_id = "arpa";
     m.model = MeasurementModel::Position2D;
     m.value = Eigen::Vector2d(enu.x(), enu.y());
-    const double sigma = 50.0;
+    const double sigma = cfg_.position_std_m;
     m.covariance = Eigen::Matrix2d::Identity() * (sigma * sigma);
     m.hints.sensor_track_id = target_num;
     buffer_.push_back(std::move(m));
@@ -109,7 +109,8 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
     const double sigma_gps_pos = own_opt->position_std_m;
     const PointAndCov2D out =
         projectRangeBearingToEnu(range_m, bearing_true_rad_corrected,
-                                 50.0, 1.0 * kDeg2Rad,
+                                 cfg_.position_std_m,
+                                 cfg_.bearing_std_deg * kDeg2Rad,
                                  sigma_heading_eff,
                                  sigma_gps_pos,
                                  own_xy);

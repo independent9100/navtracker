@@ -63,6 +63,19 @@ void HeadingBiasEstimator::observe(const AisArpaPairObservation& obs) {
 
   const double y = wrapToPi(z - b_hat_);
   const double s = p_b_ + sigma_v2;
+  // Outlier gate (review #14): a single bad AIS↔ARPA pair (mis-association,
+  // AIS position spoof/jump) must not corrupt a *converged* bias estimate.
+  // The gate is cold-start exempt — it only applies once we have at least
+  // one accepted observation (has_any_update_). At cold start the only
+  // reference is the tight init prior (default σ=5°); gating against it
+  // would reject any genuinely large uncalibrated bias forever, and this v1
+  // AIS↔ARPA path is often the *primary* calibration source with no other
+  // heading reference. Compare against the current data-backed innovation σ.
+  if (has_any_update_ &&
+      std::abs(y) > cfg_.bi_outlier_sigma * std::sqrt(s)) {
+    ++rej_outlier_;
+    return;
+  }
   const double k = p_b_ / s;
   b_hat_ += k * y;
   p_b_ = (1.0 - k) * p_b_;

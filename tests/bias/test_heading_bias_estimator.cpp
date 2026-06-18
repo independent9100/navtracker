@@ -146,4 +146,25 @@ TEST(HeadingBiasEstimatorTest, HandlesWrapAroundInnovation) {
   EXPECT_NEAR(std::cos(est.biasRad()), std::cos(true_bias), 0.05);
 }
 
+// Review #14: once converged, a single wildly-off AIS↔ARPA pair (e.g. AIS
+// position jump / mis-association) is rejected by the outlier gate instead
+// of corrupting the bias state. The gate is cold-start exempt, so it only
+// engages after the estimate is data-backed.
+TEST(HeadingBiasEstimatorTest, OutlierPairRejectedAfterConvergence) {
+  HeadingBiasEstimator est{};
+  const double true_bias = 2.0 * kDeg2Rad;
+  for (int i = 0; i < 40; ++i) {
+    est.observe(makePair(tAt(i * 1.0), (i * 17.0) * kDeg2Rad, true_bias));
+  }
+  ASSERT_EQ(est.rejectedByOutlier(), 0u);
+  const double converged = est.biasRad();
+
+  // Inject one pair with a +90° disagreement — far outside the converged
+  // innovation σ.
+  est.observe(makePair(tAt(41.0), 30.0 * kDeg2Rad, 90.0 * kDeg2Rad));
+  EXPECT_EQ(est.rejectedByOutlier(), 1u);
+  // Bias essentially unchanged by the rejected outlier.
+  EXPECT_NEAR(est.biasRad(), converged, 1e-9);
+}
+
 }  // namespace navtracker

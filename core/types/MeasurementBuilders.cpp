@@ -60,6 +60,13 @@ Measurement buildBearingMeasurement(SensorKind sensor,
       bearing_true_rad,
       range_std_m,
       bearing_std_rad,
+      // sigma_heading_rad = 0 deliberately: this convenience builder models
+      // only range + bearing + own-ship GPS-position uncertainty. Heading
+      // (gyro/compass) uncertainty is composed upstream on the sensor
+      // adapters that wire a HeadingBiasEstimator (see ArpaAdapter /
+      // EoIrAdapter `sigma_heading_eff`), which fold it into bearing_std_rad
+      // before calling. Callers not on that path who want heading σ
+      // reflected should inflate bearing_std_rad by their σ_heading.
       /*sigma_heading_rad=*/0.0,
       pose.position_std_m,
       own_xy);
