@@ -1,4 +1,5 @@
 #include <cmath>
+#include <limits>
 
 #include <gtest/gtest.h>
 #include "adapters/eoir/EoIrAdapter.hpp"
@@ -55,6 +56,40 @@ TEST(EoIrAdapter, IngestProducesPositionAheadOfOwnShip) {
   EXPECT_NEAR(out[0].value(1), 500.0, 1.0);
   ASSERT_TRUE(out[0].hints.sensor_track_id.has_value());
   EXPECT_EQ(*out[0].hints.sensor_track_id, 7);
+}
+
+TEST(EoIrAdapter, DropsNonPositiveRangeAndNaNBearing) {
+  OwnShipProvider provider;
+  OwnShipPose pose;
+  pose.time = Timestamp::fromSeconds(0.0);
+  pose.lat_deg = 53.5;
+  pose.lon_deg = 8.0;
+  pose.heading_true_deg = 0.0;
+  provider.update(pose);
+
+  Datum datum({53.5, 8.0, 0.0});
+  EoIrAdapter adapter(datum, provider);
+
+  CameraDetection zero_range;
+  zero_range.time = Timestamp::fromSeconds(1.0);
+  zero_range.bearing_relative_deg = 0.0;
+  zero_range.range_m = 0.0;  // parse-failure / target-on-own-ship
+  adapter.ingest(zero_range);
+
+  CameraDetection nan_bearing;
+  nan_bearing.time = Timestamp::fromSeconds(2.0);
+  nan_bearing.bearing_relative_deg = std::numeric_limits<double>::quiet_NaN();
+  nan_bearing.range_m = 500.0;
+  adapter.ingest(nan_bearing);
+
+  EXPECT_TRUE(adapter.poll().empty());
+
+  CameraDetection good;
+  good.time = Timestamp::fromSeconds(3.0);
+  good.bearing_relative_deg = 0.0;
+  good.range_m = 500.0;
+  adapter.ingest(good);
+  EXPECT_EQ(adapter.poll().size(), 1u);
 }
 
 TEST(EoIrAdapter, HeadingStdInflatesCrossTrackCovariance) {

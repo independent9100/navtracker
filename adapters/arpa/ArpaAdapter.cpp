@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <utility>
 
+#include "adapters/util/EdgeValidation.hpp"
 #include "adapters/util/Nmea.hpp"
 #include "core/projection/Projection.hpp"
 
@@ -52,6 +53,9 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
     if (parsed->fields[2] == "S") lat = -lat;
     double lon = parseDdmm(parsed->fields[3]);
     if (parsed->fields[4] == "W") lon = -lon;
+    // Invariant #6: drop malformed / out-of-range lat/lon (parseDdmm
+    // silently yields 0.0 on a parse failure) before projecting.
+    if (!edge::isPlausibleLatLon(lat, lon)) return false;
     const Eigen::Vector3d enu = datum_.toEnu({lat, lon, 0.0});
 
     Measurement m;
@@ -77,6 +81,11 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
     const std::string bearing_units = parsed->fields[3];
     const std::string dist_units = parsed->fields[9];
     const double range_m = distanceToMeters(dist, dist_units);
+    // Invariant #6: a strtod parse failure maps range/bearing to 0.0,
+    // which would place a target at own-ship. Reject non-positive /
+    // non-finite range and non-finite bearing.
+    if (!edge::isPlausibleRange(range_m) || !edge::isFiniteValue(bearing))
+      return false;
     double bearing_true_deg = bearing;
     if (bearing_units == "R") bearing_true_deg += own_opt->heading_true_deg;
     const double bearing_true_rad = bearing_true_deg * kDeg2Rad;

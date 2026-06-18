@@ -27,6 +27,18 @@ single-hypothesis prune without touching tracker kinematics or lifecycle.
 - #3 → `Tracker` prunes `recent_contributions` to a 2 s window after each
   append (parity with the MHT path).
 
+**Fixed: rank 2 / #15 (live adapter edge validation).** New shared helper
+`adapters/util/EdgeValidation.{hpp,cpp}` (`isPlausibleLatLon`,
+`isPlausibleRange`, `isFiniteValue`); `AisAdapter`, `ArpaAdapter`
+(TLL lat/lon + TTM range/bearing), and `EoIrAdapter` now reject
+sentinel/out-of-range/NaN/non-positive-range input at the edge instead of
+emitting phantom measurements. Unit-tested
+(`tests/adapters/util/test_edge_validation.cpp` + rejection cases in each
+adapter test); full suite 651/651 green. Verified **bench-neutral**: a
+before/after sweep (17 configs × 10 synthetic scenarios × 5 seeds, 28166
+rows) is bit-for-bit identical — guards fire only on invalid input, which
+the clean synthetic/replay data never produces.
+
 ## Ranked summary
 
 Ranked by impact × likelihood × blast radius. "Always-on" = triggers on
@@ -35,10 +47,10 @@ move, specific config).
 
 | Rank | # | Finding | Sev | Trigger | Why here |
 |------|---|---------|-----|---------|----------|
-| 1 | 1 | MHT drops track identity (MMSI/name/dims) | BUG/GAP | always-on | Output contract violated on **every** track in the canonical pipeline |
-| 2 | 15 | Live adapters skip edge validation | BUG/GAP | bad input | One AIS 91°/181° sentinel or NaN → phantom/garbage track; safety-relevant |
-| 3 | 2 | MHT has no datum-recenter shift | BUG | >30 km move | Internal `trees_` desync from measurements; tracks jump. Severe but conditional |
-| 4 | 3 | `Tracker.cpp` never prunes `recent_contributions` | BUG | time | Unbounded memory + O(n²) extractor cost on the single-hypothesis path |
+| 1 | 1 | MHT drops track identity (MMSI/name/dims) ✅ FIXED | BUG/GAP | always-on | Output contract violated on **every** track in the canonical pipeline |
+| 2 | 15 | Live adapters skip edge validation ✅ FIXED | BUG/GAP | bad input | One AIS 91°/181° sentinel or NaN → phantom/garbage track; safety-relevant |
+| 3 | 2 | MHT has no datum-recenter shift ✅ FIXED | BUG | >30 km move | Internal `trees_` desync from measurements; tracks jump. Severe but conditional |
+| 4 | 3 | `Tracker.cpp` never prunes `recent_contributions` ✅ FIXED | BUG | time | Unbounded memory + O(n²) extractor cost on the single-hypothesis path |
 | 5 | 11 | PF hard-wired to 4-state | BUG | config | Crash / silent CV-only if wired to a 5-state motion model |
 | 6 | 17 | Greedy (not optimal) GOSPA/OSPA/id-switch assignment | EVAL | crossing geometry | Confounds estimator A/B decisions you act on |
 | 7 | 4 | JPDA soft path omits `contributing_sources` | BUG | JPDA mode | Provenance empty under soft association |
@@ -196,7 +208,7 @@ Deep-read: `adapters/ais` + `arpa` + `eoir` + `own_ship/OwnShipNmeaAdapter`,
 `scenario/Gospa` + `Ospa`, `benchmark/Metrics`, `collision/CpaEvaluator`,
 `projection/Projection`, `geo/Datum`, `MhtTracker` (predict/solve core).
 
-### [BUG/GAP] 15. Live sensor adapters do no edge validation (invariant #6)
+### [BUG/GAP] 15. Live sensor adapters do no edge validation (invariant #6) — ✅ FIXED 2026-06-18
 CLAUDE.md invariant #6 + the docstring require adapters to "validate
 parsing/units/NaN/plausibility." The live adapters don't:
 - `AisAdapter::ingest` converts `r.lat_deg/lon_deg` straight to ENU with

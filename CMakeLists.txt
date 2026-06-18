@@ -68,6 +68,7 @@ target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
 
 add_library(navtracker_nmea
   adapters/util/Nmea.cpp
+  adapters/util/EdgeValidation.cpp
   adapters/ais/AisAdapter.cpp
   adapters/arpa/ArpaAdapter.cpp
   adapters/eoir/EoIrAdapter.cpp
@@ -173,6 +174,7 @@ add_executable(navtracker_tests
   tests/adapters/own_ship/test_own_ship_provider.cpp
   tests/adapters/util/test_projection.cpp
   tests/adapters/util/test_nmea.cpp
+  tests/adapters/util/test_edge_validation.cpp
   tests/adapters/ais/test_ais_adapter.cpp
   tests/adapters/own_ship/test_own_ship_nmea.cpp
   tests/adapters/own_ship/test_own_ship_nmea_multi_heading.cpp

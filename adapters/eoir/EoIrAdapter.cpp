@@ -3,6 +3,7 @@
 #include <cmath>
 #include <utility>
 
+#include "adapters/util/EdgeValidation.hpp"
 #include "core/projection/Projection.hpp"
 
 namespace navtracker {
@@ -20,6 +21,11 @@ EoIrAdapter::EoIrAdapter(geo::Datum datum, OwnShipProvider& own_ship,
       bias_provider_(bias_provider) {}
 
 void EoIrAdapter::ingest(const CameraDetection& d) {
+  // Invariant #6: reject non-positive / non-finite range and non-finite
+  // bearing at the edge before projecting to ENU.
+  if (!edge::isPlausibleRange(d.range_m) ||
+      !edge::isFiniteValue(d.bearing_relative_deg))
+    return;
   const auto own_opt = own_ship_.poseAtOrBefore(d.time);
   if (!own_opt) return;
   const double bearing_true_rad =

@@ -2,11 +2,17 @@
 
 #include <utility>
 
+#include "adapters/util/EdgeValidation.hpp"
+
 namespace navtracker {
 
 AisAdapter::AisAdapter(geo::Datum datum) : datum_(std::move(datum)) {}
 
 void AisAdapter::ingest(const AisDynamicReport& r) {
+  // Invariant #6: reject implausible / sentinel / NaN fixes at the edge
+  // (AIS lat 91° / lon 181° "not available", garbled positions) before
+  // they become phantom tracks.
+  if (!edge::isPlausibleLatLon(r.lat_deg, r.lon_deg)) return;
   const Eigen::Vector3d enu = datum_.toEnu({r.lat_deg, r.lon_deg, 0.0});
   Measurement m;
   m.time = r.time;

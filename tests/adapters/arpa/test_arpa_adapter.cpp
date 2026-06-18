@@ -45,6 +45,33 @@ TEST(ArpaAdapter, TllProducesPosition2D) {
   EXPECT_EQ(*out[0].hints.sensor_track_id, 1);
 }
 
+TEST(ArpaAdapter, TllRejectsOutOfRangeLatLon) {
+  OwnShipProvider provider;
+  ArpaAdapter adapter(kDatum, provider);
+  // 9130.0 ddmm -> lat 91.5°, out of range -> rejected.
+  EXPECT_FALSE(adapter.ingest(
+      makeNmea("RATLL,01,9130.0,N,00800.0,E,TARG1,123456,T,R"),
+      Timestamp::fromSeconds(10.0)));
+  EXPECT_TRUE(adapter.poll().empty());
+}
+
+TEST(ArpaAdapter, TtmRejectsNonPositiveRange) {
+  OwnShipProvider provider;
+  OwnShipPose pose;
+  pose.time = Timestamp::fromSeconds(0.0);
+  pose.lat_deg = 53.5;
+  pose.lon_deg = 8.0;
+  pose.heading_true_deg = 0.0;
+  provider.update(pose);
+
+  ArpaAdapter adapter(kDatum, provider);
+  // distance 0.0 (e.g. strtod parse failure) -> target on own-ship -> rejected.
+  EXPECT_FALSE(adapter.ingest(
+      makeNmea("RATTM,01,0.0,90.0,T,12.0,90.0,T,0.0,0.0,N,TARG1,T,R,123456.78,A"),
+      Timestamp::fromSeconds(5.0)));
+  EXPECT_TRUE(adapter.poll().empty());
+}
+
 TEST(ArpaAdapter, TtmProducesPositionUsingOwnShip) {
   OwnShipProvider provider;
   OwnShipPose pose;
