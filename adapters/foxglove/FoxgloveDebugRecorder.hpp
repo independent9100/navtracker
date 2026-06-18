@@ -57,6 +57,8 @@ class FoxgloveDebugRecorder final
   RecorderConfig cfg_;
   // Latest predicted innovation covariance per track (for /gates).
   std::unordered_map<std::uint64_t, Eigen::MatrixXd> last_S_;
+  // Most recent event time seen (used by onDatumRecentered for the log msg).
+  Timestamp last_time_{};
 };
 
 }  // namespace navtracker::foxglove

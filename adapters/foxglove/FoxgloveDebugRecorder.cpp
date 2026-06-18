@@ -44,6 +44,7 @@ void FoxgloveDebugRecorder::registerChannels() {
 }
 
 void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp now) {
+  last_time_ = now;
   std::vector<json> entities;
   int confirmed = 0, tentative = 0;
   for (const auto& t : tracks) {
@@ -89,6 +90,7 @@ void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp
 }
 
 void FoxgloveDebugRecorder::recordMeasurement(const Measurement& m) {
+  last_time_ = m.time;
   const Rgba col = colorForSensor(m.sensor, m.source_id);
   std::vector<json> entities;
   const std::string base = "det-" + m.source_id + "-" + std::to_string(m.time.nanos());
@@ -136,13 +138,20 @@ void FoxgloveDebugRecorder::recordMeasurement(const Measurement& m) {
   w_->write("/detections", m.time, sceneUpdate(m.time, entities).dump());
 }
 
-// Remaining sink methods implemented in later tasks (Tasks 6-8). Provide
-// empty bodies now so the class is concrete and links:
-void FoxgloveDebugRecorder::recordOwnShip(const OwnShipPose&) {}
-void FoxgloveDebugRecorder::onTrackInitiated(const TrackLifecycleEvent&) {}
-void FoxgloveDebugRecorder::onTrackConfirmed(const TrackLifecycleEvent&) {}
-void FoxgloveDebugRecorder::onTrackUpdated(const TrackLifecycleEvent&) {}
-void FoxgloveDebugRecorder::onTrackDeleted(const TrackLifecycleEvent&) {}
+void FoxgloveDebugRecorder::onTrackInitiated(const TrackLifecycleEvent& e) {
+  w_->write("/log", e.time, logMsg(e.time, 1, "lifecycle",
+      "track " + std::to_string(e.id.value) + " initiated").dump());
+}
+void FoxgloveDebugRecorder::onTrackConfirmed(const TrackLifecycleEvent& e) {
+  w_->write("/log", e.time, logMsg(e.time, 2, "lifecycle",
+      "track " + std::to_string(e.id.value) + " confirmed").dump());
+}
+void FoxgloveDebugRecorder::onTrackUpdated(const TrackLifecycleEvent&) { /* high-volume: skip /log */ }
+void FoxgloveDebugRecorder::onTrackDeleted(const TrackLifecycleEvent& e) {
+  w_->write("/log", e.time, logMsg(e.time, 3, "lifecycle",
+      "track " + std::to_string(e.id.value) + " deleted").dump());
+}
+
 void FoxgloveDebugRecorder::onInnovation(const InnovationEvent& e) {
   const double nis = (e.residual.transpose() * e.S.ldlt().solve(e.residual)).value();
   last_S_[e.track_id.value] = e.S;
@@ -151,7 +160,36 @@ void FoxgloveDebugRecorder::onInnovation(const InnovationEvent& e) {
                  {"sensor", static_cast<int>(e.sensor)}, {"source_id", e.source_id},
                  {"nis", nis}, {"dim", e.dim}}.dump());
 }
-void FoxgloveDebugRecorder::onCollisionRisk(const CollisionRiskEvent&) {}
-void FoxgloveDebugRecorder::onDatumRecentered(const geo::Datum&, const geo::Datum&) {}
+
+void FoxgloveDebugRecorder::onCollisionRisk(const CollisionRiskEvent& e) {
+  const char* kind = e.transition == CollisionRiskTransition::Entered ? "ENTERED"
+                   : e.transition == CollisionRiskTransition::Exited  ? "EXITED" : "UPDATED";
+  w_->write("/log", e.time, logMsg(e.time, 2, "cpa",
+      std::string("CPA ") + kind + " track " + std::to_string(e.other.value) +
+      " d=" + std::to_string(e.prediction.cpa_distance_m) +
+      "m t=" + std::to_string(e.prediction.tcpa_seconds) + "s").dump());
+  // Minimal CPA marker: a text at origin carrying the numbers.
+  std::vector<json> ents{ textEntity("cpa-" + std::to_string(e.other.value),
+      {0,0,0}, std::string(kind) + " d=" + std::to_string(e.prediction.cpa_distance_m),
+      {1.0,0.3,0.3,1.0}) };
+  w_->write("/cpa", e.time, sceneUpdate(e.time, ents).dump());
+}
+
+void FoxgloveDebugRecorder::recordOwnShip(const OwnShipPose& pose) {
+  last_time_ = pose.time;
+  // ENU position of own-ship relative to the datum.
+  // heading_true_deg is clockwise-from-north; ENU yaw (CCW-from-east) = 90 - hdg.
+  const Eigen::Vector3d p3 = datum_.toEnu(geo::Geodetic{pose.lat_deg, pose.lon_deg, 0.0});
+  const double yaw = (90.0 - pose.heading_true_deg) * M_PI / 180.0;
+  w_->write("/tf", pose.time, frameTransform(pose.time, kRootFrame, "own_ship",
+      p3.x(), p3.y(), 0.0, yaw).dump());
+}
+
+void FoxgloveDebugRecorder::onDatumRecentered(const geo::Datum& /*old_d*/, const geo::Datum& new_d) {
+  datum_ = new_d;
+  // Mark the discontinuity in the log at the last known event time.
+  w_->write("/log", last_time_, logMsg(last_time_, 4, "datum",
+      "datum recentered").dump());
+}
 
 }  // namespace navtracker::foxglove

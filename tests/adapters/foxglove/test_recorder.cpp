@@ -88,3 +88,26 @@ TEST(Recorder, InnovationEmitsNisAndGate) {
   EXPECT_EQ(c["/diag/innovation"], 1);
   EXPECT_EQ(c["/gates"], 1);                          // gate drawn because S cached + gamma>0
 }
+
+TEST(Recorder, LifecycleCpaOwnshipEmit) {
+  const std::string path = navtracker::foxglove::test::tmpMcapPath("recorder_lifecycle");
+  {
+    FoxgloveDebugRecorder rec(path, geo::Datum(geo::Geodetic{59.9, 10.7}));
+    rec.onTrackConfirmed({TrackId{1}, Timestamp{4000}, TrackStatus::Confirmed});
+    rec.onTrackDeleted({TrackId{1}, Timestamp{4500}, TrackStatus::Confirmed});
+    CollisionRiskEvent ev; ev.transition = CollisionRiskTransition::Entered;
+    ev.other = TrackId{1}; ev.time = Timestamp{4100};
+    ev.prediction.cpa_distance_m = 50; ev.prediction.tcpa_seconds = 120;
+    ev.prediction.probability_below_threshold = 0.8; ev.prediction.d_threshold_m = 100;
+    rec.onCollisionRisk(ev);
+    OwnShipPose pose; pose.time = Timestamp{4000}; pose.lat_deg = 59.9; pose.lon_deg = 10.7;
+    pose.heading_true_deg = 90.0;
+    rec.recordOwnShip(pose);
+    rec.close();
+  }
+  auto c = countByTopic(path);
+  std::remove(path.c_str());
+  EXPECT_GE(c["/log"], 3);     // confirmed + deleted + cpa entered
+  EXPECT_EQ(c["/cpa"], 1);
+  EXPECT_EQ(c["/tf"], 1);
+}
