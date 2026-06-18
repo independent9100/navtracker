@@ -8,6 +8,39 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-18 — Review #17: metric assignment greedy → optimal (Hungarian). Intentional re-baseline.
+
+**Change.** `ospaGreedy`, `gospaGreedy`, and `assignPerStep` (the shared
+truth↔track assignment feeding OSPA, GOSPA, id_switches, continuity, and
+per-track RMSE/NEES) switched from greedy nearest-neighbour to optimal
+min-cost assignment via `hungarianAssignment`. Function names retained for
+call-site stability. OSPA: clipped-distance² cost matrix. GOSPA: augmented
+(|X|+|Y|)² matrix with per-target miss/false dummy slots so a pair is matched
+only when `d^p < 2·c^p/α`. `assignPerStep`: gated truth×track matrix.
+
+**Why.** Greedy can lock a locally-cheap pairing that forces a globally-worse
+remainder. In close-crossing geometry this both *manufactures* spurious
+id_switches/OSPA spikes and *masks* real ID swaps (by keeping a stale
+pairing) — both confound the A/B estimator comparisons this log exists to
+make. Optimal assignment is the metric the OSPA/GOSPA definitions actually
+specify (min over assignments).
+
+**Measured impact (synthetic sweep, 17 configs × 10 scenarios × 5 seeds,
+28166 rows).** 226 rows differ (~0.8 %), exclusively in head-on crossing
+scenarios, and only on assignment-dependent metrics (ospa_mean, gospa_mean,
+gospa_rms, id_switches, pos/sog/cog_rmse, nees). `id_switches` moves **both**
+directions: e.g. `ukf_ct_gnn / head_on` 2→0 (greedy over-counted churn),
+`imm_cv_ct_mht / head_on` 0→2 (greedy masked a real swap). Non-crossing
+scenarios and all cardinality-only cases are unchanged. Unit-level: all
+existing OSPA/GOSPA/assignPerStep tests still pass (greedy == optimal on
+their simple geometries); two new tests (`Ospa/Gospa.UsesOptimalAssignmentNotGreedy`)
+pin a collinear case where they diverge.
+
+**Baseline hygiene.** This is a deliberate metric-definition change, so it is
+*not* bench-neutral and historical `docs/baselines/*.csv` snapshots predate
+it. Do **not** cross-compare id_switches/OSPA/NEES across the #17 boundary;
+regenerate a fresh reference on-host when an exact comparison is needed.
+
 ## 2026-06-17 (later) — Item 13 cross-sensor anchored bias: shipped, fires correctly, AutoFerry-invariant due to symmetric fusion
 
 Backlog item 13. Adds `extractCrossSensorPositionPairs` to

@@ -63,6 +63,26 @@ bit-for-bit identical.
   relies on multi-range geometry, which is the documented design
   (`SensorBiasPairExtractor.hpp`), not a bug.
 
+**Fixed: #17 (rank 6) — optimal metric assignment.** `ospaGreedy`,
+`gospaGreedy`, and `assignPerStep` now use the optimal (min-cost) Hungarian
+assignment instead of greedy NN (names kept for call-site stability; docs
+updated). OSPA uses the clipped-distance² matrix; GOSPA an augmented
+(|X|+|Y|)² matrix with per-target miss/false dummy slots; `assignPerStep`
+a gated truth×track matrix. New distinguishing unit tests
+(`Ospa.UsesOptimalAssignmentNotGreedy`, `Gospa.UsesOptimalAssignmentNotGreedy`)
+on a collinear geometry where the global-min edge is *not* in the optimal
+matching. Full suite 660/660.
+⚠ **Intentional re-baseline (NOT bench-neutral, by design).** Before/after
+sweep (17×10×5, 28166 rows): **226 rows differ (~0.8 %)**, all
+assignment-dependent metrics (ospa/gospa, id_switches, pos/sog/cog rmse,
+nees) and only in close-crossing geometry (head-on). `id_switches` moves
+**both** directions — greedy both over-counted (spurious churn) and
+under-counted (real ID swaps it masked by locking a stale pairing); optimal
+is the correct metric in each case. The dated baselines in `docs/baselines/`
+are frozen historical decision records and are intentionally left as-is;
+cross-comparing id_switches/OSPA across the #17 boundary is not
+apples-to-apples (see eval-log entry 2026-06-18).
+
 ## Ranked summary
 
 Ranked by impact × likelihood × blast radius. "Always-on" = triggers on
@@ -76,7 +96,7 @@ move, specific config).
 | 3 | 2 | MHT has no datum-recenter shift ✅ FIXED | BUG | >30 km move | Internal `trees_` desync from measurements; tracks jump. Severe but conditional |
 | 4 | 3 | `Tracker.cpp` never prunes `recent_contributions` ✅ FIXED | BUG | time | Unbounded memory + O(n²) extractor cost on the single-hypothesis path |
 | 5 | 11 | PF hard-wired to 4-state ✅ FIXED | BUG | config | Crash / silent CV-only if wired to a 5-state motion model |
-| 6 | 17 | Greedy (not optimal) GOSPA/OSPA/id-switch assignment | EVAL | crossing geometry | Confounds estimator A/B decisions you act on |
+| 6 | 17 | Greedy (not optimal) GOSPA/OSPA/id-switch assignment ✅ FIXED (re-baseline) | EVAL | crossing geometry | Confounds estimator A/B decisions you act on |
 | 7 | 4 | JPDA soft path omits `contributing_sources` ✅ FIXED | BUG | JPDA mode | Provenance empty under soft association |
 | 8 | 18 | Possible heading × per-sensor double-debias ✅ VERIFIED (no bug) | VERIFY | ARPA/EO-IR | Could double-correct one physical offset; needs a targeted test |
 | 9 | 12 | SigmaPoints ignores `llt.info()` ✅ FIXED | MINOR | non-PD cov | NaN sigma points poison the whole UKF/IMM step |
@@ -253,7 +273,7 @@ TTM/TLL hardcode `sigma = 50.0 m` position std and `1.0°` bearing std
 (lines 63-64, 103) instead of pulling from `ArpaAdapterConfig`. Makes
 per-deployment noise tuning impossible without a recompile.
 
-### [EVAL] 17. GOSPA/OSPA/id-switch metrics use greedy assignment
+### [EVAL] 17. GOSPA/OSPA/id-switch metrics use greedy assignment — ✅ FIXED 2026-06-18 (intentional re-baseline)
 `gospaGreedy`, `ospaGreedy`, and `assignPerStep` use greedy nearest-
 neighbour, not the optimal (min-cost) assignment the true metrics require.
 Greedy can over-count localization cost and, more importantly, flip

@@ -108,7 +108,8 @@ compresses differences on harbour-scale scenes").
 The fix is either a smaller cutoff (loses bound) or a different
 metric. The PMBM/JIPDA literature picked the second route.
 
-Implementation: `core/scenario/Ospa.{hpp,cpp}`, greedy assignment.
+Implementation: `core/scenario/Ospa.{hpp,cpp}`, optimal (min-cost)
+assignment via the Hungarian algorithm.
 
 ## 4. GOSPA — Generalised OSPA
 
@@ -237,8 +238,8 @@ remember the paper aggregates per-environment, not per-scenario.
 
 ## 7. Where this lives in the repo
 
-- `core/scenario/Ospa.{hpp,cpp}` — greedy OSPA.
-- `core/scenario/Gospa.{hpp,cpp}` — greedy GOSPA.
+- `core/scenario/Ospa.{hpp,cpp}` — OSPA, optimal (Hungarian) assignment.
+- `core/scenario/Gospa.{hpp,cpp}` — GOSPA, optimal (Hungarian) assignment.
 - `core/benchmark/Metrics.{hpp,cpp}` — per-step computation,
   RMS / mean / p95 aggregation, lifecycle counts.
 - `core/benchmark/Sweep.cpp` — emits one row per metric per
@@ -256,7 +257,14 @@ remember the paper aggregates per-environment, not per-scenario.
   queued as PMBM-plan phase 4 follow-up (`docs/superpowers/plans/
   2026-06-07-pmbm-integration-plan.md`). Needs trajectory-aware
   step bundling that the current `BenchSink` does not yet emit.
-- **Hungarian assignment instead of greedy.** Hungarian is the
-  textbook optimal — but on AutoFerry's 2 truths × ≤ 5 tracks
-  scenes the greedy and Hungarian agree to within numerical noise
-  and greedy is faster. Promote when profiling demands it.
+- **Greedy assignment.** *(Superseded 2026-06-18, review #17.)* We
+  originally used greedy nearest-neighbour, reasoning that on
+  AutoFerry's 2 truths × ≤ 5 tracks it agreed with Hungarian to
+  within noise. That held on average but **not in close-crossing
+  geometry**: greedy can lock a locally-cheap pairing that forces a
+  globally-worse remainder, manufacturing spurious `id_switches` /
+  OSPA spikes *and* masking real ID swaps by keeping a stale pairing.
+  Both directions confound A/B estimator comparisons, so OSPA, GOSPA,
+  and `assignPerStep` now all use the optimal (min-cost) **Hungarian**
+  assignment (`core/association/Hungarian.hpp`). On the synthetic
+  sweep this changed ~0.8 % of metric rows, all in head-on crossings.

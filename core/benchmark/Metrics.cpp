@@ -9,10 +9,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <numeric>
 #include <unordered_set>
 
+#include "core/association/Hungarian.hpp"
 #include "core/scenario/Gospa.hpp"
 #include "core/scenario/Ospa.hpp"
 
@@ -32,15 +34,13 @@ double cogDeg(const Eigen::Vector2d& v) {
 }
 }  // namespace
 
-// Math:        per-step OSPA via greedy assignment (existing repo impl).
+// Math:        per-step OSPA via optimal (Hungarian) assignment.
 // Assumptions: result.steps[i].truth and .tracks are valid;
 //              cutoff_m > 0; positions in metres.
-// Rationale:   reuse ospaGreedy() from core/scenario/Ospa.hpp so the
-//              metric matches the existing harness exactly.
+// Rationale:   reuse ospaGreedy() from core/scenario/Ospa.hpp (now backed
+//              by min-cost assignment) so the metric matches the harness.
 // Improve next: OSPA(2) window-based variant (penalises ID switches
-//               directly); switch to true Hungarian assignment if the
-//               greedy version dominates regressions in pathological
-//               crossing cases.
+//               directly).
 std::vector<double> computeOspaPerStep(const BenchResult& result,
                                        double cutoff_m) {
   std::vector<double> out;
@@ -57,8 +57,8 @@ std::vector<double> computeOspaPerStep(const BenchResult& result,
   return out;
 }
 
-// Math:        per-step GOSPA at p=α=2, cutoff cutoff_m, via greedy
-//              assignment (gospaGreedy).
+// Math:        per-step GOSPA at p=α=2, cutoff cutoff_m, via optimal
+//              (Hungarian) assignment (gospaGreedy).
 // Assumptions: same as computeOspaPerStep — positions in metres, ENU.
 // Rationale:   GOSPA is the conventional metric for PMBM and the
 //              autoferry literature (Helgesen 2022). Unlike OSPA it
@@ -107,41 +107,47 @@ double percentile(std::vector<double> v, double q) {
   return v[lo] * (1.0 - frac) + v[hi] * frac;
 }
 
-// Math:        per-truth greedy NN: for each truth index i, scan
-//              unclaimed tracks, pick the one minimising
-//              ||tr.position - truth[i].position|| strictly less than
-//              gate_m; mark it claimed.
+// Math:        per-step optimal (min-cost) assignment of truth → track.
+//              Build an N×M cost matrix C(i,j) = ||tr_j - truth_i|| when
+//              that distance is strictly below gate_m, else +∞ (forbidden);
+//              solve with the Hungarian algorithm. Truth i is assigned the
+//              track on its matched (finite-cost) cell, or left unassigned.
 // Assumptions: truth and track positions are in the same ENU frame and
-//              metres; gate_m is the exclusive ceiling.
-// Rationale:   greedy NN matches the existing countIdSwitches behaviour
-//              and is O(N*M); for our small N,M (<= 10 typical) the
-//              difference vs. full Hungarian is below noise. Single
-//              shared assignment function across continuity, id
-//              switches, and per-track RMSE keeps metrics consistent.
-// Improve next: swap to full Hungarian via munkres if pathological
-//               crossing geometry causes assignment churn that affects
-//               ID-switch counts.
+//              metres; gate_m is the exclusive ceiling. The cost matrix is a
+//              deterministic function of the step, so the assignment (and
+//              hence id-switch / continuity counts) is replay-deterministic.
+// Rationale:   greedy NN (the previous impl) can flip pairings between
+//              adjacent steps in close-crossing geometry, manufacturing
+//              spurious id-switches and OSPA spikes that confound A/B
+//              estimator comparisons. Optimal assignment reflects the
+//              tracker, not assignment churn. Single shared assignment
+//              function across continuity, id switches, and per-track RMSE
+//              keeps the three metrics consistent. O(N·M·min(N,M)); N,M are
+//              small (≤ ~10) in every bench scenario.
+// Improve next: extend to GOSPA-style assignment that also scores
+//               cardinality if continuity should penalise false tracks.
 std::vector<StepAssignment> assignPerStep(const BenchResult& result,
                                           double gate_m) {
+  const double kInf = std::numeric_limits<double>::infinity();
   std::vector<StepAssignment> out;
   out.reserve(result.steps.size());
   for (const auto& step : result.steps) {
     StepAssignment a(step.truth.size(), std::nullopt);
-    std::unordered_set<std::uint64_t> claimed;
-    for (std::size_t i = 0; i < step.truth.size(); ++i) {
-      double best = gate_m;
-      std::optional<TrackId> best_id;
-      for (const auto& tr : step.tracks) {
-        if (claimed.count(tr.id.value)) continue;
-        const double d = (tr.position - step.truth[i].position).norm();
-        if (d < best) {
-          best = d;
-          best_id = tr.id;
+    const int n = static_cast<int>(step.truth.size());
+    const int m = static_cast<int>(step.tracks.size());
+    if (n > 0 && m > 0) {
+      Eigen::MatrixXd cost = Eigen::MatrixXd::Constant(n, m, kInf);
+      for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < m; ++j) {
+          const double d =
+              (step.tracks[j].position - step.truth[i].position).norm();
+          if (d < gate_m) cost(i, j) = d;
         }
       }
-      if (best_id) {
-        claimed.insert(best_id->value);
-        a[i] = best_id;
+      const std::vector<int> row_to_col = hungarianAssignment(cost);
+      for (int i = 0; i < n; ++i) {
+        const int j = row_to_col[i];
+        if (j >= 0 && std::isfinite(cost(i, j))) a[i] = step.tracks[j].id;
       }
     }
     out.push_back(std::move(a));

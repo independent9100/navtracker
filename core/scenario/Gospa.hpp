@@ -24,10 +24,12 @@ namespace navtracker {
 // Defaults p=2, α=2 match the convention used throughout the GOSPA /
 // PMBM literature.
 //
-// Assignment: greedy nearest-neighbour, same as ospaGreedy (matches our
-// existing convention; equivalent to Hungarian within numerical noise on
-// the small target counts in the bench scenarios — promote when
-// profiling demands it).
+// Assignment: optimal (min-cost) via the Hungarian algorithm on an
+// augmented (|X|+|Y|)² cost matrix with per-target miss/false dummy slots,
+// so a pair is matched only when d^p < 2·c^p/α. (The name retains the
+// historical "Greedy" suffix for call-site stability; the implementation is
+// no longer greedy — greedy NN could flip pairings in crossing geometry and
+// confound A/B comparisons.) Same convention as ospaGreedy.
 double gospaGreedy(const std::vector<Eigen::Vector2d>& truth,
                    const std::vector<Eigen::Vector2d>& est,
                    double cutoff,

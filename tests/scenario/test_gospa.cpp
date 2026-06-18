@@ -73,6 +73,19 @@ TEST(Gospa, AlphaOneChargesFullCutoff) {
               10.0, 1e-12);
 }
 
+// Review #17: optimal (min-cost) assignment, not greedy NN. Same geometry
+// as the OSPA test: truth A=(0,0), B=(0,3); est P=(0,2), Q=(0,5).
+//   greedy locks min edge B-P (d=1), then A-Q (d=5<cutoff): cost=1+25=26 →
+//     GOSPA_greedy = √26 ≈ 5.099.
+//   optimal pairs A-P, B-Q (d=2 each): cost=4+4=8 → GOSPA_opt = √8 ≈ 2.828.
+TEST(Gospa, UsesOptimalAssignmentNotGreedy) {
+  std::vector<Eigen::Vector2d> truth{Eigen::Vector2d(0.0, 0.0),
+                                     Eigen::Vector2d(0.0, 3.0)};
+  std::vector<Eigen::Vector2d> est{Eigen::Vector2d(0.0, 2.0),
+                                   Eigen::Vector2d(0.0, 5.0)};
+  EXPECT_NEAR(gospaGreedy(truth, est, 50.0), std::sqrt(8.0), 1e-12);
+}
+
 // Asymmetric: one matched pair + one extra estimate.
 // Cost = d² + c²/α = 9 + 50 = 59 → √59 ≈ 7.681.
 TEST(Gospa, MatchedPairPlusExtraEstimate) {
