@@ -109,6 +109,18 @@ suite 662/662; before/after sweep (28166 rows) **bit-for-bit identical**.
   `bearing_std_deg` (1°); TTM/TLL pull from config instead of hardcoding.
   Defaults preserve prior behavior.
 
+**Fixed: #9 (rank 10) — `TrackManager::index()` O(n) scan.** Replaced the
+per-call linear scan over `tracks_` with a `std::unordered_map<TrackId.value,
+size_t>` lookup maintained on `add` (append) and `recordMiss` (erase + tail
+reindex). The per-cycle hit/miss/observation/update bookkeeping and the stale
+sweep's `lastObservation(id)` per track are now O(n) instead of O(n²). The map
+is a pure lookup accelerator — iteration still walks `tracks_` in insertion
+order, so replay stays deterministic (invariant #4). New guard test
+`TrackManager.ResolvesIdsCorrectlyAfterMiddleErase` exercises the
+delete-middle index-fixup (the only place the map and vector can desync).
+Full suite 663/663; before/after sweep (17×10×5, 28166 rows) **bit-for-bit
+identical** — same lookup results, only faster.
+
 ## Ranked summary
 
 Ranked by impact × likelihood × blast radius. "Always-on" = triggers on
@@ -126,7 +138,7 @@ move, specific config).
 | 7 | 4 | JPDA soft path omits `contributing_sources` ✅ FIXED | BUG | JPDA mode | Provenance empty under soft association |
 | 8 | 18 | Possible heading × per-sensor double-debias ✅ VERIFIED (no bug) | VERIFY | ARPA/EO-IR | Could double-correct one physical offset; needs a targeted test |
 | 9 | 12 | SigmaPoints ignores `llt.info()` ✅ FIXED | MINOR | non-PD cov | NaN sigma points poison the whole UKF/IMM step |
-| 10 | 9 | `TrackManager::index()` O(n) → O(n²)/cycle | PERF | many tracks | Fine now; bites at scale |
+| 10 | 9 | `TrackManager::index()` O(n) → O(n²)/cycle ✅ FIXED | PERF | many tracks | Fine now; bites at scale |
 | 11 | 13 | Velocity `is_valid` true whenever `trace>0` ✅ FIXED | MINOR | always-on | Consumers get a COG from pure init prior |
 | 12 | 14 | HeadingBias v1 AIS-ARPA path has no outlier gate ✅ FIXED | MINOR | bad pair | One bad pair enters bias state unfiltered |
 | 13 | 6 | Relative-bearing builder drops heading σ ✅ FIXED (documented) | MINOR | always-on | Under-reports projected covariance |
@@ -203,10 +215,18 @@ A track whose only two keys share a `source_id` (ARPA TTM+TLL) passes the
 the same-`source_id` guard, line 215). Tighten gate to "≥2 distinct
 source_ids."
 
-### [PERF] 9. `TrackManager::index()` O(n) scan → O(n²) per cycle
+### [PERF] 9. `TrackManager::index()` O(n) scan → O(n²) per cycle — ✅ FIXED 2026-06-18
 Linear scan called from `recordHit/recordMiss/noteObservation/recordUpdated`,
 plus the stale sweep calls `lastObservation(id)` per track. A
 `TrackId→index` map fixes it if track counts grow.
+
+**Fix:** added `std::unordered_map<std::uint64_t, std::size_t> id_to_index_`
+(keyed on `TrackId.value`) maintained on `add` and `recordMiss`; `index()` is
+now an O(1) hash lookup. On erase the shifted tail `[i, end)` is reindexed so
+the map stays exact. Purely a lookup accelerator — `tracks_` iteration order is
+untouched, so deterministic replay (invariant #4) holds. Guard test
+`TrackManager.ResolvesIdsCorrectlyAfterMiddleErase`; bench bit-for-bit
+identical (28166 rows).
 
 ### [PERF/VERIFY] 10. Hungarian BIG_M re-validation contract
 `Hungarian.cpp` requires callers to re-validate infeasible (BIG_M)

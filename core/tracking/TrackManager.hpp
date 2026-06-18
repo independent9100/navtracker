@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 #include "core/types/Timestamp.hpp"
@@ -57,6 +58,12 @@ class TrackManager {
   std::vector<Track> tracks_;
   std::vector<Counters> counters_;
   std::vector<Timestamp> last_observation_;
+  // TrackId.value -> position in tracks_/counters_/last_observation_. Keeps
+  // per-track lookup O(1) so the per-cycle hit/miss/observation bookkeeping
+  // is O(n) rather than O(n²) (review #9). Iteration order is still driven by
+  // tracks_, so this is purely a lookup accelerator — replay stays
+  // deterministic (invariant #4).
+  std::unordered_map<std::uint64_t, std::size_t> id_to_index_;
   ITrackSink* sink_{nullptr};
 };
 

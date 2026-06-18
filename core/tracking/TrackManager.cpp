@@ -14,6 +14,7 @@ TrackId TrackManager::add(const Track& track, Timestamp first_observation) {
   tracks_.push_back(t);
   counters_.push_back(Counters{1, 0});
   last_observation_.push_back(first_observation);
+  id_to_index_[t.id.value] = tracks_.size() - 1;
   if (sink_ != nullptr) {
     sink_->onTrackInitiated({t.id, first_observation, t.status});
   }
@@ -21,10 +22,9 @@ TrackId TrackManager::add(const Track& track, Timestamp first_observation) {
 }
 
 int TrackManager::index(TrackId id) const {
-  for (std::size_t i = 0; i < tracks_.size(); ++i) {
-    if (tracks_[i].id == id) return static_cast<int>(i);
-  }
-  return -1;
+  const auto it = id_to_index_.find(id.value);
+  if (it == id_to_index_.end()) return -1;
+  return static_cast<int>(it->second);
 }
 
 void TrackManager::recordHit(TrackId id) {
@@ -53,6 +53,12 @@ void TrackManager::recordMiss(TrackId id) {
     tracks_.erase(tracks_.begin() + i);
     counters_.erase(counters_.begin() + i);
     last_observation_.erase(last_observation_.begin() + i);
+    // The erase shifted every element after i down by one slot. Drop the
+    // deleted id and reindex the shifted tail so id_to_index_ stays exact.
+    id_to_index_.erase(id.value);
+    for (std::size_t k = static_cast<std::size_t>(i); k < tracks_.size(); ++k) {
+      id_to_index_[tracks_[k].id.value] = k;
+    }
     return;
   }
   tracks_[i].status = TrackStatus::Coasting;
