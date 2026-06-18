@@ -12,6 +12,11 @@
 #include <memory>
 #include <vector>
 
+#ifdef NAVTRACKER_WITH_FOXGLOVE
+#include <cstdlib>
+#include "adapters/foxglove/FoxgloveDebugRecorder.hpp"
+#endif
+
 #include "core/types/Measurement.hpp"
 #include "core/types/MeasurementBuilders.hpp"
 #include "core/types/SensorDefaults.hpp"
@@ -66,6 +71,17 @@ int main() {
     provider.update(pose);
   }
 
+#ifdef NAVTRACKER_WITH_FOXGLOVE
+  std::unique_ptr<foxglove::FoxgloveDebugRecorder> recorder;
+  if (const char* mcap_path = std::getenv("NAVTRACKER_MCAP")) {
+    foxglove::RecorderConfig rc; rc.gate_gamma = 20.0;  // match GnnAssociator chi2_gate
+    recorder = std::make_unique<foxglove::FoxgloveDebugRecorder>(
+        mcap_path, provider.datum(), /*bias=*/nullptr, rc);
+    mgr.setTrackSink(recorder.get());
+    tracker.setInnovationSink(recorder.get());
+  }
+#endif
+
   // ---- Each time YOUR pipeline emits a parsed AIS report --------------
   //
   // AIS gives the target's absolute lat/lon directly. Convert to ENU
@@ -82,6 +98,9 @@ int main() {
         Eigen::Matrix2d::Zero(),  // empty -> defaults will fill in
         AssociationHints{/*mmsi=*/200000001u, std::nullopt});
     applyDefaultsIfEmpty(m, defaults);
+#ifdef NAVTRACKER_WITH_FOXGLOVE
+    if (recorder) recorder->recordMeasurement(m);
+#endif
     tracker.process(m);
   }
 
@@ -105,11 +124,18 @@ int main() {
     // If your radar didn't report std values, leave them 0 and call:
     // applyDefaultsIfEmpty(m, defaults);
     if (m.value.size() > 0) {
+#ifdef NAVTRACKER_WITH_FOXGLOVE
+      if (recorder) recorder->recordMeasurement(m);
+#endif
       tracker.process(m);
     }
   }
 
   // ---- Drain the current track snapshot in operator-friendly form ----
+
+#ifdef NAVTRACKER_WITH_FOXGLOVE
+  if (recorder) recorder->onTracks(mgr.tracks(), Timestamp::fromSeconds(123.0));
+#endif
 
   for (const Track& t : mgr.tracks()) {
     if (t.status != TrackStatus::Confirmed) continue;

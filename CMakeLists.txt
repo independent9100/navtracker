@@ -313,4 +313,11 @@ add_executable(navtracker_example app/example.cpp)
 target_link_libraries(navtracker_example PRIVATE
     navtracker_core Eigen3::Eigen)
 
+if(NAVTRACKER_BUILD_FOXGLOVE)
+  add_executable(navtracker_example_foxglove app/example.cpp)
+  target_compile_definitions(navtracker_example_foxglove PRIVATE NAVTRACKER_WITH_FOXGLOVE)
+  target_link_libraries(navtracker_example_foxglove PRIVATE
+    navtracker_core navtracker_foxglove Eigen3::Eigen)
+endif()
+
 add_subdirectory(bench)
