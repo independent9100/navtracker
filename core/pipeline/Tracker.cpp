@@ -256,6 +256,13 @@ void Tracker::processBatch(const std::vector<Measurement>& scan_in) {
         touch.own_position_std_m = gz.sensor_position_std_m;
         touch.covariance_is_default = gz.covariance_is_default;
         tr.recent_contributions.push_back(std::move(touch));
+        // Provenance parity with the hard path: every source that
+        // soft-updated this track joins contributing_sources (dedup).
+        bool has_src = false;
+        for (const auto& s : tr.contributing_sources) {
+          if (s == gz.source_id) { has_src = true; break; }
+        }
+        if (!has_src) tr.contributing_sources.push_back(gz.source_id);
       }
       pruneContributions(tr.recent_contributions, t);
       const TrackId id = tr.id;

@@ -169,6 +169,8 @@ add_executable(navtracker_tests
   tests/pipeline/test_mht_cross_merge.cpp
   tests/pipeline/test_mht_innovation_emit.cpp
   tests/pipeline/test_review_fixes.cpp
+  tests/pipeline/test_jpda_contributing_sources.cpp
+  tests/pipeline/test_bias_correction_orthogonality.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
   tests/adapters/own_ship/test_own_ship_provider.cpp

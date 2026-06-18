@@ -97,8 +97,14 @@ Weights: `Wm₀ = λ/scale`, `Wc₀ = λ/scale + (1−α²+β)`, others `1/(2·s
   `x ← x + K (z − ẑ)` (residual angle-wrapped); `P ← P − K S Kᵀ`.
 - **Initiate:** same one-point initiator as the EKF.
 
-**Assumptions.** `P` is positive-definite (Cholesky succeeds); linear motion
-model (`F(dt)·x`); `h(x)` continuous over the sigma spread; the unscented
+**Assumptions.** `P` is normally positive-definite (Cholesky succeeds). When
+`scale·P` is *not* PD (singular or marginally indefinite after a degenerate
+update), `computeSigmaPoints` falls back to a symmetric PSD matrix square
+root via eigendecomposition with negative eigenvalues clamped to zero — any
+matrix square root is a valid sigma-point spread (Julier/Uhlmann), and this
+keeps the points finite instead of emitting NaN columns that would poison the
+whole step. Linear motion model (`F(dt)·x`); `h(x)` continuous over the sigma
+spread; the unscented
 predicted measurement mean `ẑ` is used as-is for the innovation — under
 strong nonlinearity (e.g. very-short-range range/bearing with large prior
 position uncertainty) `ẑ` differs from `h(x̂)` by a second-moment bias,
@@ -132,11 +138,18 @@ the table of measurements.
 **Math.** Bootstrap (sequential importance resampling) with `N` weighted
 particles `{xⁱ, wⁱ}`. State and motion model as for the EKF.
 
-- **Initiate:** sample `xⁱ ~ N(μ₀, P₀)` from the same one-point Gaussian
-  initiator as EKF / UKF; `wⁱ = 1/N`. Project ensemble → `(track.state,
-  track.covariance)`.
-- **Predict:** `xⁱ ← F(dt)·xⁱ + ηⁱ`, `ηⁱ ~ N(0, Q(dt))` via Cholesky
-  `Q = L Lᵀ`. Weights unchanged. Project ensemble → carrier.
+- **Initiate:** size the ensemble from `motion_->stateDim()` (CV2D → 4-state;
+  CT / CV5State → 5-state with `ω` as the trailing entry, seeded from
+  `init_omega_std`), mirroring `UkfEstimator::initiate`. Sample
+  `xⁱ ~ N(μ₀, P₀)` from the same one-point Gaussian initiator as EKF / UKF;
+  `wⁱ = 1/N`. Project ensemble → `(track.state, track.covariance)`.
+- **Predict:** `xⁱ ← f(xⁱ, dt) + ηⁱ`, `ηⁱ ~ N(0, Q(dt))` via Cholesky
+  `Q = L Lᵀ`. `f` is the model's per-particle nonlinear transition
+  `propagate(x, dt)` — for a linear model it reduces to `F(dt)·x`, but for a
+  coordinated-turn model each particle turns by *its own* state-driven `ω`.
+  (The previous linear `F(dt)·particles` path silently dropped that, collapsing
+  the PF to the CV limit even under a CT model.) Weights unchanged. Project
+  ensemble → carrier.
 - **Update:** `log wⁱ ← log wⁱ − ½ yⁱᵀ R⁻¹ yⁱ`, `yⁱ = z − h(xⁱ)`
   (bearing wrapped to (−π, π] via the shared `measurementResidual` helper).
   Normalize via log-sum-exp: `wⁱ ∝ exp(log wⁱ − max log w)`, then `w /= Σ w`.
@@ -146,7 +159,7 @@ particles `{xⁱ, wⁱ}`. State and motion model as for the EKF.
 
 **Assumptions.** Process noise `Q(dt)` is positive-semidefinite; when `Q` is
 singular (e.g. `q = 0`) the Cholesky branch is skipped and predict collapses
-to a deterministic `F·x`. Measurement noise covariance `R` is
+to a deterministic `f(xⁱ, dt)` (no diffusion). Measurement noise covariance `R` is
 positive-definite (used inverted in the log-likelihood; a sensor reporting
 zero-diagonal `R` makes the inverse explode but the degenerate-weights
 guard catches it and resets the ensemble to uniform — defensive only, not a

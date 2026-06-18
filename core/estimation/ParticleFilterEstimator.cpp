@@ -16,11 +16,13 @@ ParticleFilterEstimator::ParticleFilterEstimator(
     int particle_count,
     double init_speed_std,
     double ess_fraction_threshold,
-    std::uint64_t seed)
+    std::uint64_t seed,
+    double init_omega_std)
     : motion_(std::move(motion)),
       particle_count_(particle_count),
       init_speed_std_(init_speed_std),
       ess_threshold_(ess_fraction_threshold * particle_count),
+      init_omega_std_(init_omega_std),
       rng_(seed) {}
 
 void ParticleFilterEstimator::projectToGaussian(Track& track) const {
@@ -44,7 +46,6 @@ void ParticleFilterEstimator::predict(Track& track, Timestamp to) const {
   if (track.particles.cols() == 0) return;
   const int n = static_cast<int>(track.particles.rows());
   const int N = static_cast<int>(track.particles.cols());
-  const Eigen::MatrixXd F = motion_->transitionMatrix(dt);
   const Eigen::MatrixXd Q = motion_->processNoise(dt);
 
   Eigen::MatrixXd noise = Eigen::MatrixXd::Zero(n, N);
@@ -58,9 +59,16 @@ void ParticleFilterEstimator::predict(Track& track, Timestamp to) const {
     noise = L * eta;
   }
   // If Q is not PD (e.g. q == 0 → singular), skip the noise term entirely;
-  // the predict becomes deterministic F·x for every particle.
+  // the predict becomes deterministic f(x) for every particle.
 
-  track.particles = (F * track.particles) + noise;
+  // Apply the model's per-particle nonlinear transition. For a linear
+  // model `propagate` reduces to F(dt)·x; for a coordinated-turn model it
+  // turns each particle by its own state-driven ω, which the previous
+  // linear F-matrix path silently dropped (collapsing the PF to CV).
+  Eigen::MatrixXd propagated(n, N);
+  for (int j = 0; j < N; ++j)
+    propagated.col(j) = motion_->propagate(track.particles.col(j), dt);
+  track.particles = propagated + noise;
   projectToGaussian(track);
   track.last_update = to;
 }
@@ -111,20 +119,30 @@ Track ParticleFilterEstimator::initiate(const Measurement& z) const {
   t.last_update = z.time;
   t.status = TrackStatus::Tentative;
 
-  Eigen::Vector4d x = Eigen::Vector4d::Zero();
+  // Size the ensemble from the motion model: CV2D → 4-state, CT / CV5State
+  // → 5-state with ω as the trailing entry. Mirrors UkfEstimator::initiate
+  // so a PF can be dropped into any IMM-eligible model slot without a
+  // dimension-mismatch crash.
+  const int n = motion_->stateDim();
+  Eigen::VectorXd x = Eigen::VectorXd::Zero(n);
   x(0) = z.value(0);
   x(1) = z.value(1);
 
-  Eigen::Matrix4d P = Eigen::Matrix4d::Zero();
+  Eigen::MatrixXd P = Eigen::MatrixXd::Zero(n, n);
   P(0, 0) = z.covariance(0, 0);
   P(0, 1) = z.covariance(0, 1);
   P(1, 0) = z.covariance(1, 0);
   P(1, 1) = z.covariance(1, 1);
   const double vv = init_speed_std_ * init_speed_std_;
-  P(2, 2) = vv;
-  P(3, 3) = vv;
+  if (n >= 4) {
+    P(2, 2) = vv;
+    P(3, 3) = vv;
+  }
+  if (n >= 5) {
+    P(4, 4) = init_omega_std_ * init_omega_std_;
+  }
 
-  const Eigen::LLT<Eigen::Matrix4d> llt(P);
+  const Eigen::LLT<Eigen::MatrixXd> llt(P);
   if (llt.info() != Eigen::Success) {
     // Init covariance was not positive-definite — return a Tentative track
     // with the Gaussian carrier only (no particle ensemble). Predict/update
@@ -136,13 +154,13 @@ Track ParticleFilterEstimator::initiate(const Measurement& z) const {
     t.contributing_sources.push_back(z.source_id);
     return t;
   }
-  const Eigen::Matrix4d L = llt.matrixL();
+  const Eigen::MatrixXd L = llt.matrixL();
 
   std::normal_distribution<double> n01(0.0, 1.0);
-  Eigen::MatrixXd particles(4, particle_count_);
+  Eigen::MatrixXd particles(n, particle_count_);
   for (int i = 0; i < particle_count_; ++i) {
-    Eigen::Vector4d eta;
-    for (int j = 0; j < 4; ++j) eta(j) = n01(rng_);
+    Eigen::VectorXd eta(n);
+    for (int j = 0; j < n; ++j) eta(j) = n01(rng_);
     particles.col(i) = x + L * eta;
   }
   t.particles = particles;

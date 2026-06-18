@@ -39,6 +39,30 @@ before/after sweep (17 configs × 10 synthetic scenarios × 5 seeds, 28166
 rows) is bit-for-bit identical — guards fire only on invalid input, which
 the clean synthetic/replay data never produces.
 
+**Fixed: correctness batch — #4, #11, #12; #18 verified.** Unit-tested
+(`test_jpda_contributing_sources`, `test_bias_correction_orthogonality`,
++ PF/SigmaPoints cases); full suite 658/658 green. Verified **bench-neutral**:
+before/after sweep (17 configs × 10 scenarios × 5 seeds, 28166 rows)
+bit-for-bit identical.
+- #4 → JPDA soft-update path now appends each fusing source to
+  `contributing_sources` (dedup), parity with the hard/GNN path.
+- #11 → `ParticleFilterEstimator` sizes its ensemble from
+  `motion_->stateDim()` (no more 4-state hard-wire / dimension crash) and
+  `predict` uses the model's per-particle `propagate(x, dt)` so a CT model
+  actually turns each particle instead of silently collapsing to CV. New
+  `init_omega_std` ctor arg (appended; defaulted) seeds the ω state.
+- #12 → `computeSigmaPoints` checks `llt.info()`; on a non-PD `scale·P` it
+  falls back to an eigen PSD square root (negative eigenvalues clamped),
+  keeping the UKF/IMM step finite instead of NaN-poisoned.
+- #18 → **verified, not a defect.** Heading bias (angular, platform-global,
+  removed upstream in the adapter via `IHeadingBiasProvider`) and per-sensor
+  bias (translational/bearing, via `ISensorBiasProvider` in the Tracker) are
+  applied by disjoint mechanisms on disjoint quantities — no code path
+  double-applies. Locked by `test_bias_correction_orthogonality`. System-level
+  separability of a far-target heading offset vs a per-sensor position offset
+  relies on multi-range geometry, which is the documented design
+  (`SensorBiasPairExtractor.hpp`), not a bug.
+
 ## Ranked summary
 
 Ranked by impact × likelihood × blast radius. "Always-on" = triggers on
@@ -51,11 +75,11 @@ move, specific config).
 | 2 | 15 | Live adapters skip edge validation ✅ FIXED | BUG/GAP | bad input | One AIS 91°/181° sentinel or NaN → phantom/garbage track; safety-relevant |
 | 3 | 2 | MHT has no datum-recenter shift ✅ FIXED | BUG | >30 km move | Internal `trees_` desync from measurements; tracks jump. Severe but conditional |
 | 4 | 3 | `Tracker.cpp` never prunes `recent_contributions` ✅ FIXED | BUG | time | Unbounded memory + O(n²) extractor cost on the single-hypothesis path |
-| 5 | 11 | PF hard-wired to 4-state | BUG | config | Crash / silent CV-only if wired to a 5-state motion model |
+| 5 | 11 | PF hard-wired to 4-state ✅ FIXED | BUG | config | Crash / silent CV-only if wired to a 5-state motion model |
 | 6 | 17 | Greedy (not optimal) GOSPA/OSPA/id-switch assignment | EVAL | crossing geometry | Confounds estimator A/B decisions you act on |
-| 7 | 4 | JPDA soft path omits `contributing_sources` | BUG | JPDA mode | Provenance empty under soft association |
-| 8 | 18 | Possible heading × per-sensor double-debias | VERIFY | ARPA/EO-IR | Could double-correct one physical offset; needs a targeted test |
-| 9 | 12 | SigmaPoints ignores `llt.info()` | MINOR | non-PD cov | NaN sigma points poison the whole UKF/IMM step |
+| 7 | 4 | JPDA soft path omits `contributing_sources` ✅ FIXED | BUG | JPDA mode | Provenance empty under soft association |
+| 8 | 18 | Possible heading × per-sensor double-debias ✅ VERIFIED (no bug) | VERIFY | ARPA/EO-IR | Could double-correct one physical offset; needs a targeted test |
+| 9 | 12 | SigmaPoints ignores `llt.info()` ✅ FIXED | MINOR | non-PD cov | NaN sigma points poison the whole UKF/IMM step |
 | 10 | 9 | `TrackManager::index()` O(n) → O(n²)/cycle | PERF | many tracks | Fine now; bites at scale |
 | 11 | 13 | Velocity `is_valid` true whenever `trace>0` | MINOR | always-on | Consumers get a COG from pure init prior |
 | 12 | 14 | HeadingBias v1 AIS-ARPA path has no outlier gate | MINOR | bad pair | One bad pair enters bias state unfiltered |
@@ -107,7 +131,7 @@ and bias extractors re-scan an ever-growing vector each cycle → O(n²) CPU.
 The `SourceTouch` comment claims "consumers are responsible for clearing,"
 but no consumer does.
 
-### [BUG] 4. JPDA soft-update path doesn't populate `contributing_sources`
+### [BUG] 4. JPDA soft-update path doesn't populate `contributing_sources` — ✅ FIXED 2026-06-18
 In `Tracker::processBatch`, the hard-match branch updates
 `tr.contributing_sources` (264-268) but the `soft` branch (204-244) does
 not. Under JPDA the provenance list is never filled even in the
@@ -160,7 +184,7 @@ Deep-read: `association/Murty` + `Gating` + `JointEvents`, `estimation/Ukf`
 + `ParticleFilter` + `Ekf` + `CoordinatedTurn` + `BearingRangeGuard` +
 `SigmaPoints`, `output/TrackOutput`, `bias/HeadingBiasEstimator`.
 
-### [BUG] 11. ParticleFilterEstimator is hard-wired to a 4-state model
+### [BUG] 11. ParticleFilterEstimator is hard-wired to a 4-state model — ✅ FIXED 2026-06-18
 `initiate()` always builds an `Eigen::Vector4d`/`Matrix4d` ensemble
 (lines 114-126), ignoring `motion_->stateDim()` — unlike `UkfEstimator`
 which sizes from `stateDim()`. If a PF is constructed with a 5-state motion
@@ -172,7 +196,7 @@ even with a CT model the PF would only ever apply the CV-limit (no
 nonlinear turn propagation). Net: PF is silently CV-only. Document the
 constraint or size from `stateDim()` + propagate per particle.
 
-### [MINOR] 12. SigmaPoints doesn't check Cholesky success
+### [MINOR] 12. SigmaPoints doesn't check Cholesky success — ✅ FIXED 2026-06-18
 `computeSigmaPoints` ignores `llt.info()`; a non-PD `cov` yields a garbage
 `L` and NaN sigma points that propagate through the whole UKF/IMM step.
 EKF and IMM guard their determinants; UKF's sigma path does not. Add an
@@ -273,7 +297,7 @@ Deep-read: `estimation/NoiseModels` + `ConstantVelocity5State`,
   fragmentation issue noted in the autoferry eval findings; the data path
   is correct. Truth dedup + finite-difference velocity derivation are fine.
 
-### [MINOR] 18. (carryover) HeadingBias v1 vs cross-sensor publish coupling
+### [MINOR] 18. (carryover) HeadingBias v1 vs cross-sensor publish coupling — ✅ VERIFIED 2026-06-18 (no bug)
 Not a defect, a design watch-item: `ArpaAdapter`/`EoIrAdapter` apply the
 *heading* bias (`IHeadingBiasProvider`) but the per-sensor position bias
 from `SensorBiasEstimator` is applied separately in the Tracker via

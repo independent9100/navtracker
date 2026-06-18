@@ -1,11 +1,14 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <memory>
 
 #include "core/estimation/ConstantVelocity2D.hpp"
+#include "core/estimation/CoordinatedTurn.hpp"
 #include "core/estimation/ParticleFilterEstimator.hpp"
 
 using navtracker::ConstantVelocity2D;
+using navtracker::CoordinatedTurn;
 using navtracker::ParticleFilterEstimator;
 using navtracker::Measurement;
 using navtracker::MeasurementModel;
@@ -124,6 +127,43 @@ TEST(ParticleFilterEstimator, UpdateResamplesWhenEssCollapses) {
   // Post-resample weights are uniform.
   for (int i = 0; i < t.particle_weights.size(); ++i)
     EXPECT_NEAR(t.particle_weights(i), 1.0 / 1000.0, 1e-12);
+}
+
+TEST(ParticleFilterEstimator, InitiateSizesEnsembleFromFiveStateModel) {
+  // Review #11: a PF built on a 5-state model must size its ensemble from
+  // stateDim() (was hard-wired to 4 → dimension-mismatch crash in predict).
+  auto motion = std::make_shared<CoordinatedTurn>(0.5, 0.1);
+  ParticleFilterEstimator pf(motion, 500, 5.0, 0.5, 17, /*init_omega_std=*/0.2);
+  const navtracker::Track t = pf.initiate(positionMeas(0.0, 0.0, 3.0, 0.0));
+
+  EXPECT_EQ(t.particles.rows(), 5);
+  EXPECT_EQ(t.state.size(), 5);
+  EXPECT_EQ(t.covariance.rows(), 5);
+  // ω row seeded from init_omega_std (0.2² = 0.04); the projected sample
+  // covariance over 500 particles lands within Monte-Carlo tolerance.
+  EXPECT_NEAR(t.covariance(4, 4), 0.04, 0.01);
+}
+
+TEST(ParticleFilterEstimator, PredictTurnsParticlesWithCoordinatedTurn) {
+  // Review #11: predict must use per-particle propagate() so a CT model
+  // actually rotates the velocity vector. The old linear-F path kept the
+  // velocity constant (CV limit) regardless of ω.
+  auto motion = std::make_shared<CoordinatedTurn>(0.0, 0.0);  // deterministic
+  ParticleFilterEstimator pf(motion, 1000, 1.0, 0.5, 19, 0.1);
+  navtracker::Track t = pf.initiate(positionMeas(0.0, 0.0, 1.0, 0.0));
+  // Drive every particle east at 10 m/s with a +0.5 rad/s turn rate.
+  for (int i = 0; i < t.particles.cols(); ++i) {
+    t.particles(2, i) = 10.0;  // vx
+    t.particles(3, i) = 0.0;   // vy
+    t.particles(4, i) = 0.5;   // ω
+  }
+  pf.predict(t, Timestamp::fromSeconds(1.0));
+  // After 1 s the velocity has turned by ~0.5 rad: vy becomes appreciably
+  // non-zero while the speed magnitude is preserved. A CV-limit predict
+  // would have left vy at 0.
+  const double vx = t.state(2), vy = t.state(3);
+  EXPECT_GT(std::abs(vy), 2.0);
+  EXPECT_NEAR(std::hypot(vx, vy), 10.0, 0.3);
 }
 
 TEST(ParticleFilterEstimator, DeterministicForSameSeed) {

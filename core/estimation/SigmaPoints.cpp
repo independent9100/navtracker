@@ -1,6 +1,7 @@
 #include "core/estimation/SigmaPoints.hpp"
 
 #include <Eigen/Cholesky>
+#include <Eigen/Eigenvalues>
 
 namespace navtracker {
 
@@ -13,8 +14,23 @@ SigmaPoints computeSigmaPoints(const Eigen::VectorXd& mean,
   const double scale = alpha * alpha * (n + kappa);  // = n + lambda
   const double lambda = scale - n;
 
-  const Eigen::LLT<Eigen::MatrixXd> llt(scale * cov);
-  const Eigen::MatrixXd L = llt.matrixL();
+  const Eigen::MatrixXd S = scale * cov;
+  const Eigen::LLT<Eigen::MatrixXd> llt(S);
+  Eigen::MatrixXd L;
+  if (llt.info() == Eigen::Success) {
+    L = llt.matrixL();
+  } else {
+    // S is not positive-definite (singular or marginally indefinite cov,
+    // e.g. after a degenerate update). A raw Cholesky would emit NaN
+    // columns that poison every sigma point and propagate through the
+    // whole UKF/IMM step. Fall back to a symmetric PSD matrix square
+    // root via eigendecomposition with negative eigenvalues clamped to
+    // zero — any matrix square root is a valid sigma-point spread
+    // (Julier/Uhlmann), and this one stays finite.
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(S);
+    const Eigen::VectorXd d = es.eigenvalues().cwiseMax(0.0);
+    L = es.eigenvectors() * d.cwiseSqrt().asDiagonal();
+  }
 
   SigmaPoints sp;
   sp.points.resize(n, 2 * n + 1);

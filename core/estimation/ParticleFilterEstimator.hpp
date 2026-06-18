@@ -15,13 +15,21 @@ namespace navtracker {
 // Determinism: a single internal RNG is advanced by every predict / update /
 // initiate call. Replaying the same message stream against a freshly-seeded
 // instance reproduces identical particles, weights, and projected state.
+//
+// State layout follows the motion model: `initiate` sizes the ensemble
+// from `motion_->stateDim()` (CV2D → 4-state; CT / CV5State → 5-state with
+// ω as the trailing entry, seeded with `init_omega_std`). `predict` applies
+// the model's per-particle nonlinear `propagate(x, dt)` so a coordinated-
+// turn model actually turns each particle, rather than collapsing to the
+// linear CV limit.
 class ParticleFilterEstimator : public IEstimator {
  public:
   ParticleFilterEstimator(std::shared_ptr<const IMotionModel> motion,
                           int particle_count = 500,
                           double init_speed_std = 10.0,
                           double ess_fraction_threshold = 0.5,
-                          std::uint64_t seed = 0);
+                          std::uint64_t seed = 0,
+                          double init_omega_std = 0.1);
 
   void predict(Track& track, Timestamp to) const override;
   void update(Track& track, const Measurement& z) const override;
@@ -34,6 +42,7 @@ class ParticleFilterEstimator : public IEstimator {
   int particle_count_;
   double init_speed_std_;
   double ess_threshold_;     // absolute (= fraction · N)
+  double init_omega_std_;
   mutable std::mt19937_64 rng_;
 };
 
