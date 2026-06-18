@@ -69,3 +69,22 @@ TEST(Recorder, PositionAndBearingDetectionsEmit) {
   EXPECT_EQ(c["/detections"], 2);          // one SceneUpdate per measurement
   EXPECT_EQ(c["/map/detections"], 1);      // only the position meas maps to lat/lon
 }
+
+TEST(Recorder, InnovationEmitsNisAndGate) {
+  const std::string path = navtracker::foxglove::test::tmpMcapPath("recorder_innov");
+  {
+    RecorderConfig cfg; cfg.gate_gamma = 9.21;        // chi2 2dof 99%
+    FoxgloveDebugRecorder rec(path, geo::Datum(geo::Geodetic{59.9, 10.7}), nullptr, cfg);
+    InnovationEvent e; e.time = Timestamp{3000}; e.track_id = TrackId{1};
+    e.sensor = SensorKind::Ais; e.source_id = "ais-1";
+    e.residual = Eigen::Vector2d(1.0, 0.0);
+    e.S = Eigen::Matrix2d::Identity() * 4.0; e.R = e.S; e.dim = 2;
+    rec.onInnovation(e);                              // caches S for track 1
+    rec.onTracks({makeTrack(1, 0, 0)}, Timestamp{3001});
+    rec.close();
+  }
+  auto c = countByTopic(path);
+  std::remove(path.c_str());
+  EXPECT_EQ(c["/diag/innovation"], 1);
+  EXPECT_EQ(c["/gates"], 1);                          // gate drawn because S cached + gamma>0
+}

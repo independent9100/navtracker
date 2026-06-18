@@ -2,6 +2,7 @@
 #include <cmath>
 #include <fstream>
 #include <sstream>
+#include <Eigen/Cholesky>
 #include "adapters/foxglove/FoxgloveJson.hpp"
 #include "adapters/foxglove/Geometry.hpp"
 #include "adapters/foxglove/Schemas.hpp"
@@ -68,6 +69,19 @@ void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp
     cov[3] = geo.position_covariance_m2(1,0); cov[4] = geo.position_covariance_m2(1,1);
     w_->write("/map/tracks", now, locationFix(now, geo.lat_deg, geo.lon_deg, cov).dump());
   }
+  if (cfg_.gate_gamma > 0.0) {
+    std::vector<json> gate_entities;
+    for (const auto& t : tracks) {
+      if (t.state.size() < 2) continue;
+      auto sit = last_S_.find(t.id.value);
+      if (sit == last_S_.end() || sit->second.rows() < 2) continue;
+      const Eigen::Vector2d p = xy(t.state);
+      gate_entities.push_back(lineEntity("gate-" + std::to_string(t.id.value),
+          covarianceEllipse(p, sit->second.topLeftCorner<2,2>(), std::sqrt(cfg_.gate_gamma)),
+          Rgba{0.4,0.4,1.0,0.6}));
+    }
+    w_->write("/gates", now, sceneUpdate(now, gate_entities).dump());
+  }
   w_->write("/tracks", now, sceneUpdate(now, entities).dump());
   json diag{{"time_ns", now.nanos()}, {"confirmed", confirmed}, {"tentative", tentative},
             {"total", confirmed + tentative}};
@@ -129,7 +143,14 @@ void FoxgloveDebugRecorder::onTrackInitiated(const TrackLifecycleEvent&) {}
 void FoxgloveDebugRecorder::onTrackConfirmed(const TrackLifecycleEvent&) {}
 void FoxgloveDebugRecorder::onTrackUpdated(const TrackLifecycleEvent&) {}
 void FoxgloveDebugRecorder::onTrackDeleted(const TrackLifecycleEvent&) {}
-void FoxgloveDebugRecorder::onInnovation(const InnovationEvent&) {}
+void FoxgloveDebugRecorder::onInnovation(const InnovationEvent& e) {
+  const double nis = e.residual.transpose() * e.S.ldlt().solve(e.residual);
+  last_S_[e.track_id.value] = e.S;
+  w_->write("/diag/innovation", e.time,
+            json{{"time_ns", e.time.nanos()}, {"track_id", e.track_id.value},
+                 {"sensor", static_cast<int>(e.sensor)}, {"source_id", e.source_id},
+                 {"nis", nis}, {"dim", e.dim}}.dump());
+}
 void FoxgloveDebugRecorder::onCollisionRisk(const CollisionRiskEvent&) {}
 void FoxgloveDebugRecorder::onDatumRecentered(const geo::Datum&, const geo::Datum&) {}
 
