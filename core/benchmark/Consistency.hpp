@@ -40,10 +40,28 @@ struct NisStats {
 
 struct NeesStats {
   std::size_t n{0};
-  double mean{0.0};                 // ε̄_NEES (position only, 2-d)
+  double mean{0.0};                 // ε̄_NEES (position only, 2-d). On
+                                    // benches with frequent metric ID
+                                    // reassignments (e.g. close parallel
+                                    // targets) the mean is dragged by
+                                    // post-switch transient samples;
+                                    // see median + p95 + coverage_95
+                                    // for the central-tendency reads
+                                    // that are robust to that artefact.
+  double median{0.0};               // p50 of εⁿᵉᵉˢ samples — central
+                                    // tendency robust to ID-switch
+                                    // transient spikes.
   double p95{0.0};                  // p95 of εⁿᵉᵉˢ samples
+  double p99{0.0};                  // p99 of εⁿᵉᵉˢ samples — pins
+                                    // tail magnitude separately from
+                                    // p95; useful for distinguishing
+                                    // "fat tail" from "extreme outlier"
+                                    // when mean ≫ p95.
   double coverage_95{0.0};
-  double beta_hat{1.0};             // ε̄ / 2 — gross posterior-cov scaling
+  double beta_hat{1.0};             // ε̄ / 2 — gross posterior-cov
+                                    // scaling. Inherits the mean's
+                                    // tail-drag caveat; prefer
+                                    // median / coverage_95 for honesty.
   double band_lo{0.0};
   double band_hi{0.0};
   bool low_sample{false};

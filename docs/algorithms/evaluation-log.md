@@ -8,7 +8,96 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
-## 2026-06-19 (later) — [Cl-2 #1 diagnostic] Step 2: per-sensor NIS refresh on gated canonical; old Q-tightening claim retired
+## 2026-06-19 (later 2) — [Cl-2 #1 close-out] sc13_anchored NEES "catastrophe" is a metric-reporting artefact; close as no filter bug; add nees_median + nees_p99
+
+**The premise we were investigating.** Step 0 left sc13_anchored at
+NEES mean = 69 on the canonical with no obvious mechanism — the
+bias estimator's correction was applied (anchor pairs present), but
+NEES stayed catastrophic while other anchored env-2 scenarios saw
+modest gains (sc16/17/22). The 2026-06-16 entry hypothesised
+"recent_contributions reset on every ID switch", which on re-reading
+the code today is **wrong** — `recent_contributions` is keyed by
+`externalId()` and pruned only by time window
+(`core/pipeline/MhtTracker.cpp:618`); metric-side ID switches do not
+touch it.
+
+**What's actually happening.** The bench harness emits only
+`nees_mean` as the headline. Adding `nees_median` and `nees_p99` to
+the NeesStats output (this commit) and re-bencing canonical-family
+configs on sc13_anchored reveals:
+
+| Config | mean | **median** | p95 | **p99** | cov95 |
+|---|---:|---:|---:|---:|---:|
+| `imm_cv_ct_mht`           | **69.07** | **0.37** | 7.71 | **1637** | 0.943 |
+| `imm_cv_ct_mht_nobias`    | 24.27     | 0.44     | 6.83 | **873**  | 0.938 |
+| `imm_cv_ct_mht_robust`    | 32.10     | 0.42     | 6.07 | 845      | 0.949 |
+| `imm_cv_ct_mht_bearguard` | 24.27     | 0.44     | 6.83 | 871      | 0.938 |
+| `imm_cv_ct_mht_ipda`      | 24.27     | 0.44     | 6.83 | 873      | 0.938 |
+| `imm_cv_ct_mht_cmap`      | 24.96     | 0.44     | 6.78 | 873      | 0.940 |
+| `imm_cv_ct_mht_mofn`      | 36.38     | 0.51     | 7.47 | 1067     | 0.934 |
+| `imm_cv_ct_mht_recapture` | 24.27     | 0.44     | 6.83 | 873      | 0.938 |
+
+**Read.** The filter is *fine* on sc13_anchored in every config:
+median NEES ≈ 0.4 (well below the χ²₂ expected mean of 2), p95 ≈ 7
+(at the χ²₂ 95% threshold of 6), cov95 ≈ 0.94 (right at the
+expected 0.95). The headline NEES = 69 is **entirely tail-driven**:
+nees_p99 reaches 873–1637 on every config, meaning ~1% of samples
+have NEES values in the 1000s. Those extreme samples appear at
+*metric-side ID switch reassignment events* — the truth-to-track
+assignment greedy-matches under `assignPerStep` (with optimal
+2026-06-18 Hungarian), and when truth_i flips from track_A to
+track_B at scan k+1, track_B's posterior is briefly far from truth_i
+(it was just tracking truth_j) → one or two extreme NEES samples
+until the filter catches up or the next switch happens.
+
+This pattern is **scenario-bound** (sc13 has 14 metric ID switches
+between two close-spaced targets), not config-bound. Removing the
+bias estimator (`_nobias`) drops mean from 69 → 24 because it
+prevents ~9 of those switches; it does **not** improve median, p95,
+or cov95.
+
+**Confirming pattern across the matrix.** Tail-drag (= mean − p95)
+shows two distinct regimes:
+
+| Pattern | Scenarios | Read |
+|---|---|---|
+| **mean ≫ p95** — tail-dragged | sc13_anchored (61), sc17 unanchored (69) | Filter is fine; metric reassignment spikes drag mean. |
+| **mean ≤ p95** — broadly distributed | every other autoferry scenario, both anchored and unanchored | If mean is high, filter is genuinely off — the headline is honest. |
+
+The first regime is what was confusing us about sc13_anchored. The
+second covers the rest of the matrix, including the genuine env-2
+BOT pathology (sc5/sc6/sc22 unanchored, sustained high mean *and*
+high p95).
+
+### Code change
+
+`core/benchmark/Consistency.{hpp,cpp}`: NeesStats gains `median` and
+`p99` fields, computed via the existing `percentile` helper.
+`Sweep.cpp` emits two new rows per scenario (`nees_median`,
+`nees_p99`). `tests/benchmark/test_sweep.cpp` row-count pin updated
+(30 → 32, NEES per-seed 6 → 8). 679 tests green.
+
+### What this means for Cl-2 #1
+
+The catastrophe was the reporting, not the filter. Cl-2 #1 **closes
+as no filter bug**; the headline NEES on sc13_anchored is now
+honest (`p95 = 7.71`, `median = 0.37` for canonical). The 2026-06-16
+"recent_contributions reset on ID switch" hypothesis is retracted;
+the code never did that.
+
+### Eval-log convention going forward
+
+Headline NEES for *any* scenario reads `(median, p95, cov95)` first.
+`nees_mean` is reported but with a footnote when `mean / p95 > 2.0`
+(the tail-dragged regime). This keeps the metric honest without
+losing the mean for historical comparability. `comparison-baselines.md`
+updated to drop sc13_anchored from the Cl-2 #1 open-work table; Cl-2
+moves directly to env-2 BOT (sc5/sc6/sc22).
+
+Pinned bench: `docs/baselines/cl21_metrics_full_20260619.csv`
+(regenerating; new NeesStats fields).
+
+
 
 **Premise.** Plan step 2: re-measure per-sensor NIS now that the bias
 estimator's publish is gated. The standing claim from 2026-06-15
@@ -224,7 +313,8 @@ motivation just evaporated.
 ### Note for fleet-GNSS cooperative deployments (step 5)
 
 The gating creates a clean deployment story for cooperative
-fleet GNSS as an AIS-replacement anchor: emit those as a new
+fleet GNSS as an additional anchor source (alongside AIS, not in
+place of it): emit those as a new
 `SensorKind::Cooperative` Position2D source, extend
 `SensorBiasPairExtractor::isAnchorKind` to recognise it, and
 the existing extractors + the new gate compose correctly

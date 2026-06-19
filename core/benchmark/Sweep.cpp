@@ -128,7 +128,9 @@ void emit(std::vector<MetricRow>& out,
   }
   // NEES aggregate (position, Confirmed-only via BenchStep::tracks).
   out.push_back({p.run_id, config, scenario, seed, "nees_mean", c.nees.mean, "ratio"});
+  out.push_back({p.run_id, config, scenario, seed, "nees_median", c.nees.median, "ratio"});
   out.push_back({p.run_id, config, scenario, seed, "nees_p95", c.nees.p95, "ratio"});
+  out.push_back({p.run_id, config, scenario, seed, "nees_p99", c.nees.p99, "ratio"});
   out.push_back({p.run_id, config, scenario, seed, "nees_coverage_95", c.nees.coverage_95, "ratio"});
   out.push_back({p.run_id, config, scenario, seed, "nees_beta_hat", c.nees.beta_hat, "ratio"});
   out.push_back({p.run_id, config, scenario, seed, "nees_n",

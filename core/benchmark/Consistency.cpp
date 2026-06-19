@@ -245,7 +245,9 @@ NeesStats computeNees(const BenchResult& result, double gate_m) {
   double sum = 0.0;
   for (double v : samples) sum += v;
   out.mean = sum / static_cast<double>(out.n);
+  out.median = ::navtracker::benchmark::percentile(samples, 0.50);
   out.p95 = ::navtracker::benchmark::percentile(samples, 0.95);
+  out.p99 = ::navtracker::benchmark::percentile(samples, 0.99);
   out.coverage_95 = static_cast<double>(below_95) / static_cast<double>(out.n);
   out.beta_hat = out.mean / 2.0;
   if (out.n >= kMinSamples) {

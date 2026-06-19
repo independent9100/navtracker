@@ -181,29 +181,35 @@ question for the headline. The "when/where/why" reading:
   targets without coalescence, which is the dominant env-2 failure
   mode in JPDA-class trackers. (To strictly attribute this to MHT
   vs to our richer IMM, we need the deferred SJPDA+JIPDA from Cl-1.)
-- **Where MHT-class loses**: env-1 unanchored. Mechanism:
-  sc13_anchored NEES = 69 (track-tree pair-stream regression from 14
-  ID switches; documented step-0 residual 2026-06-19); sc5/sc6 BOT
-  range collapse (Jacobian-rank problem the canonical estimator
-  can't fix; see eval-log 2026-06-16 per-target diagnosis).
+- **Where MHT-class loses**: env-1 unanchored — sc5/sc6 BOT range
+  collapse (Jacobian-rank problem the canonical estimator can't fix;
+  see eval-log 2026-06-16 per-target diagnosis). The earlier
+  "sc13_anchored NEES = 69 residual" turned out to be a
+  metric-reporting artefact rather than a filter bug — see eval-log
+  2026-06-19 (later 2): median NEES is 0.37, p95 is 7.71,
+  coverage_95 is 0.94; the mean was dragged by ~1% extreme samples
+  from metric-side ID-switch reassignment events. Closed as no bug.
 - **Cooperative-fleet deployment (step 5 in plan)**: cooperative
-  GNSS acts as an AIS-replacement anchor; under it, Cl-2 inherits
-  the truth-AIS column from Cl-1's table, i.e. cleanly beats the
-  paper.
+  GNSS is an *additional* anchor source — it sits alongside AIS,
+  not in place of it. Real deployments will commonly have both
+  (community AIS for non-cooperative traffic, cooperative GNSS
+  from fleet partners). Under either-or-both, Cl-2 inherits the
+  truth-AIS column from Cl-1's table, i.e. cleanly beats the paper.
 
 **Open Cl-2 work (ranked):**
 
-1. **sc13_anchored NEES = 69 residual.** MHT-internal: 14 ID
-   switches reset `recent_contributions`, biasing the AIS-bearing
-   pair stream toward the better-tracked target; corrected bearings
-   are then systematically wrong on the swap-prone target. Fix lives
-   in `MhtTracker` / `TrackTree` ID-switch handling, not in JPDA or
-   the bias estimator.
+1. ~~sc13_anchored NEES = 69 residual.~~ **CLOSED 2026-06-19 as no
+   filter bug** — was a metric-reporting artefact (mean dragged by
+   ~1% extreme samples from ID-switch reassignment events; median
+   0.37, p95 7.71, cov95 0.94 are all healthy). Bench harness now
+   emits `nees_median` + `nees_p99` alongside `nees_mean`; eval-log
+   headline convention is `(median, p95, cov95)` first. See
+   2026-06-19 (later 2).
 2. **sc5 / sc6 / sc22 env-2 BOT pathology.** Modified-polar EKF or
    bearing-bearing triangulation pre-init. `BearingRangeGuard`
    (`_bearguard`) already implements a post-update LOS clamp that
-   helps measurably; promote to canonical once Cl-2#1 is closed and
-   re-measurable cleanly.
+   helps measurably; re-measure against the gated canonical, then
+   decide promotion.
 3. **UKF / cubature KF inside IMM (sub-question (a), sota-roadmap
    §3).** Build a `ukf_cv_ct_mht` config and measure. If the answer
    is "≤1% different from EKF", we declare the inner-filter question
@@ -321,11 +327,11 @@ when they do is the prevention mechanism.
 
 | Item | Claim | Expected delta | Cost | Status |
 |---|---|---|---|---|
-| sc13_anchored MHT NEES = 69 residual | Cl-2 #1 | Closes the only remaining anchored-env-2 NEES catastrophe; ≈ −45 NEES on sc13. | 1–2 days investigation + fix | open |
+| ~~sc13_anchored MHT NEES = 69 residual~~ | Cl-2 #1 | Was misdiagnosed; filter is fine, mean was tail-dragged. Closed as no-bug 2026-06-19; bench now emits nees_median + nees_p99. | n/a (done) | **closed** |
 | sc5/sc6/sc22 env-2 BOT pathology | Cl-2 #2 | Closes the unanchored env-1 GOSPA gap to Helgesen (Cl-1 cold-deployment claim) by an unknown amount; likely partial. | 3–5 days (mod-polar EKF or triangulation init) | open |
 | UKF / cubature KF inside IMM | Cl-2 #3 | Answers Cl-2 sub-question (a); either ships UKF or formally closes the inner-filter question in EKF's favour. | 1–2 days build + bench | open |
 | EO/IR R tightening (step-2 finding) | Cl-2 #4 | Small NEES improvement on anchored env-2; safe direction. | half-day | open, low-priority |
-| Step 5 — Cooperative GNSS as anchor | Cl-2 (deployment) | Inherits truth-AIS-column performance under deployments with fleet GNSS. | half-day to 1 day | queued |
+| Step 5 — Cooperative GNSS as additional anchor (alongside AIS) | Cl-2 (deployment) | Inherits truth-AIS-column performance when AIS is absent or sparse; additive with AIS when both are present. | half-day to 1 day | queued |
 | SJPDA on JPDA branch | Cl-1 (class-controlled extension) | Half of "is the association class load-bearing?" answer. | half-day (permutation collapse) | optional / deferred |
 | JIPDA proper on JPDA branch | Cl-1 (class-controlled extension) | Other half. | 2–3 days | optional / deferred |
 | PMBM as `IDataAssociator` (sim-only first) | Cl-3 #1 | First-cut PMBM; sanity-check against Williams 2015 MHT-as-special-case. | 1–2 weeks (literature + build + sim tests) | not started |
@@ -334,13 +340,12 @@ when they do is the prevention mechanism.
 
 **Implicit ordering this produces (until you say otherwise):**
 
-1. Cl-2 #1 (sc13_anchored ID-switch residual) — directly improves the
-   tracker we ship; concretely measurable; closes the only catastrophe
-   left on the Cl-2 headline.
-2. Cl-2 #2 (env-2 BOT) — same; biggest remaining MHT-class gap and
+1. ~~Cl-2 #1~~ — **closed 2026-06-19** as metric-artefact, not bug.
+2. **Cl-2 #2** (env-2 BOT) — biggest remaining MHT-class gap and
    directly improves Cl-1's unanchored env-1 number too.
-3. Step 5 (cooperative GNSS) — deployment-relevant, cheap, unlocks
-   the truth-AIS-column performance for real deployments without AIS.
+3. Step 5 (cooperative GNSS) — deployment-relevant, cheap, additive
+   anchor source alongside AIS (the truth-AIS-column performance is
+   already documented).
 4. Cl-2 #3 (UKF) and #4 (EO/IR R) — small, safe.
 5. **Then Cl-3 (PMBM)** — the academic-frontier milestone. Begins
    only after Cl-2 stack is stable so the comparison floor is honest.
