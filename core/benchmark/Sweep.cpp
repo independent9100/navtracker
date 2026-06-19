@@ -54,6 +54,7 @@ const char* sensorName(SensorKind s) {
     case SensorKind::EoIr:     return "eoir";
     case SensorKind::OwnShip:  return "ownship";
     case SensorKind::Lidar:    return "lidar";
+    case SensorKind::Cooperative: return "cooperative";
   }
   return "unknown";
 }

@@ -66,6 +66,17 @@ TEST(AisArpaPairExtractorTest, PropagatesOwnPositionStdFromTouch) {
   EXPECT_DOUBLE_EQ(pairs[0].own_position_std_m, 3.0);
 }
 
+TEST(AisArpaPairExtractorTest, CooperativeGnssActsAsAnchorLikeAis) {
+  Track tr;
+  tr.recent_contributions.push_back(makeTouch(
+      SensorKind::Cooperative, tAt(10.0), Eigen::Vector2d(1000.0, 0.0)));
+  tr.recent_contributions.push_back(
+      makeTouch(SensorKind::ArpaTtm, tAt(10.0), Eigen::Vector2d(995.0, 87.0)));
+  const auto pairs = extractPairs({tr}, tAt(10.0));
+  ASSERT_EQ(pairs.size(), 1u);
+  EXPECT_NEAR(pairs[0].ais_target_position_enu.x(), 1000.0, 1e-9);
+}
+
 TEST(AisArpaPairExtractorTest, MultipleTracksEmitMultiplePairs) {
   Track a;
   a.recent_contributions.push_back(

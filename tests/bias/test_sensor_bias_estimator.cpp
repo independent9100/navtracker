@@ -179,6 +179,32 @@ TEST(SensorBiasPairExtractor, EmitsPairFromAisAndLidarContributions) {
   EXPECT_NEAR(pairs[0].z_sensor_enu.x(), 502.0, 1e-9);
 }
 
+TEST(SensorBiasPairExtractor, EmitsPairFromCooperativeAndLidarContributions) {
+  Track tr;
+  tr.id = TrackId{1};
+  Track::SourceTouch coop;
+  coop.sensor = SensorKind::Cooperative;
+  coop.source_id = "consort0";
+  coop.time = tsSeconds(1.0);
+  coop.value_enu = Eigen::Vector2d(500.0, 100.0);
+  coop.covariance = iso(2.0);
+  tr.recent_contributions.push_back(coop);
+  Track::SourceTouch lidar;
+  lidar.sensor = SensorKind::Lidar;
+  lidar.source_id = "lidar0";
+  lidar.time = tsSeconds(1.1);
+  lidar.value_enu = Eigen::Vector2d(502.0, 99.0);
+  lidar.covariance = iso(2.0);
+  tr.recent_contributions.push_back(lidar);
+
+  std::vector<Track> tracks{tr};
+  const auto pairs = extractPositionPairs(tracks, tsSeconds(1.1));
+  ASSERT_EQ(pairs.size(), 1u);
+  EXPECT_EQ(pairs[0].key.sensor, SensorKind::Lidar);
+  EXPECT_NEAR(pairs[0].z_anchor_enu.x(), 500.0, 1e-9);
+  EXPECT_NEAR(pairs[0].z_sensor_enu.x(), 502.0, 1e-9);
+}
+
 // FixedSensorBiasProvider: known offsets publish immediately.
 TEST(FixedSensorBiasProvider, ConfiguredKeyPublishesKnownOffset) {
   FixedSensorBiasProvider prov;

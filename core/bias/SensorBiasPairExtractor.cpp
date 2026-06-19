@@ -11,7 +11,9 @@
 namespace navtracker {
 namespace {
 
-bool isAnchorKind(SensorKind k) { return k == SensorKind::Ais; }
+bool isAnchorKind(SensorKind k) {
+  return k == SensorKind::Ais || k == SensorKind::Cooperative;
+}
 
 bool isPositionalNonAnchor(SensorKind k) {
   return k == SensorKind::ArpaTtm || k == SensorKind::ArpaTll ||

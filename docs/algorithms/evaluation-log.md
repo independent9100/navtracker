@@ -8,6 +8,51 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-19 (later 4) — [Step 5] SensorKind::Cooperative added as positional anchor alongside AIS
+
+**Change.** New `SensorKind::Cooperative` enum variant (fleet
+partner sharing its own platform GNSS). Wired as an additional
+positional anchor:
+
+- `core/types/Ids.hpp` — new enum variant + comment explaining
+  identity-in-attributes invariant.
+- `core/bias/SensorBiasPairExtractor.cpp:14` — `isAnchorKind` now
+  returns true for `Ais || Cooperative`. Cross-sensor extractor
+  treats either as a valid anchor for `pos`/`bearing`/`cross`
+  pair extraction.
+- `core/bias/AisArpaPairExtractor.cpp:11` — `isAisKind` now
+  matches `Ais || Cooperative` (v1 heading-bias path).
+- `core/benchmark/Sweep.cpp:48` — `sensorName` switch handles
+  the new variant (label `"cooperative"`).
+- `docs/sensors/sensor-reference.md` §4b — full reference entry.
+
+**Framing.** This is additive, not a replacement for AIS. When
+both AIS and Cooperative report on the same target in the same
+cycle, both are valid anchors — selection between them per pair
+is a future tuning knob, not a Step-5 concern.
+
+**Tests.**
+- `tests/bias/test_ais_arpa_pair_extractor.cpp` —
+  `CooperativeGnssActsAsAnchorLikeAis` (1 new).
+- `tests/bias/test_sensor_bias_estimator.cpp` —
+  `EmitsPairFromCooperativeAndLidarContributions` (1 new).
+- Full bias/pair/sweep gtest set: 77 tests pass (unchanged set
+  + 2 new).
+- Bench determinism: green.
+
+**No bench delta** — no scenario currently emits Cooperative
+measurements, so this is wiring-only. A synthetic
+cooperative-vs-AIS-as-anchor sweep is filed as next-step work
+(would test that bias convergence is identical when Cooperative
+substitutes for AIS, and that two anchors of different kinds on
+the same target both contribute).
+
+**Decision.** Ship as canonical wiring; consumers can begin
+producing Cooperative measurements without further engine
+changes. No retune of any existing config.
+
+---
+
 ## 2026-06-19 (later 3) — [Cl-2 #2 scoping] env-2 BOT / env-1 unanchored gap: no cheap canonical promotion; defer to longer-term work
 
 **Premise.** Cl-2 #2 — sc5/sc6/sc22 env-2 BOT pathology — was framed

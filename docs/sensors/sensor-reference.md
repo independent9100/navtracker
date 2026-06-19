@@ -136,6 +136,35 @@ GNSS ~1–10 Hz; IMU/attitude 10–100+ Hz; compass ~10–50 Hz. Generally highe
 
 ---
 
+## 4b. Cooperative GNSS (fleet partner)
+
+A non-AIS cooperative source: a fleet partner (consort vessel, harbor support boat, escort) that shares its own platform GNSS fix over a private link (e.g. mesh radio, LTE, tactical net). Behaves identically to AIS for fusion purposes — high-quality absolute position from the target itself — but does not depend on the regulated AIS transponder.
+
+### Data provided
+Per partner: latitude/longitude (WGS-84), optionally SOG/COG/heading, partner identity (call sign / fleet id), timestamp. No clutter — by construction one report ↔ one platform.
+
+### Units
+Position degrees (WGS-84); SOG m/s if reported; COG/heading degrees.
+
+### Update rate
+Adapter-defined; typical 1–5 Hz when the partner is actively reporting.
+
+### Error / covariance characteristics
+Driven by the partner's GNSS receiver. DGPS/RTK partners ≈ 0.1–2 m; consumer GNSS ≈ 5–10 m. Set `R` from the receiver's reported HDOP/accuracy when available; assume tight (≤ 5 m) with a small floor when not. `P_D ≈ 0.99` when the partner is in-range and reporting; `λ_C ≈ 1e-8` (essentially zero — no clutter).
+
+### Identity content
+Strong: call sign / fleet id is authoritative for the partner. **Convention (invariant 5):** identity lives in `Track::attributes`, never in the fusion primary key. The cooperative kind itself anchors bias; identity is only an association hint.
+
+### Failure modes / gotchas
+- Link loss → silent dropouts; do not infer absence-of-target from silence.
+- Receiver miscalibration / spoofing of the partner's own GNSS propagates directly into our fusion: gate against AIS / radar / lidar as usual.
+- Lever-arm offsets (antenna-to-CCRP) on the partner should be compensated by the partner before transmission, but rarely are; expect a small constant bias per partner that the cross-sensor bias estimator will recover.
+
+### Fusion role
+**Anchor, alongside AIS — not a replacement.** `SensorKind::Cooperative` is recognised by `SensorBiasPairExtractor::isAnchorKind` and `AisArpaPairExtractor::isAisKind`, so a Cooperative⇄radar/lidar/EO co-touch behaves the same as an AIS⇄radar/lidar/EO co-touch for the cross-sensor bias estimator. When both AIS and Cooperative report on the same target in the same cycle, both are valid anchors; either can be the basis of a position-bias pair. Choice of which to prefer per-pair is a future tuning knob.
+
+---
+
 ## 5. Extension sensors (not in initial scope; design accommodates)
 
 | Sensor | Provides | Rate | Notes / when to add |

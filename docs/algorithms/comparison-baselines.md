@@ -342,7 +342,7 @@ when they do is the prevention mechanism.
 | Cl-2 #2 deeper: lifecycle re-tune or init-cov widening | Cl-2 #2 | Closes the unanchored env-1 NEES over-confidence; impact on Helgesen GOSPA gap unknown until measured. | 1-2 days | open, deferred behind Step 5 + Cl-2 #3/#4 |
 | UKF / cubature KF inside IMM | Cl-2 #3 | Answers Cl-2 sub-question (a); either ships UKF or formally closes the inner-filter question in EKF's favour. | 1–2 days build + bench | open |
 | EO/IR R tightening (step-2 finding) | Cl-2 #4 | Small NEES improvement on anchored env-2; safe direction. | half-day | open, low-priority |
-| Step 5 — Cooperative GNSS as additional anchor (alongside AIS) | Cl-2 (deployment) | Inherits truth-AIS-column performance when AIS is absent or sparse; additive with AIS when both are present. | half-day to 1 day | queued |
+| ~~Step 5 — Cooperative GNSS as additional anchor (alongside AIS)~~ | Cl-2 (deployment) | Wiring shipped 2026-06-19 (new `SensorKind::Cooperative`, anchor extractors + AIS-ARPA pair extractor recognise it). No bench delta — no scenario emits Cooperative measurements yet. Synthetic sweep filed as next-step. | n/a (done) | **shipped** |
 | SJPDA on JPDA branch | Cl-1 (class-controlled extension) | Half of "is the association class load-bearing?" answer. | half-day (permutation collapse) | optional / deferred |
 | JIPDA proper on JPDA branch | Cl-1 (class-controlled extension) | Other half. | 2–3 days | optional / deferred |
 | PMBM as `IDataAssociator` (sim-only first) | Cl-3 #1 | First-cut PMBM; sanity-check against Williams 2015 MHT-as-special-case. | 1–2 weeks (literature + build + sim tests) | not started |
@@ -356,12 +356,14 @@ when they do is the prevention mechanism.
    `_bearguard` small, `_recapture` not shippable, real fix is
    lifecycle/init-cov work. Deeper investigation deferred behind
    cheaper wins below.
-3. **Step 5 (Cooperative GNSS)** — NEXT. Deployment-relevant,
-   cheap, additive anchor source alongside AIS.
+3. ~~Step 5 (Cooperative GNSS)~~ — **shipped 2026-06-19** as
+   wiring-only (no bench delta until a scenario emits Cooperative
+   measurements). Synthetic anchor-substitution sweep filed as
+   follow-up.
 4. **Cl-2 #3 (UKF inside IMM)** and **#4 (EO/IR R tightening)** —
-   small, safe, measurable.
+   NEXT. Small, safe, measurable.
 5. **Cl-2 #2 deeper** (lifecycle re-tune / init-cov widening) —
-   re-open after Step 5 and Cl-2 #3/#4.
+   re-open after Cl-2 #3/#4.
 6. **Then Cl-3 (PMBM)** — the academic-frontier milestone. Begins
    only after Cl-2 stack is stable so the comparison floor is honest.
 7. Cl-1 SJPDA/JIPDA — defer unless we explicitly want the

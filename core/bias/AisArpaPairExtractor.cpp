@@ -9,7 +9,7 @@ namespace navtracker {
 namespace {
 
 bool isAisKind(SensorKind k) {
-  return k == SensorKind::Ais;
+  return k == SensorKind::Ais || k == SensorKind::Cooperative;
 }
 
 bool isArpaKind(SensorKind k) {

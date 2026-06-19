@@ -5,7 +5,15 @@
 namespace navtracker {
 
 // Which physical sensor class produced a measurement.
-enum class SensorKind { Unknown, Ais, ArpaTtm, ArpaTll, EoIr, OwnShip, Lidar };
+// Cooperative: a fleet partner that shares its own platform GNSS fix
+// (e.g. consort vessel, harbor support boat, fleet escort).
+// Acts as a positional anchor alongside AIS — see
+// SensorBiasPairExtractor::isAnchorKind and
+// AisArpaPairExtractor::isAisKind. External identity (call sign, fleet
+// id) belongs in Track::attributes, not the fusion key (invariant 5).
+enum class SensorKind {
+  Unknown, Ais, ArpaTtm, ArpaTll, EoIr, OwnShip, Lidar, Cooperative
+};
 
 // Track lifecycle states. Default-constructs to Tentative.
 enum class TrackStatus { Tentative, Confirmed, Coasting, Deleted };
