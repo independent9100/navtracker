@@ -209,6 +209,7 @@ std::vector<PositionBiasPairObservation> extractCrossSensorPositionPairs(
       Eigen::Vector2d best_b_anchor = Eigen::Vector2d::Zero();
       Eigen::Matrix2d best_R_anchor = Eigen::Matrix2d::Zero();
       double best_trace = 0.0;
+      bool best_anchor_published = false;
       for (auto it_y = latest.begin(); it_y != latest.end(); ++it_y) {
         if (it_y == it_x) continue;  // no self-anchoring
         const SensorBiasKey& key_y = it_y->first;
@@ -226,11 +227,13 @@ std::vector<PositionBiasPairObservation> extractCrossSensorPositionPairs(
 
         Eigen::Vector2d b_anchor = Eigen::Vector2d::Zero();
         Eigen::Matrix2d P_anchor = Eigen::Matrix2d::Zero();
+        bool y_published = false;
         if (bias_provider != nullptr) {
           const auto est_y = bias_provider->positionBias(key_y);
           if (est_y.is_published) {
             b_anchor = est_y.bias_enu_m;
             P_anchor = est_y.covariance_m2;
+            y_published = true;
           }
         }
         const Eigen::Matrix2d R_anchor =
@@ -242,6 +245,7 @@ std::vector<PositionBiasPairObservation> extractCrossSensorPositionPairs(
           best_b_anchor = b_anchor;
           best_R_anchor = R_anchor;
           best_trace = tr_anchor;
+          best_anchor_published = y_published;
         }
       }
       if (best_y == nullptr) continue;  // no eligible partner
@@ -255,6 +259,16 @@ std::vector<PositionBiasPairObservation> extractCrossSensorPositionPairs(
           covWithFallback(x.covariance, cfg.sensor_position_std_fallback_m);
       obs.R_anchor = best_R_anchor;
       obs.own_position_enu = x.sensor_position_enu;
+      // A cross-sensor pair "inherits" anchor status from its partner:
+      // when the partner's own bias has already been published (seeded
+      // with treat_as_anchored=true, or refined via AIS-anchored pairs),
+      // the partner's contribution is debiased and behaves as an
+      // absolute-position anchor for X. When the partner is itself
+      // unpublished, the pair is a symmetric coordinate-descent step on
+      // a relative offset and must NOT, on its own, let X's estimate
+      // flow back into applyBiasCorrection (sc2/13/22 unanchored NEES
+      // diagnosis, 2026-06-19).
+      obs.is_anchor_source = best_anchor_published;
       out.push_back(std::move(obs));
     }
   }

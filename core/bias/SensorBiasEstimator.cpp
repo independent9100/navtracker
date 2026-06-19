@@ -115,6 +115,7 @@ void SensorBiasEstimator::observe(const PositionBiasPairObservation& obs) {
   s.b_hat += K * r;
   s.P = (Eigen::Matrix2d::Identity() - K) * s.P;
   s.has_update = true;
+  if (obs.is_anchor_source) ++s.anchor_obs_count;
   ++acc_pos_;
 }
 
@@ -159,27 +160,32 @@ void SensorBiasEstimator::observe(const BearingBiasPairObservation& obs) {
   s.b_hat += K * r;
   s.P = (1.0 - K) * s.P;
   s.has_update = true;
+  if (obs.is_anchor_source) ++s.anchor_obs_count;
   ++acc_brg_;
 }
 
 void SensorBiasEstimator::setKnownPositionBias(
     const SensorBiasKey& key,
     const Eigen::Vector2d& bias_enu_m,
-    const Eigen::Matrix2d& covariance_m2) {
+    const Eigen::Matrix2d& covariance_m2,
+    bool treat_as_anchored) {
   PositionState& s = posStateFor(key);
   s.b_hat = bias_enu_m;
   s.P = covariance_m2;
   s.has_update = true;
   // last_predict left at default (0); the next observe() call will
   // initialize it to obs.time, same as a fresh entry.
+  if (treat_as_anchored) ++s.anchor_obs_count;
 }
 
 void SensorBiasEstimator::setKnownBearingBias(
-    const SensorBiasKey& key, double bias_rad, double variance_rad2) {
+    const SensorBiasKey& key, double bias_rad, double variance_rad2,
+    bool treat_as_anchored) {
   BearingState& s = brgStateFor(key);
   s.b_hat = bias_rad;
   s.P = variance_rad2;
   s.has_update = true;
+  if (treat_as_anchored) ++s.anchor_obs_count;
 }
 
 PositionBiasEstimate
@@ -190,11 +196,19 @@ SensorBiasEstimator::positionBias(const SensorBiasKey& key) const {
   out.bias_enu_m = it->second.b_hat;
   out.covariance_m2 = it->second.P;
   // Publish only when *both* axes are sub-threshold AND the estimator
-  // has been actually updated at least once.
+  // has been actually updated AND at least one of those updates came
+  // from an absolute-position anchor (AIS / RTK / seed-as-anchored).
+  // Symmetric cross-sensor pairs (item 13) keep the state moving but
+  // don't *on their own* let the estimate flow back into
+  // applyBiasCorrection — measured 2026-06-19 (autoferry sc2/13/22
+  // unanchored NEES blow-up); a pure cross-sensor split with no
+  // ground-truth grounding shifts measurements off truth even when
+  // GOSPA is invariant.
   const bool below =
       it->second.P(0, 0) <= cfg_.publish_pos_var_threshold_m2 &&
       it->second.P(1, 1) <= cfg_.publish_pos_var_threshold_m2;
-  out.is_published = it->second.has_update && below;
+  out.is_published = it->second.has_update && below &&
+                     it->second.anchor_obs_count > 0;
   return out;
 }
 
@@ -207,7 +221,8 @@ SensorBiasEstimator::bearingBias(const SensorBiasKey& key) const {
   out.variance_rad2 = it->second.P;
   out.is_published =
       it->second.has_update &&
-      it->second.P <= cfg_.publish_brg_var_threshold_rad2;
+      it->second.P <= cfg_.publish_brg_var_threshold_rad2 &&
+      it->second.anchor_obs_count > 0;
   return out;
 }
 

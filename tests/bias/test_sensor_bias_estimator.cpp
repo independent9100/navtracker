@@ -251,11 +251,28 @@ TEST(SensorBiasPairExtractor, SkipsBearingTouchesWithoutAlphaPayload) {
   EXPECT_EQ(pairs.size(), 0u);
 }
 
-TEST(SensorBiasEstimator, SetKnownPositionBiasTightPriorPublishes) {
+// Tight seed alone does NOT publish (since 2026-06-19 anchor-gating):
+// the seed is a hypothesis, not a measurement, so it must wait for an
+// observation to confirm. Callers that *want* the seed to publish
+// immediately (offline calibration trusted as ground truth) must pass
+// treat_as_anchored=true.
+TEST(SensorBiasEstimator, SetKnownPositionBiasTightPriorDoesNotPublishByDefault) {
   SensorBiasEstimator est;
   const SensorBiasKey lidar{SensorKind::Lidar, "lidar0"};
   est.setKnownPositionBias(lidar, Eigen::Vector2d(2.0, 0.0),
                            Eigen::Matrix2d::Identity() * 0.25);
+  const auto pb = est.positionBias(lidar);
+  EXPECT_FALSE(pb.is_published);
+  EXPECT_NEAR(pb.bias_enu_m.x(), 2.0, 1e-12);
+  EXPECT_NEAR(pb.bias_enu_m.y(), 0.0, 1e-12);
+}
+
+TEST(SensorBiasEstimator, SetKnownPositionBiasTightAnchoredPriorPublishes) {
+  SensorBiasEstimator est;
+  const SensorBiasKey lidar{SensorKind::Lidar, "lidar0"};
+  est.setKnownPositionBias(lidar, Eigen::Vector2d(2.0, 0.0),
+                           Eigen::Matrix2d::Identity() * 0.25,
+                           /*treat_as_anchored=*/true);
   const auto pb = est.positionBias(lidar);
   EXPECT_TRUE(pb.is_published);
   EXPECT_NEAR(pb.bias_enu_m.x(), 2.0, 1e-12);
@@ -587,10 +604,14 @@ TEST(SensorBiasEstimator, CrossSensorRecoversBiasWithPinnedAnchor) {
   const SensorBiasKey lidar_key{SensorKind::Lidar, "lidar0"};
   const SensorBiasKey radar_key{SensorKind::ArpaTtm, "radar0"};
 
-  // Pin radar bias to zero via a tight seed (simulates earlier AIS-
-  // anchored convergence).
+  // Pin radar bias to zero via a tight seed marked as anchored
+  // (simulates earlier AIS-anchored convergence — the operator is
+  // asserting "this sensor's bias is known"). The treat_as_anchored
+  // flag makes the seed publish immediately, which the cross-sensor
+  // extractor then propagates to the lidar pairs.
   est.setKnownPositionBias(radar_key, Eigen::Vector2d::Zero(),
-                           Eigen::Matrix2d::Identity() * 0.01);
+                           Eigen::Matrix2d::Identity() * 0.01,
+                           /*treat_as_anchored=*/true);
 
   const Eigen::Vector2d lidar_bias(3.0, -2.0);
   Eigen::Vector2d truth(500.0, 100.0);

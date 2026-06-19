@@ -39,6 +39,14 @@ struct SensorBiasEstimatorConfig {
 // frame (z_anchor from AIS, z_sensor from the biased radar/lidar).
 // Their disagreement is a direct 2D measurement of b. Range gate
 // uses target-relative range from own_position_enu.
+//
+// `is_anchor_source = true` (default) means z_anchor came from an
+// independent absolute-position source (AIS, RTK-GNSS truth-anchor).
+// `is_anchor_source = false` means z_anchor was a *cross-sensor*
+// position contribution from another sensor whose own bias is being
+// jointly estimated (item 13). The estimator keeps the state update
+// either way but only counts anchored observations toward
+// "anchor_obs_count", which gates publish — see SensorBiasEstimator.
 struct PositionBiasPairObservation {
   Timestamp time;
   SensorBiasKey key;
@@ -48,6 +56,12 @@ struct PositionBiasPairObservation {
   Eigen::Matrix2d R_anchor{Eigen::Matrix2d::Zero()};
   // For the range gate (target range from own-ship).
   Eigen::Vector2d own_position_enu{Eigen::Vector2d::Zero()};
+  // True iff z_anchor is an absolute-position reference (AIS / truth).
+  // False for symmetric cross-sensor pairs whose "anchor" is itself a
+  // biased sensor — those still drive coordinate descent on b̂ but
+  // must not, on their own, make the estimate count as "published"
+  // toward applyBiasCorrection. See SensorBiasEstimator::positionBias.
+  bool is_anchor_source{true};
 };
 
 // One paired observation for a bearing-bias estimator. anchor_pos_enu
@@ -55,7 +69,8 @@ struct PositionBiasPairObservation {
 // camera's mounting position; alpha_observed is the bearing the
 // camera reported. The bias b enters as α_predicted = atan2(anchor−
 // sensor) + b, so r = wrap(α_obs − α_predicted) is a scalar
-// measurement of b.
+// measurement of b. See PositionBiasPairObservation for the meaning
+// of is_anchor_source — same gating logic applies.
 struct BearingBiasPairObservation {
   Timestamp time;
   SensorBiasKey key;
@@ -65,6 +80,7 @@ struct BearingBiasPairObservation {
   double alpha_meas_var_rad2{0.0};   // σ²_α from the sensor
   // 1-sigma isotropic position noise on the anchor report (m).
   double anchor_position_std_m{10.0};
+  bool is_anchor_source{true};
 };
 
 // Per-(sensor, source_id) bias estimator. Each key has its own KF;
@@ -83,17 +99,27 @@ class SensorBiasEstimator : public ISensorBiasProvider {
   void observe(const BearingBiasPairObservation& obs);
 
   // Seed a per-key prior from external knowledge (calibration
-  // documentation, factory survey, plan drawings). The bias is
-  // immediately treated as "has_update == true", so it publishes
-  // through ISensorBiasProvider as soon as the covariance is below
-  // the publish threshold. Subsequent observations continue to
-  // refine it via the KF update path; the entry behaves identically
-  // to one built from observations once seeded.
+  // documentation, factory survey, plan drawings). Subsequent
+  // observations continue to refine it via the KF update path.
+  //
+  // The seed alone does NOT make the estimate publish (since
+  // 2026-06-19 anchor-gating): publish requires at least one
+  // anchor-source observation, since a seed is the operator's
+  // hypothesis and can be wrong for the current deployment, and
+  // we don't want a wrong hypothesis silently shifting every
+  // measurement (sc13_anchored regression diagnosis). Pass
+  // `treat_as_anchored = true` if the caller intends the seed to
+  // count as the first anchor observation — i.e. the value came
+  // from a trusted external calibration step that should publish
+  // immediately. Default false preserves the safer "refine first"
+  // behaviour.
   void setKnownPositionBias(const SensorBiasKey& key,
                             const Eigen::Vector2d& bias_enu_m,
-                            const Eigen::Matrix2d& covariance_m2);
+                            const Eigen::Matrix2d& covariance_m2,
+                            bool treat_as_anchored = false);
   void setKnownBearingBias(const SensorBiasKey& key, double bias_rad,
-                           double variance_rad2);
+                           double variance_rad2,
+                           bool treat_as_anchored = false);
 
   // ISensorBiasProvider
   PositionBiasEstimate positionBias(const SensorBiasKey& key) const override;
@@ -112,12 +138,17 @@ class SensorBiasEstimator : public ISensorBiasProvider {
     Eigen::Matrix2d P{Eigen::Matrix2d::Zero()};
     Timestamp last_predict{};
     bool has_update{false};
+    // Count of accepted observations whose anchor came from an
+    // absolute-position source (AIS / RTK / seed-as-anchored). Gates
+    // is_published — see positionBias().
+    std::size_t anchor_obs_count{0};
   };
   struct BearingState {
     double b_hat{0.0};
     double P{0.0};
     Timestamp last_predict{};
     bool has_update{false};
+    std::size_t anchor_obs_count{0};
   };
 
   PositionState& posStateFor(const SensorBiasKey& key);

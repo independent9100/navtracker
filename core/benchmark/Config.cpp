@@ -266,9 +266,33 @@ std::vector<Config> defaultConfigs() {
   configs.push_back({"imm_cv_ct_mht_robust", &makeImmCvCtRobust, &makeJpda,
                      TrackerKind::Mht, &makeMhtConfig});
   // Canonical minus the visibility channel — isolates what VIMM's
-  // obscuration handling adds over plain IPDA.
+  // obscuration handling adds over plain IPDA. Also functionally the
+  // canonical minus *both* the bias estimator and visibility (no
+  // build_sensor_bias_estimator set), so it doubles as the
+  // "_nobias_novis" ablation in the step-0 step-0 disambiguation.
   configs.push_back({"imm_cv_ct_mht_ipda", &makeImmCvCt, &makeJpda,
                      TrackerKind::Mht, &makeMhtIpdaConfig});
+  // Canonical minus the bias estimator only (visibility ON). With
+  // imm_cv_ct_mht_novis below, this triple (canonical / _nobias /
+  // _novis) separates the two axes that differentiate the canonical
+  // from the otherwise-strongest sc13_anchored ablations. Measured
+  // 2026-06-18: canonical NEES 73.3 vs ipda/recapture/bearguard ~25
+  // on sc13_anchored, but those drop *both* bias and visibility.
+  // _nobias / _novis isolate which knob is responsible.
+  {
+    Config c{"imm_cv_ct_mht_nobias", &makeImmCvCt, &makeJpda,
+             TrackerKind::Mht, &makeMhtConfig};
+    configs.push_back(std::move(c));
+  }
+  // Canonical minus visibility only (bias estimator wired).
+  {
+    Config c{"imm_cv_ct_mht_novis", &makeImmCvCt, &makeJpda,
+             TrackerKind::Mht, &makeMhtIpdaConfig};
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
   // Canonical minus the existence lifecycle (pre-2026-06-11 M-of-N +
   // score-delete) — isolates what calibrated existence buys.
   configs.push_back({"imm_cv_ct_mht_mofn", &makeImmCvCt, &makeJpda,

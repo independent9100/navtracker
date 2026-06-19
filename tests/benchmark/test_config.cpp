@@ -10,10 +10,11 @@ using navtracker::benchmark::defaultConfigs;
 
 TEST(Config, DefaultConfigsHaveUniqueLabels) {
   const auto configs = defaultConfigs();
-  // 17: the canonical now embeds the bias-estimator wiring (item 9
-  // 2026-06-16); the standalone imm_cv_ct_mht_biascal that was
-  // bit-identical to it has been removed.
-  ASSERT_EQ(configs.size(), 17u);
+  // 19: 17 standing configs + two step-0 ablations added 2026-06-19
+  // (imm_cv_ct_mht_nobias / imm_cv_ct_mht_novis) to isolate the
+  // canonical-vs-ablation NEES split on sc13_anchored. See eval-log
+  // entry pending.
+  ASSERT_EQ(configs.size(), 19u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   // Canonical wires the bias estimator unconditionally; the
@@ -25,7 +26,9 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 17u);
+  EXPECT_EQ(labels.size(), 19u);
+  EXPECT_EQ(labels.count("imm_cv_ct_mht_nobias"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_mht_novis"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_robust"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_ipda"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_mofn"), 1u);
