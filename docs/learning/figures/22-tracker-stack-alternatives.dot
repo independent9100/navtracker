@@ -1,0 +1,119 @@
+// Vertical-slice comparison of three tracker stacks. Source for
+// 22-tracker-stack-alternatives.png — render with:
+//   dot -Tpng 22-tracker-stack-alternatives.dot \
+//       -o 22-tracker-stack-alternatives.png
+//
+// Each row is one layer of the tracker. The three coloured columns
+// are end-to-end stacks we explicitly compare against (see
+// docs/algorithms/comparison-baselines.md). The right column lists
+// other techniques that live at the same slice — drop-in
+// alternatives, not necessarily good ideas in this codebase.
+//
+// Highlight scheme:
+//   Cl-1 (light blue)  = Helgesen 2022 — VIMM-JIPDA, GNSS-anchored.
+//   Cl-2 (light green) = navtracker canonical — imm_cv_ct_mht.
+//   Cl-3 (light orange)= endgame — PMBM (Williams 2015 lineage).
+//   gray               = other alternatives at that slice.
+//
+// Edit this file (not the PNG) and re-render.
+
+digraph stacks {
+  rankdir=TB;
+  bgcolor="white";
+  node [shape=plaintext fontname="Helvetica"];
+
+  comparison [label=<
+    <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="8">
+      <TR>
+        <TD BGCOLOR="#dddddd"><B>Layer (vertical slice)</B></TD>
+        <TD BGCOLOR="#a8c8e8"><B>Cl-1: Helgesen 2022</B><BR/><FONT POINT-SIZE="10">VIMM-JIPDA, GNSS-anchored</FONT></TD>
+        <TD BGCOLOR="#a8e8c8"><B>Cl-2: navtracker</B><BR/><FONT POINT-SIZE="10">imm_cv_ct_mht (canonical)</FONT></TD>
+        <TD BGCOLOR="#f8c890"><B>Cl-3: endgame</B><BR/><FONT POINT-SIZE="10">PMBM (Williams 2015)</FONT></TD>
+        <TD BGCOLOR="#eeeeee"><B>Other techniques at this slice</B></TD>
+      </TR>
+
+      <TR>
+        <TD ALIGN="LEFT"><B>1. Sensor R<BR/>(measurement noise)</B></TD>
+        <TD BGCOLOR="#e3f0ff" ALIGN="LEFT">Per-sensor σ from offline RTK calibration</TD>
+        <TD BGCOLOR="#e7fff0" ALIGN="LEFT">Per-sensor σ + per-env override + online registration bias</TD>
+        <TD BGCOLOR="#ffe9d6" ALIGN="LEFT">Per-sensor σ; PMBM is R-source-agnostic</TD>
+        <TD BGCOLOR="#f5f5f5" ALIGN="LEFT">Adaptive R via NIS;<BR/>per-measurement R;<BR/>Student-t robust R</TD>
+      </TR>
+
+      <TR>
+        <TD ALIGN="LEFT"><B>2. Motion model</B></TD>
+        <TD BGCOLOR="#e3f0ff" ALIGN="LEFT"><B>IMM</B> (CV + CT)</TD>
+        <TD BGCOLOR="#e7fff0" ALIGN="LEFT"><B>IMM</B> (CV5 + CT)</TD>
+        <TD BGCOLOR="#ffe9d6" ALIGN="LEFT">Single mode (CV / CT) or IMM inside a Bernoulli component</TD>
+        <TD BGCOLOR="#f5f5f5" ALIGN="LEFT">Single CV;<BR/>single CT;<BR/>IMM-3 with noisy-CV;<BR/>Singer / Wiener-jerk</TD>
+      </TR>
+
+      <TR>
+        <TD ALIGN="LEFT"><B>3. Inner filter</B><BR/><FONT POINT-SIZE="10">propagate &amp; update</FONT></TD>
+        <TD BGCOLOR="#e3f0ff" ALIGN="LEFT"><B>EKF</B></TD>
+        <TD BGCOLOR="#e7fff0" ALIGN="LEFT"><B>EKF</B> (Joseph form)<BR/><FONT POINT-SIZE="10">UKF candidate = Cl-2 #3</FONT></TD>
+        <TD BGCOLOR="#ffe9d6" ALIGN="LEFT">EKF / <B>UKF</B> / CKF inside the Bernoulli predict/update</TD>
+        <TD BGCOLOR="#f5f5f5" ALIGN="LEFT">UKF;<BR/>CKF (cubature);<BR/>particle filter;<BR/>modified-polar EKF (BOT)</TD>
+      </TR>
+
+      <TR>
+        <TD ALIGN="LEFT"><B>4. Gating</B></TD>
+        <TD BGCOLOR="#e3f0ff" ALIGN="LEFT">Mahalanobis χ²<BR/>(validation region)</TD>
+        <TD BGCOLOR="#e7fff0" ALIGN="LEFT">Mahalanobis χ² per mode (any-mode gate)</TD>
+        <TD BGCOLOR="#ffe9d6" ALIGN="LEFT">Folded into the RFS recursion<BR/>(no explicit pre-gate)</TD>
+        <TD BGCOLOR="#f5f5f5" ALIGN="LEFT">M-best gating;<BR/>fixed N-σ ellipsoid;<BR/>elliptic + range guard</TD>
+      </TR>
+
+      <TR>
+        <TD ALIGN="LEFT"><B>5. Association</B><BR/><FONT POINT-SIZE="10">measurement ↔ track</FONT></TD>
+        <TD BGCOLOR="#e3f0ff" ALIGN="LEFT"><B>JIPDA</B><BR/>(soft, joint, existence-aware)</TD>
+        <TD BGCOLOR="#e7fff0" ALIGN="LEFT"><B>TOMHT</B><BR/>(deferred multi-hypothesis, hypothesis tree per track)</TD>
+        <TD BGCOLOR="#ffe9d6" ALIGN="LEFT"><B>PMBM</B><BR/>(no separate step; folded into the Poisson + MB mixture recursion)</TD>
+        <TD BGCOLOR="#f5f5f5" ALIGN="LEFT">GNN + Hungarian;<BR/>JPDA;<BR/>SJPDA (set-JPDA);<BR/>δ-GLMB;<BR/>LMB</TD>
+      </TR>
+
+      <TR>
+        <TD ALIGN="LEFT"><B>6. Lifecycle /<BR/>existence</B></TD>
+        <TD BGCOLOR="#e3f0ff" ALIGN="LEFT">Existence integrated into JIPDA betas + VIMM visibility flag</TD>
+        <TD BGCOLOR="#e7fff0" ALIGN="LEFT"><B>IPDA</B> existence + <B>VIMM</B> visibility (Mušicki-Evans recursion)</TD>
+        <TD BGCOLOR="#ffe9d6" ALIGN="LEFT">Bernoulli existence per component + Poisson birth intensity</TD>
+        <TD BGCOLOR="#f5f5f5" ALIGN="LEFT">M-of-N + score-delete;<BR/>SPRT confirm;<BR/>plain IPDA;<BR/>fixed birth model</TD>
+      </TR>
+
+      <TR>
+        <TD ALIGN="LEFT"><B>7. Multi-sensor /<BR/>bias</B></TD>
+        <TD BGCOLOR="#e3f0ff" ALIGN="LEFT">Per-sensor offline RTK-calibrated bias; no online step</TD>
+        <TD BGCOLOR="#e7fff0" ALIGN="LEFT">Anchor-gated online cross-sensor bias<BR/>(AIS / Cooperative GNSS) + Schmidt-KF fold</TD>
+        <TD BGCOLOR="#ffe9d6" ALIGN="LEFT">PMBM is bias-handling-agnostic; same Schmidt-KF fold composes</TD>
+        <TD BGCOLOR="#f5f5f5" ALIGN="LEFT">Schmidt KF "considered" bias;<BR/>augment state with b;<BR/>online R inflation</TD>
+      </TR>
+
+    </TABLE>
+  >];
+
+  // Footer / legend
+  legend [label=<
+    <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4">
+      <TR>
+        <TD ALIGN="LEFT" COLSPAN="2"><B>Key</B></TD>
+      </TR>
+      <TR>
+        <TD BGCOLOR="#a8c8e8" WIDTH="20"></TD>
+        <TD ALIGN="LEFT">Cl-1 — Helgesen 2022 VIMM-JIPDA (baseline we measure against).</TD>
+      </TR>
+      <TR>
+        <TD BGCOLOR="#a8e8c8" WIDTH="20"></TD>
+        <TD ALIGN="LEFT">Cl-2 — navtracker canonical IMM+TOMHT (what we ship).</TD>
+      </TR>
+      <TR>
+        <TD BGCOLOR="#f8c890" WIDTH="20"></TD>
+        <TD ALIGN="LEFT">Cl-3 — PMBM endgame (Williams 2015 RFS line).</TD>
+      </TR>
+      <TR>
+        <TD ALIGN="LEFT" COLSPAN="2"><BR/><FONT POINT-SIZE="10">Slices 2, 3, 6, 7 are <I>stackable</I>: you can mix and match between stacks.<BR/>Slice 5 (association) is the binary fork — MHT and JPDA/JIPDA answer the<BR/>same question differently. PMBM merges slices 4-6 into one RFS recursion.</FONT></TD>
+      </TR>
+    </TABLE>
+  >];
+
+  comparison -> legend [style=invis];
+}

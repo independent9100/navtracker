@@ -1,7 +1,13 @@
 # learning/figures — diagram generator
 
-All PNGs in this directory are produced by `generate.py`. **Do not
-edit the PNGs by hand** — change the script and re-run.
+Most PNGs in this directory are produced by `generate.py`
+(matplotlib). A small number of comparison / structure diagrams
+are generated from `.dot` files via graphviz — currently
+[`22-tracker-stack-alternatives.dot`](22-tracker-stack-alternatives.dot).
+Re-render those with `dot -Tpng <name>.dot -o <name>.png`.
+
+**Do not edit the PNGs by hand** — change the source script or
+`.dot` file and re-render.
 
 ## Regenerating
 
