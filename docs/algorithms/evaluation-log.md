@@ -8,6 +8,86 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-19 (later) — Step 2: per-sensor NIS refresh on gated canonical; old Q-tightening claim retired
+
+**Premise.** Plan step 2: re-measure per-sensor NIS now that the bias
+estimator's publish is gated. The standing claim from 2026-06-15
+("radar trace_ratio = 4.02 → Q is 50× too large") predates Schmidt-KF
+canonical promotion, the 2026-06-18 Hungarian metric, and the
+2026-06-19 anchor-gating. Need fresh numbers before step 3 (SJPDA)
+or any Q tuning.
+
+**Method.** No new bench needed — `step0_gated_20260619.csv`
+(canonical-gated, all 9 autoferry × 2 anchor variants × seed 0)
+emits `nis_alpha_hat:<source>` and `nis_trace_ratio:<source>` per
+update. α̂ = ε̄_NIS / dim → target 1.0; trace_ratio > 1 flags the
+state-driven regime where α̂ is unreliable as an R-calibration
+diagnostic.
+
+### Aggregate by sensor (autoferry × {anchored, unanchored})
+
+| sensor | α̂ median | α̂ range | trace_ratio median | rows tr>1 |
+|---|---:|---|---:|---:|
+| AIS (truth-anchor) | 0.08 | [0.03, 0.14] | 0.08 | 0/9 |
+| radar | 0.88 | [0.35, 1.88] | 0.79 | **8/18** |
+| lidar | 0.55 | [0.11, 1.05] | 0.21 | 1/18 |
+| EO | 0.35 | [0.15, 0.74] | 0.09 | 0/18 |
+| IR | 0.40 | [0.09, 0.81] | 0.08 | 0/18 |
+
+### Reads
+
+**The 2026-06-15 "Q too large" claim doesn't replicate.** Radar
+trace_ratio sits at 0.04–5.66 (median 0.79) — eight scenarios
+above 1, ten below. The 4.02 figure was a single-scenario
+snapshot under stale state (pre-Schmidt-KF, pre-Hungarian, pre-
+bias-canonical). Even on the rows where trace_ratio > 1 today, α̂
+is in [1.15, 1.88] — that's not the "Q is 50× too large" regime,
+it's "state covariance is comparable to R, α̂ unreliable here".
+And — independently — eval-log 2026-06-16 already established that
+tightening Q would shrink P and make NEES *worse* (item 12(c)
+closed "Q is not the lever"). Treat the stale claim as retired;
+no Q change.
+
+**R is conservatively loose on EO/IR (~2.5–3×) and lidar (~1.8×).**
+α̂ medians 0.35 (EO) / 0.40 (IR) / 0.55 (lidar), all in the
+state-cov-doesn't-dominate regime (trace_ratio ≪ 1, reliable).
+Configured σ values are 5.3° bearing (env-2 override, ~3-4°
+empirical) and 3 m lidar (env-2 override, ~1.5 m empirical).
+**Direction is safe** — over-conservative R never produces an
+overconfident filter — but tightening to empirical would help
+NEES marginally on the anchored scenarios. **Not blocking for
+step 3.** Candidate change: env-2 EO/IR `bearing_std_rad` 0.0925
+→ 0.06; lidar `lidar_pos_std_m` 3.0 → 2.0. Measure before
+shipping; small impact expected given state already dominates
+under the truth anchor.
+
+**AIS truth-anchor α̂ ≈ 0.05 is a fixture artefact, not a
+finding.** Truth-AIS injects truth as the measurement (σ = 5 m);
+the post-update state matches truth almost exactly, so the next
+AIS innovation is near-zero by construction. α̂ → 0 in this
+limit. Real AIS in deployment would have non-zero target motion
+between updates and this artefact wouldn't appear.
+
+**Gating is calibration-neutral on unanchored runs (verified).**
+On every unanchored autoferry scenario, NIS per-sensor is
+**bit-identical** between `imm_cv_ct_mht` (gated canonical) and
+`imm_cv_ct_mht_nobias` (no bias estimator): sc2 lidar 0.89 vs
+0.89, sc2 radar 1.56 vs 1.56, sc2 EO 0.46 vs 0.46. This is the
+expected outcome of the 2026-06-19 gating change — bias is
+prevented from publishing without anchor data, so the Schmidt-KF
+correction path never fires and R is never inflated. Empirical
+proof the gate works as designed.
+
+### Step 2 verdict: nothing blocks step 3
+
+- No Q tuning (the 2026-06-15 motivation is stale).
+- EO/IR/lidar R tightening is a small backlog item, not blocking.
+- The gating produces honest NIS, including by leaving unanchored
+  runs untouched.
+- Per-sensor data committed alongside step 1's
+  `step0_gated_20260619.csv`. Step 3 (SJPDA on the JPDA path)
+  proceeds next.
+
 ## 2026-06-19 — Step 0: canonical's bias estimator regresses NEES on unanchored urban scenarios; fix = anchor-gated publish
 
 **Premise** (from prior session). When asked "what to do before JIPDA",
