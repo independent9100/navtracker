@@ -225,8 +225,15 @@ question for the headline. The "when/where/why" reading:
    is "≤1% different from EKF", we declare the inner-filter question
    closed in EKF's favour (simpler, faster, no loss). If meaningful,
    ship UKF as canonical inner filter.
-4. **EO/IR R tightening from step-2 NIS finding (2026-06-19).** Small,
-   safe-direction change; documented and not blocking.
+4. ~~EO/IR R tightening from step-2 NIS finding~~ **Closed 2026-06-19
+   as REJECTED.** Measured 0.0925 → 0.06 against the gated canonical;
+   env-2 anchored GOSPA regressed +18-88% (sc16/17/22), RMSE up to
+   +88%, env-2 unanchored NEES p99 catastrophic. Mechanism: bias
+   estimator shrinks innovations on anchored runs → α̂ looks "loose"
+   even when R matches the physical sensor noise floor (~0.088 rad
+   empirical residual). α̂-driven R tightening is not safe on stacks
+   with online bias correction without a `nobias` cross-check.
+   See eval-log "Cl-2 #4 close-out".
 
 ---
 
@@ -341,7 +348,7 @@ when they do is the prevention mechanism.
 | Cl-2 #2 scoping: bearguard small, recapture not shippable (lifetime cost) | Cl-2 #2 partial | Scoped 2026-06-19; mechanism is filter over-confidence post-miss, not BOT. Real fix is lifecycle / init-cov; deferred. | scoping done | partial / deferred |
 | Cl-2 #2 deeper: lifecycle re-tune or init-cov widening | Cl-2 #2 | Closes the unanchored env-1 NEES over-confidence; impact on Helgesen GOSPA gap unknown until measured. | 1-2 days | open, deferred behind Step 5 + Cl-2 #3/#4 |
 | UKF / cubature KF inside IMM | Cl-2 #3 | Answers Cl-2 sub-question (a); either ships UKF or formally closes the inner-filter question in EKF's favour. | 1–2 days build + bench | open |
-| EO/IR R tightening (step-2 finding) | Cl-2 #4 | Small NEES improvement on anchored env-2; safe direction. | half-day | open, low-priority |
+| ~~EO/IR R tightening (step-2 finding)~~ | Cl-2 #4 | Measured 2026-06-19: env-2 anchored GOSPA +18-88%, RMSE catastrophic. α̂ analysis was misleading on stacks with online bias correction. | n/a (rejected) | **closed** |
 | ~~Step 5 — Cooperative GNSS as additional anchor (alongside AIS)~~ | Cl-2 (deployment) | Wiring shipped 2026-06-19 (new `SensorKind::Cooperative`, anchor extractors + AIS-ARPA pair extractor recognise it). No bench delta — no scenario emits Cooperative measurements yet. Synthetic sweep filed as next-step. | n/a (done) | **shipped** |
 | SJPDA on JPDA branch | Cl-1 (class-controlled extension) | Half of "is the association class load-bearing?" answer. | half-day (permutation collapse) | optional / deferred |
 | JIPDA proper on JPDA branch | Cl-1 (class-controlled extension) | Other half. | 2–3 days | optional / deferred |
@@ -360,8 +367,9 @@ when they do is the prevention mechanism.
    wiring-only (no bench delta until a scenario emits Cooperative
    measurements). Synthetic anchor-substitution sweep filed as
    follow-up.
-4. **Cl-2 #3 (UKF inside IMM)** and **#4 (EO/IR R tightening)** —
-   NEXT. Small, safe, measurable.
+4. ~~Cl-2 #4 (EO/IR R tightening)~~ — **rejected 2026-06-19**
+   (env-2 anchored regression). **Cl-2 #3 (UKF inside IMM)** —
+   NEXT.
 5. **Cl-2 #2 deeper** (lifecycle re-tune / init-cov widening) —
    re-open after Cl-2 #3/#4.
 6. **Then Cl-3 (PMBM)** — the academic-frontier milestone. Begins

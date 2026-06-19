@@ -8,6 +8,65 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-19 (later 5) — [Cl-2 #4 close-out] EO/IR R tightening rejected: bench measures catastrophic env-2 anchored regression; Step 2 NIS-based recommendation was misleading
+
+**Premise.** Cl-2 #4 in the north-star doc: tighten env-2
+`bearing_std_rad` from 0.0925 → ~0.06 per the Step 2 NIS finding
+(gated canonical α̂ = 0.35/0.40 on EO/IR → "R conservatively
+loose by 2.5-3×"). Predicted: "small NEES improvement on
+anchored env-2; safe direction".
+
+**Method.** Edit `adapters/benchmark/ReplayScenarioRun.cpp:248`
+(0.0925 → 0.06 for env-2 urban scenarios only), full autoferry
+slice on 6 IMM+MHT configs × 18 scenarios × seed 0. Pin:
+`docs/baselines/cl24_tightR_20260619.csv`. Compare to the gated
+canonical baseline `cl21_metrics_full_20260619.csv`.
+
+**Result. Clear regression on the anchored runs the change was
+supposed to help.** Δ vs cl21 baseline:
+
+| sc (anchored) | GOSPA | RMSE | NEES med | NEES p95 |
+|---|---:|---:|---:|---:|
+| sc13_anchored | +1.5% | −8.1% | +0.14 | +1.70 |
+| sc16_anchored | **+63.3%** | **+72.2%** | +0.35 | +25.53 |
+| sc17_anchored | **+88.1%** | **+87.7%** | +0.30 | +1.08 |
+| sc22_anchored | **+18.9%** | **+53.3%** | +0.24 | +13.28 |
+
+Env-2 unanchored: RMSE also blew up (sc13 +245%, sc22 −33%); NEES
+p99 went catastrophic (sc13 +112000, sc17 +17000). Env-1
+bit-identical (we did not touch env-1 R) — verified zero delta
+across all five scenarios × three configs.
+
+**Mechanism.** The Step 2 NIS analysis read α̂ = innovation² /
+(HPH^T + R) as "R is loose". On the **gated canonical** that was
+the wrong read: the bias estimator removes systematic offset on
+anchored runs, so innovations shrink — α̂ goes down even when R
+matches the physical sensor noise. The *true* sensor noise floor
+(≈ 0.088-0.095 rad empirically on env-2 EO/IR residuals before
+debias) is what bounds how tight R can be. Forcing R below that
+floor leaves the filter overconfident; the next outlier-class
+measurement (urban shoreline / clutter) pulls state hard and
+GOSPA + RMSE collapse.
+
+**Decision: revert and close.** Keep env-2 `bearing_std_rad` at
+0.0925. Inline comment in `ReplayScenarioRun.cpp:248` documents
+the bound so a future drive-by tightening attempt sees the
+breadcrumb.
+
+**Lesson for Step 2-style analyses.** α̂ alone is not a
+calibration target on a stack with online bias correction —
+small α̂ can be "R is loose" or "innovations are small because
+bias removed the systematic chunk". Distinguishing them needs
+either (a) an explicit residual-σ measurement on the post-debias
+stream, or (b) running α̂ alongside a `nobias` ablation. Item
+filed for the next Step-2-style sweep.
+
+**Bench cost.** 18090 rows × 1 seed × ~5 min on 19 configs.
+`cl24_tightR_20260619.csv` kept as a negative-result baseline so
+the bound is reproducible.
+
+---
+
 ## 2026-06-19 (later 4) — [Step 5] SensorKind::Cooperative added as positional anchor alongside AIS
 
 **Change.** New `SensorKind::Cooperative` enum variant (fleet

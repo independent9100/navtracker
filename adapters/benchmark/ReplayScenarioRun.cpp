@@ -245,7 +245,16 @@ class AutoferryScenarioRun : public ScenarioRun {
     if (urban) {
       opts.lidar_pos_std_m = 3.0;
       opts.radar_pos_std_m = 5.0;
-      opts.bearing_std_rad = 0.0925;  // ~5.3°, slightly above env-2 σ
+      opts.bearing_std_rad = 0.0925;  // ~5.3°, slightly above env-2 σ.
+      // Do NOT tighten below ~0.088 rad: 2026-06-19 (Cl-2 #4) measured
+      // 0.0925 → 0.06 against the gated canonical and saw catastrophic
+      // env-2 anchored regression (sc17 GOSPA +88%, sc16 +63%, sc22
+      // +19%) and env-2 unanchored NEES p99 blow-up. Step 2's NIS α̂
+      // recommendation was misleading: α̂ = innovation² / (HPH^T+R) is
+      // small because the bias estimator removes systematic offset
+      // post-debias, not because R is loose. The physical sensor noise
+      // floor (~0.088 rad on env-2 empirical residual) bounds how
+      // tight R can be. See eval-log entry "Cl-2 #4 close-out".
     }
     return navtracker::replay::loadAutoferryScenario(
         std::string("data/autoferry/") + label_, label_, opts);
