@@ -8,6 +8,162 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-19 — Step 0: canonical's bias estimator regresses NEES on unanchored urban scenarios; fix = anchor-gated publish
+
+**Premise** (from prior session). When asked "what to do before JIPDA",
+synthesized a plan from the log. Pushed back; re-verified against
+code + fresh bench; three of six recommendations were obsolete or
+contradicted by data already in the committed CSVs. The remaining
+load-bearing claim was: on AutoFerry sc13_anchored, canonical NEES
+= 73 while every MHT ablation (`_ipda`, `_recapture`, `_bearguard`)
+sat at ~25. The two things the canonical does that the ablations
+don't are wire the bias estimator and turn `use_visibility` on.
+Step 0 was a clean 2-axis disambiguation.
+
+### Ablations added
+
+`imm_cv_ct_mht_nobias` (canonical minus the bias estimator,
+visibility ON) and `imm_cv_ct_mht_novis` (canonical minus VIMM
+visibility, bias estimator ON). Together with the existing
+`_ipda` (both off, = `_nobias_novis`), the 2×2 separates the two
+canonical choices on every autoferry scenario. `defaultConfigs()`
+now returns 19; `tests/benchmark/test_config.cpp` pins the count
+and the two labels.
+
+### Bench (`step0_ablation` — 9 MHT configs × 9 autoferry × 2 anchor variants, seed 0)
+
+NEES on canonical vs canonical-minus-one-axis. Visibility is
+neutral to 4 decimals on every anchored row and within rounding on
+every unanchored row. The bias-estimator wiring is the asymmetry:
+
+| sc (unanchored) | canonical | `_nobias` | `_novis` | `_ipda` |
+|---|---:|---:|---:|---:|
+| **sc2**  | **1210** | 45 | 1222 | 46 |
+| sc3  |   82 | 82 |  82 | 82 |
+| sc4  |   70 | 70 |  65 | 65 |
+| sc5  |   49 | 49 |  50 | 50 |
+| sc6  |  122 | 121 | 131 | 131 |
+| **sc13** | **57** | **7.7** | 58 | 7.7 |
+| sc16 |   20 | 17 |  20 | 17 |
+| sc17 |  265 | 265 | 265 | 265 |
+| **sc22** | **1285** | **542** | 1314 | 584 |
+
+Anchored variants are mixed but never as catastrophic: canonical
+beats `_nobias` modestly on sc3/sc16/sc17/sc22; `_nobias` beats
+canonical modestly on sc4/sc5; on sc13_anchored canonical is **69**
+vs `_nobias` **24** (the original headline). GOSPA shifts are 4-4-1
+across anchored, near-flat on unanchored — the bias estimator's
+unanchored regression is a NEES catastrophe with negligible GOSPA
+signature, which is why the symmetric-fusion invariance argument
+from 2026-06-17 (item 13) had read it as "bit-neutral."
+
+### Mechanism
+
+`extractCrossSensorPositionPairs` walks pairs of non-AIS
+positional contributions and lets the estimator's zero-mean prior
+split any relative offset symmetrically across keys. The
+**estimate** is GOSPA-invariant (the antisymmetric split cancels
+in symmetric weighted fusion — verified 2026-06-17). The
+**Schmidt-KF correction** is not: `R_eff = R + P_b` happens on
+every consuming filter regardless of whether the prior allocation
+is right. On sc2/sc13/sc22 unanchored — symmetric sensors, no
+AIS, no offline calibration — the split is purely a guess; the
+shifted measurements pull state off truth by O(δ/2) while the
+filter's claimed covariance inflates, so NIS stays calibrated but
+NEES diverges (truth vs estimate offset, not innovation magnitude).
+
+### Fix shipped: anchor-gated publish
+
+`PositionBiasPairObservation` and `BearingBiasPairObservation`
+gain `is_anchor_source` (default `true`, preserving the AIS-
+anchored callers). `SensorBiasEstimator::PositionState` and
+`BearingState` track `anchor_obs_count`, incremented only when
+the accepted observation's `is_anchor_source == true`.
+`positionBias()` / `bearingBias()` gate `is_published` on
+`anchor_obs_count > 0` in addition to the existing convergence
+threshold. `extractCrossSensorPositionPairs` inherits anchor
+status from its partner: if the anchor partner's bias is already
+published (seeded with `treat_as_anchored=true`, or refined via
+AIS), the pair counts as anchored; otherwise not. Seed APIs
+(`setKnownPositionBias`, `setKnownBearingBias`) get a
+`treat_as_anchored = false` default — the seed alone is the
+operator's hypothesis, not an anchor; observations validate it.
+
+Two tests updated: `SetKnownPositionBiasTightPriorPublishes`
+became `…DoesNotPublishByDefault` + a paired `…AnchoredPriorPublishes`;
+`CrossSensorRecoversBiasWithPinnedAnchor` now seeds the radar
+side with `treat_as_anchored=true` (the test's intent — operator
+asserts "this sensor is calibrated"). Full 679-test suite green.
+
+### Measured deltas — canonical, before vs after gating
+
+NEES, before → after on `imm_cv_ct_mht`:
+
+| sc | unanchored | anchored |
+|---|---|---|
+| sc2  | **1210 → 45** (−96%) | 2.33 → 2.33 |
+| sc3  | 82 → 82 | 0.90 → 0.90 |
+| sc4  | 70 → 70 | 3.70 → 3.70 |
+| sc5  | 49 → 49 | 4.02 → 4.02 |
+| sc6  | 121 → 121 | 4.71 → 4.71 |
+| **sc13** | **57 → 7.7** (−87%) | 69.07 → 69.07 (unchanged) |
+| sc16 | 20 → 17 (−14%) | 2.71 → 2.70 |
+| sc17 | 265 → 265 | 1.28 → 1.29 |
+| **sc22** | **1285 → 542** (−58%) | 1.11 → 1.11 |
+
+GOSPA shifts ≤ 1% across the board, both directions. Three
+catastrophes removed; the modest anchored-env-2 wins from the
+seeded-and-published path are preserved because anchor data is
+present and the gate opens normally. No regression on the synthetic
+suite. Bench: `step0_gated_20260619.csv` (regenerate on-host;
+intermediate run not committed).
+
+### Still open: sc13_anchored NEES = 69
+
+Anchor data is present on sc13_anchored, so the gate opens
+immediately on the first AIS-bearing pair — `_nobias` and
+canonical-after-gating diverge by 45 NEES. The mechanism is
+downstream of the publish gate: sc13_anchored has 14 ID
+switches, each resets `recent_contributions` on the affected
+track, so the AIS-bearing pair stream is sample-biased toward
+the better-tracked target; the published bearing correction is
+then systematically wrong on the swap-prone target. The right
+fix is upstream coalescence/swap handling (SJPDA, step 3 in the
+plan), not another bias-estimator tweak.
+
+### Implication for `_bearguard` promotion
+
+Pre-step-0, bearguard's sc13_anchored NEES 73 → 25 looked like
+the "range-collapse guard works" story. With step 0 it's clear
+the 73 was the bias-estimator regression and bearguard's drop is
+mostly inherited from its `_nobias`-like default (the bearguard
+ablation doesn't wire the bias estimator). On the gated canonical,
+re-measure bearguard before deciding promotion — the headline
+motivation just evaporated.
+
+### Note for fleet-GNSS cooperative deployments (step 5)
+
+The gating creates a clean deployment story for cooperative
+fleet GNSS as an AIS-replacement anchor: emit those as a new
+`SensorKind::Cooperative` Position2D source, extend
+`SensorBiasPairExtractor::isAnchorKind` to recognise it, and
+the existing extractors + the new gate compose correctly
+(cross-sensor pairs inherit anchor status from the cooperative
+partner; bias estimator publishes; Schmidt-KF correction flows).
+This is the "no AIS, real anchor" regime the 2026-06-15 item-9
+caveat called out and item 13 didn't quite reach.
+
+### Baseline-comparison caveat (2026-06-18 Hungarian)
+
+The before-and-after numbers in this entry are both on the
+optimal-assignment metric introduced 2026-06-18. Do not cross-
+compare to the 2026-06-17 `bench_xsensor` headline NEES values
+(sc2 ≈ 56 in that CSV, ≈ 1210 here on a fresh build) — both the
+build-reproducibility caveat from that entry and the metric
+change apply. The 2026-06-19 deltas above are internally
+consistent (same harness, same build, same metric, only the
+bias-publish-gating differs).
+
 ## 2026-06-18 — Review #17: metric assignment greedy → optimal (Hungarian). Intentional re-baseline.
 
 **Change.** `ospaGreedy`, `gospaGreedy`, and `assignPerStep` (the shared
