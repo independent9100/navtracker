@@ -8,7 +8,7 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
-## 2026-06-19 (later) — Step 2: per-sensor NIS refresh on gated canonical; old Q-tightening claim retired
+## 2026-06-19 (later) — [Cl-2 #1 diagnostic] Step 2: per-sensor NIS refresh on gated canonical; old Q-tightening claim retired
 
 **Premise.** Plan step 2: re-measure per-sensor NIS now that the bias
 estimator's publish is gated. The standing claim from 2026-06-15
@@ -88,7 +88,7 @@ proof the gate works as designed.
   `step0_gated_20260619.csv`. Step 3 (SJPDA on the JPDA path)
   proceeds next.
 
-## 2026-06-19 — Step 0: canonical's bias estimator regresses NEES on unanchored urban scenarios; fix = anchor-gated publish
+## 2026-06-19 — [Cl-2 canonical fix] Step 0: canonical's bias estimator regresses NEES on unanchored urban scenarios; fix = anchor-gated publish
 
 **Premise** (from prior session). When asked "what to do before JIPDA",
 synthesized a plan from the log. Pushed back; re-verified against
