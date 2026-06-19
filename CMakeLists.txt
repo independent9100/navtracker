@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Emit compile_commands.json for clangd / IDE LSPs. Symlinked at the repo
+# root (compile_commands.json -> build/compile_commands.json) so clangd
+# finds it without extra config.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 find_package(Eigen3 REQUIRED)
 find_package(GTest REQUIRED)
 

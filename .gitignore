@@ -1,6 +1,9 @@
 /build/
 /Testing/
 CMakeUserPresets.json
+# Local symlink to build/compile_commands.json for clangd; recreated by
+# anyone after cmake configure (see CMakeLists.txt).
+/compile_commands.json
 
 # Sandbox shadow placeholders: 0-byte read-only bind-mounts the
 # Claude Code sandbox creates in the working tree to mask the
