@@ -30,6 +30,8 @@ Eigen::MatrixXd SensorDefaults::covarianceFor(SensorKind sensor,
 
   if (sensor == SensorKind::Ais && model == MeasurementModel::Position2D)
     return pos2D(ais_position.sigma_pos_m);
+  if (sensor == SensorKind::Cooperative && model == MeasurementModel::Position2D)
+    return pos2D(cooperative_position.sigma_pos_m);
   if (sensor == SensorKind::ArpaTll && model == MeasurementModel::Position2D)
     return pos2D(arpa_tll_position.sigma_pos_m);
   if (sensor == SensorKind::ArpaTtm && model == MeasurementModel::RangeBearing2D)
@@ -47,6 +49,10 @@ Eigen::MatrixXd SensorDefaults::covarianceFor(SensorKind sensor,
 SensorDefaults pessimisticSensorDefaults() {
   SensorDefaults d;
   d.ais_position.sigma_pos_m              = 30.0;
+  // Fleet-partner GNSS. Tighter than AIS — no transponder/aggregation
+  // chain and partners often run DGPS/RTK — but still pessimistic
+  // enough for consumer-grade receivers without RTK.
+  d.cooperative_position.sigma_pos_m      = 10.0;
   d.arpa_tll_position.sigma_pos_m         = 50.0;
   d.arpa_ttm_range_bearing.sigma_range_m   = 75.0;
   d.arpa_ttm_range_bearing.sigma_bearing_rad = 1.5 * kDeg2Rad;

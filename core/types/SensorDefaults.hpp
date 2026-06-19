@@ -19,6 +19,7 @@ struct SensorDefaults {
   PerSensorCov arpa_ttm_range_bearing;
   PerSensorCov eoir_range_bearing;
   PerSensorCov eoir_bearing_only;
+  PerSensorCov cooperative_position;  // fleet-partner GNSS fix
 
   Eigen::MatrixXd covarianceFor(SensorKind sensor,
                                 MeasurementModel model) const;

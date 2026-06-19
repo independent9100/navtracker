@@ -16,6 +16,7 @@ SkewProfile defaultMaritimeSkewProfile() {
   p.at(SensorKind::EoIr)    = {0.15, 0.05};
   p.at(SensorKind::OwnShip) = {0.00, 0.02};
   p.at(SensorKind::Lidar)   = {0.00, 0.00};
+  p.at(SensorKind::Cooperative) = {0.10, 0.05};  // typical fleet-link latency
   return p;
 }
 
