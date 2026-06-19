@@ -8,6 +8,121 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-19 (later 3) — [Cl-2 #2 scoping] env-2 BOT / env-1 unanchored gap: no cheap canonical promotion; defer to longer-term work
+
+**Premise.** Cl-2 #2 — sc5/sc6/sc22 env-2 BOT pathology — was framed
+in the north-star doc as "the biggest remaining MHT-class gap to
+Helgesen, ship `_bearguard` if clean else build modified-polar EKF".
+With Cl-2 #1 closed as metric-artefact, re-measure the env-2 BOT
+candidates against the gated canonical (post step 0) and decide.
+
+**Pinned bench.** `docs/baselines/cl21_metrics_full_20260619.csv`
+(9 configs × 18 autoferry scenarios × 1 seed, with the new
+`nees_median` / `nees_p99` headline metrics).
+
+### Bearguard re-measured against gated canonical
+
+`_bearguard` ablation differs from gated canonical by **two** axes:
+the LOS-clamp guard AND (incidentally) bias-estimator-off. To
+isolate the guard's actual contribution, compare bearguard vs
+`_nobias` (both bias-off; only the guard differs).
+
+| sc (unanchored) | canon | nobias | bearguard | guard's lift |
+|---|---:|---:|---:|---:|
+| sc2  | 38.45 | 38.45 | 37.87 | −1.5% |
+| sc3  | 43.93 | 43.93 | 43.09 | −1.9% |
+| sc4  | 40.14 | 40.14 | 39.40 | −1.8% |
+| sc5  | 36.67 | 36.67 | 36.45 | −0.6% |
+| sc6  | 37.49 | 37.49 | 37.26 | −0.6% |
+| sc13 | 23.54 | 23.54 | 22.21 | −5.7% |
+| sc16 | 26.87 | 26.87 | 25.04 | −6.8% |
+| sc17 | 31.97 | 31.97 | 30.54 | −4.5% |
+| sc22 | 47.97 | 47.97 | 46.10 | −3.9% |
+
+Anchored: bit-identical to `_nobias` on every scenario (the LOS
+clamp doesn't fire when truth-AIS pins position).
+
+**Read.** The guard delivers 0.6–6.8% GOSPA improvement on
+unanchored, 0% on anchored. No regressions on NEES tails. **Real
+but small.** Not transformative. *Could* promote to canonical for
+the uniform unanchored gain, but the upside is bounded.
+
+### Recapture re-measured
+
+`_recapture` (adaptive recapture-gate, bias-off) shows headline
+GOSPA wins of 10–36% on every autoferry unanchored scenario. But
+the underlying mechanism is *wider gates allow stale tracks to
+re-capture late-arriving measurements*, which trades **lifetime
+ratio** for fewer ghost tracks:
+
+| sc | canon gospa | recap gospa | canon life | recap life | canon p99 | recap p99 |
+|---|---:|---:|---:|---:|---:|---:|
+| sc3  | 43.93 | **28.28 (−36%)** | 0.88 | **0.66 (−22pp)** | 899 | 931 |
+| sc17 | 31.97 | **25.48 (−20%)** | 0.90 | **0.39 (−51pp catastrophic)** | 590 | 286 |
+| sc22 | 47.97 | **36.80 (−23%)** | 0.85 | **0.74 (−11pp)** | 10069 | **93036 (×9 worse)** |
+| sc16 | 26.87 | 24.21 (−10%) | 0.85 | 0.78 (−7pp) | 339 | 2095 |
+| sc4  | 40.14 | 31.96 (−20%) | 0.94 | 0.87 | 1033 | 1870 |
+
+Operationally **not shippable as canonical.** Halving sc17 lifetime
+to win 6 GOSPA points is a bad operational trade — we'd lose target
+contact 60% of the time on that scenario. The p99 NEES tail also
+explodes on sc22 (10k → 93k). GOSPA's cardinality cost is hiding
+the real lifetime regression.
+
+### Underlying mechanism (unanchored env-1)
+
+Median NEES on the canonical (and `_nobias`) is now visible
+post-Cl-2 #1: sc3 unanchored median = 20, sc5 = 11.7, sc6 = 9.4.
+χ²₂ expected median ≈ 1.4. So the filter is **genuinely
+over-confident by ~10×** on env-1 unanchored — not a metric
+artefact. The 2026-06-13 reading still holds: "env 1 gap is
+cardinality-driven — track breaks dominate the metric, and the
+paper's VIMM-JIPDA recovers from misses on something the IMM-MHT
+configuration we run does not."
+
+The over-confidence mechanism: when a track is briefly missed and
+re-confirmed (M-of-N or IPDA visibility re-fires), the new track
+starts with a *prior covariance from init*, which is calibrated for
+synthetic scenarios but too tight for autoferry maneuvering between
+losses. The filter then under-reports its own uncertainty until
+sustained tracking pulls it back.
+
+### Cl-2 #2 close-out
+
+- `_bearguard`: small uniform gain, no regression. *Defensible but
+  not load-bearing*. Recommendation: don't promote unilaterally;
+  fold in if/when a richer Cl-2 #2 fix lands and we re-baseline.
+- `_recapture`: not shippable as canonical (lifetime cost too high
+  on sc17 / sc3 / sc22). Keep as ablation; its GOSPA headline is
+  useful for understanding GOSPA's cardinality bias, not for
+  deployment.
+- The honest Cl-2 #2 fix is **lifecycle / track-init covariance**
+  work, not BOT-specific. Candidates:
+  1. **Lifecycle re-tuning**: looser demote threshold, longer
+     "ever-confirmed" memory, IPDA visibility-decay rate, etc.
+     Small lift, possibly significant impact.
+  2. **Track re-init covariance prior**: increase init covariance
+     so re-confirmed tracks honestly report wider P. Trivial code
+     change; measurable impact on NEES.
+  3. **JIPDA-class lifecycle (sota-roadmap §2)**: the paper's
+     actual fix. Multi-day; serves Cl-1's class-controlled
+     extension as a side benefit.
+- Defer (1)/(2) as the next round of Cl-2 #2 sub-tasks; (3) stays
+  parked behind Cl-3 priorities.
+
+### Implicit re-ordering
+
+| Step | Status |
+|---|---|
+| Cl-2 #1 | closed 2026-06-19 (metric-artefact) |
+| Cl-2 #2 | **partially scoped 2026-06-19**: `_bearguard` small, `_recapture` not shippable, real fix is lifecycle/init-cov work. Defer the algorithmic investigation. |
+| Step 5 (Cooperative GNSS) | **NEXT** — small, additive deployment win |
+| Cl-2 #3 (UKF inside IMM) | small, safe, measurable |
+| Cl-2 #4 (EO/IR R tightening) | small, safe |
+| Cl-2 #2 deeper (lifecycle / init-cov) | re-open after Step 5 / Cl-2 #3 |
+| Cl-3 (PMBM) | the endgame, after the above stabilises |
+| Cl-1 SJPDA/JIPDA | deferred unless class-controlled comparison wanted |
+
 ## 2026-06-19 (later 2) — [Cl-2 #1 close-out] sc13_anchored NEES "catastrophe" is a metric-reporting artefact; close as no filter bug; add nees_median + nees_p99
 
 **The premise we were investigating.** Step 0 left sc13_anchored at

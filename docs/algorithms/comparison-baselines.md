@@ -205,11 +205,21 @@ question for the headline. The "when/where/why" reading:
    emits `nees_median` + `nees_p99` alongside `nees_mean`; eval-log
    headline convention is `(median, p95, cov95)` first. See
    2026-06-19 (later 2).
-2. **sc5 / sc6 / sc22 env-2 BOT pathology.** Modified-polar EKF or
-   bearing-bearing triangulation pre-init. `BearingRangeGuard`
-   (`_bearguard`) already implements a post-update LOS clamp that
-   helps measurably; re-measure against the gated canonical, then
-   decide promotion.
+2. **env-1 unanchored gap to Helgesen** (formerly framed as "env-2
+   BOT pathology"; re-scoped 2026-06-19). The honest mechanism is
+   **filter over-confidence on re-confirmed tracks after brief
+   misses**, not BOT range collapse — median NEES on sc3 unanchored
+   is 20 (expected ~1.4 for χ²₂), p95 is 417. `_bearguard` was
+   measured and gives only 0.6–6.8% GOSPA improvement and no
+   anchored effect — *small but no regression, not load-bearing*.
+   `_recapture` gives 10–36% GOSPA wins but at catastrophic
+   lifetime cost (sc17 0.90 → 0.39) — *not shippable as canonical*.
+   The real fix candidates are (a) IPDA+VIMM lifecycle re-tuning
+   (looser demote, longer ever-confirmed memory), (b) track re-init
+   covariance prior widening, or (c) JIPDA-class lifecycle (the
+   paper's actual approach; doubles as Cl-1 class-controlled work).
+   **(a) + (b) are days; (c) is multi-day and serves Cl-1 too.**
+   Defer pending Step 5 + Cl-2 #3/#4 (cheaper wins first).
 3. **UKF / cubature KF inside IMM (sub-question (a), sota-roadmap
    §3).** Build a `ukf_cv_ct_mht` config and measure. If the answer
    is "≤1% different from EKF", we declare the inner-filter question
@@ -328,7 +338,8 @@ when they do is the prevention mechanism.
 | Item | Claim | Expected delta | Cost | Status |
 |---|---|---|---|---|
 | ~~sc13_anchored MHT NEES = 69 residual~~ | Cl-2 #1 | Was misdiagnosed; filter is fine, mean was tail-dragged. Closed as no-bug 2026-06-19; bench now emits nees_median + nees_p99. | n/a (done) | **closed** |
-| sc5/sc6/sc22 env-2 BOT pathology | Cl-2 #2 | Closes the unanchored env-1 GOSPA gap to Helgesen (Cl-1 cold-deployment claim) by an unknown amount; likely partial. | 3–5 days (mod-polar EKF or triangulation init) | open |
+| Cl-2 #2 scoping: bearguard small, recapture not shippable (lifetime cost) | Cl-2 #2 partial | Scoped 2026-06-19; mechanism is filter over-confidence post-miss, not BOT. Real fix is lifecycle / init-cov; deferred. | scoping done | partial / deferred |
+| Cl-2 #2 deeper: lifecycle re-tune or init-cov widening | Cl-2 #2 | Closes the unanchored env-1 NEES over-confidence; impact on Helgesen GOSPA gap unknown until measured. | 1-2 days | open, deferred behind Step 5 + Cl-2 #3/#4 |
 | UKF / cubature KF inside IMM | Cl-2 #3 | Answers Cl-2 sub-question (a); either ships UKF or formally closes the inner-filter question in EKF's favour. | 1–2 days build + bench | open |
 | EO/IR R tightening (step-2 finding) | Cl-2 #4 | Small NEES improvement on anchored env-2; safe direction. | half-day | open, low-priority |
 | Step 5 — Cooperative GNSS as additional anchor (alongside AIS) | Cl-2 (deployment) | Inherits truth-AIS-column performance when AIS is absent or sparse; additive with AIS when both are present. | half-day to 1 day | queued |
@@ -341,15 +352,19 @@ when they do is the prevention mechanism.
 **Implicit ordering this produces (until you say otherwise):**
 
 1. ~~Cl-2 #1~~ — **closed 2026-06-19** as metric-artefact, not bug.
-2. **Cl-2 #2** (env-2 BOT) — biggest remaining MHT-class gap and
-   directly improves Cl-1's unanchored env-1 number too.
-3. Step 5 (cooperative GNSS) — deployment-relevant, cheap, additive
-   anchor source alongside AIS (the truth-AIS-column performance is
-   already documented).
-4. Cl-2 #3 (UKF) and #4 (EO/IR R) — small, safe.
-5. **Then Cl-3 (PMBM)** — the academic-frontier milestone. Begins
+2. ~~Cl-2 #2 (env-2 BOT framed)~~ — **partially scoped 2026-06-19**;
+   `_bearguard` small, `_recapture` not shippable, real fix is
+   lifecycle/init-cov work. Deeper investigation deferred behind
+   cheaper wins below.
+3. **Step 5 (Cooperative GNSS)** — NEXT. Deployment-relevant,
+   cheap, additive anchor source alongside AIS.
+4. **Cl-2 #3 (UKF inside IMM)** and **#4 (EO/IR R tightening)** —
+   small, safe, measurable.
+5. **Cl-2 #2 deeper** (lifecycle re-tune / init-cov widening) —
+   re-open after Step 5 and Cl-2 #3/#4.
+6. **Then Cl-3 (PMBM)** — the academic-frontier milestone. Begins
    only after Cl-2 stack is stable so the comparison floor is honest.
-6. Cl-1 SJPDA/JIPDA — defer unless we explicitly want the
+7. Cl-1 SJPDA/JIPDA — defer unless we explicitly want the
    class-controlled comparison published.
 
 ---
