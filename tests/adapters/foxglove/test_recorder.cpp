@@ -36,8 +36,10 @@ TEST(Recorder, TracksEmitSceneMapAndCount) {
   }
   auto c = countByTopic(path);
   std::remove(path.c_str());
-  EXPECT_EQ(c["/tracks"], 1);              // one SceneUpdate per onTracks call
-  EXPECT_EQ(c["/map/tracks"], 2);          // one LocationFix per track
+  // makeTrack() builds Confirmed tracks -> the confirmed (output) layer.
+  EXPECT_EQ(c["/tracks/confirmed"], 1);        // one SceneUpdate per onTracks call
+  EXPECT_EQ(c["/tracks/tentative"], 1);        // empty scene, still emitted
+  EXPECT_EQ(c["/map/tracks/confirmed"], 2);    // one LocationFix per confirmed track
   EXPECT_EQ(c["/diag/track_count"], 1);
 }
 

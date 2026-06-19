@@ -79,12 +79,13 @@ Call `recorder.close()` (or let the destructor run) when the session ends.
 
 | Topic | Foxglove schema | Source | What it shows |
 |---|---|---|---|
-| `/tracks` | `foxglove.SceneUpdate` | `ITrackSnapshotSink` | Track position, `ellipse_k`-sigma covariance ellipse (from `P`), velocity arrow, ID + status label. Green = Confirmed, yellow = Tentative. |
+| `/tracks/confirmed` | `foxglove.SceneUpdate` | `ITrackSnapshotSink` | **The committed output** — Confirmed tracks only (what a consumer publishes, per `app/example.cpp`'s Confirmed-only drain). Position, `ellipse_k`-sigma covariance ellipse (from `P`), velocity arrow, ID label. Green. |
+| `/tracks/tentative` | `foxglove.SceneUpdate` | `ITrackSnapshotSink` | Candidate tracks not yet confirmed (**not** part of the output). Yellow. Toggle off to see only the output. |
 | `/detections/<source_id>` | `foxglove.SceneUpdate` | `recordMeasurement` | **One topic per sensor source** (e.g. `/detections/autoferry_radar`, `/detections/autoferry_lidar`) so each sensor is an independent, toggleable layer. `Position2D`/`RangeBearing2D` → point + ellipse; `Bearing2D` → bearing wedge from `sensor_position_enu`. With a bias provider, also draws the bias-corrected marker at reduced opacity. Color is fixed per `SensorKind` (radar=red, lidar=orange, EO/IR=cyan, AIS=magenta), nudged per `source_id`. |
 | `/ownship` | `foxglove.SceneUpdate` | `recordOwnShip` | White diamond + "own-ship" label at the own-ship ENU position (stable id → moves in place). |
 | `/associations` | `foxglove.SceneUpdate` | `ITrackSnapshotSink` | Line from each contributing detection to the track it updated this scan. Bearing-only touches anchor at the sensor position. |
 | `/gates` | `foxglove.SceneUpdate` | `ITrackSnapshotSink` + cached `S` | Gate ellipse per track = `√γ · ellipse(S)`. Populated only when `gate_gamma > 0` and a cached innovation covariance `S` exists for the track. See [gate caveat](#gate-caveat). |
-| `/map/tracks` | `foxglove.LocationFix` | `ITrackSnapshotSink` | One `LocationFix` per track per scan, for the Map panel. Lat/lon via `toGeodeticWithCov`. **Accumulates** over the whole log (the Map panel never clears points). |
+| `/map/tracks/confirmed`, `/map/tracks/tentative` | `foxglove.LocationFix` | `ITrackSnapshotSink` | Map-panel lat/lon, split into the committed output (confirmed) vs candidates (tentative). One `LocationFix` per track per scan via `toGeodeticWithCov`. **Accumulates** over the whole log (the Map panel never clears points). |
 | `/map/detections/<source_id>` | `foxglove.LocationFix` | `recordMeasurement` | Per-sensor lat/lon for position-type detections (Map panel). |
 | `/map/ownship` | `foxglove.LocationFix` | `recordOwnShip` | Own-ship lat/lon track for the Map panel. |
 | `/tf` | `foxglove.FrameTransform` | recorder + `recordOwnShip` + datum events | A one-time identity `map→enu` root transform (so the 3D panel has a frame), plus an `enu→own_ship` transform per pose. Datum recenters emit a `/log` note. |

@@ -35,9 +35,10 @@ void FoxgloveDebugRecorder::registerChannels() {
   const std::string log   = loadSchema("Log.json");
   // Per-sensor detection topics (/detections/<source_id>, /map/detections/<source_id>)
   // are registered lazily in recordMeasurement so each sensor is its own layer.
-  for (const char* t : {"/tracks","/associations","/gates","/cpa","/ownship"})
+  for (const char* t : {"/tracks/confirmed","/tracks/tentative",
+                        "/associations","/gates","/cpa","/ownship"})
     w_->ensureChannel(t, kSceneUpdateSchema, scene);
-  for (const char* t : {"/map/tracks","/map/ownship"})
+  for (const char* t : {"/map/tracks/confirmed","/map/tracks/tentative","/map/ownship"})
     w_->ensureChannel(t, kLocationFixSchema, loc);
   w_->ensureChannel("/tf", kFrameTransformSchema, tf);
   w_->ensureChannel("/log", kLogSchema, log);
@@ -55,31 +56,36 @@ void FoxgloveDebugRecorder::ensureRootFrame(Timestamp t) {
 void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp now) {
   last_time_ = now;
   ensureRootFrame(now);
-  std::vector<json> entities;
+  // Split by lifecycle: /tracks/confirmed is the committed OUTPUT (what a
+  // consumer would publish, per app/example.cpp's Confirmed-only drain);
+  // /tracks/tentative is candidates not yet confirmed. Same split on the Map.
+  std::vector<json> conf_entities, tent_entities;
   int confirmed = 0, tentative = 0;
   for (const auto& t : tracks) {
     if (t.state.size() < 2 || t.covariance.rows() < 2 || t.covariance.cols() < 2) continue;
+    const bool is_output = (t.status == TrackStatus::Confirmed);
     const Eigen::Vector2d p = xy(t.state);
-    const Rgba col = (t.status == TrackStatus::Confirmed) ? Rgba{0.1,0.9,0.1,1.0}
-                                                          : Rgba{0.9,0.9,0.1,1.0};
+    const Rgba col = is_output ? Rgba{0.1,0.9,0.1,1.0} : Rgba{0.9,0.9,0.1,1.0};
     const std::string base = "track-" + std::to_string(t.id.value);
-    entities.push_back(lineEntity(base + "-cov",
+    std::vector<json>& bucket = is_output ? conf_entities : tent_entities;
+    bucket.push_back(lineEntity(base + "-cov",
         covarianceEllipse(p, pos2(t.covariance), cfg_.ellipse_k), col));
-    entities.push_back(textEntity(base + "-label", {p.x(), p.y(), 0},
+    bucket.push_back(textEntity(base + "-label", {p.x(), p.y(), 0},
         std::to_string(t.id.value), col));
     if (t.velocity_observed && t.state.size() >= 4) {
       const Eigen::Vector2d v = t.state.segment<2>(2);
-      entities.push_back(arrowEntity(base + "-vel", {p.x(),p.y(),0},
+      bucket.push_back(arrowEntity(base + "-vel", {p.x(),p.y(),0},
           {p.x()+v.x(), p.y()+v.y(), 0}, col));
     }
-    (t.status == TrackStatus::Confirmed ? confirmed : tentative)++;
+    (is_output ? confirmed : tentative)++;
     // Map: lat/lon via the canonical helper.
     const auto geo = toGeodeticWithCov(p, pos2(t.covariance), datum_);
     // NED (0=north,1=east) -> row-major ENU LocationFix (0=EE,1=EN,3=NE,4=NN).
     std::array<double,9> cov{};
     cov[0] = geo.position_covariance_m2(1,1); cov[1] = geo.position_covariance_m2(1,0);
     cov[3] = geo.position_covariance_m2(0,1); cov[4] = geo.position_covariance_m2(0,0);
-    w_->write("/map/tracks", now, locationFix(now, geo.lat_deg, geo.lon_deg, cov).dump());
+    w_->write(is_output ? "/map/tracks/confirmed" : "/map/tracks/tentative", now,
+              locationFix(now, geo.lat_deg, geo.lon_deg, cov).dump());
   }
   if (cfg_.gate_gamma > 0.0) {
     std::vector<json> gate_entities;
@@ -111,7 +117,8 @@ void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp
     }
   }
   w_->write("/associations", now, sceneUpdate(now, assoc, cfg_.entity_lifetime_sec).dump());
-  w_->write("/tracks", now, sceneUpdate(now, entities, cfg_.entity_lifetime_sec).dump());
+  w_->write("/tracks/confirmed", now, sceneUpdate(now, conf_entities, cfg_.entity_lifetime_sec).dump());
+  w_->write("/tracks/tentative", now, sceneUpdate(now, tent_entities, cfg_.entity_lifetime_sec).dump());
   json diag{{"time_ns", now.nanos()}, {"confirmed", confirmed}, {"tentative", tentative},
             {"total", confirmed + tentative}};
   w_->write("/diag/track_count", now, diag.dump());
