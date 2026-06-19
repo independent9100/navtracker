@@ -31,10 +31,24 @@ std::vector<Pt> bearingWedge(const Eigen::Vector2d& s, double alpha, double sigm
 }
 
 Rgba colorForSensor(SensorKind sensor, const std::string& source_id) {
-  // Hash (kind, source_id) into a hue; fixed S/V. Deterministic across runs.
+  // Fixed, well-separated base hue per sensor kind so radar / lidar / AIS / EO-IR
+  // are visually distinct (and clear of the track-green ~120 and gate-blue ~240
+  // used elsewhere). Multiple sources of the same kind are nudged apart by a
+  // small source_id-hash offset. Deterministic across runs.
+  double base;
+  switch (sensor) {
+    case SensorKind::ArpaTtm: base = 0.0; break;    // radar — red
+    case SensorKind::ArpaTll: base = 330.0; break;  // radar TLL — pink
+    case SensorKind::Lidar:   base = 30.0; break;   // lidar — orange
+    case SensorKind::EoIr:    base = 180.0; break;  // EO/IR — cyan
+    case SensorKind::Ais:     base = 300.0; break;  // AIS — magenta
+    default:                  base = -1.0; break;    // unknown — fall back to hash
+  }
   const std::size_t h = std::hash<int>{}(static_cast<int>(sensor)) * 1000003u
                       ^ std::hash<std::string>{}(source_id);
-  const double hue = static_cast<double>(h % 360u);       // degrees
+  const double hue = base >= 0.0
+      ? std::fmod(base + static_cast<double>(h % 30u) - 15.0 + 360.0, 360.0)
+      : static_cast<double>(h % 360u);              // degrees
   const double s = 0.65, v = 0.95, c = v * s, x = c * (1 - std::abs(std::fmod(hue / 60.0, 2.0) - 1));
   const double m = v - c;
   double r = 0, g = 0, bl = 0;

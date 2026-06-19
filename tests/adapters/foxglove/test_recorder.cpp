@@ -66,8 +66,10 @@ TEST(Recorder, PositionAndBearingDetectionsEmit) {
   }
   auto c = countByTopic(path);
   std::remove(path.c_str());
-  EXPECT_EQ(c["/detections"], 2);          // one SceneUpdate per measurement
-  EXPECT_EQ(c["/map/detections"], 1);      // only the position meas maps to lat/lon
+  // Per-sensor topics: posMeas is Ais/"ais-1", bearingMeas is EoIr/"cam-1".
+  EXPECT_EQ(c["/detections/ais-1"], 1);
+  EXPECT_EQ(c["/detections/cam-1"], 1);
+  EXPECT_EQ(c["/map/detections/ais-1"], 1);  // only the position meas maps to lat/lon
 }
 
 TEST(Recorder, InnovationEmitsNisAndGate) {

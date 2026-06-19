@@ -62,6 +62,16 @@ int main(int argc, char** argv) {
   // track set at that measurement's timestamp so the scrub timeline shows
   // detections, gates, associations, and track evolution together.
   for (const Measurement& m : scn.measurements) {
+    // Own-ship: the loader carries the platform's ENU position per detection;
+    // convert back to lat/lon so the recorder can place it (heading unknown -> 0).
+    const geo::Geodetic g = datum.toGeodetic(
+        Eigen::Vector3d(m.sensor_position_enu.x(), m.sensor_position_enu.y(), 0.0));
+    OwnShipPose pose;
+    pose.time = m.time;
+    pose.lat_deg = g.lat_deg;
+    pose.lon_deg = g.lon_deg;
+    recorder.recordOwnShip(pose);
+
     recorder.recordMeasurement(m);
     tracker.process(m);
     recorder.onTracks(mgr.tracks(), m.time);

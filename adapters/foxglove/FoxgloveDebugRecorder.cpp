@@ -33,9 +33,11 @@ void FoxgloveDebugRecorder::registerChannels() {
   const std::string loc   = loadSchema("LocationFix.json");
   const std::string tf    = loadSchema("FrameTransform.json");
   const std::string log   = loadSchema("Log.json");
-  for (const char* t : {"/tracks","/detections","/associations","/gates","/cpa"})
+  // Per-sensor detection topics (/detections/<source_id>, /map/detections/<source_id>)
+  // are registered lazily in recordMeasurement so each sensor is its own layer.
+  for (const char* t : {"/tracks","/associations","/gates","/cpa","/ownship"})
     w_->ensureChannel(t, kSceneUpdateSchema, scene);
-  for (const char* t : {"/map/tracks","/map/detections"})
+  for (const char* t : {"/map/tracks","/map/ownship"})
     w_->ensureChannel(t, kLocationFixSchema, loc);
   w_->ensureChannel("/tf", kFrameTransformSchema, tf);
   w_->ensureChannel("/log", kLogSchema, log);
@@ -166,9 +168,14 @@ void FoxgloveDebugRecorder::recordMeasurement(const Measurement& m) {
     // row-major ENU (0=EE, 4=NN), so map east<-NED(1,1), north<-NED(0,0).
     std::array<double,9> cov{};
     cov[0]=geo.position_covariance_m2(1,1); cov[4]=geo.position_covariance_m2(0,0);
-    w_->write("/map/detections", m.time, locationFix(m.time, geo.lat_deg, geo.lon_deg, cov).dump());
+    const std::string map_topic = "/map/detections/" + m.source_id;
+    w_->ensureChannel(map_topic, kLocationFixSchema, "");
+    w_->write(map_topic, m.time, locationFix(m.time, geo.lat_deg, geo.lon_deg, cov).dump());
   }
-  w_->write("/detections", m.time, sceneUpdate(m.time, entities, cfg_.entity_lifetime_sec).dump());
+  // Per-sensor detection layer so radar/lidar/EO/IR are independently toggleable.
+  const std::string det_topic = "/detections/" + m.source_id;
+  w_->ensureChannel(det_topic, kSceneUpdateSchema, "");
+  w_->write(det_topic, m.time, sceneUpdate(m.time, entities, cfg_.entity_lifetime_sec).dump());
 }
 
 void FoxgloveDebugRecorder::onTrackInitiated(const TrackLifecycleEvent& e) {
@@ -217,6 +224,22 @@ void FoxgloveDebugRecorder::recordOwnShip(const OwnShipPose& pose) {
   const double yaw = (90.0 - pose.heading_true_deg) * M_PI / 180.0;
   w_->write("/tf", pose.time, frameTransform(pose.time, kRootFrame, "own_ship",
       p3.x(), p3.y(), 0.0, yaw).dump());
+
+  // Visible own-ship marker: a diamond + label at the own-ship ENU position,
+  // bright white so it stands out from tracks/detections. Stable id -> the
+  // marker moves in place. Also a /map/ownship point for the Map panel.
+  const double d = 20.0;  // marker half-size, metres
+  const Rgba white{1.0, 1.0, 1.0, 1.0};
+  std::vector<json> own{
+      lineEntity("ownship",
+                 {{p3.x()+d, p3.y(), 0}, {p3.x(), p3.y()+d, 0}, {p3.x()-d, p3.y(), 0},
+                  {p3.x(), p3.y()-d, 0}, {p3.x()+d, p3.y(), 0}}, white, 2.0),
+      textEntity("ownship-label", {p3.x(), p3.y(), 0}, "own-ship", white)};
+  w_->write("/ownship", pose.time, sceneUpdate(pose.time, own, cfg_.entity_lifetime_sec).dump());
+  std::array<double,9> own_cov{};  // own-ship GPS std (m) -> EE/NN
+  own_cov[0] = own_cov[4] = pose.position_std_m * pose.position_std_m;
+  w_->write("/map/ownship", pose.time,
+            locationFix(pose.time, pose.lat_deg, pose.lon_deg, own_cov).dump());
 }
 
 void FoxgloveDebugRecorder::onDatumRecentered(const geo::Datum& /*old_d*/, const geo::Datum& new_d) {

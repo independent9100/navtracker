@@ -80,12 +80,14 @@ Call `recorder.close()` (or let the destructor run) when the session ends.
 | Topic | Foxglove schema | Source | What it shows |
 |---|---|---|---|
 | `/tracks` | `foxglove.SceneUpdate` | `ITrackSnapshotSink` | Track position, `ellipse_k`-sigma covariance ellipse (from `P`), velocity arrow, ID + status label. Green = Confirmed, yellow = Tentative. |
-| `/detections` | `foxglove.SceneUpdate` | `recordMeasurement` | Per-measurement marker. `Position2D`/`RangeBearing2D` → point + ellipse; `Bearing2D` → bearing wedge from `sensor_position_enu`. When a bias provider is present, also draws the bias-corrected marker at reduced opacity. Color is stable per `(SensorKind, source_id)`. |
+| `/detections/<source_id>` | `foxglove.SceneUpdate` | `recordMeasurement` | **One topic per sensor source** (e.g. `/detections/autoferry_radar`, `/detections/autoferry_lidar`) so each sensor is an independent, toggleable layer. `Position2D`/`RangeBearing2D` → point + ellipse; `Bearing2D` → bearing wedge from `sensor_position_enu`. With a bias provider, also draws the bias-corrected marker at reduced opacity. Color is fixed per `SensorKind` (radar=red, lidar=orange, EO/IR=cyan, AIS=magenta), nudged per `source_id`. |
+| `/ownship` | `foxglove.SceneUpdate` | `recordOwnShip` | White diamond + "own-ship" label at the own-ship ENU position (stable id → moves in place). |
 | `/associations` | `foxglove.SceneUpdate` | `ITrackSnapshotSink` | Line from each contributing detection to the track it updated this scan. Bearing-only touches anchor at the sensor position. |
 | `/gates` | `foxglove.SceneUpdate` | `ITrackSnapshotSink` + cached `S` | Gate ellipse per track = `√γ · ellipse(S)`. Populated only when `gate_gamma > 0` and a cached innovation covariance `S` exists for the track. See [gate caveat](#gate-caveat). |
-| `/map/tracks` | `foxglove.LocationFix` | `ITrackSnapshotSink` | One `LocationFix` per track per scan, for the Map panel. Lat/lon via `toGeodeticWithCov`. |
-| `/map/detections` | `foxglove.LocationFix` | `recordMeasurement` | Lat/lon for position-type detections. |
-| `/tf` | `foxglove.FrameTransform` | `recordOwnShip`, datum events | Own-ship pose as a transform from `enu` to `own_ship`. Datum recenters emit an updated transform and a `/log` note. |
+| `/map/tracks` | `foxglove.LocationFix` | `ITrackSnapshotSink` | One `LocationFix` per track per scan, for the Map panel. Lat/lon via `toGeodeticWithCov`. **Accumulates** over the whole log (the Map panel never clears points). |
+| `/map/detections/<source_id>` | `foxglove.LocationFix` | `recordMeasurement` | Per-sensor lat/lon for position-type detections (Map panel). |
+| `/map/ownship` | `foxglove.LocationFix` | `recordOwnShip` | Own-ship lat/lon track for the Map panel. |
+| `/tf` | `foxglove.FrameTransform` | recorder + `recordOwnShip` + datum events | A one-time identity `map→enu` root transform (so the 3D panel has a frame), plus an `enu→own_ship` transform per pose. Datum recenters emit a `/log` note. |
 | `/log` | `foxglove.Log` | `ITrackSink`, CPA, datum | Track lifecycle transitions (Initiated / Confirmed / Deleted), CPA Entered/Exited with distance and TCPA, datum-recenter notes. |
 | `/cpa` | `foxglove.SceneUpdate` | `ICollisionRiskSink` | CPA marker per (own-ship × track) pair with distance and TCPA label. |
 | `/diag/innovation` | custom JSON scalars | `IInnovationSink` | Per-update NIS `nis = νᵀ S⁻¹ ν` and measurement dimension `dim`, keyed by `(track_id, sensor, source_id)`. Feed a Plot panel; add a horizontal reference line at `dim` to see the chi-squared expectation. |
