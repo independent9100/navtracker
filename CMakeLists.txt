@@ -70,6 +70,7 @@ add_library(navtracker_core
   core/scenario/Harness.cpp
   core/scenario/HarnessBatched.cpp
   core/scenario/HarnessBatchedMht.cpp
+  core/scenario/HarnessBatchedPmbm.cpp
   core/scenario/Metrics.cpp
   core/scenario/TruthResample.cpp
   core/output/TrackOutput.cpp
@@ -200,6 +201,7 @@ add_executable(navtracker_tests
   tests/pmbm/test_pmbm_types.cpp
   tests/pmbm/test_pmbm_tracker_predict.cpp
   tests/pmbm/test_pmbm_tracker_update.cpp
+  tests/pmbm/test_pmbm_scenario.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
   tests/adapters/own_ship/test_own_ship_provider.cpp

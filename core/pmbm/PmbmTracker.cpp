@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <utility>
 
 #include <Eigen/Dense>
@@ -450,6 +451,63 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan) {
 
   density_.mbm = std::move(children);
   pruneAndNormalise();
+  aggregated_tracks_dirty_ = true;
+}
+
+const std::vector<Track>& PmbmTracker::tracks() const {
+  if (aggregated_tracks_dirty_) {
+    refreshAggregatedTracks();
+    aggregated_tracks_dirty_ = false;
+  }
+  return aggregated_tracks_;
+}
+
+void PmbmTracker::refreshAggregatedTracks() const {
+  // Aggregate (w^j · r^{j,id}) across hypotheses for each Bernoulli id.
+  // std::map ordered by id keeps the emission order deterministic across
+  // runs — critical for the determinism contract and for diff-friendly
+  // bench output.
+  struct Acc {
+    double mass{0.0};
+    Eigen::VectorXd mean_acc;       // Σ w·r · μ
+    Eigen::MatrixXd cov_acc;        // Σ w·r · (P + μμ')
+    Timestamp last_update{};
+  };
+  std::map<BernoulliId, Acc> by_id;
+
+  for (const auto& h : density_.mbm) {
+    for (const auto& b : h.bernoullis) {
+      const double m = h.weight * b.existence_probability;
+      if (m <= 0.0) continue;
+      Acc& a = by_id[b.id];
+      if (a.mean_acc.size() == 0) {
+        a.mean_acc = Eigen::VectorXd::Zero(b.mean.size());
+        a.cov_acc = Eigen::MatrixXd::Zero(b.mean.size(), b.mean.size());
+      }
+      a.mass += m;
+      a.mean_acc += m * b.mean;
+      a.cov_acc += m * (b.covariance + b.mean * b.mean.transpose());
+      if (b.last_update.seconds() > a.last_update.seconds()) {
+        a.last_update = b.last_update;
+      }
+    }
+  }
+
+  aggregated_tracks_.clear();
+  aggregated_tracks_.reserve(by_id.size());
+  for (const auto& [id, a] : by_id) {
+    if (a.mass < cfg_.output_existence_floor) continue;
+    Track t;
+    t.id.value = id;
+    t.last_update = a.last_update;
+    t.existence_probability = std::min(a.mass, 1.0);
+    t.status = (a.mass >= cfg_.confirm_threshold) ? TrackStatus::Confirmed
+                                                   : TrackStatus::Tentative;
+    t.state = a.mean_acc / a.mass;
+    // Moment-matched covariance: E[P + μμ'] − mean·mean'
+    t.covariance = (a.cov_acc / a.mass) - (t.state * t.state.transpose());
+    aggregated_tracks_.push_back(std::move(t));
+  }
 }
 
 }  // namespace navtracker::pmbm

@@ -71,6 +71,17 @@ class PmbmTracker {
     double r_min = 1e-3;
     double weight_min = 1e-4;
     double hypothesis_weight_min = 1e-4;
+
+    // Output emission threshold (§3.6 of pmbm-design.md). After
+    // aggregating P(exists | id) across hypotheses, emit a Track with
+    // status = Confirmed iff P(exists) ≥ confirm_threshold, else
+    // Tentative. 0.5 matches the textbook midpoint.
+    double confirm_threshold = 0.5;
+
+    // Aggregated tracks() output also drops any Bernoulli id whose
+    // P(exists) is below this floor — keeps phantom mass out of
+    // downstream consumers without affecting the internal MBM.
+    double output_existence_floor = 0.1;
   };
 
   // Birth intensity callback. Called once per predict() (after the
@@ -122,6 +133,19 @@ class PmbmTracker {
   // Next Bernoulli id that will be minted (introspection / tests).
   BernoulliId nextBernoulliId() const noexcept { return next_bernoulli_id_; }
 
+  // Aggregated single-Track view of the MBM, one entry per unique
+  // Bernoulli id (§3.6 of pmbm-design.md):
+  //   P(exists | id) = Σ_{j: id ∈ j} w^j · r^{j,id}
+  //   mean(id)       = (1 / P(exists)) · Σ w^j · r^{j,id} · μ^{j,id}
+  //   cov(id)        = (1 / P(exists)) · Σ w^j · r^{j,id} · (P^{j,id} +
+  //                                                          dd')
+  // with d = μ^{j,id} − mean(id). Status = Confirmed iff
+  // P(exists) ≥ confirm_threshold; tracks with P(exists) <
+  // output_existence_floor are omitted entirely. TrackId.value reuses
+  // the Bernoulli id so external consumers see a stable, non-reusable
+  // identifier across scans.
+  const std::vector<Track>& tracks() const;
+
  private:
   // One candidate "new Bernoulli" per measurement, fused from the PPP.
   // rho_target = Σ_i p_D · w_i · ℓ(z|c_i); rho_total = rho_target +
@@ -150,6 +174,8 @@ class PmbmTracker {
   // cfg_.max_global_hypotheses.
   void pruneAndNormalise();
 
+  void refreshAggregatedTracks() const;
+
   const IEstimator& estimator_;
   Config cfg_;
   BirthModelFn birth_model_;
@@ -157,6 +183,8 @@ class PmbmTracker {
   Timestamp current_time_{};
   bool has_current_time_{false};
   BernoulliId next_bernoulli_id_{1};
+  mutable std::vector<Track> aggregated_tracks_;
+  mutable bool aggregated_tracks_dirty_{true};
 };
 
 }  // namespace navtracker::pmbm
