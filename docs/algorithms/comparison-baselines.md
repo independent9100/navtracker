@@ -214,12 +214,23 @@ question for the headline. The "when/where/why" reading:
    anchored effect — *small but no regression, not load-bearing*.
    `_recapture` gives 10–36% GOSPA wins but at catastrophic
    lifetime cost (sc17 0.90 → 0.39) — *not shippable as canonical*.
-   The real fix candidates are (a) IPDA+VIMM lifecycle re-tuning
-   (looser demote, longer ever-confirmed memory), (b) track re-init
-   covariance prior widening, or (c) JIPDA-class lifecycle (the
-   paper's actual approach; doubles as Cl-1 class-controlled work).
-   **(a) + (b) are days; (c) is multi-day and serves Cl-1 too.**
-   Defer pending Step 5 + Cl-2 #3/#4 (cheaper wins first).
+   The real fix candidates *inside* Cl-2's stack were (a) IPDA+VIMM
+   lifecycle re-tuning (looser demote, longer ever-confirmed memory)
+   and (b) track-spawn init-covariance prior widening. **Both
+   measured and REJECTED 2026-06-20** (bench
+   `cl25_life_20260620.csv`): cardinality bloat broadly regressed
+   autoferry-unanchored GOSPA +4.3% mean and autoferry-anchored
+   GOSPA +17.1% mean (sc3_anchored +56%). The over-confidence
+   mechanism lives in the joint existence + association coupling,
+   not in lifecycle thresholds or init priors — a standalone
+   parameter tweak cannot reach it. A third path sometimes confused
+   with a Cl-2 fix is "JIPDA-class lifecycle", but that is **not** a
+   fix inside our stack: JIPDA replaces TOMHT at slice 5
+   (`docs/learning/22-tracker-stack-alternatives.md`), so building
+   JIPDA is the Cl-1 sibling pipeline (GNN/JPDA branch), not a
+   stackable change to Cl-2. **Cl-2 #2 is deferred indefinitely**
+   in favour of Cl-3 (PMBM), which collapses slices 4-6 into one
+   RFS recursion and makes the over-confidence question moot.
 3. ~~UKF / cubature KF inside IMM~~ **Closed 2026-06-20 as
    SHIPPED.** Measured the UKF inner filter against EKF on
    cl23_ukf_full_20260619.csv (29 scenarios × seed 0). Autoferry
@@ -352,7 +363,7 @@ when they do is the prevention mechanism.
 |---|---|---|---|---|
 | ~~sc13_anchored MHT NEES = 69 residual~~ | Cl-2 #1 | Was misdiagnosed; filter is fine, mean was tail-dragged. Closed as no-bug 2026-06-19; bench now emits nees_median + nees_p99. | n/a (done) | **closed** |
 | Cl-2 #2 scoping: bearguard small, recapture not shippable (lifetime cost) | Cl-2 #2 partial | Scoped 2026-06-19; mechanism is filter over-confidence post-miss, not BOT. Real fix is lifecycle / init-cov; deferred. | scoping done | partial / deferred |
-| Cl-2 #2 deeper: lifecycle re-tune or init-cov widening | Cl-2 #2 | Closes the unanchored env-1 NEES over-confidence; impact on Helgesen GOSPA gap unknown until measured. | 1-2 days | open, deferred behind Step 5 + Cl-2 #3/#4 |
+| ~~Cl-2 #2 (a)+(b): lifecycle re-tune + init-cov widening~~ | Cl-2 #2 | Measured 2026-06-20: cardinality bloat regressed autoferry-unanchored mean GOSPA +4.3% and anchored +17.1% (sc3_anchored +56%). Over-confidence is in joint existence+association coupling — not reachable by lifecycle/init-cov tweaks. Cl-2 #2 deferred indefinitely; PMBM (Cl-3) makes it moot. | n/a (rejected) | **closed** |
 | ~~UKF / cubature KF inside IMM~~ | Cl-2 #3 | **Shipped 2026-06-20.** Autoferry unanchored mean GOSPA −12.3% (9/9 wins); philos −4.6%; anchored flat; synthetic +5.7% bounded (linear-CV regime). Promoted to canonical; EKF preserved as `imm_cv_ct_mht_ekf` ablation. | n/a (done) | **shipped** |
 | ~~EO/IR R tightening (step-2 finding)~~ | Cl-2 #4 | Measured 2026-06-19: env-2 anchored GOSPA +18-88%, RMSE catastrophic. α̂ analysis was misleading on stacks with online bias correction. | n/a (rejected) | **closed** |
 | ~~Step 5 — Cooperative GNSS as additional anchor (alongside AIS)~~ | Cl-2 (deployment) | Wiring shipped 2026-06-19 (new `SensorKind::Cooperative`, anchor extractors + AIS-ARPA pair extractor recognise it). No bench delta — no scenario emits Cooperative measurements yet. Synthetic sweep filed as next-step. | n/a (done) | **shipped** |
@@ -376,11 +387,14 @@ when they do is the prevention mechanism.
 4. ~~Cl-2 #3 (UKF inside IMM)~~ — **shipped 2026-06-20**
    (autoferry unanchored mean GOSPA −12.3%). ~~Cl-2 #4 (EO/IR R
    tightening)~~ — **rejected 2026-06-19** (env-2 anchored
-   regression). **Cl-2 #2 deeper** (lifecycle re-tune /
-   init-cov widening) is now the sole open IMM+MHT-side item
-   before Cl-3 (PMBM).
-5. **Cl-2 #2 deeper** (lifecycle re-tune / init-cov widening) —
-   re-open after Cl-2 #3/#4.
+   regression). ~~Cl-2 #2 (a)+(b) (lifecycle re-tune /
+   init-cov widening)~~ — **rejected 2026-06-20** (cardinality
+   bloat). With Cl-2 #2 deferred indefinitely, the Cl-2 stack is
+   stable enough to move on.
+5. *(Cl-2 #2 has no remaining cheap candidates inside the IMM+MHT
+   stack — the joint-existence+association coupling is the real
+   over-confidence locus, and reaching it means PMBM or the Cl-1
+   sibling pipeline.)*
 6. **Then Cl-3 (PMBM)** — the academic-frontier milestone. Begins
    only after Cl-2 stack is stable so the comparison floor is honest.
 7. Cl-1 SJPDA/JIPDA — defer unless we explicitly want the

@@ -8,6 +8,105 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-20 (later) — [Cl-2 #2 (a)+(b) close-out] Lifecycle re-tune + init-cov widening rejected: cardinality bloat broadly regresses GOSPA
+
+**Premise.** Cl-2 #2 left open in the north-star doc with two
+candidate fixes inside the canonical IMM+MHT stack:
+- (a) IPDA+VIMM lifecycle re-tune — looser demote, longer
+  ever-confirmed memory (`ipda_persistence` 0.99 → 0.995,
+  `ipda_delete_threshold` 0.05 → 0.02).
+- (b) Track-spawn init-covariance widening
+  (`kImmInitSpeedStd` 10 → 15, `kImmInitOmegaStd` 0.1 → 0.2).
+Target: env-1 sc3 unanchored median NEES ≈ 15 (post-UKF
+canonical) should fall toward 1.4. Mechanism intended: looser
+lifecycle keeps tracks alive through brief misses → P grows by
+accumulated Q → re-confirmation has honest uncertainty; wider
+init-cov starts fresh tracks honest about velocity/turn rate.
+
+**Method.** Edit `makeMhtConfig` and `kImmInit*` constants in
+`core/benchmark/Config.cpp`. Add `imm_cv_ct_mht_oldlife`
+ablation that reverts (a)+(b) for attribution. Full autoferry
+slice (18 sc × 21 configs × seed 0). Pinned:
+`docs/baselines/cl25_life_20260620.csv`.
+
+### Result — broadly worse on real data
+
+**Autoferry UNANCHORED (the target regime):**
+
+| | mean Δ | median Δ | NEW worse | NEW better |
+|---|---:|---:|---:|---:|
+| GOSPA % | **+4.3** | +6.3 | **8/9** | 1/9 |
+| RMSE %  | **+10.4** | +9.2 | 6/9 | 3/9 |
+| NEES median | +0.36 | +0.07 | 5/9 | 4/9 |
+| lifetime % | +1.9 | +1.6 | 1/9 | 8/9 |
+
+**Autoferry ANCHORED:**
+
+| | mean Δ | median Δ | NEW worse | NEW better |
+|---|---:|---:|---:|---:|
+| GOSPA % | **+17.1** | +13.6 | **8/9** | 1/9 |
+| RMSE % | −0.2 | +0.01 | 6/9 | 3/9 |
+
+Standout regressions: sc3_anchored GOSPA **+56%**, sc6_anchored
++28%, sc4_anchored +26%, sc6 unanchored RMSE +39%, sc13 RMSE
++25%. **sc3 unanchored NEES median 15.0 → 17.6 — the wrong
+direction on the very scenario that motivated the work.**
+
+### Mechanism — cardinality bloat, not localization
+
+Anchored RMSE essentially flat (≤±3%) while anchored GOSPA
+explodes +17% mean. RMSE measures *localization* on the
+truth-matched tracks; GOSPA includes a *cardinality penalty*
+for extra tracks. The combo of looser lifecycle (kept tentative
+false tracks alive longer) and wider init cov (gates pulled
+more measurements into more competing branches, sustaining
+more false-positive hypotheses) bloated the hypothesis tree
+without improving localization. Higher lifetime% (+1.9% on
+unanchored) confirms tracks are persisting longer — real ones
+and fake ones together.
+
+### Why "honest uncertainty" didn't help NEES
+
+The wider init-cov *did* widen P at spawn, but only briefly —
+the filter's posterior shrinks rapidly under the first few
+updates regardless of the prior. The persistent over-confidence
+on re-confirmed tracks isn't fixable at *initialization* time;
+it's about the *recovery* path after a brief miss. The lifecycle
+change didn't address recovery directly either: it just made
+the track survive longer in coast, but during coast the
+estimator already adds Q correctly. The over-confidence comes
+from somewhere else — likely the IPDA hit recursion treating
+re-confirmation as if the gap never happened. Real fix here is
+either deeper IPDA work or a JIPDA-class joint existence
+recursion, which is **the Cl-1 sibling-pipeline experiment, not
+a stackable change to Cl-2** (see §22 of
+`docs/learning/22-tracker-stack-alternatives.md` — slice 5 is a
+fork, not a stack).
+
+### Decision
+
+**Reverted both** (a) and (b). Inline comments in
+`Config.cpp` document the bounds (init-cov widening direction
+and lifecycle persistence direction) so a future drive-by
+attempt sees the breadcrumb. `_oldlife` ablation dropped (no
+longer needed for attribution).
+
+`cl25_life_20260620.csv` kept as a negative-result baseline so
+the cardinality-bloat mechanism is reproducible.
+
+### Lesson
+
+A standalone lifecycle/init-cov tweak cannot fix
+re-confirmation over-confidence — the mechanism lives in the
+joint existence + association coupling. Future Cl-2 #2 work
+should attack that directly (more sophisticated IPDA recursion,
+or treat it as the Cl-1 sibling experiment). Cl-2 #2 is now
+**deferred indefinitely** in favour of going straight to Cl-3
+(PMBM), which collapses slices 4-6 into one RFS recursion and
+makes the question moot.
+
+---
+
 ## 2026-06-20 — [Cl-2 #3 close-out] UKF inside IMM promoted to canonical inner filter; EKF preserved as `imm_cv_ct_mht_ekf` ablation
 
 **Premise.** Cl-2 #3 in the north-star doc: build `ukf_cv_ct_mht`,

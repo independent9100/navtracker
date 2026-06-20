@@ -52,6 +52,16 @@ constexpr double kImmCtAccelPsd = 0.5;
 constexpr double kImmCtOmegaPsd = 0.1;
 constexpr double kImmInitSpeedStd = 10.0;
 constexpr double kImmInitOmegaStd = 0.1;
+// Cl-2 #2 (b) — init-cov widening — measured against the gated UKF
+// canonical 2026-06-20 (bench cl25_life_20260620.csv) and REJECTED.
+// 10.0/0.1 → 15.0/0.2 was meant to fix env-1 sc3 unanchored median
+// NEES (15 in canonical, "should be ~1.4"). Result: sc3 median went
+// 15.0 → 17.6 (worse), autoferry-unanchored mean GOSPA +4.3%, env-2
+// anchored mean GOSPA +17.1%. Wider gates pulled extra measurements
+// into competing branches → hypothesis-tree cardinality bloat. Do
+// not retry without first addressing the cardinality side of the
+// problem (e.g. tighter MHT pruning, JIPDA on the sibling pipeline
+// per Cl-1). See eval-log "Cl-2 #2 (a)+(b) close-out".
 
 // Noisy-CV third mode for the 3-mode IMM (CV + CT + noisy-CV). Same
 // CV5State motion model with the accel PSD inflated 50× — the
@@ -228,6 +238,14 @@ MhtTracker::Config makeMhtConfig() {
   cfg.gate_threshold = kJpdaGate;
   cfg.probability_of_detection = kJpdaPd;
   cfg.clutter_density = kJpdaClutterDensity;
+  // Cl-2 #2 (a) — lifecycle re-tune (ipda_persistence 0.99 → 0.995,
+  // ipda_delete_threshold 0.05 → 0.02) measured against the gated
+  // UKF canonical 2026-06-20 (bench cl25_life_20260620.csv) and
+  // REJECTED. Looser lifecycle kept *false-track* tentatives alive
+  // alongside real ones → cardinality bloat → anchored GOSPA +17%
+  // (sc3 +56%, sc4 +26%). Unanchored NEES median on the target
+  // scenario (sc3) went 15.0 → 17.6 — the wrong direction. Header
+  // defaults retained. See eval-log "Cl-2 #2 (a)+(b) close-out".
   return cfg;
 }
 

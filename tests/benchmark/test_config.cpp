@@ -10,9 +10,9 @@ using navtracker::benchmark::defaultConfigs;
 
 TEST(Config, DefaultConfigsHaveUniqueLabels) {
   const auto configs = defaultConfigs();
-  // 20: 17 standing configs + two step-0 ablations added 2026-06-19
-  // (imm_cv_ct_mht_nobias / imm_cv_ct_mht_novis) + Cl-2 #3
-  // (imm_cv_ct_mht_ukf, UKF inner filter inside the canonical IMM).
+  // 20: 17 standing + two step-0 ablations added 2026-06-19
+  // (imm_cv_ct_mht_nobias / imm_cv_ct_mht_novis) + Cl-2 #3 EKF
+  // ablation (imm_cv_ct_mht_ekf, the pre-2026-06-20 canonical).
   ASSERT_EQ(configs.size(), 20u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
