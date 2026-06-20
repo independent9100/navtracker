@@ -220,11 +220,17 @@ question for the headline. The "when/where/why" reading:
    paper's actual approach; doubles as Cl-1 class-controlled work).
    **(a) + (b) are days; (c) is multi-day and serves Cl-1 too.**
    Defer pending Step 5 + Cl-2 #3/#4 (cheaper wins first).
-3. **UKF / cubature KF inside IMM (sub-question (a), sota-roadmap
-   §3).** Build a `ukf_cv_ct_mht` config and measure. If the answer
-   is "≤1% different from EKF", we declare the inner-filter question
-   closed in EKF's favour (simpler, faster, no loss). If meaningful,
-   ship UKF as canonical inner filter.
+3. ~~UKF / cubature KF inside IMM~~ **Closed 2026-06-20 as
+   SHIPPED.** Measured the UKF inner filter against EKF on
+   cl23_ukf_full_20260619.csv (29 scenarios × seed 0). Autoferry
+   unanchored — the Cl-2 #2 regime — gave **9/9 GOSPA wins, mean
+   −12.3%** (sc17 −20.5%, sc22 −21.7%, sc3/4/6 all −14 to −16%);
+   philos −4.6%. Anchored flat (no regression). Synthetic
+   regressed +5.7% mean (linear-CV scenarios where EKF is exact;
+   bounded ≤+13%). Promoted: `makeImmCvCt` now uses
+   `use_ukf=true`; the EKF stack is preserved as
+   `imm_cv_ct_mht_ekf` ablation. Sub-question (a) of Cl-2 closed
+   in UKF's favour. See eval-log "Cl-2 #3 close-out".
 4. ~~EO/IR R tightening from step-2 NIS finding~~ **Closed 2026-06-19
    as REJECTED.** Measured 0.0925 → 0.06 against the gated canonical;
    env-2 anchored GOSPA regressed +18-88% (sc16/17/22), RMSE up to
@@ -347,7 +353,7 @@ when they do is the prevention mechanism.
 | ~~sc13_anchored MHT NEES = 69 residual~~ | Cl-2 #1 | Was misdiagnosed; filter is fine, mean was tail-dragged. Closed as no-bug 2026-06-19; bench now emits nees_median + nees_p99. | n/a (done) | **closed** |
 | Cl-2 #2 scoping: bearguard small, recapture not shippable (lifetime cost) | Cl-2 #2 partial | Scoped 2026-06-19; mechanism is filter over-confidence post-miss, not BOT. Real fix is lifecycle / init-cov; deferred. | scoping done | partial / deferred |
 | Cl-2 #2 deeper: lifecycle re-tune or init-cov widening | Cl-2 #2 | Closes the unanchored env-1 NEES over-confidence; impact on Helgesen GOSPA gap unknown until measured. | 1-2 days | open, deferred behind Step 5 + Cl-2 #3/#4 |
-| UKF / cubature KF inside IMM | Cl-2 #3 | Answers Cl-2 sub-question (a); either ships UKF or formally closes the inner-filter question in EKF's favour. | 1–2 days build + bench | open |
+| ~~UKF / cubature KF inside IMM~~ | Cl-2 #3 | **Shipped 2026-06-20.** Autoferry unanchored mean GOSPA −12.3% (9/9 wins); philos −4.6%; anchored flat; synthetic +5.7% bounded (linear-CV regime). Promoted to canonical; EKF preserved as `imm_cv_ct_mht_ekf` ablation. | n/a (done) | **shipped** |
 | ~~EO/IR R tightening (step-2 finding)~~ | Cl-2 #4 | Measured 2026-06-19: env-2 anchored GOSPA +18-88%, RMSE catastrophic. α̂ analysis was misleading on stacks with online bias correction. | n/a (rejected) | **closed** |
 | ~~Step 5 — Cooperative GNSS as additional anchor (alongside AIS)~~ | Cl-2 (deployment) | Wiring shipped 2026-06-19 (new `SensorKind::Cooperative`, anchor extractors + AIS-ARPA pair extractor recognise it). No bench delta — no scenario emits Cooperative measurements yet. Synthetic sweep filed as next-step. | n/a (done) | **shipped** |
 | SJPDA on JPDA branch | Cl-1 (class-controlled extension) | Half of "is the association class load-bearing?" answer. | half-day (permutation collapse) | optional / deferred |
@@ -367,9 +373,12 @@ when they do is the prevention mechanism.
    wiring-only (no bench delta until a scenario emits Cooperative
    measurements). Synthetic anchor-substitution sweep filed as
    follow-up.
-4. ~~Cl-2 #4 (EO/IR R tightening)~~ — **rejected 2026-06-19**
-   (env-2 anchored regression). **Cl-2 #3 (UKF inside IMM)** —
-   NEXT.
+4. ~~Cl-2 #3 (UKF inside IMM)~~ — **shipped 2026-06-20**
+   (autoferry unanchored mean GOSPA −12.3%). ~~Cl-2 #4 (EO/IR R
+   tightening)~~ — **rejected 2026-06-19** (env-2 anchored
+   regression). **Cl-2 #2 deeper** (lifecycle re-tune /
+   init-cov widening) is now the sole open IMM+MHT-side item
+   before Cl-3 (PMBM).
 5. **Cl-2 #2 deeper** (lifecycle re-tune / init-cov widening) —
    re-open after Cl-2 #3/#4.
 6. **Then Cl-3 (PMBM)** — the academic-frontier milestone. Begins

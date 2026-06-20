@@ -82,7 +82,31 @@ std::shared_ptr<IEstimator> makeUkfCt() {
   return std::make_shared<UkfEstimator>(motion, kCtInitSpeedStd);
 }
 
+// CANONICAL IMM (CV5 + CT). Inner filter is UKF (sigma-point) per
+// mode, promoted from EKF on 2026-06-20 (Cl-2 #3 close-out). See
+// eval-log entry; pinned bench cl23_ukf_full_20260619.csv. The EKF
+// inner filter is preserved as the imm_cv_ct_mht_ekf ablation.
 std::shared_ptr<IEstimator> makeImmCvCt() {
+  std::vector<std::shared_ptr<IMotionModel>> motions = {
+      std::make_shared<ConstantVelocity5State>(kImmCv5AccelPsd,
+                                               kImmCv5OmegaPsd),
+      std::make_shared<CoordinatedTurn>(kImmCtAccelPsd, kImmCtOmegaPsd)};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05,
+        0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 0.5, 0.5;
+  return std::make_shared<ImmEstimator>(motions, pi, mu0,
+                                        kImmInitSpeedStd, kImmInitOmegaStd,
+                                        /*noise=*/nullptr,
+                                        /*bearing_range_guard=*/false,
+                                        /*use_ukf=*/true);
+}
+
+// EKF inner filter for the canonical IMM. The 2026-06-20 pre-UKF
+// canonical, preserved as an ablation so the "did UKF land cleanly?"
+// question stays measurable.
+std::shared_ptr<IEstimator> makeImmCvCtEkf() {
   std::vector<std::shared_ptr<IMotionModel>> motions = {
       std::make_shared<ConstantVelocity5State>(kImmCv5AccelPsd,
                                                kImmCv5OmegaPsd),
@@ -96,13 +120,13 @@ std::shared_ptr<IEstimator> makeImmCvCt() {
                                         kImmInitSpeedStd, kImmInitOmegaStd);
 }
 
-// Same canonical IMM but with the bearing range-variance guard ON.
-// Backlog item 12 suspect (b): the Joseph-form EKF/IMM bearing update
-// can drive along-LOS position variance below its predicted value
-// through cross-coupling, leaving the filter overconfident in range
-// it never measured. The guard restores the predicted LOS-direction
-// variance post-update while preserving the legitimate cross-LOS
-// reduction. See core/estimation/BearingRangeGuard.hpp.
+// Canonical IMM + bearing range-variance guard (backlog item 12
+// suspect b). The Joseph-form bearing update can drive along-LOS
+// position variance below its predicted value through cross-coupling,
+// leaving the filter overconfident in range it never measured. The
+// guard restores the predicted LOS-direction variance post-update
+// while preserving the legitimate cross-LOS reduction. Inherits the
+// UKF inner filter from canonical post-2026-06-20.
 std::shared_ptr<IEstimator> makeImmCvCtBearGuard() {
   std::vector<std::shared_ptr<IMotionModel>> motions = {
       std::make_shared<ConstantVelocity5State>(kImmCv5AccelPsd,
@@ -116,7 +140,8 @@ std::shared_ptr<IEstimator> makeImmCvCtBearGuard() {
   return std::make_shared<ImmEstimator>(motions, pi, mu0,
                                         kImmInitSpeedStd, kImmInitOmegaStd,
                                         /*noise=*/nullptr,
-                                        /*bearing_range_guard=*/true);
+                                        /*bearing_range_guard=*/true,
+                                        /*use_ukf=*/true);
 }
 
 // 3-mode IMM: CV5State (cruising), CoordinatedTurn (turning),
@@ -141,7 +166,10 @@ std::shared_ptr<IEstimator> makeImmCvCtNoisy() {
   mu0 << 0.45, 0.45, 0.10;  // bias prior toward CV/CT; noisy is the
                             // fallback, not the default expectation.
   return std::make_shared<ImmEstimator>(motions, pi, mu0,
-                                        kImmInitSpeedStd, kImmInitOmegaStd);
+                                        kImmInitSpeedStd, kImmInitOmegaStd,
+                                        /*noise=*/nullptr,
+                                        /*bearing_range_guard=*/false,
+                                        /*use_ukf=*/true);
 }
 
 // Same IMM as makeImmCvCt but with a Student-t robust measurement model
@@ -160,7 +188,9 @@ std::shared_ptr<IEstimator> makeImmCvCtRobust() {
   mu0 << 0.5, 0.5;
   auto noise = std::make_shared<StudentTNoiseModel>(4.0);
   return std::make_shared<ImmEstimator>(motions, pi, mu0, kImmInitSpeedStd,
-                                        kImmInitOmegaStd, noise);
+                                        kImmInitOmegaStd, noise,
+                                        /*bearing_range_guard=*/false,
+                                        /*use_ukf=*/true);
 }
 
 std::shared_ptr<IDataAssociator> makeGnn() {
@@ -303,6 +333,18 @@ std::vector<Config> defaultConfigs() {
   configs.push_back({"imm_cv_ct_mht_cmap", &makeImmCvCt, &makeJpda,
                      TrackerKind::Mht, &makeMhtConfig,
                      /*use_clutter_map=*/true});
+  // Cl-2 #3 close-out (2026-06-20): the pre-2026-06-20 canonical
+  // (EKF inner filter) preserved as an ablation. Use this to ask
+  // "what does the new UKF inner filter buy us?" on any scenario.
+  // Sensor bias estimator wired (matches canonical).
+  {
+    Config c{"imm_cv_ct_mht_ekf", &makeImmCvCtEkf, &makeJpda,
+             TrackerKind::Mht, &makeMhtConfig};
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
   // Canonical plus the bearing range-variance guard (backlog item 12
   // suspect b). Isolates the BOT pathology fix without changing any
   // other tracker mechanism. Expected effect on AutoFerry sc5:

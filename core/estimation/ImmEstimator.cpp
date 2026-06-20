@@ -10,6 +10,7 @@
 #include "core/estimation/BearingRangeGuard.hpp"
 #include "core/estimation/CoordinatedTurn.hpp"
 #include "core/estimation/MeasurementModels.hpp"
+#include "core/estimation/SigmaPoints.hpp"
 
 namespace navtracker {
 
@@ -19,14 +20,22 @@ ImmEstimator::ImmEstimator(std::vector<std::shared_ptr<IMotionModel>> motions,
                            double init_speed_std,
                            double init_omega_std,
                            std::shared_ptr<const IMeasurementNoiseModel> noise,
-                           bool bearing_range_guard)
+                           bool bearing_range_guard,
+                           bool use_ukf,
+                           double ukf_alpha,
+                           double ukf_beta,
+                           double ukf_kappa)
     : motions_(std::move(motions)),
       pi_(std::move(transition_matrix)),
       mu0_(std::move(initial_mode_probabilities)),
       init_speed_std_(init_speed_std),
       init_omega_std_(init_omega_std),
       noise_(std::move(noise)),
-      bearing_range_guard_(bearing_range_guard) {}
+      bearing_range_guard_(bearing_range_guard),
+      use_ukf_(use_ukf),
+      ukf_alpha_(ukf_alpha),
+      ukf_beta_(ukf_beta),
+      ukf_kappa_(ukf_kappa) {}
 
 void ImmEstimator::projectMixtureToTrack(Track& track) const {
   const int K = static_cast<int>(track.imm_means.cols());
@@ -105,21 +114,43 @@ void ImmEstimator::predict(Track& track, Timestamp to) const {
     }
   }
 
-  // Per-mode prediction. For nonlinear motion models (CT with state-
-  // driven omega) we linearize F at the mode's mixed-prior omega for the
-  // covariance update, then apply the true nonlinear step to the mean.
-  // Linear models hit the default propagate() == F·x; the two paths
-  // coincide.
+  // Per-mode prediction. EKF path (default): linearize F at the mode's
+  // mixed-prior omega for the covariance update, apply the nonlinear
+  // propagate() to the mean — for linear motion models F·x and
+  // propagate() coincide. UKF path (use_ukf_): propagate sigma points
+  // drawn from (x_mix, P_mix) through propagate() and reconstruct both
+  // mean and covariance from the weighted sums, then add Q. The UKF
+  // path captures nonlinearity exactly to second-order moments at the
+  // cost of (2n+1) propagate() calls per mode.
   for (int j = 0; j < K; ++j) {
-    Eigen::MatrixXd F;
-    if (auto* ct = dynamic_cast<CoordinatedTurn*>(motions_[j].get())) {
-      F = ct->transitionMatrixAt(x_mix(4, j), dt);
-    } else {
-      F = motions_[j]->transitionMatrix(dt);
-    }
     const Eigen::MatrixXd Q = motions_[j]->processNoise(dt);
-    track.imm_means.col(j) = motions_[j]->propagate(x_mix.col(j), dt);
-    track.imm_covariances[j] = F * P_mix[j] * F.transpose() + Q;
+    if (use_ukf_) {
+      const SigmaPoints sp = computeSigmaPoints(
+          x_mix.col(j), P_mix[j], ukf_alpha_, ukf_beta_, ukf_kappa_);
+      Eigen::MatrixXd prop(sp.points.rows(), sp.points.cols());
+      for (int i = 0; i < sp.points.cols(); ++i) {
+        prop.col(i) = motions_[j]->propagate(sp.points.col(i), dt);
+      }
+      Eigen::VectorXd mean = Eigen::VectorXd::Zero(n);
+      for (int i = 0; i < prop.cols(); ++i) mean += sp.Wm(i) * prop.col(i);
+      Eigen::MatrixXd cov = Eigen::MatrixXd::Zero(n, n);
+      for (int i = 0; i < prop.cols(); ++i) {
+        const Eigen::VectorXd d = prop.col(i) - mean;
+        cov += sp.Wc(i) * d * d.transpose();
+      }
+      cov += Q;
+      track.imm_means.col(j) = mean;
+      track.imm_covariances[j] = cov;
+    } else {
+      Eigen::MatrixXd F;
+      if (auto* ct = dynamic_cast<CoordinatedTurn*>(motions_[j].get())) {
+        F = ct->transitionMatrixAt(x_mix(4, j), dt);
+      } else {
+        F = motions_[j]->transitionMatrix(dt);
+      }
+      track.imm_means.col(j) = motions_[j]->propagate(x_mix.col(j), dt);
+      track.imm_covariances[j] = F * P_mix[j] * F.transpose() + Q;
+    }
   }
 
   // Advance the mode probabilities to the predicted prior c = π(dt)ᵀ μ.
@@ -143,31 +174,71 @@ void ImmEstimator::update(Track& track, const Measurement& z) const {
   // TPM again here would double-count the transition.)
   const Eigen::VectorXd c = track.imm_mode_probabilities;
 
-  // Per-mode EKF update + log-likelihood. Copies of (x_j, P_j) so we
-  // read the prior while writing the posterior back to the same slot.
+  // Per-mode update + log-likelihood. EKF path (default): linearize h
+  // at x_j (the Jacobian H from predictMeasurement), Joseph-form gain.
+  // UKF path (use_ukf_): draw sigma points from (x_j, P_j), pass each
+  // through h via predictMeasurement, reconstruct (z_pred, S, Pxz),
+  // gain K = Pxz S^-1; covariance update P_new = P_j - K S K^T (the
+  // standard unscented form; not Joseph). Both paths share R, the
+  // robustness noise scale, and the bearing-range-guard hook.
+  // Copies of (x_j, P_j) so we read the prior while writing back.
   Eigen::VectorXd log_lambda(K);
   for (int j = 0; j < K; ++j) {
     const Eigen::VectorXd x_j = track.imm_means.col(j);
     const Eigen::MatrixXd P_j = track.imm_covariances[j];
-    const MeasurementPrediction pred = predictMeasurement(z.model, x_j, z.sensor_position_enu);
-    const Eigen::VectorXd y =
-        measurementResidual(z.model, z.value, pred.z_pred);
-    const Eigen::MatrixXd& H = pred.H;
-    // Robustify per mode: inflate R by the noise model's scale (Gaussian →
-    // 1; Student-t down-weights an outlier measurement under this mode).
-    const Eigen::MatrixXd S_nom = H * P_j * H.transpose() + z.covariance;
-    const double scale = noise_ ? noise_->covarianceScale(y, S_nom) : 1.0;
-    const Eigen::MatrixXd R = z.covariance * scale;
-    const Eigen::MatrixXd S = H * P_j * H.transpose() + R;
-    const Eigen::MatrixXd S_inv = S.inverse();
-    const Eigen::MatrixXd K_gain = P_j * H.transpose() * S_inv;
-    const Eigen::VectorXd x_new = x_j + K_gain * y;
-    const Eigen::MatrixXd I = Eigen::MatrixXd::Identity(n, n);
-    // Joseph form: P = (I-KH) P (I-KH)' + K R K'.
-    const Eigen::MatrixXd IKH = I - K_gain * H;
-    Eigen::MatrixXd P_new =
-        IKH * P_j * IKH.transpose() +
-        K_gain * R * K_gain.transpose();
+
+    Eigen::VectorXd y;
+    Eigen::MatrixXd S;
+    Eigen::MatrixXd K_gain;
+    Eigen::VectorXd x_new;
+    Eigen::MatrixXd P_new;
+
+    if (use_ukf_) {
+      const SigmaPoints sp = computeSigmaPoints(x_j, P_j, ukf_alpha_,
+                                                ukf_beta_, ukf_kappa_);
+      const int nz = static_cast<int>(z.value.size());
+      Eigen::MatrixXd Zsp(nz, sp.points.cols());
+      for (int i = 0; i < sp.points.cols(); ++i) {
+        Zsp.col(i) = predictMeasurement(z.model, sp.points.col(i),
+                                        z.sensor_position_enu).z_pred;
+      }
+      Eigen::VectorXd z_pred = Eigen::VectorXd::Zero(nz);
+      for (int i = 0; i < Zsp.cols(); ++i) z_pred += sp.Wm(i) * Zsp.col(i);
+      Eigen::MatrixXd Sxx = Eigen::MatrixXd::Zero(nz, nz);
+      Eigen::MatrixXd Pxz = Eigen::MatrixXd::Zero(n, nz);
+      for (int i = 0; i < Zsp.cols(); ++i) {
+        Eigen::VectorXd zd = Zsp.col(i) - z_pred;
+        if (z.model == MeasurementModel::RangeBearing2D) zd(1) = wrapAngle(zd(1));
+        else if (z.model == MeasurementModel::Bearing2D)  zd(0) = wrapAngle(zd(0));
+        const Eigen::VectorXd xd = sp.points.col(i) - x_j;
+        Sxx += sp.Wc(i) * zd * zd.transpose();
+        Pxz += sp.Wc(i) * xd * zd.transpose();
+      }
+      y = measurementResidual(z.model, z.value, z_pred);
+      const Eigen::MatrixXd S_nom = Sxx + z.covariance;
+      const double scale = noise_ ? noise_->covarianceScale(y, S_nom) : 1.0;
+      const Eigen::MatrixXd R = z.covariance * scale;
+      S = Sxx + R;
+      K_gain = Pxz * S.inverse();
+      x_new = x_j + K_gain * y;
+      P_new = P_j - K_gain * S * K_gain.transpose();
+    } else {
+      const MeasurementPrediction pred = predictMeasurement(z.model, x_j, z.sensor_position_enu);
+      y = measurementResidual(z.model, z.value, pred.z_pred);
+      const Eigen::MatrixXd& H = pred.H;
+      const Eigen::MatrixXd S_nom = H * P_j * H.transpose() + z.covariance;
+      const double scale = noise_ ? noise_->covarianceScale(y, S_nom) : 1.0;
+      const Eigen::MatrixXd R = z.covariance * scale;
+      S = H * P_j * H.transpose() + R;
+      const Eigen::MatrixXd S_inv = S.inverse();
+      K_gain = P_j * H.transpose() * S_inv;
+      x_new = x_j + K_gain * y;
+      const Eigen::MatrixXd I = Eigen::MatrixXd::Identity(n, n);
+      // Joseph form: P = (I-KH) P (I-KH)' + K R K'.
+      const Eigen::MatrixXd IKH = I - K_gain * H;
+      P_new = IKH * P_j * IKH.transpose() + K_gain * R * K_gain.transpose();
+    }
+
     if (bearing_range_guard_ && z.model == MeasurementModel::Bearing2D) {
       // Guard per mode: each P_j has its own pre/post pair. The
       // per-mode predicted state x_j is the right LOS reference for
@@ -177,6 +248,7 @@ void ImmEstimator::update(Track& track, const Measurement& z) const {
     track.imm_means.col(j) = x_new;
     track.imm_covariances[j] = P_new;
 
+    const Eigen::MatrixXd S_inv = S.inverse();
     const double det = S.determinant();
     const double safe_det = (det > 0.0 && std::isfinite(det)) ? det : 1e-300;
     log_lambda(j) = -0.5 * std::log(safe_det) -

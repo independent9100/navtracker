@@ -8,6 +8,104 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-20 — [Cl-2 #3 close-out] UKF inside IMM promoted to canonical inner filter; EKF preserved as `imm_cv_ct_mht_ekf` ablation
+
+**Premise.** Cl-2 #3 in the north-star doc: build `ukf_cv_ct_mht`,
+measure against the gated canonical, either ship UKF or formally
+close the inner-filter question in EKF's favour. Implementation
+landed as an `ImmEstimator` constructor flag (`use_ukf=true`)
+dispatching per-mode sigma-point predict (propagate (2n+1) sigma
+points through f, reconstruct mean/cov from weighted sums + Q)
+and update (reconstruct (z̄, S, Pxz) from sigma-point
+measurements, gain `K = Pxz S⁻¹`, posterior
+`P − K S Kᵀ`). All other canonical wiring unchanged
+(motion models, TPM, bias estimator, lifecycle).
+
+**Bench.** `docs/baselines/cl23_ukf_full_20260619.csv` — 20
+configs × 29 scenarios × seed 0 (autoferry 18, philos 1,
+synthetic 10). UKF was config `imm_cv_ct_mht_ukf` for this
+measurement; the deltas below are vs the EKF canonical
+`imm_cv_ct_mht`. After promotion, the rows reverse roles: the
+"EKF column" becomes `imm_cv_ct_mht_ekf` (preserved ablation)
+and the "UKF column" becomes `imm_cv_ct_mht` (new canonical).
+
+### Per-slice headlines
+
+| slice | n | GOSPA mean Δ | UKF wins | verdict |
+|---|---:|---:|---:|---|
+| Autoferry unanchored (Cl-2 #2 regime) | 9 | **−12.3%** | **9/9** | dominant |
+| Autoferry anchored | 9 | −0.4% | 4/9 | flat |
+| Synthetic (linear-CV with clean noise) | 10 | **+5.7%** | 1/10 | regression |
+| Philos (Boston-harbor replay) | 1 | −4.6% | 1/1 | win |
+| **Overall (29 scenarios)** | 29 | **−2.1%** | 15/29 | mixed-but-positive |
+
+**Standout autoferry-unanchored wins:** sc17 GOSPA −20.5% /
+RMSE −30.7%; sc22 GOSPA **−21.7%** / NEES p95 **−4394** / p99
+**−4558** (tail collapse fixed); sc3/4/6 all −14 to −16% GOSPA.
+9/9 NEES median improvements. 9/9 `coverage_95` improvements.
+
+**Synthetic regression mechanism (the catch).** Synthetic
+generators use pure linear CV motion with clean Gaussian noise
+— exactly the case where EKF is theoretically optimal. UKF's
+sigma-point reconstruction adds tiny numerical noise but no
+information. The real-data wins all come from the CT mode under
+actual maneuvering, where EKF's linearization at the mode's
+mixed-prior omega leaks information that UKF captures exactly
+to second-order moments.
+
+**Tail "regressions" on sc13/sc17 unanchored p99 (+1223 /
++711).** Same Cl-2 #1 metric-artefact pattern: `nees_median`
+essentially unchanged (−0.03 / −2.74), `coverage_95` improved
+(+0.01 / +0.06), only the extreme tail moves — same
+Hungarian-ID-switch-boundary signature that drove the
+sc13_anchored mean = 69 close-out. Not a UKF problem.
+
+**Promotion decision: ship.** Real maritime data is what
+deployment cares about. Autoferry unanchored is the exact
+regime Cl-2 #2 left open; getting **9/9 GOSPA wins (mean
+−12.3%)** is the result Cl-2 #2 was looking for. Synthetic
+regressions are bounded (≤13%) and have a principled
+explanation. Anchored stays flat (no regression risk).
+
+### Changes shipped
+
+- `core/estimation/ImmEstimator.{hpp,cpp}`: per-mode sigma-point
+  predict + update behind `use_ukf` constructor flag (default
+  false to preserve the explicit-EKF call sites in
+  `_robust`/`_noisy`/etc; canonical factories pass true).
+- `core/benchmark/Config.cpp`:
+  - `makeImmCvCt` now passes `use_ukf=true` (CANONICAL).
+  - `makeImmCvCtBearGuard`, `makeImmCvCtNoisy`,
+    `makeImmCvCtRobust` switched to `use_ukf=true` for slice
+    isolation — all "canonical + X" variants share inner-filter.
+  - New `makeImmCvCtEkf` factory + `imm_cv_ct_mht_ekf` config
+    pinning EKF (the pre-2026-06-20 canonical).
+  - `imm_cv_ct_mht_ukf` config retired (redundant with
+    canonical).
+- `tests/benchmark/test_config.cpp`: pinned label set updated.
+- `tests/estimation/test_imm_estimator.cpp`: new
+  `UkfInnerFilterTracksAndShrinksLikeEkfOnLinearMeasurement`
+  sanity check — Position2D update must agree to 1e-6.
+- Bench pinned: `cl23_ukf_full_20260619.csv`. Label remap: rows
+  labelled `imm_cv_ct_mht` are the OLD EKF canonical (=
+  current `_ekf`); rows labelled `imm_cv_ct_mht_ukf` are the
+  NEW canonical. Re-bench after promotion will normalise this.
+
+**Cost summary across the 18 dependent ablations:** every
+`makeImmCvCt`-derived config (nobias, novis, mofn, cmap, ipda,
+recapture, jpda variants) automatically inherits UKF; we
+expect their deltas to mirror canonical's autoferry-unanchored
+wins. `_bearguard`, `_robust`, `_noisy` explicitly switched.
+
+**Lessons for the next inner-filter experiment.** The slice
+separation in §22 of `docs/learning/` is exactly what made this
+clean: motion model unchanged, TPM unchanged, lifecycle
+unchanged, bias unchanged — only the per-mode filter math
+swapped. The diff to the bench was attributable. Apply this
+template before any future Cl-2-class change.
+
+---
+
 ## 2026-06-19 (later 5) — [Cl-2 #4 close-out] EO/IR R tightening rejected: bench measures catastrophic env-2 anchored regression; Step 2 NIS-based recommendation was misleading
 
 **Premise.** Cl-2 #4 in the north-star doc: tighten env-2

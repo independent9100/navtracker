@@ -117,6 +117,48 @@ TEST(ImmEstimator, UpdateShrinksPositionCovariance) {
   EXPECT_GE(t.imm_mode_probabilities(1), 0.0);
 }
 
+TEST(ImmEstimator, UkfInnerFilterTracksAndShrinksLikeEkfOnLinearMeasurement) {
+  // Cl-2 #3 sanity check. Position2D is a linear measurement
+  // (H = [I 0]); for a linear h(x) the UKF sigma-point reconstruction
+  // produces (z_pred, S, Pxz) that exactly equal the EKF's
+  // (H x, H P H', P H'). UKF and EKF inner filters must therefore land
+  // within numerical noise of each other on this case.
+  auto cv = std::make_shared<ConstantVelocity5State>(0.1, 0.01);
+  auto ct = std::make_shared<CoordinatedTurn>(0.1, 0.05);
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {cv, ct};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05,
+        0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 0.5, 0.5;
+
+  ImmEstimator imm_ekf(motions, pi, mu0, 10.0, 0.1);
+  ImmEstimator imm_ukf(motions, pi, mu0, 10.0, 0.1,
+                       /*noise=*/nullptr,
+                       /*bearing_range_guard=*/false,
+                       /*use_ukf=*/true);
+
+  navtracker::Track t_ekf = imm_ekf.initiate(positionMeas(0.0, 0.0, 20.0, 0.0));
+  navtracker::Track t_ukf = imm_ukf.initiate(positionMeas(0.0, 0.0, 20.0, 0.0));
+  imm_ekf.predict(t_ekf, Timestamp::fromSeconds(1.0));
+  imm_ukf.predict(t_ukf, Timestamp::fromSeconds(1.0));
+  imm_ekf.update(t_ekf, positionMeas(5.0, 0.0, 1.0, 1.0));
+  imm_ukf.update(t_ukf, positionMeas(5.0, 0.0, 1.0, 1.0));
+
+  // Position mean and covariance match within tight numerical tolerance.
+  EXPECT_NEAR((t_ukf.state.head<2>() - t_ekf.state.head<2>()).norm(),
+              0.0, 1e-6);
+  EXPECT_NEAR((t_ukf.covariance.topLeftCorner<2, 2>() -
+               t_ekf.covariance.topLeftCorner<2, 2>())
+                  .norm(),
+              0.0, 1e-6);
+  // Mode probabilities also match (likelihood reconstruction is path-
+  // equivalent for linear h).
+  EXPECT_NEAR((t_ukf.imm_mode_probabilities -
+               t_ekf.imm_mode_probabilities).norm(),
+              0.0, 1e-6);
+}
+
 TEST(ImmEstimator, UpdateOnEmptyImmIsNoOp) {
   std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {
       std::make_shared<ConstantVelocity5State>(0.1, 0.01)};
