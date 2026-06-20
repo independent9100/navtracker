@@ -29,3 +29,8 @@ CMakeUserPresets.json
 
 # Paywalled / copyrighted papers fetched locally — do not commit.
 /1-s2.0-*.pdf
+
+# External reference implementations — read-only cross-check material
+# (e.g. Garcia-Fernandez MTT MATLAB toolbox for PMBM port). Fetched per
+# developer; never linked into the build. See docs/algorithms/pmbm-design.md.
+/third_party/reference/

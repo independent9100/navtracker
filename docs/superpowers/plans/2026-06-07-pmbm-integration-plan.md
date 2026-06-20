@@ -3,7 +3,32 @@
 Concrete phased plan to introduce Poisson Multi-Bernoulli Mixture
 filtering as a third tracker pipeline alongside `Tracker`
 (GNN/JPDA-driven) and `MhtTracker` (TOMHT). Companion to the high-level
-literature entry in [sota-roadmap.md §4](../../algorithms/sota-roadmap.md).
+literature entry in [sota-roadmap.md §4](../../algorithms/sota-roadmap.md)
+and the equation-level reference in
+[pmbm-design.md](../../algorithms/pmbm-design.md).
+
+**Status refresh 2026-06-20 (post Cl-2 close-out).** Original plan dated
+2026-06-07 stands; the upgrades since then *strengthen* the case but do
+not change the phasing:
+
+- Cl-2 #3 SHIPPED — UKF is the canonical inner filter. Phase 2
+  (`IMM-per-Bernoulli`) inherits UKF for free; no extra work.
+- Cl-2 #2 (a)+(b) REJECTED — the re-confirmation over-confidence is **not
+  reachable** from lifecycle thresholds or init-cov priors
+  (`cl25_life_20260620.csv` regressed +17 % anchored GOSPA). PMBM's joint
+  existence + association recursion is now the **principled remaining
+  fix** for that failure mode, sharpening the rationale below.
+- Cross-sensor bias correction promoted to canonical with anchor-gated
+  publish; composes in front of PMBM update unchanged.
+- Step 5 cooperative GNSS anchor wired; PMBM treats `Cooperative` as
+  another sensor in the PPP / measurement-likelihood machinery.
+- Murty K-best (Phase 0) shipped and in production use under
+  `MhtTracker`. Same code path will service PMBM Phase 1.
+
+Equation-level math, port shape, and composition with existing
+components: see [pmbm-design.md](../../algorithms/pmbm-design.md). This
+document remains the *engineering execution* reference; that document is
+the *algorithm* reference.
 
 **Context.** The current stack — EKF/UKF/IMM behind `IEstimator`,
 TOMHT via `MhtTracker`, GNN/JPDA via `IDataAssociator` — is the

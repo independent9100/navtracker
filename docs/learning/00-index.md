@@ -65,6 +65,7 @@ This matches the documentation standard in `CLAUDE.md`
 | 20 | [Tracker performance metrics](20-tracker-metrics.md)                    | RMSE / OSPA / GOSPA / lifetime. How we score a tracker.  |
 | 21 | [Inter-sensor registration bias](21-sensor-registration-bias.md)        | Per-sensor mounting offsets. The next layer after heading. |
 | 22 | [Tracker stacks compared](22-tracker-stack-alternatives.md)             | Vertical slices: IMM+TOMHT vs JIPDA+VIMM vs PMBM — what's a layer, what's a fork. |
+| 23 | [Poisson Multi-Bernoulli Mixture (PMBM)](23-pmbm.md)                    | RFS thinking. PPP for undetected + MBM for detected. Why slices 4-6 collapse. |
 |    | [**→ Seeing the tracker in Foxglove**](11-gating-gnn-hungarian.md#9-seeing-the-tracker-in-foxglove) *(§9 of chapter 11)* | How to read covariance ellipses, gates, association lines, and NIS plots in Lichtblick. [`figures/seeing-the-tracker.png`](figures/seeing-the-tracker.png) |
 
 ## A note on diagrams
