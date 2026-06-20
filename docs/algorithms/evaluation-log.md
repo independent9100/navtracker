@@ -3549,3 +3549,48 @@ amplify into large swings on the already-pathological autoferry NEES
 (50–2340 across scenarios, both builds). This is a baseline-hygiene
 issue — when a bit-reproducible reference is needed, regenerate the
 full matrix on-host and pin the toolchain in the provenance block.
+
+## 2026-06-20 — Post-UKF canonical floor pinned: `cl26_canonical_postukf_20260620.csv`
+
+Half-day prerequisite for Cl-3 (PMBM) work — a clean comparison floor
+against the new UKF canonical (`imm_cv_ct_mht` IS UKF post-2026-06-20)
+so every downstream PMBM A/B is read against a single labeled baseline.
+Same bench shape as `cl23_ukf_full_20260619.csv` (20 configs × 29
+scenarios × seed 0 = 30 030 rows).
+
+### Unexpected finding: the post-cl23 cross-sensor commits were NOT bench-neutral
+
+Diff `imm_cv_ct_mht / gospa_mean` between `cl23_ukf_full_20260619` and
+`cl26_canonical_postukf_20260620` reveals systematic deltas across the
+five intervening cross-sensor-bias commits (a27ade8, d1c46a1, b01bedb,
+44ba15c, 5d467cf). The 2026-06-17 cross-sensor review-fixes entry above
+claimed bench-neutral because the matrix has N=2 positional keys per
+scenario — but the post-cl23 changes touch the **same N=2** path:
+
+| Scenario class | Direction | Magnitude | Mechanism (best read) |
+|---|---|---|---|
+| autoferry unanchored (9/9) | improved | −12.3 % mean (sc17 −20.4 %, sc22 −22.5 %, sc3 −16.0 %, sc4 −16.1 %, sc6 −13.9 %) | cross-sensor bias commits collectively tighten real-data bias correction |
+| autoferry anchored | flat | ≤ ±2 % | anchored seeds the bias prior; cross-sensor extractor has little to add |
+| philos | improved | −4.4 % | real-data trend matches autoferry |
+| synthetic clean (crossing, head_on, overtaking, parallel, speed_change) | regressed | +9 to +16 % small absolute (e.g. crossing 8.5 → 9.9 m GOSPA) | `44ba15c` "one update per key/cycle (fix overconfidence)" → larger residual `P_b` → larger Schmidt-KF R-inflation → slightly looser updates on clean data where there is no real bias to correct away |
+| dense_clutter / ais_dropout / clock_skew | regressed | +5 to +8 % | same mechanism as synthetic clean |
+| non_cooperative | unchanged | 0.00 % | single-sensor → no cross-sensor bias path engaged |
+
+Net interpretation: the post-cl23 changes are a **real win on the data
+that matters** (autoferry + philos, where real biases exist) at the cost
+of a small, theory-consistent regression on clean-synthetic. Direction
+is correct; reverting to recover the synthetic numbers would forfeit
+the autoferry wins. `cl26_canonical_postukf_20260620.csv` is the
+post-UKF + post-bias-overconfidence-fix canonical floor — read all
+Cl-3 PMBM A/Bs against this CSV, not against `cl23_ukf_full`.
+
+### What this also means
+
+The "bench-neutral" claim on the 2026-06-17 review-fixes commit and
+the subsequent four commits (d1c46a1 through 5d467cf) was based on
+spot-checks of a few scenarios; the full-matrix diff was not run.
+Going forward, any commit that touches the bias path or the
+measurement-correction path should produce a full-matrix bench diff
+in the same commit, not a spot-check. The autoferry-unanchored wins
+that emerged here would have been worth highlighting at the time of
+landing rather than being hidden inside "no change".
