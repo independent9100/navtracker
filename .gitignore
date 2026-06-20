@@ -1,5 +1,7 @@
 /build/
 /Testing/
+/.cache/
+**/__pycache__/
 CMakeUserPresets.json
 # Local symlink to build/compile_commands.json for clangd; recreated by
 # anyone after cmake configure (see CMakeLists.txt).

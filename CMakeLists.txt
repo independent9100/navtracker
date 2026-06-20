@@ -199,6 +199,7 @@ add_executable(navtracker_tests
   tests/pipeline/test_bias_correction_orthogonality.cpp
   tests/pmbm/test_pmbm_types.cpp
   tests/pmbm/test_pmbm_tracker_predict.cpp
+  tests/pmbm/test_pmbm_tracker_update.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
   tests/adapters/own_ship/test_own_ship_provider.cpp
