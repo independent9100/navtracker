@@ -7,6 +7,7 @@
 #include <Eigen/Core>
 
 #include "core/types/Timestamp.hpp"
+#include "core/types/Track.hpp"
 
 // Data structures for the Poisson Multi-Bernoulli Mixture (PMBM) filter.
 // Header-only at this stage — the types are POD-like value semantics
@@ -137,5 +138,45 @@ struct PmbmDensity {
     return s;
   }
 };
+
+// IEstimator interop. The repository's IEstimator interface operates on
+// Track values; PMBM stores Bernoullis and PoissonComponents as smaller
+// value types. These adapters round-trip the kinematic state so the
+// existing predict/update/initiate/logLikelihood implementations work
+// unchanged inside the PMBM pipeline.
+//
+// last_update on Bernoulli matches Track's semantics: it is the filter
+// time, advanced by predict and update alike. Phase 2 (IMM-per-Bernoulli)
+// will extend these adapters to round-trip imm_means/imm_covariances/
+// imm_mode_probabilities — the underlying fields already exist on Track.
+
+inline Track toTrack(const Bernoulli& b) {
+  Track t;
+  t.state = b.mean;
+  t.covariance = b.covariance;
+  t.last_update = b.last_update;
+  return t;
+}
+
+inline void fromTrack(Bernoulli& b, const Track& t) {
+  b.mean = t.state;
+  b.covariance = t.covariance;
+  b.last_update = t.last_update;
+}
+
+inline Track toTrack(const PoissonComponent& c, Timestamp filter_time) {
+  Track t;
+  t.state = c.mean;
+  t.covariance = c.covariance;
+  t.last_update = filter_time;
+  return t;
+}
+
+inline void fromTrack(PoissonComponent& c, const Track& t) {
+  c.mean = t.state;
+  c.covariance = t.covariance;
+  // weight is unchanged by predict — caller scales it separately
+  // (PPP weight decays by p_S, Bernoulli existence decays by p_S).
+}
 
 }  // namespace navtracker::pmbm
