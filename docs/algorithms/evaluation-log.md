@@ -8,6 +8,129 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-20 (later) — [Cl-3 PMBM Phase 1, first A/B] Structural win on the Cl-2 #2 pain scenarios; per-clutter id-flap dominates everything else
+
+**Premise.** Cl-3 endgame validation: does GM-PMBM (single-Gaussian
+per Bernoulli, IMM as the inner per-mode estimator) beat IMM+MHT on
+the 29-scenario bench, in particular on the Cl-2 #2 over-confidence
+cases (autoferry sc2-sc6 unanchored) where the design predicts a
+structural fix?
+
+**Method.** Wire `imm_cv_ct_pmbm` as a sibling to `imm_cv_ct_mht`
+with matched (P_D = 0.9, λ_C = 1e-4, χ² gate = 9) and the same
+ImmEstimator (CV5 + CT, UKF inner). Differences against MHT:
+no SensorBiasEstimator on the PMBM path; no within-id Bernoulli
+merging (§3.5 of `docs/algorithms/pmbm-design.md` — deferred to
+Phase 1.5); measurement-driven birth at 0.3 per scan; Murty K=1.
+Full 29-scenario × seed 0 matrix run via
+`./build/bench/navtracker_bench_baseline --seeds 1 --run-id
+pmbm_phase1_first_ab_20260620`. Pinned:
+`docs/baselines/pmbm_phase1_first_ab_20260620.csv`. Compared
+against `docs/baselines/cl26_canonical_postukf_20260620.csv` (the
+post-UKF + post-bias-overconfidence-fix MHT canonical from earlier
+this day).
+
+### Headline numbers — GOSPA, PMBM vs MHT canonical
+
+| Scenario | MHT | PMBM | Δ | Δ% |
+|---|---:|---:|---:|---:|
+| **autoferry_scenario2** (Cl-2 #2)              | 33.28 | 22.05 | −11.23 | **−34 %** |
+| **autoferry_scenario3** (Cl-2 #2)              | 35.94 | 20.85 | −15.09 | **−42 %** |
+| **autoferry_scenario4** (Cl-2 #2)              | 31.94 | 14.77 | −17.17 | **−54 %** |
+| **autoferry_scenario5** (Cl-2 #3 UKF win)      | 33.49 | 20.88 | −12.61 | **−38 %** |
+| **autoferry_scenario6** (Cl-2 #2)              | 30.55 | 18.87 | −11.68 | **−38 %** |
+| **autoferry_scenario4_anchored**               | 2.64  | 1.50  |  −1.14 | −43 % |
+| autoferry_scenario6_anchored                   | 5.60  | 5.11  |  −0.49 | −9 %  |
+| philos                                         | 69.43 | 63.65 |  −5.78 | −8 %  |
+| autoferry_scenario22                           | 36.87 | 42.29 |  +5.42 | +15 % |
+| autoferry_scenario13                           | 21.49 | 42.08 | +20.59 | **+96 %** |
+| autoferry_scenario16                           | 25.79 | 46.00 | +20.21 | **+78 %** |
+| autoferry_scenario17                           | 25.20 | 44.84 | +19.64 | **+78 %** |
+| dense_clutter                                  | 10.91 | 32.47 | +21.57 | **+198 %** |
+| autoferry_scenario2_anchored                   | 2.34  | 6.84  |  +4.51 | +193 % |
+| autoferry_scenario3_anchored                   | 1.54  | 4.60  |  +3.06 | +199 % |
+| autoferry_scenario5_anchored                   | 3.06  | 6.88  |  +3.82 | +125 % |
+| **autoferry_scenario13_anchored**              | 3.12  | 26.82 | +23.70 | **+759 %** |
+| **autoferry_scenario16_anchored**              | 2.35  | 27.60 | +25.25 | **+1074 %** |
+| **autoferry_scenario17_anchored**              | 2.63  | 23.12 | +20.49 | **+780 %** |
+| **autoferry_scenario22_anchored**              | 3.42  | 17.75 | +14.33 | **+418 %** |
+| crossing / overtaking / head_on / parallel_targets / ais_dropout / clock_skew / speed_change / crossing_dropout / crossing | (5–15) | +25–60 % each | +1–6 | small abs |
+| non_cooperative                                | 19.85 | 19.85 |  0.00 | 0 % (bearing-only; PMBM births skipped by canInitiateTrack) |
+
+### Pattern
+
+1. **Structural win on the Cl-2 #2 over-confidence scenarios.**
+   PMBM beats MHT by **34–54 %** on autoferry sc2/3/4/5/6
+   unanchored — the exact scenarios where Cl-2 #2 manifests as
+   "joint existence + association coupling at re-acquisition" that
+   IPDA + TOMHT can't reach. The Cl-3 design hypothesis is
+   validated: jointly Bayesian existence×association cleans up the
+   re-acquisition phantom-confidence behaviour without any tuning.
+   This closes Cl-2 #2 as a structural fix, conditional on the
+   Phase 1.5 work below.
+
+2. **ID flapping dominates everything else.** PMBM emits **100–170
+   id_switches per scenario** on autoferry (vs MHT 0–50), and
+   **20–60 per scenario on clean synthetics** (vs MHT 0). Every
+   gated measurement births a fresh Bernoulli that the within-id
+   Bernoulli merging step (§3.5 of pmbm-design.md, not yet
+   implemented) is supposed to fold back. With measurement-driven
+   birth running every scan, clutter returns mint new ids that
+   live for several scans before pruning — this inflates OSPA /
+   GOSPA cardinality penalty and is the dominant residual cost on
+   every scenario other than the Cl-2 #2 winners. Phase 1.5 fix:
+   §3.5 within-id merging + only birth PPP where no existing
+   Bernoulli gates.
+
+3. **Anchored variants regress 5–11×.** PMBM doesn't wire
+   `SensorBiasEstimator` (the MHT canonical's bias correction
+   path). On the anchored scenarios the MHT canonical applies a
+   Schmidt-KF measurement correction that PMBM is missing — so
+   PMBM is essentially measuring "PMBM without bias correction vs
+   MHT with bias correction" on those rows, an unfair A/B.
+   Phase 1.5 must wire the bias provider into the PMBM
+   `processBatch` measurement-correction call site (same hook
+   shape as MhtTracker::setSensorBiasProvider).
+
+4. **dense_clutter +198 %** is the same id-flap problem, sharper:
+   high clutter rate × measurement-driven-birth + no merging.
+
+5. **philos lifetime 0.005**. Lifetime ratio drops from 0.31 (MHT)
+   to 0.005 (PMBM) on the real-AIS philos scenario. Diagnosis
+   pending — likely a sparse-AIS interaction with the measurement-
+   driven birth rate. Treat as a Phase 1.5 investigation, not a
+   structural blocker.
+
+### Takeaway
+
+PMBM Phase 1 ships the **structural** result the design predicted:
+joint existence×association coupling fixes Cl-2 #2 cleanly (−34
+to −54 % GOSPA on autoferry sc2–sc6 unanchored). Every other
+regression is traceable to *implementation* gaps with named fixes
+already in the design doc — they do not invalidate the Cl-3
+direction, they define the Phase 1.5 work list. **Cl-3 stays the
+endgame; the next milestone is Phase 1.5 (Bernoulli merging + smart
+birth + bias-provider wiring), then a re-bench.**
+
+### Phase 1.5 work list (in priority order)
+
+1. **Smart birth + within-id Bernoulli merging (§3.5).** Highest
+   expected payoff: kills id flapping on every scenario, brings
+   anchored / clean / dense_clutter back into parity with MHT
+   without touching the Cl-2 #2 wins.
+2. **Wire `SensorBiasEstimator` into PMBM.** Same hook as MHT;
+   bias correction is a per-measurement pre-pass that composes
+   cleanly in front of the update.
+3. **Investigate philos collapse.** Either tighten the measurement-
+   driven-birth rate for sparse-rate scenarios, or look at AIS-
+   only-source interaction with the existing-Bernoulli vs new-
+   target competition.
+4. After (1)–(3), re-bench against the same MHT canonical CSV. If
+   the Cl-2 #2 wins survive and everything else returns to parity
+   or better, Phase 1 is complete and Phase 2 (full
+   IMM-per-Bernoulli mixture as the Bernoulli's spatial density,
+   not just the inner estimator) becomes the next slab.
+
 ## 2026-06-20 (later) — [Cl-2 #2 (a)+(b) close-out] Lifecycle re-tune + init-cov widening rejected: cardinality bloat broadly regresses GOSPA
 
 **Premise.** Cl-2 #2 left open in the north-star doc with two
