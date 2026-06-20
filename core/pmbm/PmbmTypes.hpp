@@ -1,0 +1,141 @@
+#pragma once
+
+#include <cstdint>
+#include <limits>
+#include <vector>
+
+#include <Eigen/Core>
+
+#include "core/types/Timestamp.hpp"
+
+// Data structures for the Poisson Multi-Bernoulli Mixture (PMBM) filter.
+// Header-only at this stage — the types are POD-like value semantics
+// containers used by PmbmTracker and tested in isolation.
+//
+// See docs/algorithms/pmbm-design.md for the math and
+// docs/learning/23-pmbm.md for the intuition. The plain-English
+// recap:
+//
+//   PPP (Poisson Point Process) — a Gaussian-mixture intensity over
+//   single-target state space representing targets that *may* exist but
+//   have not been detected yet. New Bernoullis are born from this when a
+//   measurement falls on PPP mass.
+//
+//   Bernoulli — one possible detected target. (r, mean, covariance) with
+//   r ∈ [0,1] the existence probability.
+//
+//   GlobalHypothesis — one complete "who is who" interpretation of the
+//   measurement history. Carries a weight and the Bernoullis that exist
+//   under this interpretation.
+//
+//   PmbmDensity — the full posterior: the PPP plus the weighted mixture
+//   of GlobalHypotheses (MBM).
+
+namespace navtracker::pmbm {
+
+// Stable identifier for a Bernoulli component across hypotheses and
+// scans. Two Bernoullis in different global hypotheses with the same id
+// refer to the *same* target — they are alternative state distributions
+// for that target conditional on different association histories. Ids
+// are minted by the tracker; never reused. Track output aggregation
+// (TrackOutput) keys on this id.
+//
+// Distinct from TrackId because PMBM may suppress a Bernoulli (existence
+// → 0) before a TrackId is ever assigned, and conversely an aggregated
+// TrackId may correspond to several Bernoullis-of-the-same-id across
+// hypotheses. The mapping is one TrackId ↔ one BernoulliId, finalised
+// at output time.
+using BernoulliId = std::uint64_t;
+constexpr BernoulliId kInvalidBernoulliId = 0;
+
+// One Gaussian component of the PPP intensity λ^u(x). The full PPP is
+// λ^u(x) = Σ_i weight_i · 𝒩(x; mean_i, covariance_i).
+//
+// `weight` is an intensity, not a probability — it can sum to > 1
+// across components. It represents the expected number of undetected
+// targets per unit state-space volume contributed by this component.
+struct PoissonComponent {
+  double weight{0.0};
+  Eigen::VectorXd mean;        // n_state
+  Eigen::MatrixXd covariance;  // n_state × n_state
+
+  // Convenience: integrated mass under this component (just `weight`
+  // for a normalised Gaussian — provided as a name for readability at
+  // call sites).
+  double mass() const noexcept { return weight; }
+};
+
+// One Bernoulli component — a single possible detected target.
+//
+// Existence probability r ∈ [0,1]. State density is Gaussian
+// 𝒩(x; mean, covariance) at this stage (Phase 1, GM-PMBM). Phase 2
+// upgrades this to an IMM mixture (one mean/cov per motion mode + mode
+// probabilities) — to be added when Phase 2 lands.
+struct Bernoulli {
+  BernoulliId id{kInvalidBernoulliId};
+  double existence_probability{0.0};  // r ∈ [0,1]
+  Eigen::VectorXd mean;               // n_state
+  Eigen::MatrixXd covariance;         // n_state × n_state
+
+  // Timestamp of the last measurement that updated this Bernoulli.
+  // Used by output aggregation and by the predict step to compute dt.
+  Timestamp last_update{};
+
+  // Convenience: a Bernoulli is "alive" if r is above the supplied
+  // pruning threshold. Caller picks the threshold per the tracker's
+  // configured ipda_delete_threshold equivalent. Phase 1 default
+  // r_min = 1e-3 (see PmbmTracker::Config when added).
+  bool isAlive(double r_min) const noexcept {
+    return existence_probability >= r_min;
+  }
+};
+
+// One complete scan-consistent assignment of measurement history to
+// targets. Mixture weight is the Bayesian posterior probability of this
+// interpretation; the MBM is the weighted sum across all stored
+// GlobalHypotheses (weights summing to 1 after normalisation).
+//
+// The Bernoullis are kept in a flat vector; ids are unique within a
+// hypothesis (each target appears at most once). Across hypotheses, the
+// same id may appear with different `(r, mean, covariance)`.
+struct GlobalHypothesis {
+  double weight{0.0};                 // mixture weight w^j, [0,1]
+  double log_weight{                  // unnormalised log weight,
+      -std::numeric_limits<double>::infinity()};  // primary scoring quantity
+  std::vector<Bernoulli> bernoullis;  // possibly empty (no detected targets)
+
+  // Convenience: count of Bernoullis above r_min.
+  std::size_t aliveCount(double r_min) const noexcept {
+    std::size_t n = 0;
+    for (const auto& b : bernoullis) {
+      if (b.isAlive(r_min)) ++n;
+    }
+    return n;
+  }
+};
+
+// The full PMBM posterior: PPP (undetected) plus a mixture (MBM) of
+// global hypotheses (detected). The two parts evolve under the same
+// Bayesian recursion (PmbmTracker::predict, PmbmTracker::update) but
+// are stored separately because they have very different shapes —
+// PPP is a flat Gaussian mixture, MBM is a *mixture of multi-Bernoulli
+// sets*.
+struct PmbmDensity {
+  std::vector<PoissonComponent> ppp;
+  std::vector<GlobalHypothesis> mbm;
+
+  // The MBM is empty at filter start (no detected targets yet). The PPP
+  // carries the prior birth intensity — also empty until the user wires
+  // a birth model.
+  bool empty() const noexcept { return ppp.empty() && mbm.empty(); }
+
+  // Convenience: total mixture weight (should sum to 1 after each
+  // update; tests use this to verify normalisation).
+  double totalMbmWeight() const noexcept {
+    double s = 0.0;
+    for (const auto& h : mbm) s += h.weight;
+    return s;
+  }
+};
+
+}  // namespace navtracker::pmbm
