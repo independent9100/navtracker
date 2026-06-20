@@ -60,6 +60,16 @@ struct PoissonComponent {
   Eigen::VectorXd mean;        // n_state
   Eigen::MatrixXd covariance;  // n_state × n_state
 
+  // Optional IMM ensemble carrier — same shape and semantics as
+  // Bernoulli::imm_*. Populated when the injected estimator is IMM
+  // (the PMBM birth path round-trips imm_* from estimator.initiate),
+  // empty otherwise. Carried so the next scan's estimator.predict /
+  // estimator.update sees the IMM fields and does real work instead
+  // of the cols()==0 fast-path no-op.
+  Eigen::MatrixXd imm_means;
+  std::vector<Eigen::MatrixXd> imm_covariances;
+  Eigen::VectorXd imm_mode_probabilities;
+
   // Convenience: integrated mass under this component (just `weight`
   // for a normalised Gaussian — provided as a name for readability at
   // call sites).
@@ -75,8 +85,24 @@ struct PoissonComponent {
 struct Bernoulli {
   BernoulliId id{kInvalidBernoulliId};
   double existence_probability{0.0};  // r ∈ [0,1]
-  Eigen::VectorXd mean;               // n_state
+  Eigen::VectorXd mean;               // n_state (moment-matched projection)
   Eigen::MatrixXd covariance;         // n_state × n_state
+
+  // Optional IMM ensemble carrier. When populated, the Bernoulli's
+  // single-target density is a Gaussian mixture indexed by motion
+  // mode; `mean` / `covariance` above are the moment-matched
+  // projection consumed by the cost-matrix log-weight terms and by
+  // the output aggregation. When empty, the Bernoulli is a single
+  // Gaussian and works with any IEstimator whose update/predict reads
+  // `state` / `covariance` (EKF / UKF / particle-filter projection).
+  // Round-tripped through toTrack/fromTrack so estimators that expect
+  // IMM fields (ImmEstimator) see them on the Track. Phase 2's "IMM
+  // per Bernoulli" path uses these fields end-to-end; Phase 1 uses
+  // them too when the injected estimator is IMM, so the Phase 1 bench
+  // A/B can compare like-for-like against imm_cv_ct_mht.
+  Eigen::MatrixXd imm_means;
+  std::vector<Eigen::MatrixXd> imm_covariances;
+  Eigen::VectorXd imm_mode_probabilities;
 
   // Timestamp of the last measurement that updated this Bernoulli.
   // Used by output aggregation and by the predict step to compute dt.
@@ -155,6 +181,9 @@ inline Track toTrack(const Bernoulli& b) {
   t.state = b.mean;
   t.covariance = b.covariance;
   t.last_update = b.last_update;
+  t.imm_means = b.imm_means;
+  t.imm_covariances = b.imm_covariances;
+  t.imm_mode_probabilities = b.imm_mode_probabilities;
   return t;
 }
 
@@ -162,6 +191,9 @@ inline void fromTrack(Bernoulli& b, const Track& t) {
   b.mean = t.state;
   b.covariance = t.covariance;
   b.last_update = t.last_update;
+  b.imm_means = t.imm_means;
+  b.imm_covariances = t.imm_covariances;
+  b.imm_mode_probabilities = t.imm_mode_probabilities;
 }
 
 inline Track toTrack(const PoissonComponent& c, Timestamp filter_time) {
@@ -169,12 +201,18 @@ inline Track toTrack(const PoissonComponent& c, Timestamp filter_time) {
   t.state = c.mean;
   t.covariance = c.covariance;
   t.last_update = filter_time;
+  t.imm_means = c.imm_means;
+  t.imm_covariances = c.imm_covariances;
+  t.imm_mode_probabilities = c.imm_mode_probabilities;
   return t;
 }
 
 inline void fromTrack(PoissonComponent& c, const Track& t) {
   c.mean = t.state;
   c.covariance = t.covariance;
+  c.imm_means = t.imm_means;
+  c.imm_covariances = t.imm_covariances;
+  c.imm_mode_probabilities = t.imm_mode_probabilities;
   // weight is unchanged by predict — caller scales it separately
   // (PPP weight decays by p_S, Bernoulli existence decays by p_S).
 }

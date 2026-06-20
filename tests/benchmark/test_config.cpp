@@ -10,10 +10,12 @@ using navtracker::benchmark::defaultConfigs;
 
 TEST(Config, DefaultConfigsHaveUniqueLabels) {
   const auto configs = defaultConfigs();
-  // 20: 17 standing + two step-0 ablations added 2026-06-19
+  // 21: 20 standing + Cl-3 Phase 1 imm_cv_ct_pmbm (the headline A/B
+  // sibling to imm_cv_ct_mht). The 20-baseline accounting:
+  // 17 standing + two step-0 ablations added 2026-06-19
   // (imm_cv_ct_mht_nobias / imm_cv_ct_mht_novis) + Cl-2 #3 EKF
   // ablation (imm_cv_ct_mht_ekf, the pre-2026-06-20 canonical).
-  ASSERT_EQ(configs.size(), 20u);
+  ASSERT_EQ(configs.size(), 21u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   // Canonical wires the bias estimator unconditionally; the
@@ -25,7 +27,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 20u);
+  EXPECT_EQ(labels.size(), 21u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_ekf"), 1u);
   // imm_cv_ct_mht_ukf retired 2026-06-20: UKF promoted to canonical,
   // imm_cv_ct_mht IS the UKF stack now; _ekf preserves the prior canonical.
@@ -49,6 +51,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   EXPECT_EQ(labels.count("imm_cv_ct_mht"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_noisy_mht"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_recapture"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_pmbm"), 1u);
   // biascal label removed — its wiring is now the canonical.
   EXPECT_EQ(labels.count("imm_cv_ct_mht_biascal"), 0u);
 }

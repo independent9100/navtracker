@@ -218,5 +218,67 @@ BenchResult runBenchMht(const Scenario& scenario, MhtTracker& tracker,
   return result;
 }
 
+namespace {
+
+// PMBM snapshot: identical layout to MHT, but PmbmTracker::tracks()
+// already aggregates the MBM into one Track per Bernoulli id with
+// status = Confirmed when P(exists) ≥ confirm_threshold.
+BenchStep snapshotAtPmbm(const pmbm::PmbmTracker& tracker,
+                         const TruthGroup& g) {
+  BenchStep step;
+  step.time = g.time;
+  step.truth = g.snapshots;
+  for (const Track& tr : tracker.tracks()) {
+    if (tr.status != TrackStatus::Confirmed) continue;
+    if (tr.state.size() < 2) continue;
+    Eigen::Vector2d pos(tr.state(0), tr.state(1));
+    const Eigen::Vector2d vel = tr.state.size() >= 4
+        ? Eigen::Vector2d(tr.state(2), tr.state(3))
+        : Eigen::Vector2d::Zero();
+    TrackStateSnapshot snap{tr.id, pos, vel};
+    if (tr.covariance.rows() >= 2 && tr.covariance.cols() >= 2) {
+      snap.pos_covariance = tr.covariance.topLeftCorner<2, 2>();
+    }
+    step.tracks.push_back(std::move(snap));
+  }
+  return step;
+}
+
+}  // namespace
+
+BenchResult runBenchPmbm(const Scenario& scenario,
+                         pmbm::PmbmTracker& tracker) {
+  BenchResult result;
+  const auto truth_groups = groupTruth(scenario.truth);
+  const auto& meas = scenario.measurements;
+  const auto flushScansUpTo = [&](const Timestamp& upto, std::size_t& mi) {
+    while (mi < meas.size() && !(upto < meas[mi].time)) {
+      const Timestamp scan_t = meas[mi].time;
+      std::vector<Measurement> scan;
+      while (mi < meas.size() && meas[mi].time == scan_t) {
+        scan.push_back(meas[mi]);
+        ++mi;
+      }
+      tracker.processBatch(scan);
+    }
+  };
+
+  std::size_t mi = 0;
+  for (const auto& g : truth_groups) {
+    flushScansUpTo(g.time, mi);
+    result.steps.push_back(snapshotAtPmbm(tracker, g));
+  }
+  while (mi < meas.size()) {
+    const Timestamp scan_t = meas[mi].time;
+    std::vector<Measurement> scan;
+    while (mi < meas.size() && meas[mi].time == scan_t) {
+      scan.push_back(meas[mi]);
+      ++mi;
+    }
+    tracker.processBatch(scan);
+  }
+  return result;
+}
+
 }  // namespace benchmark
 }  // namespace navtracker

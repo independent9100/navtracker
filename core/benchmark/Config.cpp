@@ -281,6 +281,43 @@ MhtTracker::Config makeMhtMofnConfig() {
   return cfg;
 }
 
+// PMBM Phase 1 config. Same (P_D, λ_C, gate) as the MHT canonical so
+// the A/B isolates the association/lifecycle algorithm only.
+// Measurement-driven birth (every initiable measurement seeds a fresh
+// PoissonComponent — see PmbmTracker.cpp) is the de-facto standard
+// Phase 1 birth model (García-Fernández 2018 §IV-D, MTT toolbox
+// `DBM_filter'). Murty K=3 to match MhtTracker; total mixture capped
+// at 30 globals. r_min / weight_min / hypothesis_weight_min at the
+// defaults. confirm_threshold=0.5 emits a track once it carries half
+// the aggregated existence mass.
+pmbm::PmbmTracker::Config makePmbmConfig() {
+  pmbm::PmbmTracker::Config cfg;
+  cfg.gate_threshold = kJpdaGate;
+  cfg.probability_of_detection = kJpdaPd;
+  cfg.clutter_intensity = kJpdaClutterDensity;
+  cfg.measurement_driven_birth = true;
+  // Per-measurement birth intensity. The Phase 1 sweet spot tradeoff:
+  // higher → faster track confirmation but id flapping when an
+  // existing high-r Bernoulli sits on the same location; lower →
+  // stable ids but slow / missed initiation in noisy scenarios. 0.3
+  // is the middle-ground starting point for the first A/B; replace
+  // with proper measurement-conditioned birth (only when no existing
+  // Bernoulli gates) in Phase 1.5.
+  cfg.birth_weight_per_measurement = 0.3;
+  // K=1 (single best assignment per parent) for Phase 1: keeps the
+  // existence mass concentrated on the dominant interpretation and
+  // matches MhtTracker's K=1 global-hypothesis emission mode. K>1
+  // re-introduces deferred-decision alternatives — measured to
+  // *hurt* on the first A/B before within-id Bernoulli merging
+  // ships (§3.5 of pmbm-design.md), so left at 1 for now.
+  cfg.k_best_per_hypothesis = 1;
+  cfg.max_global_hypotheses = 10;
+  cfg.max_ppp_components = 200;
+  cfg.confirm_threshold = 0.5;
+  cfg.output_existence_floor = 0.1;
+  return cfg;
+}
+
 }  // namespace
 
 std::vector<Config> defaultConfigs() {
@@ -407,6 +444,22 @@ std::vector<Config> defaultConfigs() {
                      TrackerKind::Mht, &makeMhtConfig});
   configs.push_back({"imm_cv_ct_noisy_mht", &makeImmCvCtNoisy, &makeJpda,
                      TrackerKind::Mht, &makeMhtConfig});
+
+  // Cl-3 Phase 1 PMBM (GM, no IMM-per-Bernoulli yet — the IMM is the
+  // *inner* estimator inside each Bernoulli's single Gaussian, but the
+  // Bernoulli density itself is single-Gaussian; Phase 2 upgrades it to
+  // a full IMM mixture). Sibling to imm_cv_ct_mht; same (P_D, λ_C,
+  // gate, estimator), different association/lifecycle algorithm.
+  // Headline A/B comparison.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;  // unused
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.pmbm_config = &makePmbmConfig;
+    configs.push_back(std::move(c));
+  }
   return configs;
 }
 

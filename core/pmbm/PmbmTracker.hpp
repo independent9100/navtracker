@@ -82,6 +82,25 @@ class PmbmTracker {
     // P(exists) is below this floor — keeps phantom mass out of
     // downstream consumers without affecting the internal MBM.
     double output_existence_floor = 0.1;
+
+    // Measurement-driven birth (default ON in real configs, OFF in unit
+    // tests so the predict-step math stays interpretable). At the start
+    // of every processBatch, lay down one PoissonComponent per
+    // initiable measurement (skipping bearing-only) by calling
+    // IEstimator::initiate — exactly the birth model the standard
+    // PMBM literature (García-Fernández 2018 §IV-D, MTT toolbox
+    // ``DBM_filter'') uses when no domain prior over ship arrival
+    // regions is available. `birth_weight_per_measurement` controls
+    // the per-component intensity; tune so it dominates the configured
+    // clutter intensity in the local measurement-space volume.
+    bool measurement_driven_birth = false;
+    double birth_weight_per_measurement = 1.0;
+
+    // PPP component count cap (applied after each prune). Without a
+    // cap, every clutter return adds a PoissonComponent that takes
+    // several scans to decay under (1-P_D)·p_S, growing unbounded on
+    // long replays. Top-weighted are kept.
+    std::size_t max_ppp_components = 200;
   };
 
   // Birth intensity callback. Called once per predict() (after the
@@ -150,11 +169,22 @@ class PmbmTracker {
   // One candidate "new Bernoulli" per measurement, fused from the PPP.
   // rho_target = Σ_i p_D · w_i · ℓ(z|c_i); rho_total = rho_target +
   // λ_FA(z). Existence of the new Bernoulli is rho_target / rho_total.
+  //
+  // For the spatial density we currently moment-match the multi-
+  // component PPP-posterior to a single Gaussian (mean / covariance).
+  // For the IMM ensemble fields we carry the DOMINANT PPP component's
+  // post-update imm_* — exact when birth is driven by a single fresh
+  // PoissonComponent (the measurement-driven birth case), approximate
+  // otherwise. Sufficient for Phase 1; Phase 2 (full IMM-per-Bernoulli)
+  // will fold the per-component IMM mixtures properly.
   struct NewTargetCandidate {
     double rho_target{0.0};
     double rho_total{0.0};
     Eigen::VectorXd mean;
     Eigen::MatrixXd covariance;
+    Eigen::MatrixXd imm_means;
+    std::vector<Eigen::MatrixXd> imm_covariances;
+    Eigen::VectorXd imm_mode_probabilities;
   };
 
   std::vector<NewTargetCandidate> buildNewTargetCandidates(

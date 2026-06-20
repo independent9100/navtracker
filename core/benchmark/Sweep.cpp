@@ -250,6 +250,15 @@ std::vector<MetricRow> runSweep(
             };
           }
           result = runBenchMht(scen, tracker, post_scan);
+        } else if (config.tracker_kind == TrackerKind::Pmbm) {
+          pmbm::PmbmTracker::Config cfg =
+              config.pmbm_config ? config.pmbm_config()
+                                  : pmbm::PmbmTracker::Config{};
+          pmbm::PmbmTracker::BirthModelFn birth =
+              config.pmbm_birth_model ? config.pmbm_birth_model()
+                                       : pmbm::PmbmTracker::BirthModelFn{};
+          pmbm::PmbmTracker tracker(*est, cfg, std::move(birth));
+          result = runBenchPmbm(scen, tracker);
         } else {
           // Per-sensor associator if the scenario has a table and the
           // config opts in; otherwise the scalar factory. Detection

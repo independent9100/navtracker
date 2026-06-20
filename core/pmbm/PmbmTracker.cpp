@@ -9,6 +9,7 @@
 #include <Eigen/Dense>
 
 #include "core/association/Murty.hpp"
+#include "core/estimation/MeasurementModels.hpp"
 
 namespace navtracker::pmbm {
 
@@ -107,11 +108,9 @@ PmbmTracker::buildNewTargetCandidates(
     }
 
     std::vector<double> log_weights;
-    std::vector<Eigen::VectorXd> means;
-    std::vector<Eigen::MatrixXd> covs;
+    std::vector<Track> updated_tracks;
     log_weights.reserve(density_.ppp.size());
-    means.reserve(density_.ppp.size());
-    covs.reserve(density_.ppp.size());
+    updated_tracks.reserve(density_.ppp.size());
 
     const double log_pD = std::log(cfg_.probability_of_detection);
 
@@ -122,33 +121,47 @@ PmbmTracker::buildNewTargetCandidates(
       Track t_upd = t;
       estimator_.update(t_upd, z);
       log_weights.push_back(std::log(c.weight) + log_pD + log_lik);
-      means.push_back(t_upd.state);
-      covs.push_back(t_upd.covariance);
+      updated_tracks.push_back(std::move(t_upd));
     }
 
     const double log_rho_target = logSumExp(log_weights);
     cand.rho_target = std::exp(log_rho_target);
     cand.rho_total = cand.rho_target + cfg_.clutter_intensity;
 
-    if (cand.rho_target > 0.0 && !means.empty()) {
+    if (cand.rho_target > 0.0 && !updated_tracks.empty()) {
       // Moment-match the posterior mixture to a single Gaussian.
-      Eigen::VectorXd mean = Eigen::VectorXd::Zero(means.front().size());
+      const auto n_state = updated_tracks.front().state.size();
+      Eigen::VectorXd mean = Eigen::VectorXd::Zero(n_state);
       double wsum = 0.0;
-      for (std::size_t i = 0; i < means.size(); ++i) {
+      for (std::size_t i = 0; i < updated_tracks.size(); ++i) {
         const double w = std::exp(log_weights[i] - log_rho_target);
-        mean += w * means[i];
+        mean += w * updated_tracks[i].state;
         wsum += w;
       }
       if (wsum > 0.0) mean /= wsum;
-      Eigen::MatrixXd cov = Eigen::MatrixXd::Zero(mean.size(), mean.size());
-      for (std::size_t i = 0; i < means.size(); ++i) {
+      Eigen::MatrixXd cov = Eigen::MatrixXd::Zero(n_state, n_state);
+      for (std::size_t i = 0; i < updated_tracks.size(); ++i) {
         const double w = std::exp(log_weights[i] - log_rho_target);
-        const Eigen::VectorXd d = means[i] - mean;
-        cov += w * (covs[i] + d * d.transpose());
+        const Eigen::VectorXd d = updated_tracks[i].state - mean;
+        cov += w * (updated_tracks[i].covariance + d * d.transpose());
       }
       if (wsum > 0.0) cov /= wsum;
       cand.mean = std::move(mean);
       cand.covariance = std::move(cov);
+
+      // IMM fields from the DOMINANT post-update component (largest
+      // log_weight). Exact when there's a single contributor (the
+      // measurement-driven birth steady state); approximate for
+      // multi-component PPP, kept simple for Phase 1.
+      std::size_t dom = 0;
+      double best = log_weights.front();
+      for (std::size_t i = 1; i < log_weights.size(); ++i) {
+        if (log_weights[i] > best) { best = log_weights[i]; dom = i; }
+      }
+      cand.imm_means = updated_tracks[dom].imm_means;
+      cand.imm_covariances = updated_tracks[dom].imm_covariances;
+      cand.imm_mode_probabilities =
+          updated_tracks[dom].imm_mode_probabilities;
     } else {
       // No information from PPP; leave mean/cov empty — the candidate
       // contributes only clutter mass and would never be picked by an
@@ -310,6 +323,9 @@ void PmbmTracker::enumerateChildren(
           (nt.rho_total > 0.0) ? (nt.rho_target / nt.rho_total) : 0.0;
       nb.mean = nt.mean;
       nb.covariance = nt.covariance;
+      nb.imm_means = nt.imm_means;
+      nb.imm_covariances = nt.imm_covariances;
+      nb.imm_mode_probabilities = nt.imm_mode_probabilities;
       nb.last_update = scan[l].time;
       child.bernoullis.push_back(std::move(nb));
       // New-target contribution: log(ρ_total).
@@ -385,6 +401,20 @@ void PmbmTracker::pruneAndNormalise() {
                        return c.weight < cfg_.weight_min;
                      }),
       density_.ppp.end());
+
+  // PPP count cap. Without it, every clutter measurement under
+  // measurement-driven birth seeds a component that lives for several
+  // scans, growing the PPP unbounded on long replays. Keep top-weighted.
+  if (density_.ppp.size() > cfg_.max_ppp_components) {
+    std::partial_sort(
+        density_.ppp.begin(),
+        density_.ppp.begin() + cfg_.max_ppp_components,
+        density_.ppp.end(),
+        [](const PoissonComponent& a, const PoissonComponent& b) {
+          return a.weight > b.weight;
+        });
+    density_.ppp.resize(cfg_.max_ppp_components);
+  }
 }
 
 void PmbmTracker::processBatch(const std::vector<Measurement>& scan) {
@@ -431,6 +461,23 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan) {
     seed.weight = 1.0;
     seed.log_weight = 0.0;
     density_.mbm.push_back(std::move(seed));
+  }
+
+  // Measurement-driven birth: append one PPP component per initiable
+  // measurement BEFORE building new-target candidates, so a fresh
+  // measurement that no Bernoulli claims has somewhere to live (and
+  // ρ_target is dominated by the just-birthed component centred on the
+  // measurement). Bearing-only measurements cannot initiate a state
+  // and are skipped, matching MhtTracker birth-on-measurement rules.
+  if (cfg_.measurement_driven_birth) {
+    for (const auto& z : scan) {
+      if (!canInitiateTrack(z.model)) continue;
+      Track t = estimator_.initiate(z);
+      PoissonComponent c;
+      c.weight = cfg_.birth_weight_per_measurement;
+      fromTrack(c, t);  // round-trips state/cov + IMM fields
+      density_.ppp.push_back(std::move(c));
+    }
   }
 
   // Per-measurement new-target Bernoulli candidates from PPP.

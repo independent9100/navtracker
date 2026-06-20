@@ -7,6 +7,7 @@
 
 #include "core/bias/SensorBiasEstimator.hpp"
 #include "core/pipeline/MhtTracker.hpp"
+#include "core/pmbm/PmbmTracker.hpp"
 #include "ports/IDataAssociator.hpp"
 #include "ports/IEstimator.hpp"
 #include "ports/ISensorDetectionModel.hpp"
@@ -40,6 +41,7 @@ using PerSensorAssociatorFactory =
 enum class TrackerKind {
   JpdaStyle,
   Mht,
+  Pmbm,
 };
 
 // A single labelled baseline configuration. The label is the canonical
@@ -70,6 +72,16 @@ struct Config {
   // to feed it observations. Null = no bias estimation (legacy).
   std::function<std::shared_ptr<SensorBiasEstimator>()>
       build_sensor_bias_estimator{};
+  // Optional PMBM configuration override. Used only when
+  // tracker_kind == Pmbm; nullptr → default-constructed
+  // pmbm::PmbmTracker::Config (with measurement-driven birth ON).
+  std::function<pmbm::PmbmTracker::Config()> pmbm_config{};
+  // Optional explicit birth-model factory for the PMBM path. When null
+  // and pmbm_config.measurement_driven_birth is true, no separate
+  // predict-time birth fires (the measurement-driven path covers
+  // birth). When pmbm_config.measurement_driven_birth is false, a
+  // user-supplied factory is required for any new Bernoulli to spawn.
+  std::function<pmbm::PmbmTracker::BirthModelFn()> pmbm_birth_model{};
 };
 
 // Returns the five baseline configurations in fixed order:

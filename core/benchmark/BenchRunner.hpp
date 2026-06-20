@@ -9,6 +9,7 @@
 #include "core/benchmark/BenchSink.hpp"
 #include "core/pipeline/MhtTracker.hpp"
 #include "core/pipeline/Tracker.hpp"
+#include "core/pmbm/PmbmTracker.hpp"
 #include "core/scenario/Truth.hpp"
 #include "core/tracking/TrackManager.hpp"
 #include "core/types/Ids.hpp"
@@ -75,6 +76,14 @@ using PostScanHook = std::function<void(const MhtTracker&, Timestamp)>;
 
 BenchResult runBenchMht(const Scenario& scenario, MhtTracker& tracker,
                         const PostScanHook& post_scan_hook = {});
+
+// PMBM-pipeline overload. Mirrors runBenchMht: drives a PmbmTracker
+// over the scenario, snapshotting one Confirmed track per Bernoulli id
+// (aggregated by PmbmTracker::tracks()) at every truth timestamp. No
+// post-scan hook (the PMBM path does not yet wire SensorBiasEstimator
+// — that's planned for Phase 2+).
+BenchResult runBenchPmbm(const Scenario& scenario,
+                         pmbm::PmbmTracker& tracker);
 
 }  // namespace benchmark
 }  // namespace navtracker
