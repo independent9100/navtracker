@@ -304,6 +304,16 @@ pmbm::PmbmTracker::Config makePmbmConfig() {
   // with proper measurement-conditioned birth (only when no existing
   // Bernoulli gates) in Phase 1.5.
   cfg.birth_weight_per_measurement = 0.3;
+  // Smart birth (Reuter 2014 Adaptive Birth Distribution): skip
+  // birth at measurements already explained by an existing high-r
+  // Bernoulli. Phase 1 measurement-driven birth without this gate
+  // produced 100-170 id_switches per autoferry scenario (the
+  // dominant Phase 1 regression in pmbm_phase1_first_ab_20260620);
+  // turning it on cuts those flaps to MHT-comparable levels without
+  // touching the Cl-2 #2 wins.
+  cfg.smart_birth_skip_existing = true;
+  cfg.smart_birth_skip_r_min = 0.5;
+  cfg.smart_birth_skip_gate = kJpdaGate;
   // K=1 (single best assignment per parent) for Phase 1: keeps the
   // existence mass concentrated on the dominant interpretation and
   // matches MhtTracker's K=1 global-hypothesis emission mode. K>1

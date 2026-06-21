@@ -472,10 +472,33 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan) {
   if (cfg_.measurement_driven_birth) {
     for (const auto& z : scan) {
       if (!canInitiateTrack(z.model)) continue;
+
+      // Smart birth: skip when an existing high-r Bernoulli already
+      // gates to this measurement. Walks every hypothesis's Bernoullis
+      // and uses the estimator's gate (Mahalanobis for single-Gaussian,
+      // any-mode for IMM). The first match wins — cheap and sufficient
+      // because the dominant hypothesis carries the highest-r Bernoulli
+      // for each id in practice.
+      bool claimed_by_existing = false;
+      if (cfg_.smart_birth_skip_existing) {
+        for (const auto& h : density_.mbm) {
+          for (const auto& b : h.bernoullis) {
+            if (b.existence_probability < cfg_.smart_birth_skip_r_min) continue;
+            Track t = toTrack(b);
+            if (estimator_.gate(t, z, cfg_.smart_birth_skip_gate)) {
+              claimed_by_existing = true;
+              break;
+            }
+          }
+          if (claimed_by_existing) break;
+        }
+      }
+      if (claimed_by_existing) continue;
+
       Track t = estimator_.initiate(z);
       PoissonComponent c;
       c.weight = cfg_.birth_weight_per_measurement;
-      fromTrack(c, t);  // round-trips state/cov + IMM fields
+      fromTrack(c, t);
       density_.ppp.push_back(std::move(c));
     }
   }
@@ -497,8 +520,97 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan) {
   }
 
   density_.mbm = std::move(children);
+
+  // Within-hypothesis Bernoulli merge: fold near-duplicate Bernoullis
+  // (Bhattacharyya position-block distance < threshold) into a single
+  // Bernoulli keeping the older id.
+  if (cfg_.bhattacharyya_merge_threshold > 0.0) {
+    for (auto& h : density_.mbm) {
+      mergeBernoulliDuplicates(h);
+    }
+  }
+
   pruneAndNormalise();
   aggregated_tracks_dirty_ = true;
+}
+
+namespace {
+
+// Bhattacharyya distance between two 2-D Gaussians on the position
+// block (first two state components). Standard form:
+//   d_B = 1/8 · (m1-m2)' P^-1 (m1-m2) + 1/2 · ln(det(P) / sqrt(det(P1)·det(P2)))
+// with P = (P1 + P2) / 2. Returns +∞ for degenerate covariances.
+double bhattacharyya2D(const Eigen::VectorXd& mean_a,
+                       const Eigen::MatrixXd& cov_a,
+                       const Eigen::VectorXd& mean_b,
+                       const Eigen::MatrixXd& cov_b) {
+  if (mean_a.size() < 2 || mean_b.size() < 2) return kInf;
+  if (cov_a.rows() < 2 || cov_b.rows() < 2) return kInf;
+  const Eigen::Vector2d d = mean_a.head<2>() - mean_b.head<2>();
+  const Eigen::Matrix2d Pa = cov_a.topLeftCorner<2, 2>();
+  const Eigen::Matrix2d Pb = cov_b.topLeftCorner<2, 2>();
+  const Eigen::Matrix2d P = 0.5 * (Pa + Pb);
+  const double det_P = P.determinant();
+  const double det_Pa = Pa.determinant();
+  const double det_Pb = Pb.determinant();
+  if (det_P <= 0.0 || det_Pa <= 0.0 || det_Pb <= 0.0) return kInf;
+  const double mahal = d.transpose() * P.inverse() * d;
+  return 0.125 * mahal +
+         0.5 * std::log(det_P / std::sqrt(det_Pa * det_Pb));
+}
+
+}  // namespace
+
+void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h) const {
+  // Sort by id ascending so the survivor (kept) carries the older id.
+  std::sort(h.bernoullis.begin(), h.bernoullis.end(),
+            [](const Bernoulli& a, const Bernoulli& b) {
+              return a.id < b.id;
+            });
+  std::vector<bool> dead(h.bernoullis.size(), false);
+  for (std::size_t i = 0; i < h.bernoullis.size(); ++i) {
+    if (dead[i]) continue;
+    for (std::size_t j = i + 1; j < h.bernoullis.size(); ++j) {
+      if (dead[j]) continue;
+      const double dB = bhattacharyya2D(
+          h.bernoullis[i].mean, h.bernoullis[i].covariance,
+          h.bernoullis[j].mean, h.bernoullis[j].covariance);
+      if (dB > cfg_.bhattacharyya_merge_threshold) continue;
+
+      // Merge j INTO i. Independent-existence fold:
+      //   r_merged = 1 - (1 - r_i)(1 - r_j)
+      // Mean / cov: r-weighted moment match.
+      Bernoulli& a = h.bernoullis[i];
+      const Bernoulli& b = h.bernoullis[j];
+      const double r_a = a.existence_probability;
+      const double r_b = b.existence_probability;
+      const double r_m = 1.0 - (1.0 - r_a) * (1.0 - r_b);
+      const double wa = r_a, wb = r_b;
+      const double ws = wa + wb;
+      if (ws > 0.0 && a.mean.size() == b.mean.size()) {
+        const Eigen::VectorXd new_mean = (wa * a.mean + wb * b.mean) / ws;
+        const Eigen::VectorXd d_a = a.mean - new_mean;
+        const Eigen::VectorXd d_b = b.mean - new_mean;
+        Eigen::MatrixXd new_cov =
+            (wa * (a.covariance + d_a * d_a.transpose()) +
+             wb * (b.covariance + d_b * d_b.transpose())) / ws;
+        a.mean = new_mean;
+        a.covariance = std::move(new_cov);
+      }
+      a.existence_probability = r_m;
+      if (b.last_update.seconds() > a.last_update.seconds()) {
+        a.last_update = b.last_update;
+      }
+      dead[j] = true;
+    }
+  }
+  // Compact.
+  std::vector<Bernoulli> kept;
+  kept.reserve(h.bernoullis.size());
+  for (std::size_t k = 0; k < h.bernoullis.size(); ++k) {
+    if (!dead[k]) kept.push_back(std::move(h.bernoullis[k]));
+  }
+  h.bernoullis = std::move(kept);
 }
 
 const std::vector<Track>& PmbmTracker::tracks() const {

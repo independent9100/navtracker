@@ -96,6 +96,34 @@ class PmbmTracker {
     bool measurement_driven_birth = false;
     double birth_weight_per_measurement = 1.0;
 
+    // Smart-birth gate. With measurement-driven birth, every gated
+    // clutter return mints a fresh Bernoulli that competes with the
+    // tracked one and creates an id_switch when it eventually
+    // out-scores it. When smart_birth_skip_existing is true, a
+    // measurement that's already explained by an existing Bernoulli
+    // (any hypothesis: r ≥ smart_birth_skip_r_min AND χ² to that
+    // Bernoulli ≤ smart_birth_skip_gate) skips birth — the existing
+    // track absorbs the measurement and no phantom is born. Strongly
+    // recommended ON; default OFF so unit tests of the bare predict /
+    // update math remain interpretable. Adaptive Birth Distribution
+    // (Reuter 2014).
+    bool smart_birth_skip_existing = false;
+    double smart_birth_skip_r_min = 0.5;
+    double smart_birth_skip_gate = 9.0;  // χ² 2-DoF 99 %
+
+    // Within-hypothesis Bernoulli merging. Generalised from
+    // MhtTracker::mergeBranches (cross-tree Bhattacharyya merge): after
+    // enumerateChildren, fold pairs of Bernoullis within the same
+    // global hypothesis whose 2-D position blocks are within
+    // `bhattacharyya_merge_threshold`. Survivor keeps the older id
+    // (id-stability invariant), gets r = 1 - (1-r_i)(1-r_j)
+    // (independent-existence fold), and a r-weighted moment-matched
+    // (mean, cov). Defends against the rare case where a smart-birth
+    // gate misses (gate threshold below the true overlap) and an
+    // existing Bernoulli plus a fresh new-Bernoulli end up on the
+    // same target. Set ≤ 0 to disable; typical 0.5–2.0.
+    double bhattacharyya_merge_threshold = 1.0;
+
     // PPP component count cap (applied after each prune). Without a
     // cap, every clutter return adds a PoissonComponent that takes
     // several scans to decay under (1-P_D)·p_S, growing unbounded on
@@ -203,6 +231,11 @@ class PmbmTracker {
   // Bernoullis / PPP components below thresholds, cap mixture size at
   // cfg_.max_global_hypotheses.
   void pruneAndNormalise();
+
+  // Merge near-duplicate Bernoullis within one global hypothesis by
+  // Bhattacharyya distance on the position block (§3.5 of
+  // docs/algorithms/pmbm-design.md, MhtTracker::mergeBranches analogue).
+  void mergeBernoulliDuplicates(GlobalHypothesis& h) const;
 
   void refreshAggregatedTracks() const;
 
