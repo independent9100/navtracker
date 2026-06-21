@@ -45,14 +45,14 @@ TEST(Sweep, RowCountMatchesMatrix) {
 
   const auto rows = runSweep(configs, scenarios, p);
   // 1 config * 1 scenario * 2 seeds → some number of metric rows.
-  // 11 kinematic/quality metrics (OSPA mean/p95 + GOSPA mean/p95/rms +
-  // lifetime/breaks/switches/RMSE × 4) + 8 NEES metrics (mean, median,
-  // p95, p99, coverage_95, beta_hat, n, dropped_singular) + 6 NIS metrics
-  // per (sensor, model, source_id) source key contributing innovations
-  // + 7 per-truth metrics (lifetime/breaks/switches/RMSE × 4 + rmse_n)
-  // per truth_id. TinyStraightLine has one source and one truth target;
-  // total per seed = 11 + 8 + 6 + 7 = 32.
-  EXPECT_EQ(rows.size(), 2u * 32u);
+  // 12 kinematic/quality metrics (OSPA mean/p95 + GOSPA mean/p95/rms +
+  // tgospa_raw + lifetime/breaks/switches/RMSE × 4) + 8 NEES metrics
+  // (mean, median, p95, p99, coverage_95, beta_hat, n, dropped_singular)
+  // + 6 NIS metrics per (sensor, model, source_id) source key
+  // contributing innovations + 7 per-truth metrics (lifetime/breaks/
+  // switches/RMSE × 4 + rmse_n) per truth_id. TinyStraightLine has one
+  // source and one truth target; total per seed = 12 + 8 + 6 + 7 = 33.
+  EXPECT_EQ(rows.size(), 2u * 33u);
   std::size_t nees_seen = 0;
   std::size_t nis_seen = 0;
   std::size_t per_truth_seen = 0;

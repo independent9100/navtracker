@@ -17,6 +17,7 @@
 #include "core/association/Hungarian.hpp"
 #include "core/scenario/Gospa.hpp"
 #include "core/scenario/Ospa.hpp"
+#include "core/scenario/TGospa.hpp"
 
 namespace navtracker {
 namespace benchmark {
@@ -338,6 +339,37 @@ RmseResult computeRmse(const BenchResult& result,
 //              individual metric callers.
 // Improve next: OSPA(2) (window-based) to fold identity churn into the
 //               headline metric instead of reporting it separately.
+// Build T-GOSPA trajectories from a BenchResult by stitching positions
+// across steps keyed by truth_id (truth) and TrackId.value (est). Scan
+// index = position in BenchResult.steps (caller-monotone time → integer
+// index is sufficient for T-GOSPA's time alignment).
+namespace {
+double computeTGospaRawImpl(const BenchResult& result, double cutoff_m) {
+  if (result.steps.empty()) return 0.0;
+  std::map<std::uint64_t, Trajectory> truth_map;
+  std::map<std::uint64_t, Trajectory> est_map;
+  for (int k = 0; k < static_cast<int>(result.steps.size()); ++k) {
+    const auto& s = result.steps[k];
+    for (const auto& t : s.truth) {
+      auto& tr = truth_map[t.truth_id];
+      if (tr.samples.empty()) tr.id = t.truth_id;
+      tr.samples[k] = t.position;
+    }
+    for (const auto& tr : s.tracks) {
+      auto& est = est_map[tr.id.value];
+      if (est.samples.empty()) est.id = tr.id.value;
+      est.samples[k] = tr.position;
+    }
+  }
+  std::vector<Trajectory> truth_vec, est_vec;
+  truth_vec.reserve(truth_map.size());
+  est_vec.reserve(est_map.size());
+  for (auto& [_, t] : truth_map) truth_vec.push_back(std::move(t));
+  for (auto& [_, t] : est_map) est_vec.push_back(std::move(t));
+  return tgospa(truth_vec, est_vec, cutoff_m);
+}
+}  // namespace
+
 MetricsResult computeMetrics(const BenchResult& result,
                              const MetricsParams& params) {
   MetricsResult m{};
@@ -348,6 +380,7 @@ MetricsResult computeMetrics(const BenchResult& result,
       computeGospaPerStep(result, params.gospa_cutoff_m);
   m.gospa_mean = mean(gospa_per_step);
   m.gospa_p95 = percentile(gospa_per_step, 0.95);
+  m.tgospa_raw_m = computeTGospaRawImpl(result, params.gospa_cutoff_m);
   // RMS over per-step GOSPA: matches Helgesen 2022's aggregation.
   double sumsq = 0.0;
   for (double v : gospa_per_step) sumsq += v * v;

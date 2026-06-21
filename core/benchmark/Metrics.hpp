@@ -40,6 +40,12 @@ struct MetricsResult {
   // Helgesen 2022 reports in Tables 6 / 7 ("GOSPA is reported as RMS")
   // and is what to compare against the paper's headline numbers.
   double gospa_rms{0.0};        // metres
+  // Trajectory-aligned T-GOSPA over BenchResult.steps. Stitches truth
+  // and estimated positions into time-indexed trajectories keyed by
+  // truth_id / TrackId.value, then runs core/scenario/TGospa.hpp. The
+  // switch penalty γ defaults to gospa_cutoff_m. Surfaces fragmentation
+  // and id switching directly (the things per-scan OSPA/GOSPA hide).
+  double tgospa_raw_m{0.0};
   double lifetime_ratio{0.0};   // [0, 1]
   double track_breaks{0.0};     // count, mean across truth
   double id_switches{0.0};      // count, mean across truth
