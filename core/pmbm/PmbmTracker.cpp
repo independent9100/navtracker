@@ -163,19 +163,78 @@ PmbmTracker::buildNewTargetCandidates(
       cand.mean = std::move(mean);
       cand.covariance = std::move(cov);
 
-      // IMM fields from the DOMINANT post-update component (largest
-      // log_weight). Exact when there's a single contributor (the
-      // measurement-driven birth steady state); approximate for
-      // multi-component PPP, kept simple for Phase 1.
-      std::size_t dom = 0;
-      double best = log_weights.front();
-      for (std::size_t i = 1; i < log_weights.size(); ++i) {
-        if (log_weights[i] > best) { best = log_weights[i]; dom = i; }
+      // Per-mode moment-matched IMM mixture across all post-update
+      // components (Phase 2). Each component has the same mode count
+      // K (an IMM invariant); the merged mixture's per-mode mean and
+      // covariance are weighted by w_i · μ_i[j], with merged mode
+      // probabilities μ[j] = (Σ_i w_i · μ_i[j]) / Σ_i w_i.
+      //
+      // Drops components whose imm_* are empty (single-Gaussian PPP)
+      // — they contributed via the moment-matched (mean, cov) above
+      // but can't inform the IMM ensemble. The IMM-only-PPP common
+      // case (every PPP component carries IMM, via the measurement-
+      // driven birth path that calls estimator.initiate) sees every
+      // component contribute, with the dominant-component case as the
+      // single-contributor degenerate.
+      int K = 0;
+      int n_imm_state = 0;
+      for (const auto& t : updated_tracks) {
+        if (t.imm_means.cols() > 0) {
+          K = static_cast<int>(t.imm_means.cols());
+          n_imm_state = static_cast<int>(t.imm_means.rows());
+          break;
+        }
       }
-      cand.imm_means = updated_tracks[dom].imm_means;
-      cand.imm_covariances = updated_tracks[dom].imm_covariances;
-      cand.imm_mode_probabilities =
-          updated_tracks[dom].imm_mode_probabilities;
+      if (K > 0) {
+        Eigen::VectorXd modep_acc = Eigen::VectorXd::Zero(K);
+        std::vector<Eigen::VectorXd> mode_mean_acc(K, Eigen::VectorXd::Zero(n_imm_state));
+        std::vector<double> mode_w_acc(K, 0.0);
+        double wsum_imm = 0.0;
+        for (std::size_t i = 0; i < updated_tracks.size(); ++i) {
+          const auto& t = updated_tracks[i];
+          if (t.imm_means.cols() != K) continue;
+          const double w = std::exp(log_weights[i] - log_rho_target);
+          wsum_imm += w;
+          for (int j = 0; j < K; ++j) {
+            const double mw = w * t.imm_mode_probabilities(j);
+            modep_acc(j) += mw;
+            mode_mean_acc[j] += mw * t.imm_means.col(j);
+            mode_w_acc[j] += mw;
+          }
+        }
+        if (wsum_imm > 0.0) {
+          Eigen::MatrixXd merged_means(n_imm_state, K);
+          std::vector<Eigen::MatrixXd> merged_covs(
+              K, Eigen::MatrixXd::Zero(n_imm_state, n_imm_state));
+          Eigen::VectorXd merged_modep = modep_acc / wsum_imm;
+          for (int j = 0; j < K; ++j) {
+            if (mode_w_acc[j] > 0.0) {
+              merged_means.col(j) = mode_mean_acc[j] / mode_w_acc[j];
+            } else {
+              merged_means.col(j).setZero();
+            }
+          }
+          for (std::size_t i = 0; i < updated_tracks.size(); ++i) {
+            const auto& t = updated_tracks[i];
+            if (t.imm_means.cols() != K) continue;
+            const double w = std::exp(log_weights[i] - log_rho_target);
+            for (int j = 0; j < K; ++j) {
+              const double mw = w * t.imm_mode_probabilities(j);
+              if (mw <= 0.0) continue;
+              const Eigen::VectorXd d =
+                  t.imm_means.col(j) - merged_means.col(j);
+              merged_covs[j] +=
+                  mw * (t.imm_covariances[j] + d * d.transpose());
+            }
+          }
+          for (int j = 0; j < K; ++j) {
+            if (mode_w_acc[j] > 0.0) merged_covs[j] /= mode_w_acc[j];
+          }
+          cand.imm_means = std::move(merged_means);
+          cand.imm_covariances = std::move(merged_covs);
+          cand.imm_mode_probabilities = std::move(merged_modep);
+        }
+      }
     } else {
       // No information from PPP; leave mean/cov empty — the candidate
       // contributes only clutter mass and would never be picked by an
