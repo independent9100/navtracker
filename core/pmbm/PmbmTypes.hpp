@@ -80,16 +80,17 @@ struct TrajectoryPoint {
 // where x_pred_{k+1} / P_pred_{k+1} come from TrajectoryPoint at
 // k+1's `predicted_*` fields.
 //
-// **Assumption (this implementation).** F_k ≈ I. Correct for
-// stationary targets, BIASED for moving targets (position-velocity
-// cross-terms lost). The covariance-weighted blend G ≈ P_filt ·
-// P_pred^{-1} still does useful work — the smoothed estimate at k
-// is pulled toward the better-informed posterior at k+1 — but the
-// magnitude of correction is conservative. A correct F (e.g.,
-// constant-velocity F derived from dt) would require either
-// extending IEstimator with a `transitionMatrix(track, t)` method
-// (clean) or hard-coding the CV transition (rigid). Left as
-// Phase 4(C)' refinement.
+// **Assumption (this implementation).** F_k derived from dt under
+// constant-velocity layout (px, py, vx, vy[, ω]): identity on
+// velocity (and ω), position += dt · velocity. Exact for CV2D /
+// CV5 motion; approximate for CT (ω-coupled position update lost).
+// The earlier F=I cut shipped 2026-06-21 measured catastrophically
+// bad on anchored autoferry (smoother copied the end position back
+// through history when measurements were tight); CV-F restores the
+// position-velocity coupling that anchors the smoother to actual
+// motion. Refinement: extend IEstimator with `transitionMatrix`
+// so per-mode F mixes through IMM, instead of using the CV
+// fall-back across all modes.
 //
 // **Rationale.** RTS only helps PAST states (k < T). The
 // current-scan filter estimate at T is already optimal, so per-

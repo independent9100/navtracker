@@ -17,23 +17,46 @@
 
 namespace navtracker::pmbm {
 
+namespace {
+// Build the constant-velocity transition matrix F for state layout
+// (px, py, vx, vy [, ω]) over time interval dt. Identity on velocity
+// (and ω for 5-state); position += dt · velocity. Exact for CV
+// motion; approximate for CT (the ω-coupled position update is lost,
+// but autoferry tracks spend most time straight, so the
+// approximation is small).
+Eigen::MatrixXd cvTransitionMatrix(int n_state, double dt) {
+  Eigen::MatrixXd F = Eigen::MatrixXd::Identity(n_state, n_state);
+  if (n_state >= 4) {
+    F(0, 2) = dt;
+    F(1, 3) = dt;
+  }
+  return F;
+}
+}  // namespace
+
 void rtsSmoothTrajectory(std::vector<TrajectoryPoint>& trajectory) {
   const std::size_t T = trajectory.size();
   if (T < 2) return;
   // Walk backward k = T-2 .. 0. Smoothed at k uses smoothed at k+1.
-  // Approximation: F_k ≈ I (see header). Position 2-D block only —
-  // sufficient for current navtracker output. Higher-dim states get
-  // the same blend on every component.
+  // F derived from dt assuming CV motion layout (px, py, vx, vy[, ω]).
+  // Exact for CV2D / CV5; approximate for CT (ω-coupled position
+  // update lost). Phase 6 iter 2 measured F=I to regress anchored
+  // (tight-AIS) by copying the end position back through history;
+  // CV-F restores the position-velocity coupling that anchors the
+  // smoother to actual motion.
   for (std::size_t k_plus = T - 1; k_plus-- > 0;) {
     auto& curr = trajectory[k_plus];          // x_filt_k
     const auto& next = trajectory[k_plus + 1];  // smoothed at k+1
     if (curr.covariance.rows() == 0 ||
         next.predicted_covariance.rows() == 0) continue;
     if (next.predicted_covariance.determinant() <= 0.0) continue;
-    // G_k ≈ P_filt_k · P_pred_{k+1}^{-1}.
+    const double dt = next.time.seconds() - curr.time.seconds();
+    const int n = static_cast<int>(curr.state.size());
+    const Eigen::MatrixXd F = cvTransitionMatrix(n, dt);
+    // G_k = P_filt_k · F^T · P_pred_{k+1}^{-1}.
     const Eigen::MatrixXd P_pred_inv =
         next.predicted_covariance.inverse();
-    const Eigen::MatrixXd G = curr.covariance * P_pred_inv;
+    const Eigen::MatrixXd G = curr.covariance * F.transpose() * P_pred_inv;
     // x_smooth_k = x_filt_k + G · (x_smooth_{k+1} − x_pred_{k+1})
     curr.state = curr.state +
                  G * (next.state - next.predicted_state);
