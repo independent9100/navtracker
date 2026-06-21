@@ -396,6 +396,17 @@ class PmbmTracker {
   // transitions on each processBatch.
   ITrackSink* track_sink_{nullptr};
   std::map<std::uint64_t, TrackStatus> prev_emitted_statuses_;
+  // Phase 4(D). Snapshot trajectories from the prior scan's dominant
+  // hypothesis, keyed by Bernoulli id. Updated at end of each
+  // processBatch alongside prev_emitted_statuses_. Two purposes:
+  // (a) inside an onTrackDeleted handler, trajectoryFor(id) falls
+  //     back to this snapshot when the id is no longer in any live
+  //     hypothesis — so the consumer gets the final trajectory.
+  // (b) while a track is still alive, this is unused (live MBM is
+  //     authoritative); the snapshot only "matters" when the live
+  //     lookup fails. Cleared at end of each processBatch.
+  std::map<std::uint64_t, std::vector<TrajectoryPoint>>
+      prev_emitted_trajectories_;
   // Fire onTrack* events by diffing aggregated_tracks_ against the
   // prior-scan snapshot. Called at end of processBatch when
   // track_sink_ != nullptr. Uses scan-front time as the event

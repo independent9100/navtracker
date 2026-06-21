@@ -970,8 +970,9 @@ void PmbmTracker::firePmbmLifecycleEvents(Timestamp event_time) {
     track_sink_->onTrackUpdated(e);
   }
 
-  // Deleted (prior id absent now). Emit BEFORE updating the snapshot.
-  // Status reported is the pre-deletion status.
+  // Deleted (prior id absent now). Emit BEFORE updating the snapshot
+  // so trajectoryFor(id) inside the handler hits the prior-scan
+  // trajectory snapshot. Status reported is the pre-deletion status.
   for (const auto& [id, status] : prev_emitted_statuses_) {
     if (current.find(id) != current.end()) continue;
     const TrackId tid{id};
@@ -979,6 +980,15 @@ void PmbmTracker::firePmbmLifecycleEvents(Timestamp event_time) {
   }
 
   prev_emitted_statuses_ = std::move(current);
+  // Refresh the trajectory snapshot from the current dominant
+  // hypothesis. Done AFTER the diff so the handler above still saw
+  // the prior-scan trajectory for deleted ids.
+  prev_emitted_trajectories_.clear();
+  for (const auto& t : ts) {
+    auto traj = trajectoryFor(t.id.value);
+    if (!traj.empty()) prev_emitted_trajectories_[t.id.value] =
+        std::move(traj);
+  }
 }
 
 std::vector<TrajectoryPoint> PmbmTracker::trajectoryFor(BernoulliId id) const {
@@ -997,8 +1007,13 @@ std::vector<TrajectoryPoint> PmbmTracker::trajectoryFor(BernoulliId id) const {
       }
     }
   }
-  if (best_b == nullptr) return {};
-  return best_b->trajectory;
+  if (best_b != nullptr) return best_b->trajectory;
+  // Phase 4(D) fallback: the id is no longer live (e.g. pruned this
+  // scan). Inside an onTrackDeleted handler, return the prior-scan
+  // trajectory snapshot so consumers can drain the final history.
+  auto it = prev_emitted_trajectories_.find(id);
+  if (it != prev_emitted_trajectories_.end()) return it->second;
+  return {};
 }
 
 void PmbmTracker::refreshAggregatedTracks() const {

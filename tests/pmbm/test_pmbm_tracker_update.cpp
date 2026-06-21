@@ -603,6 +603,56 @@ TEST(PmbmTrackerUpdate, TrackSinkFiresInitiatedAndConfirmedOnHighRBirth) {
   EXPECT_EQ(sink.initiated[0].id.value, sink.confirmed[0].id.value);
 }
 
+// Phase 4(D): inside an onTrackDeleted handler, trajectoryFor(id)
+// returns the prior-scan trajectory snapshot (not empty). Captures
+// the snapshot from the callback so the test can assert on it.
+class TrajectorySnapshottingSink : public navtracker::ITrackSink {
+ public:
+  navtracker::pmbm::PmbmTracker* tracker{nullptr};
+  std::map<std::uint64_t, std::vector<navtracker::pmbm::TrajectoryPoint>>
+      deleted_trajectories;
+  void onTrackInitiated(const navtracker::TrackLifecycleEvent&) override {}
+  void onTrackConfirmed(const navtracker::TrackLifecycleEvent&) override {}
+  void onTrackUpdated(const navtracker::TrackLifecycleEvent&) override {}
+  void onTrackDeleted(const navtracker::TrackLifecycleEvent& e) override {
+    deleted_trajectories[e.id.value] = tracker->trajectoryFor(e.id.value);
+  }
+};
+
+TEST(PmbmTrackerUpdate, TrajectoryAvailableInsideOnTrackDeleted) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.survival_probability = 0.5;
+  cfg.clutter_intensity = 1e-6;
+  cfg.k_best_per_hypothesis = 1;
+  cfg.output_existence_floor = 0.5;
+  cfg.trajectory_window_scans = 20;
+  PmbmTracker tracker(f.ekf, cfg);
+  TrajectorySnapshottingSink sink;
+  sink.tracker = &tracker;
+  tracker.setTrackSink(&sink);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+
+  // Scan 1: birth + record one trajectory point
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, 0.5)});
+  // Scan 2: detection (trajectory grows to 2)
+  tracker.processBatch({pos2d(2.0, 0.1, 0.0, 0.5)});
+  // Scans 3..6: empty misses → existence decays below floor → Deleted
+  for (int t = 3; t <= 6; ++t) {
+    tracker.predict(Timestamp::fromSeconds(static_cast<double>(t)));
+    tracker.processBatch({pos2d(static_cast<double>(t), 1e5, 1e5, 0.5)});
+  }
+  // At least one delete observed AND its trajectory is non-empty.
+  ASSERT_FALSE(sink.deleted_trajectories.empty());
+  bool any_non_empty = false;
+  for (const auto& [id, traj] : sink.deleted_trajectories) {
+    if (!traj.empty()) { any_non_empty = true; break; }
+  }
+  EXPECT_TRUE(any_non_empty);
+}
+
 TEST(PmbmTrackerUpdate, TrackSinkFiresDeletedWhenExistenceFallsBelowFloor) {
   Fixture f;
   PmbmTracker::Config cfg;
