@@ -314,6 +314,13 @@ pmbm::PmbmTracker::Config makePmbmConfig() {
   cfg.smart_birth_skip_existing = true;
   cfg.smart_birth_skip_r_min = 0.5;
   cfg.smart_birth_skip_gate = kJpdaGate;
+  // Source-aware misdetection: skip the misdetection recursion for
+  // Bernoullis whose contributing source_ids don't appear in this
+  // scan. Critical for sparse-broadcast sensors (AIS philos) where
+  // vessel A's broadcast tells us nothing about vessel B's
+  // existence; without this every other vessel's broadcast kills
+  // our Bernoulli in O(1) scan and philos lifetime collapses to ~0.
+  cfg.source_aware_misdetection = true;
   // K=1 (single best assignment per parent) for Phase 1: keeps the
   // existence mass concentrated on the dominant interpretation and
   // matches MhtTracker's K=1 global-hypothesis emission mode. K>1

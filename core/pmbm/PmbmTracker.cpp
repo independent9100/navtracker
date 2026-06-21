@@ -188,6 +188,26 @@ void PmbmTracker::enumerateChildren(
   const int n = static_cast<int>(parent.bernoullis.size());
   const int m = static_cast<int>(scan.size());
 
+  // Source-aware misdetection: collect this scan's source_ids once.
+  // Bernoullis whose contribution-history sources are entirely absent
+  // from this set get a no-op misdetection (state and r unchanged) —
+  // see Config::source_aware_misdetection.
+  std::set<std::string> scan_sources;
+  if (cfg_.source_aware_misdetection) {
+    for (const auto& z : scan) scan_sources.insert(z.source_id);
+  }
+  auto should_misdetect = [&](BernoulliId id) {
+    if (!cfg_.source_aware_misdetection) return true;
+    auto it = contribution_history_.find(id);
+    if (it == contribution_history_.end() || it->second.empty()) {
+      return true;  // no prior history; treat as observable
+    }
+    for (const auto& touch : it->second) {
+      if (scan_sources.count(touch.source_id)) return true;
+    }
+    return false;
+  };
+
   // Edge case: empty scan. Only one child = parent with all-miss updates.
   // Misdetection: r ← (1 − p_D)·r / (1 − r + (1 − p_D)·r), state unchanged.
   // Hypothesis weight gains a Σ log(1 − r·p_D) shift (relative ordering
@@ -199,6 +219,10 @@ void PmbmTracker::enumerateChildren(
     child.bernoullis.reserve(parent.bernoullis.size());
     for (const auto& b : parent.bernoullis) {
       Bernoulli updated = b;
+      if (!should_misdetect(b.id)) {
+        child.bernoullis.push_back(std::move(updated));
+        continue;
+      }
       const double r = b.existence_probability;
       const double pD = cfg_.probability_of_detection;
       const double miss_norm = 1.0 - r * pD;
@@ -302,7 +326,14 @@ void PmbmTracker::enumerateChildren(
             std::log(b.existence_probability) + log_pD + log_lik[i][l];
       } else {
         // Misdetection: r ← (1 − p_D) · r / (1 − r·p_D), state unchanged.
+        // Skip the recursion entirely when source-aware misdetection
+        // says no sensor in this scan could have observed this
+        // Bernoulli (e.g. AIS broadcast from a different vessel).
         Bernoulli miss = b;
+        if (!should_misdetect(b.id)) {
+          child.bernoullis.push_back(std::move(miss));
+          continue;
+        }
         const double r = b.existence_probability;
         const double pD = cfg_.probability_of_detection;
         const double miss_norm = 1.0 - r * pD;

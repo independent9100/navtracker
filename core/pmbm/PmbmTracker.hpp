@@ -114,6 +114,20 @@ class PmbmTracker {
     double smart_birth_skip_r_min = 0.5;
     double smart_birth_skip_gate = 9.0;  // χ² 2-DoF 99 %
 
+    // Source-aware misdetection. AIS (and other source-specific
+    // broadcast sensors) report per vessel — a scan with vessel A's
+    // broadcast tells us nothing about vessel B's existence. With
+    // source_aware_misdetection ON, a Bernoulli skips the misdetection
+    // recursion when none of its contributing source_ids appears in
+    // the current scan. Falls back to regular misdetection for fresh
+    // Bernoullis with no contribution history (so brand-new births
+    // still decay normally if they go unobserved). Critical for the
+    // philos sparse-AIS scenario: without this, every other vessel's
+    // broadcast misdetects ours and r dies in O(1) scan. Off by
+    // default so unit-test math stays interpretable; on in the PMBM
+    // bench config.
+    bool source_aware_misdetection = false;
+
     // Within-hypothesis Bernoulli merging. Generalised from
     // MhtTracker::mergeBranches (cross-tree Bhattacharyya merge): after
     // enumerateChildren, fold pairs of Bernoullis within the same
