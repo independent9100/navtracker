@@ -277,6 +277,29 @@ void PmbmTracker::enumerateChildren(
     return false;
   };
 
+  // Idle-decay factor for the no-information branch (source-aware skip
+  // OR out-of-any-sensor-coverage). Uses the Bernoulli's most-recent
+  // contribution-touch time as "last observed". last_update can't be
+  // used directly because the estimator's predict advances it to the
+  // current filter time even when no measurement was applied.
+  // Returns 1 (no decay) when the knob is disabled, no prior touch
+  // history exists, or no time has elapsed.
+  const double scan_time_sec =
+      scan.empty() ? current_time_.seconds() : scan.front().time.seconds();
+  auto idle_decay_for = [&](const Bernoulli& b) {
+    if (cfg_.idle_halflife_sec <= 0.0) return 1.0;
+    auto it = contribution_history_.find(b.id);
+    if (it == contribution_history_.end() || it->second.empty()) return 1.0;
+    double last_touch_s = -std::numeric_limits<double>::infinity();
+    for (const auto& touch : it->second) {
+      const double ts = touch.time.seconds();
+      if (ts > last_touch_s) last_touch_s = ts;
+    }
+    const double dt = scan_time_sec - last_touch_s;
+    if (dt <= 0.0) return 1.0;
+    return std::exp(-std::log(2.0) * dt / cfg_.idle_halflife_sec);
+  };
+
   // Per-measurement P_D under the detection model (cost-matrix and
   // detection log-weight). Config fallback when no model wired.
   std::vector<double> pD_l(m, cfg_.probability_of_detection);
@@ -320,12 +343,14 @@ void PmbmTracker::enumerateChildren(
     for (const auto& b : parent.bernoullis) {
       Bernoulli updated = b;
       if (!should_misdetect(b.id)) {
+        updated.existence_probability *= idle_decay_for(b);
         child.bernoullis.push_back(std::move(updated));
         continue;
       }
       const double r = b.existence_probability;
       const double pD = compute_miss_pD(b);
       if (pD <= 0.0) {  // out of any sensor's coverage; no penalty
+        updated.existence_probability *= idle_decay_for(b);
         child.bernoullis.push_back(std::move(updated));
         continue;
       }
@@ -432,15 +457,20 @@ void PmbmTracker::enumerateChildren(
         // Misdetection: r ← (1 − p_D) · r / (1 − r·p_D), state unchanged.
         // Skip the recursion entirely when source-aware misdetection
         // says no sensor in this scan could have observed this
-        // Bernoulli (e.g. AIS broadcast from a different vessel).
+        // Bernoulli (e.g. AIS broadcast from a different vessel) —
+        // but still apply the idle-decay (knob: idle_halflife_sec) so
+        // ghost Bernoullis whose target has stopped reporting do
+        // eventually fall below r_min.
         Bernoulli miss = b;
         if (!should_misdetect(b.id)) {
+          miss.existence_probability *= idle_decay_for(b);
           child.bernoullis.push_back(std::move(miss));
           continue;
         }
         const double r = b.existence_probability;
         const double pD = compute_miss_pD(b);
         if (pD <= 0.0) {  // out of any sensor's coverage; no penalty
+          miss.existence_probability *= idle_decay_for(b);
           child.bernoullis.push_back(std::move(miss));
           continue;
         }
@@ -460,10 +490,18 @@ void PmbmTracker::enumerateChildren(
       if (!std::isfinite(C(row, col))) continue;
       const int l = col;
       const auto& nt = nts[l];
+      const double r_new =
+          (nt.rho_total > 0.0) ? (nt.rho_target / nt.rho_total) : 0.0;
+      // Phantom-birth gate (Config::min_new_bernoulli_existence). The
+      // measurement still consumes ρ_total mass (assignment stays
+      // balanced) but no near-zero-r Bernoulli is materialised.
+      if (r_new < cfg_.min_new_bernoulli_existence) {
+        child.log_weight += std::log(std::max(nt.rho_total, 1e-300));
+        continue;
+      }
       Bernoulli nb;
       nb.id = next_bernoulli_id_++;
-      nb.existence_probability =
-          (nt.rho_total > 0.0) ? (nt.rho_target / nt.rho_total) : 0.0;
+      nb.existence_probability = r_new;
       nb.mean = nt.mean;
       nb.covariance = nt.covariance;
       nb.imm_means = nt.imm_means;
@@ -650,6 +688,23 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
         }
       }
       if (claimed_by_existing) continue;
+
+      // PPP coverage gate. Σ w_c · ℓ(z | c) ≥ threshold ⇒ the
+      // existing PPP intensity already covers this measurement;
+      // skip the redundant injection that would otherwise inflate
+      // the local ρ_target on the next scan.
+      if (cfg_.smart_birth_skip_existing_ppp &&
+          cfg_.smart_birth_skip_existing_ppp_threshold > 0.0) {
+        double coverage = 0.0;
+        for (const auto& cprev : density_.ppp) {
+          if (cprev.weight <= 0.0) continue;
+          Track tprev = toTrack(cprev, current_time_);
+          coverage += cprev.weight *
+                      std::exp(estimator_.logLikelihood(tprev, z));
+          if (coverage >= cfg_.smart_birth_skip_existing_ppp_threshold) break;
+        }
+        if (coverage >= cfg_.smart_birth_skip_existing_ppp_threshold) continue;
+      }
 
       Track t = estimator_.initiate(z);
       PoissonComponent c;

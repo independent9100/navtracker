@@ -117,6 +117,27 @@ class PmbmTracker {
     double smart_birth_skip_r_min = 0.5;
     double smart_birth_skip_gate = 9.0;  // χ² 2-DoF 99 %
 
+    // Clutter-aware PPP-birth gate (Phase 3 polish). The
+    // smart_birth_skip_existing check above covers only Bernoullis,
+    // not the PPP intensity. Under measurement_driven_birth =
+    // true, every clutter return injects a fresh PoissonComponent
+    // centred on itself; on the next scan that component dominates
+    // ρ_target locally and any nearby measurement births a high-r
+    // Bernoulli regardless of the configured clutter density. This
+    // accumulates phantom tracks in clutter-heavy scenarios
+    // (dense_clutter, radar-clutter philos).
+    //
+    // Gate: before injecting a fresh PoissonComponent for
+    // measurement z, sum Σ_{c ∈ existing PPP} w_c · ℓ(z | c). If
+    // ≥ smart_birth_skip_existing_ppp_threshold, skip the injection
+    // — the existing PPP already covers this area and another
+    // component would just be redundant. Threshold is per-volume
+    // mass; tune relative to the configured / per-sensor λ_C so
+    // that "existing PPP density ≥ k · clutter density" is the
+    // trigger (typical k = 1–5). Set ≤ 0 to disable.
+    bool smart_birth_skip_existing_ppp = false;
+    double smart_birth_skip_existing_ppp_threshold = 0.0;
+
     // Source-aware misdetection. AIS (and other source-specific
     // broadcast sensors) report per vessel — a scan with vessel A's
     // broadcast tells us nothing about vessel B's existence. With
@@ -149,6 +170,38 @@ class PmbmTracker {
     // several scans to decay under (1-P_D)·p_S, growing unbounded on
     // long replays. Top-weighted are kept.
     std::size_t max_ppp_components = 200;
+
+    // Idle-decay half-life (seconds). When source_aware_misdetection
+    // is ON and a Bernoulli's contributing sources are absent from a
+    // scan, the textbook recursion (1 − r·p_D)/… is skipped — correct,
+    // because a different vessel's AIS broadcast carries no
+    // information about this target's existence. The side-effect is
+    // that ghost Bernoullis whose target has actually stopped
+    // reporting never decay. This knob applies an explicit time-based
+    // decay during those skipped-misdetection branches:
+    //   r ← r · exp(−ln 2 · Δt / idle_halflife_sec)
+    // where Δt is the elapsed time since the Bernoulli's last
+    // detection (b.last_update → scan.front().time). Reflects a
+    // prior expectation that a real maritime target reports at least
+    // every few minutes; below the half-life it costs the
+    // existence-stable real tracks essentially nothing, above it the
+    // ghosts decay below r_min and prune. ≤ 0 disables. Default 0
+    // for parity with prior behaviour; the bench config sets ~60 s.
+    double idle_halflife_sec = 0.0;
+
+    // Birth gate: new-target row Bernoulli birth threshold. The
+    // standard PMBM new-target Bernoulli existence is
+    //   r_new_l = ρ_target_l / (ρ_target_l + λ_C(z_l))
+    // which is correctly small under dense clutter, but the Bernoulli
+    // is still materialised, costs hypothesis cardinality, and shows
+    // up as an id-flap candidate before the r_min pruner catches it
+    // on the next scan. When this knob is > 0, the assignment cell is
+    // still feasible (clutter mass consumed normally so Murty stays
+    // balanced) but the Bernoulli is suppressed entirely when r_new
+    // is below the threshold. Defends against dense_clutter where
+    // every gated clutter return births a near-zero-r phantom.
+    // Conservative default 0; bench config sets ~0.05.
+    double min_new_bernoulli_existence = 0.0;
   };
 
   // Birth intensity callback. Called once per predict() (after the

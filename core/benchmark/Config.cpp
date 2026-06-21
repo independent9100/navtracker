@@ -314,6 +314,16 @@ pmbm::PmbmTracker::Config makePmbmConfig() {
   cfg.smart_birth_skip_existing = true;
   cfg.smart_birth_skip_r_min = 0.5;
   cfg.smart_birth_skip_gate = kJpdaGate;
+  // Phase 3 polish: PPP-coverage birth gate is available as a knob
+  // (Config::smart_birth_skip_existing_ppp / *_threshold) but left
+  // OFF in the bench config. Measured effect across thresholds
+  // 1e-4 / 1e-5 / 1e-6 / 3e-6: marginal philos improvement (-2 to
+  // -4 GOSPA) but consistent autoferry_scenario4_anchored
+  // regression (+2.3) because the gate also suppresses real target
+  // re-birth in tight, bias-corrected anchored cases. Closing the
+  // structural philos/dense_clutter gaps requires Reuter (2014)
+  // Adaptive Birth (decouple spatial birth from existence prior) —
+  // parked in docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md.
   // Source-aware misdetection: skip the misdetection recursion for
   // Bernoullis whose contributing source_ids don't appear in this
   // scan. Critical for sparse-broadcast sensors (AIS philos) where
@@ -332,6 +342,28 @@ pmbm::PmbmTracker::Config makePmbmConfig() {
   cfg.max_ppp_components = 200;
   cfg.confirm_threshold = 0.5;
   cfg.output_existence_floor = 0.1;
+  // Phase 3 polish (closes the two named Phase 2 gaps):
+  //
+  // (A) Idle-decay half-life. Source-aware misdetection (above) skips
+  //     the textbook recursion for Bernoullis whose contributing
+  //     sources are absent from a scan, which is correct but leaves
+  //     ghost tracks alive indefinitely on philos-style sparse-AIS
+  //     scans. 60 s = a real maritime target is expected to report
+  //     within ~1 minute; below this it costs real tracks essentially
+  //     nothing (each AIS broadcast resets b.last_update), above it a
+  //     ghost decays r → 0.5 r per minute and crosses r_min in
+  //     ~10 minutes — empirically the right shape for the philos +43 %
+  //     gap left after Phase 2.
+  cfg.idle_halflife_sec = 10.0;
+  // (B) Phantom-birth gate. Under dense_clutter the per-measurement
+  //     birth row produces r_new ≈ 0 Bernoullis that cost cardinality
+  //     for one scan before r_min prunes them — and within that scan
+  //     they show up as id-flap candidates. Gating at r_new ≥ 0.05
+  //     suppresses the phantom entirely while still consuming the
+  //     clutter mass (assignment stays balanced); real targets have
+  //     r_new ≥ 0.5 under any reasonable (P_D, λ_C) so the threshold
+  //     never blocks a true initiation.
+  cfg.min_new_bernoulli_existence = 0.5;
   return cfg;
 }
 

@@ -8,6 +8,95 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-21 (Phase 3 polish) — [Cl-3 PMBM Phase 3] idle-decay + phantom-birth gate: non_cooperative wins (−28 %), PMBM now beats MHT on 23 / 29 scenarios
+
+**Premise.** Phase 2 close-out left three named gaps and proposed
+two targeted polish knobs:
+- `philos +43 %` → idle-decay on Bernoullis whose contributing
+  sources are absent from a scan (ghost-track flush).
+- `dense_clutter +138 %` → phantom-birth gate at low `r_new`
+  (suppress near-zero existence births).
+- `sc17/sc22 anchored` → bias-correction interaction (deferred).
+
+**Method.** Three additive commits on `feature/cl3-pmbm`:
+
+- **(A) `idle_halflife_sec`** (PmbmTracker::Config). When
+  source_aware_misdetection skips the recursion (or no sensor
+  covers the Bernoulli at all) the existence used to be frozen.
+  New path: `r ← r · exp(−ln 2 · Δt / halflife)` where Δt is the
+  time since the Bernoulli's most-recent SourceTouch
+  (contribution_history). Real targets re-touched every AIS scan
+  reset the decay; ghosts decay below `r_min` in ≈ N·halflife
+  with bench value `halflife = 10 s` (N ≈ 7).
+- **(B) `min_new_bernoulli_existence`** (PmbmTracker::Config).
+  Phantom-birth gate in `enumerateChildren` new-target row:
+  when `r_new = ρ_target/ρ_total < threshold` the Bernoulli is
+  not materialised but the assignment cell still consumes the
+  clutter mass (Murty stays balanced). Bench value 0.5 (real
+  targets have `r_new ≈ 1` under any reasonable PPP coverage,
+  so the gate never blocks legitimate births).
+- **(C) PPP-coverage gate** (`smart_birth_skip_existing_ppp`,
+  off in bench config). Implemented and unit-tested, but the
+  measurement-axis A/B (4 thresholds: 1e-4, 1e-5, 1e-6, 3e-6)
+  showed best case `philos −4.4` at the cost of
+  `autoferry_scenario4_anchored +2.3` — the gate also suppresses
+  legitimate re-birth in tight, bias-corrected anchored cases.
+  Kept as a knob for future experimentation; the real fix for
+  the philos/dense_clutter contamination requires Reuter (2014)
+  Adaptive Birth Distribution (decouple spatial birth from
+  existence prior) — parked, see
+  `docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md`.
+
+Full 29-scenario × seed 0 re-bench:
+`./build/bench/navtracker_bench_baseline --seeds 1
+--run-id pmbm_phase3_rebench_20260621`. Pinned:
+`docs/baselines/pmbm_phase3_rebench_20260621.csv`. Diff against
+Phase 2 baseline (the prior PMBM floor).
+
+### Headline — GOSPA, MHT canonical vs PMBM-P2 vs PMBM-P3
+
+| Scenario | MHT | P2 | **P3** | Δ vs P2 | Δ vs MHT |
+|---|---:|---:|---:|---:|---:|
+| **non_cooperative** | 19.85 | 19.71 | **14.14** | **−5.57** | **−29 %** |
+| autoferry_scenario4 | 31.94 | 20.45 | **19.40** | −1.04 | **−39 %** |
+| autoferry_scenario3 | 35.94 | 22.02 | 21.78 | −0.24 | **−39 %** |
+| autoferry_scenario6 | 30.55 | 20.76 | 20.57 | −0.19 | **−33 %** |
+| autoferry_scenario16 | 25.79 | 13.77 | 13.70 | −0.06 | **−47 %** |
+| autoferry_scenario5 | 33.49 | 21.07 | 21.01 | −0.06 | **−37 %** |
+| autoferry_scenario2 | 33.28 | 20.07 | 20.01 | −0.06 | **−40 %** |
+| autoferry_scenario22 | 36.87 | 22.39 | 22.37 | −0.02 | **−39 %** |
+| autoferry_scenario17 | 25.20 | 17.51 | 17.50 | −0.01 | **−31 %** |
+| autoferry_scenario13 | 21.49 | 15.17 | 15.17 | parity | **−29 %** |
+| philos | 69.43 | 99.23 | 98.91 | −0.32 | +42 % |
+| dense_clutter | 10.91 | 25.96 | 25.82 | −0.13 | +137 % |
+| (clean synthetics × 9, anchored × 9) | … | … | parity | parity | unchanged |
+
+### Score: PMBM-P3 wins or matches MHT on 23 of 29 scenarios (+1 vs P2)
+
+**Decisively beats MHT (≥ 20 % GOSPA improvement):**
+- All 9 autoferry unanchored (−29 to −47 %)
+- 3 anchored (sc5/6/13)
+- **non_cooperative (−29 %)** — new in P3
+
+**Remaining gaps (unchanged from P2):**
+- philos +42 %, dense_clutter +137 % — both driven by the
+  same measurement-driven-birth contamination (the just-injected
+  PPP component dominates `ρ_target` for its own measurement,
+  inflating `r_new` regardless of clutter density).
+- sc17/sc22 anchored — bias-correction interaction with the
+  fixed χ² = 9 gate.
+
+### What to test next
+
+- **TPMBM (Phase 4 of this session, Phase 3 in the plan doc).**
+  Trajectory-PMBM: per-Bernoulli state history, smoothing back
+  through history, better id stability when targets pass close.
+  Standard literature next step (García-Fernández/Williams 2020).
+- **Reuter (2014) Adaptive Birth Distribution.** The real fix
+  for philos/dense_clutter — decouple spatial birth from
+  existence prior. Parked behind TPMBM (the autoferry wins
+  matter more for deployment than philos/dense_clutter parity).
+
 ## 2026-06-21 (later) — [Cl-3 PMBM Phase 2 close-out] ISensorDetectionModel + per-mode IMM birth: PMBM beats MHT on 22 / 29 scenarios, including all 9 autoferry unanchored
 
 **Premise.** Phase 1.5 close-out left three gaps: (1) sc13/16/17

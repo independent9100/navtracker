@@ -232,6 +232,81 @@ variant we could port if `ReorderBuffer` latency becomes a problem.
 - **No C++ port exists upstream.** We are the C++ port. Worth
   publishing back to the community in due course.
 
+## Parking lot — side quests discovered in Phase 3 polish
+
+These are **not** on the critical path to TPMBM. Pick up only if a
+deployment workload starts caring about the corresponding gap.
+
+### Clutter-aware PPP birth (philos / dense_clutter)
+
+**The problem.** Phase 3 added a "phantom-birth gate" on the
+new-target Bernoulli row: `r_new = ρ_target / (ρ_target + λ_C)`,
+suppress birth below a threshold. Measured effect on
+`dense_clutter`: essentially zero. Reason: with
+`measurement_driven_birth = true`, every incoming measurement
+(including every clutter point) injects a fresh PPP component
+centred on itself. On the next `buildNewTargetCandidates` call,
+that just-injected component dominates `ρ_target` regardless of
+how clutter-like the measurement actually is, so `r_new ≈ 1` for
+every measurement and the gate never fires.
+
+**Tried in Phase 3 polish — does not solve it.** The
+`smart_birth_skip_existing_ppp` knob (Phase 3 polish, 2026-06-21)
+implements formulation (1) below — skip the PPP injection when
+existing PPP coverage at `z` clears a threshold. Measured across
+thresholds 1e-4 / 1e-5 / 1e-6 / 3e-6: best case (1e-6)
+philos −4.4 GOSPA but autoferry_scenario4_anchored +2.3
+regression (the gate also suppresses legitimate re-birth in
+tight, bias-corrected anchored cases). The knob ships **OFF by
+default**; left in the codebase for future experimentation.
+
+**The real fix.** Reuter (2014) Adaptive Birth Distribution.
+Decouple SPATIAL birth (mean at measurement, R from
+estimator.initiate) from EXISTENCE prior (a configurable scalar
+λ_birth representing expected target birth rate per area, NOT
+biased by the measurement itself):
+
+```
+r_new_l = λ_birth / (λ_birth + λ_C(z_l))
+```
+
+This is the textbook fix for the contamination — our current
+implementation computes ρ_target using a PPP that was JUST
+injected from `z_l`, so the measurement inflates its own
+existence; Reuter's formulation uses an independent prior.
+
+Two viable formulations of the simpler gate-only approach (both
+tried and rejected as insufficient — see above):
+
+1. **Coverage check.** Skip injection if Σ_{c ∈ existing PPP}
+   w_c · ℓ(z | c) is already above a threshold (i.e. some prior
+   PPP component already explains this measurement, no need to
+   add another).
+2. **Prior-mass gate.** Compare birth weight × peak likelihood
+   to N · λ_C(z). Only inject when the prior odds of target
+   over clutter exceed N.
+
+**Expected impact (Adaptive Birth).** Closes both
+`dense_clutter +138 %` and `philos +43 %` (the spurious tracks
+in both are driven by the same measurement-driven-birth
+contamination).
+
+**Why not now.** Substantial refactor of `processBatch` and
+`buildNewTargetCandidates`. TPMBM unlocks larger wins on the
+deployment-relevant autoferry workload, so it goes first.
+
+### Anchored bias gating (sc17 / sc22 anchored regressions)
+
+`autoferry_scenario17_anchored` and `_scenario22_anchored` show
+PMBM-P2 GOSPA of 12.2 / 8.2 vs MHT's 2.6 / 3.4. When the
+SensorBiasEstimator publishes a correction that shrinks the
+measurement spread, the fixed χ² = 9 gate over-rejects and
+high-r Bernoullis flip between hypotheses (id-flap). Either the
+gate should widen post-bias-publish, or the bias correction
+should inflate `R` by the bias covariance (Schmidt-KF flow). The
+MHT path handles this via VIMM's visibility channel — PMBM has no
+equivalent yet.
+
 ## Decision points to revisit
 
 - **PMBM vs δ-GLMB.** Both are RFS conjugate priors with native

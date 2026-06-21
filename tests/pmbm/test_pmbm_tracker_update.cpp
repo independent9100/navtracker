@@ -290,6 +290,154 @@ TEST(PmbmTrackerUpdate, MurtyPicksMatchedAssignmentAsBestChild) {
 }
 
 // ---------------------------------------------------------------------------
+// Idle-decay (Phase 3A). With source_aware_misdetection ON and a
+// Bernoulli whose contributing sources are absent from this scan, the
+// regular misdetection recursion is skipped — but the idle_halflife_sec
+// decay factor should still apply. After one half-life (60 s), the
+// existence probability halves; with no source overlap the state is
+// otherwise untouched.
+TEST(PmbmTrackerUpdate, IdleDecayHalvesExistenceAfterHalflife) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.survival_probability = 1.0;       // isolate idle-decay from p_S
+  cfg.clutter_intensity = 1e-6;         // make PPP-driven birth dominant
+  cfg.k_best_per_hypothesis = 1;        // single child per parent for clarity
+  cfg.source_aware_misdetection = true;
+  cfg.idle_halflife_sec = 60.0;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // PPP component at origin → first scan births a high-r Bernoulli whose
+  // contribution_history records source "A".
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+
+  Measurement zA = pos2d(0.0, 0.0, 0.0, 0.5);
+  zA.source_id = "A";
+  tracker.processBatch({zA});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  ASSERT_EQ(tracker.density().mbm.front().bernoullis.size(), 1u);
+  const auto id_a = tracker.density().mbm.front().bernoullis.front().id;
+  const double r_before =
+      tracker.density().mbm.front().bernoullis.front().existence_probability;
+  ASSERT_GT(r_before, 0.9);
+
+  // Second scan: source "B" only, far enough away that no Bernoulli
+  // gate-passes — Murty assigns this to a new-target row, leaving id_a
+  // un-assigned (misdetection). Source-aware skip + idle_halflife_sec
+  // path: r ← r · exp(−ln 2 · 60 / 60) = 0.5 · r.
+  Measurement zB = pos2d(60.0, 1.0e4, 1.0e4, 0.5);
+  zB.source_id = "B";
+  tracker.processBatch({zB});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  double r_after = -1.0;
+  for (const auto& bb : tracker.density().mbm.front().bernoullis) {
+    if (bb.id == id_a) { r_after = bb.existence_probability; break; }
+  }
+  ASSERT_GE(r_after, 0.0);
+  EXPECT_NEAR(r_after, r_before * 0.5, 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// Phantom-birth gate (Phase 3B). When ρ_target/ρ_total < threshold the
+// new-target row's Bernoulli must NOT be materialised, but the
+// assignment must remain feasible (the measurement is consumed by
+// clutter mass). With an empty PPP and a single clutter-only
+// measurement, ρ_target = 0 so r_new = 0; the resulting MBM must have
+// zero Bernoullis (no phantom born), and the hypothesis must still
+// exist (assignment feasibility preserved).
+TEST(PmbmTrackerUpdate, PhantomBirthSuppressedBelowThreshold) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.survival_probability = 1.0;
+  cfg.clutter_intensity = 1.0;          // pure clutter regime
+  cfg.measurement_driven_birth = false; // gate the row, not the PPP injection
+  cfg.min_new_bernoulli_existence = 0.05;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  // PPP empty → rho_target = 0 → r_new = 0 < 0.05 → suppress.
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, 0.5)});
+
+  ASSERT_EQ(tracker.density().mbm.size(), 1u);
+  EXPECT_EQ(tracker.density().mbm[0].bernoullis.size(), 0u);
+}
+
+// Companion: with the same config but a near-coincident PPP component,
+// ρ_target ≫ λ_C, so r_new ≈ 1 and the Bernoulli IS born. Confirms the
+// gate doesn't block legitimate births.
+TEST(PmbmTrackerUpdate, PhantomBirthGateAllowsHighExistenceCandidate) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.survival_probability = 1.0;
+  cfg.clutter_intensity = 1e-6;
+  cfg.measurement_driven_birth = false;
+  cfg.min_new_bernoulli_existence = 0.05;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+
+  tracker.processBatch({pos2d(1.0, 0.1, 0.0, 0.5)});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  ASSERT_EQ(tracker.density().mbm[0].bernoullis.size(), 1u);
+  EXPECT_GT(tracker.density().mbm[0].bernoullis[0].existence_probability, 0.9);
+}
+
+// ---------------------------------------------------------------------------
+// PPP-coverage birth gate (Phase 3 polish): under
+// measurement_driven_birth, an injected PoissonComponent contributes
+// ρ_target ≈ peak likelihood on the same measurement. With the
+// smart_birth_skip_existing_ppp gate ON and threshold set low enough
+// that pre-existing PPP coverage clears it, a second measurement at
+// the same location must NOT inject a redundant PPP component.
+TEST(PmbmTrackerUpdate, PpcCoverageGateSkipsRedundantPppInjection) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-4;
+  cfg.measurement_driven_birth = true;
+  cfg.smart_birth_skip_existing_ppp = true;
+  cfg.smart_birth_skip_existing_ppp_threshold = 1e-4;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  // Seed PPP at origin with high weight so coverage at (0,0) easily
+  // clears the threshold.
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+  const auto ppp_before = tracker.density().ppp.size();
+  // Measurement at origin → PPP would normally be injected; gate skips.
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, 0.5)});
+  // PPP count: started with 1 seed, predict decays its weight but
+  // doesn't drop it, then the gate skips the injection that would
+  // have added a 2nd component. So ppp.size() must be unchanged
+  // relative to the pre-injection state (still 1).
+  EXPECT_EQ(tracker.density().ppp.size(), ppp_before);
+}
+
+// Companion: gate OFF lets the redundant injection through (count
+// grows by 1, original behaviour).
+TEST(PmbmTrackerUpdate, PpcCoverageGateOffAllowsRedundantPppInjection) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-4;
+  cfg.measurement_driven_birth = true;
+  cfg.smart_birth_skip_existing_ppp = false;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, 0.5)});
+  // Original behaviour: birth injected (1 seed + 1 birth = 2 PPP).
+  // Then PPP-decay by (1-p_D) shrinks weights but doesn't drop
+  // components yet; pruneAndNormalise applies weight_min = 1e-4 floor
+  // — 1.0 · 0.1 = 0.1 still > 1e-4, kept.
+  EXPECT_EQ(tracker.density().ppp.size(), 2u);
+}
+
+// ---------------------------------------------------------------------------
 // Determinism: replaying the exact same scan sequence gives identical
 // MBM state (same hypothesis count, same Bernoulli ids assigned in order).
 TEST(PmbmTrackerUpdate, ReplayDeterministicallyReproducesState) {
