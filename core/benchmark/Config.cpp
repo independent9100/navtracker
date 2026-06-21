@@ -324,6 +324,13 @@ pmbm::PmbmTracker::Config makePmbmConfig() {
   // structural philos/dense_clutter gaps requires Reuter (2014)
   // Adaptive Birth (decouple spatial birth from existence prior) —
   // parked in docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md.
+
+  // Phase 4 (TPMBM): forward-pass trajectory recording per Bernoulli.
+  // Window = 50 scans gives ~50 s of history at 1 Hz (typical bench
+  // scenario), enough to expose the full ferry pass via
+  // PmbmTracker::trajectoryFor(id). Zero algorithmic effect on
+  // per-scan tracking; bench MUST stay bit-identical vs Phase 3.
+  cfg.trajectory_window_scans = 50;
   // Source-aware misdetection: skip the misdetection recursion for
   // Bernoullis whose contributing source_ids don't appear in this
   // scan. Critical for sparse-broadcast sensors (AIS philos) where

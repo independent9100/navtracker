@@ -152,7 +152,7 @@ clean (task #1).
 
 **Test.** `BusComparison.ImmPmbmVsImmJpdaVsImmMht`.
 
-### Phase 3: TPMBM (Trajectory PMBM) — ~1–2 weeks
+### Phase 3: TPMBM (Trajectory PMBM) — ~1–2 weeks (Phase 3(A) shipped 2026-06-21)
 
 **Deliverable.** Bernoullis carry per-target **trajectories**
 (`vector<TrajectoryPoint>`) instead of just the current state.
@@ -173,7 +173,28 @@ This is the **structural replacement** for `MhtTracker`. Once TPMBM
 beats TOMHT on the bus scenarios end-to-end, MHT can be deprecated
 (but kept around for comparison and as a sanity backstop).
 
-**Test.** `TPmbmTracker.TrajectoryLifecycleEmitsExpectedSinkEvents`.
+**Status (2026-06-21):**
+
+- **Phase 3(A) ✅ SHIPPED** — Forward-pass trajectory bookkeeping.
+  `TrajectoryPoint` type, `Bernoulli::trajectory` +
+  `birth_time`, append on every detection / misdetection /
+  new-target birth, window-truncated to
+  `Config::trajectory_window_scans` (50 in bench config). Public
+  accessor `PmbmTracker::trajectoryFor(BernoulliId)` returns the
+  dominant hypothesis's trajectory. Bench bit-identical to
+  Phase 3 — pure additive bookkeeping, zero algorithmic effect.
+- **Phase 3(B) — TODO** — `setTrackSink(ITrackSink*)` on
+  PmbmTracker. Per-scan diff against the prior-scan track set to
+  emit `onTrackConfirmed/Updated/Deleted`. Carry trajectory on
+  Deleted.
+- **Phase 3(C) — TODO** — RTS smoothing back through the
+  trajectory. Requires per-scan transition matrix storage
+  (either on `TrajectoryPoint` or a parallel structure on
+  Bernoulli). Expected GOSPA improvement on autoferry.
+
+**Test.** `TPmbmTracker.TrajectoryLifecycleEmitsExpectedSinkEvents`
+(pending Phase 3(B)). Forward-pass coverage in
+`PmbmTrackerUpdate.Tpmbm*` (3 tests, 2026-06-21).
 
 ### Phase 4: GOSPA / T-GOSPA metrics — ~3 days
 

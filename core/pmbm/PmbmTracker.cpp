@@ -21,6 +21,24 @@ namespace {
 
 constexpr double kInf = std::numeric_limits<double>::infinity();
 
+// TPMBM trajectory append + window trim. Called after detection
+// (post-update state) and after misdetection (post-predict state).
+// Skips when window=0 (TPMBM disabled).
+void appendTrajectoryPoint(Bernoulli& b, std::size_t window_scans,
+                           Timestamp t) {
+  if (window_scans == 0) return;
+  TrajectoryPoint p;
+  p.time = t;
+  p.state = b.mean;
+  p.covariance = b.covariance;
+  b.trajectory.push_back(std::move(p));
+  if (b.trajectory.size() > window_scans) {
+    const std::size_t drop = b.trajectory.size() - window_scans;
+    b.trajectory.erase(b.trajectory.begin(),
+                       b.trajectory.begin() + drop);
+  }
+}
+
 // Numerically stable log(Σ exp(x_i)). Returns -inf for empty input.
 double logSumExp(const std::vector<double>& v) {
   if (v.empty()) return -kInf;
@@ -344,6 +362,8 @@ void PmbmTracker::enumerateChildren(
       Bernoulli updated = b;
       if (!should_misdetect(b.id)) {
         updated.existence_probability *= idle_decay_for(b);
+        appendTrajectoryPoint(updated, cfg_.trajectory_window_scans,
+                              current_time_);
         child.bernoullis.push_back(std::move(updated));
         continue;
       }
@@ -351,6 +371,8 @@ void PmbmTracker::enumerateChildren(
       const double pD = compute_miss_pD(b);
       if (pD <= 0.0) {  // out of any sensor's coverage; no penalty
         updated.existence_probability *= idle_decay_for(b);
+        appendTrajectoryPoint(updated, cfg_.trajectory_window_scans,
+                              current_time_);
         child.bernoullis.push_back(std::move(updated));
         continue;
       }
@@ -358,6 +380,8 @@ void PmbmTracker::enumerateChildren(
       updated.existence_probability =
           (miss_norm > 0.0) ? ((1.0 - pD) * r) / miss_norm : 0.0;
       child.log_weight += std::log(std::max(miss_norm, 1e-300));
+      appendTrajectoryPoint(updated, cfg_.trajectory_window_scans,
+                            current_time_);
       child.bernoullis.push_back(std::move(updated));
     }
     out.push_back(std::move(child));
@@ -446,6 +470,8 @@ void PmbmTracker::enumerateChildren(
         const int l = bernoulli_to_meas[i];
         Bernoulli det = updated[i][l];
         det.last_update = scan[l].time;
+        appendTrajectoryPoint(det, cfg_.trajectory_window_scans,
+                              scan[l].time);
         child.bernoullis.push_back(std::move(det));
         // Full per-Bernoulli detection contribution to log-weight:
         // log(r · p_D · ℓ).  P_D is the assigned measurement's
@@ -464,6 +490,8 @@ void PmbmTracker::enumerateChildren(
         Bernoulli miss = b;
         if (!should_misdetect(b.id)) {
           miss.existence_probability *= idle_decay_for(b);
+          appendTrajectoryPoint(miss, cfg_.trajectory_window_scans,
+                                current_time_);
           child.bernoullis.push_back(std::move(miss));
           continue;
         }
@@ -471,6 +499,8 @@ void PmbmTracker::enumerateChildren(
         const double pD = compute_miss_pD(b);
         if (pD <= 0.0) {  // out of any sensor's coverage; no penalty
           miss.existence_probability *= idle_decay_for(b);
+          appendTrajectoryPoint(miss, cfg_.trajectory_window_scans,
+                                current_time_);
           child.bernoullis.push_back(std::move(miss));
           continue;
         }
@@ -479,6 +509,8 @@ void PmbmTracker::enumerateChildren(
             (miss_norm > 0.0) ? ((1.0 - pD) * r) / miss_norm : 0.0;
         // Misdetection contribution: log(1 − r · p_D).
         child.log_weight += std::log(std::max(miss_norm, 1e-300));
+        appendTrajectoryPoint(miss, cfg_.trajectory_window_scans,
+                              current_time_);
         child.bernoullis.push_back(std::move(miss));
       }
     }
@@ -508,6 +540,9 @@ void PmbmTracker::enumerateChildren(
       nb.imm_covariances = nt.imm_covariances;
       nb.imm_mode_probabilities = nt.imm_mode_probabilities;
       nb.last_update = scan[l].time;
+      nb.birth_time = scan[l].time;
+      appendTrajectoryPoint(nb, cfg_.trajectory_window_scans,
+                            scan[l].time);
       child.bernoullis.push_back(std::move(nb));
       // New-target contribution: log(ρ_total).
       child.log_weight += std::log(nt.rho_total);
@@ -895,6 +930,26 @@ const std::vector<Track>& PmbmTracker::tracks() const {
     aggregated_tracks_dirty_ = false;
   }
   return aggregated_tracks_;
+}
+
+std::vector<TrajectoryPoint> PmbmTracker::trajectoryFor(BernoulliId id) const {
+  // Pick the highest-weight hypothesis containing this id. Trajectory
+  // is per-Bernoulli (per-hypothesis), so the dominant interpretation
+  // is the right one to expose (matches refreshAggregatedTracks'
+  // emission of the dominant-weighted state).
+  const GlobalHypothesis* best_h = nullptr;
+  const Bernoulli* best_b = nullptr;
+  for (const auto& h : density_.mbm) {
+    for (const auto& b : h.bernoullis) {
+      if (b.id != id) continue;
+      if (best_h == nullptr || h.weight > best_h->weight) {
+        best_h = &h;
+        best_b = &b;
+      }
+    }
+  }
+  if (best_b == nullptr) return {};
+  return best_b->trajectory;
 }
 
 void PmbmTracker::refreshAggregatedTracks() const {

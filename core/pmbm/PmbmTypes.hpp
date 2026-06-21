@@ -34,6 +34,29 @@
 
 namespace navtracker::pmbm {
 
+// One point along a Bernoulli's trajectory (TPMBM, Phase 4).
+//
+// In standard PMBM each Bernoulli carries only the *current* state
+// `(mean, covariance)` as a single-target density. Trajectory-PMBM
+// (García-Fernández, Williams, Granström, Svensson 2020,
+// arXiv:1912.08718) extends this so each Bernoulli carries the
+// posterior over the *entire* trajectory from birth to now —
+// concretely a vector of `TrajectoryPoint` recording the
+// (smoothed-or-filtered) state at each scan the Bernoulli was alive.
+//
+// Phase 4 incremental: forward-pass filter trajectory (no smoothing
+// yet). The state recorded here is the post-update state at each
+// observation, or the predicted state on misdetection scans. RTS
+// smoothing back through the trajectory is the next increment
+// (Phase 4(B)). Doesn't change the per-scan tracking math but
+// (a) gives ITrackSink consumers the full track history on
+// `onTrackDeleted` and (b) is the necessary scaffold for smoothing.
+struct TrajectoryPoint {
+  Timestamp time;
+  Eigen::VectorXd state;        // n_state
+  Eigen::MatrixXd covariance;   // n_state × n_state
+};
+
 // Stable identifier for a Bernoulli component across hypotheses and
 // scans. Two Bernoullis in different global hypotheses with the same id
 // refer to the *same* target — they are alternative state distributions
@@ -107,6 +130,16 @@ struct Bernoulli {
   // Timestamp of the last measurement that updated this Bernoulli.
   // Used by output aggregation and by the predict step to compute dt.
   Timestamp last_update{};
+
+  // TPMBM (Phase 4). Birth time = first scan time the Bernoulli was
+  // alive (set at new-target row materialisation, preserved
+  // thereafter). Trajectory = forward-pass post-update / post-predict
+  // state history, capped at Config::trajectory_window_scans (the
+  // most recent N). Empty when TPMBM is disabled
+  // (Config::trajectory_window_scans == 0) — keeps Phase 3 bit-
+  // identical for consumers that don't opt in.
+  Timestamp birth_time{};
+  std::vector<TrajectoryPoint> trajectory;
 
   // Convenience: a Bernoulli is "alive" if r is above the supplied
   // pruning threshold. Caller picks the threshold per the tracker's

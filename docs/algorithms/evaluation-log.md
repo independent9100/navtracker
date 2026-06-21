@@ -8,6 +8,70 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-21 (Phase 4 TPMBM increment 1) — [Cl-3 PMBM Phase 4(A)] forward-pass trajectory per Bernoulli: foundation for TPMBM, zero bench regression
+
+**Premise.** Plan doc Phase 3 (our Phase 4) calls for Trajectory
+PMBM (TPMBM, García-Fernández/Williams/Granström/Svensson 2020,
+arXiv:1912.08718): per-Bernoulli state HISTORY, smoothing through
+the trajectory, T-GOSPA metric, ITrackSink-driven lifecycle. Full
+TPMBM is a multi-week effort (RTS smoothing, trajectory-level
+pruning, new metric). This entry covers the first increment —
+forward-pass bookkeeping — which is the necessary scaffold for
+everything else and gives operator-visible track history at zero
+algorithmic cost.
+
+**Method.** Three additive changes in `feature/cl3-pmbm`:
+
+- `TrajectoryPoint` type in `core/pmbm/PmbmTypes.hpp` (time, state,
+  covariance). `Bernoulli` extended with `birth_time` and
+  `std::vector<TrajectoryPoint> trajectory`. Default-empty —
+  zero-overhead when `Config::trajectory_window_scans = 0`.
+- `appendTrajectoryPoint` helper called at three points in
+  `enumerateChildren`: post-update (detection branch),
+  post-predict (regular and empty-scan misdetection branches),
+  and on new-target row materialisation. Truncates to the most
+  recent N points per the window config.
+- Public accessor
+  `PmbmTracker::trajectoryFor(BernoulliId) const` returns the
+  dominant (highest-weight) hypothesis's trajectory for that id.
+  Empty when id is unknown or TPMBM disabled.
+
+Bench (config knob ON, `trajectory_window_scans = 50`): 4-scenario
+probe (philos, autoferry_scenario2/22, non_cooperative, crossing,
+crossing_dropout) shows bit-identical GOSPA / id_switches /
+lifetime vs Phase 3 baseline — expected because trajectory
+recording is purely additive bookkeeping (no path reads trajectory
+back into the tracker math).
+
+### What this unlocks
+
+- **Operator UX** — `onTrackDeleted` consumers (when ITrackSink is
+  wired into PMBM, Phase 4(B)) can now emit the full per-target
+  path, not just the final state.
+- **RTS smoothing** — the trajectory stores per-point (state, cov)
+  which is enough for a backward Rauch-Tung-Striebel pass once
+  transition matrices are also stored. Phase 4(C) candidate.
+- **T-GOSPA metric** — trajectory-time-aligned variant of GOSPA;
+  needs trajectory access to compute. Per plan doc Phase 4 (our
+  Phase 5).
+
+### What to test next
+
+- **Phase 4(B): ITrackSink wiring** — fire
+  `onTrackConfirmed/Updated/Deleted` from PMBM, carry trajectory
+  on Deleted. Requires `setTrackSink` on PmbmTracker and a
+  per-scan diff against the previous-scan track set.
+- **Phase 4(C): RTS smoothing** — store per-scan state transition
+  on TrajectoryPoint (or augment Bernoulli with a parallel
+  transition history). Re-runs the trajectory backward at each
+  update so past states get the benefit of future measurements.
+  Expected GOSPA win on autoferry (smoother trajectories →
+  lower per-point error). Whether to gate via window or every
+  scan is the parameter.
+- **Phase 5: T-GOSPA metric.** Pull GOSPA out of `Ospa.hpp`,
+  add trajectory-time alignment. Reproduces published TPMBM
+  comparisons.
+
 ## 2026-06-21 (Phase 3 polish) — [Cl-3 PMBM Phase 3] idle-decay + phantom-birth gate: non_cooperative wins (−28 %), PMBM now beats MHT on 23 / 29 scenarios
 
 **Premise.** Phase 2 close-out left three named gaps and proposed

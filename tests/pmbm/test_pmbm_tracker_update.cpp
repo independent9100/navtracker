@@ -438,6 +438,126 @@ TEST(PmbmTrackerUpdate, PpcCoverageGateOffAllowsRedundantPppInjection) {
 }
 
 // ---------------------------------------------------------------------------
+// TPMBM trajectory recording (Phase 4). With
+// trajectory_window_scans > 0, each detection appends a
+// TrajectoryPoint to the Bernoulli's trajectory; with the knob = 0
+// the trajectory stays empty (Phase 3 bit-identical).
+TEST(PmbmTrackerUpdate, TpmbmDisabledLeavesTrajectoryEmpty) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.trajectory_window_scans = 0;  // disabled
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, 0.5)});
+  tracker.processBatch({pos2d(2.0, 0.1, 0.0, 0.5)});
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  for (const auto& b : tracker.density().mbm.front().bernoullis) {
+    EXPECT_TRUE(b.trajectory.empty());
+  }
+}
+
+TEST(PmbmTrackerUpdate, TpmbmRecordsDetectionAndMisdetectionPoints) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.k_best_per_hypothesis = 1;
+  cfg.trajectory_window_scans = 10;  // generous window
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+
+  // Scan 1 at t=1: birth Bernoulli at origin.
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, 0.5)});
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  ASSERT_EQ(tracker.density().mbm.front().bernoullis.size(), 1u);
+  const auto id = tracker.density().mbm.front().bernoullis.front().id;
+  EXPECT_EQ(tracker.density().mbm.front().bernoullis.front().trajectory.size(),
+            1u);
+  EXPECT_EQ(tracker.density().mbm.front().bernoullis.front().birth_time
+                .seconds(),
+            1.0);
+
+  // Scan 2 at t=2: detection at (0.1, 0). Trajectory grows to 2.
+  tracker.processBatch({pos2d(2.0, 0.1, 0.0, 0.5)});
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  const Bernoulli* survivor = nullptr;
+  for (const auto& b : tracker.density().mbm.front().bernoullis) {
+    if (b.id == id) { survivor = &b; break; }
+  }
+  ASSERT_NE(survivor, nullptr);
+  EXPECT_EQ(survivor->trajectory.size(), 2u);
+  EXPECT_EQ(survivor->trajectory.front().time.seconds(), 1.0);
+  EXPECT_EQ(survivor->trajectory.back().time.seconds(), 2.0);
+
+  // Scan 3 at t=3: empty scan → misdetection. Trajectory still grows
+  // (post-predict state recorded).
+  tracker.predict(Timestamp::fromSeconds(3.0));
+  tracker.processBatch({});
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  survivor = nullptr;
+  for (const auto& b : tracker.density().mbm.front().bernoullis) {
+    if (b.id == id) { survivor = &b; break; }
+  }
+  ASSERT_NE(survivor, nullptr);
+  EXPECT_EQ(survivor->trajectory.size(), 3u);
+  EXPECT_EQ(survivor->trajectory.back().time.seconds(), 3.0);
+}
+
+TEST(PmbmTrackerUpdate, TpmbmTrajectoryForReturnsDominantHypothesis) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.k_best_per_hypothesis = 1;
+  cfg.trajectory_window_scans = 10;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, 0.5)});
+  tracker.processBatch({pos2d(2.0, 0.1, 0.0, 0.5)});
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  const auto id = tracker.density().mbm.front().bernoullis.front().id;
+  const auto traj = tracker.trajectoryFor(id);
+  EXPECT_EQ(traj.size(), 2u);
+  EXPECT_EQ(traj.front().time.seconds(), 1.0);
+  EXPECT_EQ(traj.back().time.seconds(), 2.0);
+
+  // Unknown id returns empty.
+  EXPECT_TRUE(tracker.trajectoryFor(999999).empty());
+}
+
+TEST(PmbmTrackerUpdate, TpmbmTrajectoryRespectsWindowCap) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.k_best_per_hypothesis = 1;
+  cfg.trajectory_window_scans = 3;  // tight cap
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+
+  // 5 detection scans — trajectory must cap at 3 (most recent kept).
+  for (int i = 1; i <= 5; ++i) {
+    tracker.processBatch({pos2d(static_cast<double>(i),
+                                0.1 * i, 0.0, 0.5)});
+  }
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  for (const auto& b : tracker.density().mbm.front().bernoullis) {
+    if (b.trajectory.empty()) continue;
+    EXPECT_LE(b.trajectory.size(), 3u);
+    if (b.trajectory.size() == 3u) {
+      EXPECT_EQ(b.trajectory.front().time.seconds(), 3.0);
+      EXPECT_EQ(b.trajectory.back().time.seconds(), 5.0);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Determinism: replaying the exact same scan sequence gives identical
 // MBM state (same hypothesis count, same Bernoulli ids assigned in order).
 TEST(PmbmTrackerUpdate, ReplayDeterministicallyReproducesState) {

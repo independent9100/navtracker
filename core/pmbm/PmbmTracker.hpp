@@ -138,6 +138,16 @@ class PmbmTracker {
     bool smart_birth_skip_existing_ppp = false;
     double smart_birth_skip_existing_ppp_threshold = 0.0;
 
+    // Trajectory-PMBM (Phase 4, García-Fernández/Williams 2020). When
+    // > 0, each Bernoulli records its forward-pass post-update state
+    // history at every detection and post-predict state at every
+    // misdetection, truncated to the most recent N points. Provides
+    // operator-visible track history (consumed by ITrackSink on
+    // delete) and the scaffold for future RTS smoothing.
+    // 0 = disabled (Phase 3 bit-identical, zero overhead). Typical
+    // bench value 50 (≈ 50 scans of history at scan rate 1 Hz).
+    std::size_t trajectory_window_scans = 0;
+
     // Source-aware misdetection. AIS (and other source-specific
     // broadcast sensors) report per vessel — a scan with vessel A's
     // broadcast tells us nothing about vessel B's existence. With
@@ -274,6 +284,16 @@ class PmbmTracker {
 
   // Next Bernoulli id that will be minted (introspection / tests).
   BernoulliId nextBernoulliId() const noexcept { return next_bernoulli_id_; }
+
+  // TPMBM (Phase 4) — forward-pass trajectory for a given Bernoulli
+  // id. Walks the MBM, finds the highest-weight global hypothesis
+  // containing that id, returns its trajectory. Empty when (a) the
+  // id is not present in any hypothesis, (b) trajectory_window_scans
+  // is 0 (TPMBM disabled), or (c) the Bernoulli has not yet been
+  // observed (e.g. just-created seed). One-stop accessor for
+  // consumers that want trajectory output without subscribing to
+  // every hypothesis.
+  std::vector<TrajectoryPoint> trajectoryFor(BernoulliId id) const;
 
   // Aggregated single-Track view of the MBM, one entry per unique
   // Bernoulli id (§3.6 of pmbm-design.md):
