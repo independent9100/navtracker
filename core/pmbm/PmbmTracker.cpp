@@ -843,6 +843,11 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
   }
 
   aggregated_tracks_dirty_ = true;
+  // Phase 4(B) push-based lifecycle events. Diffs against the prior-
+  // scan emitted set. No-op when no sink is wired.
+  if (track_sink_ != nullptr && !scan.empty()) {
+    firePmbmLifecycleEvents(scan.front().time);
+  }
 }
 
 namespace {
@@ -930,6 +935,50 @@ const std::vector<Track>& PmbmTracker::tracks() const {
     aggregated_tracks_dirty_ = false;
   }
   return aggregated_tracks_;
+}
+
+void PmbmTracker::firePmbmLifecycleEvents(Timestamp event_time) {
+  if (track_sink_ == nullptr) return;
+  // Compute current emitted track set + statuses by id.
+  std::map<std::uint64_t, TrackStatus> current;
+  const auto& ts = tracks();
+  for (const auto& t : ts) current[t.id.value] = t.status;
+
+  // Initiated (new ids, status Tentative) and Confirmed (new ids
+  // status Confirmed, or prior Tentative → Confirmed transition).
+  for (const auto& [id, status] : current) {
+    const TrackId tid{id};
+    const TrackLifecycleEvent e{tid, event_time, status};
+    auto pit = prev_emitted_statuses_.find(id);
+    if (pit == prev_emitted_statuses_.end()) {
+      // Newly emitted this scan.
+      if (status == TrackStatus::Confirmed) {
+        track_sink_->onTrackInitiated(e);  // existence preceded
+                                            // confirmation in one scan
+        track_sink_->onTrackConfirmed(e);
+      } else {
+        track_sink_->onTrackInitiated(e);
+      }
+    } else {
+      // Existed last scan; check status transition.
+      if (pit->second != TrackStatus::Confirmed &&
+          status == TrackStatus::Confirmed) {
+        track_sink_->onTrackConfirmed(e);
+      }
+    }
+    // Every track present this scan emits onTrackUpdated.
+    track_sink_->onTrackUpdated(e);
+  }
+
+  // Deleted (prior id absent now). Emit BEFORE updating the snapshot.
+  // Status reported is the pre-deletion status.
+  for (const auto& [id, status] : prev_emitted_statuses_) {
+    if (current.find(id) != current.end()) continue;
+    const TrackId tid{id};
+    track_sink_->onTrackDeleted({tid, event_time, status});
+  }
+
+  prev_emitted_statuses_ = std::move(current);
 }
 
 std::vector<TrajectoryPoint> PmbmTracker::trajectoryFor(BernoulliId id) const {

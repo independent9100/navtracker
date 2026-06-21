@@ -558,6 +558,90 @@ TEST(PmbmTrackerUpdate, TpmbmTrajectoryRespectsWindowCap) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 4(B): ITrackSink wiring.
+class RecordingTrackSink : public navtracker::ITrackSink {
+ public:
+  std::vector<navtracker::TrackLifecycleEvent> initiated;
+  std::vector<navtracker::TrackLifecycleEvent> confirmed;
+  std::vector<navtracker::TrackLifecycleEvent> updated;
+  std::vector<navtracker::TrackLifecycleEvent> deleted;
+  void onTrackInitiated(const navtracker::TrackLifecycleEvent& e) override {
+    initiated.push_back(e);
+  }
+  void onTrackConfirmed(const navtracker::TrackLifecycleEvent& e) override {
+    confirmed.push_back(e);
+  }
+  void onTrackUpdated(const navtracker::TrackLifecycleEvent& e) override {
+    updated.push_back(e);
+  }
+  void onTrackDeleted(const navtracker::TrackLifecycleEvent& e) override {
+    deleted.push_back(e);
+  }
+};
+
+TEST(PmbmTrackerUpdate, TrackSinkFiresInitiatedAndConfirmedOnHighRBirth) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.k_best_per_hypothesis = 1;
+  cfg.confirm_threshold = 0.5;     // standard
+  cfg.output_existence_floor = 0.1;
+  PmbmTracker tracker(f.ekf, cfg);
+  RecordingTrackSink sink;
+  tracker.setTrackSink(&sink);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+
+  // Single scan: r_new ≈ 1 ⇒ Confirmed immediately on emit. Sink
+  // fires Initiated + Confirmed + Updated in that order, no Deleted.
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, 0.5)});
+  EXPECT_EQ(sink.initiated.size(), 1u);
+  EXPECT_EQ(sink.confirmed.size(), 1u);
+  EXPECT_EQ(sink.updated.size(), 1u);
+  EXPECT_EQ(sink.deleted.size(), 0u);
+  EXPECT_EQ(sink.initiated[0].id.value, sink.confirmed[0].id.value);
+}
+
+TEST(PmbmTrackerUpdate, TrackSinkFiresDeletedWhenExistenceFallsBelowFloor) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.survival_probability = 0.5;       // fast decay to force delete
+  cfg.clutter_intensity = 1e-6;
+  cfg.k_best_per_hypothesis = 1;
+  cfg.output_existence_floor = 0.5;     // drops fast
+  PmbmTracker tracker(f.ekf, cfg);
+  RecordingTrackSink sink;
+  tracker.setTrackSink(&sink);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+
+  // Scan 1: birth
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, 0.5)});
+  ASSERT_EQ(sink.initiated.size(), 1u);
+  ASSERT_EQ(sink.deleted.size(), 0u);
+  const auto id = sink.initiated[0].id.value;
+
+  // Scans 2..6: empty (miss). With p_S=0.5 and p_D=0.9, r decays
+  // multiplicatively each scan. The track drops below the
+  // output_existence_floor after a few scans → Deleted fires.
+  for (int t = 2; t <= 6; ++t) {
+    tracker.predict(Timestamp::fromSeconds(static_cast<double>(t)));
+    // Empty scan with one sentinel measurement so scan.front().time
+    // is well-defined for the sink event timestamp.
+    tracker.processBatch({pos2d(static_cast<double>(t),
+                                1e5, 1e5, 0.5)});  // far away
+  }
+  // Eventually the original id is deleted.
+  bool found_delete = false;
+  for (const auto& e : sink.deleted) {
+    if (e.id.value == id) { found_delete = true; break; }
+  }
+  EXPECT_TRUE(found_delete);
+}
+
+// ---------------------------------------------------------------------------
 // Determinism: replaying the exact same scan sequence gives identical
 // MBM state (same hypothesis count, same Bernoulli ids assigned in order).
 TEST(PmbmTrackerUpdate, ReplayDeterministicallyReproducesState) {

@@ -183,10 +183,14 @@ beats TOMHT on the bus scenarios end-to-end, MHT can be deprecated
   accessor `PmbmTracker::trajectoryFor(BernoulliId)` returns the
   dominant hypothesis's trajectory. Bench bit-identical to
   Phase 3 — pure additive bookkeeping, zero algorithmic effect.
-- **Phase 3(B) — TODO** — `setTrackSink(ITrackSink*)` on
-  PmbmTracker. Per-scan diff against the prior-scan track set to
-  emit `onTrackConfirmed/Updated/Deleted`. Carry trajectory on
-  Deleted.
+- **Phase 3(B) ✅ SHIPPED** — `setTrackSink(ITrackSink*)` on
+  PmbmTracker. Per-scan diff against prior-scan emitted statuses
+  fires `onTrackInitiated/Confirmed/Updated/Deleted` matching
+  MhtTracker semantics. Trajectory accessible via
+  `trajectoryFor(id)` inside callbacks (dominant hypothesis still
+  live). Pull-only mode preserved when no sink wired.
+  Trajectory-on-Deleted needs a pre-prune snapshot — Phase 3(D)
+  candidate, not done.
 - **Phase 3(C) — TODO** — RTS smoothing back through the
   trajectory. Requires per-scan transition matrix storage
   (either on `TrajectoryPoint` or a parallel structure on

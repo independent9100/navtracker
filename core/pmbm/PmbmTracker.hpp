@@ -12,6 +12,7 @@
 #include "ports/IEstimator.hpp"
 #include "ports/ISensorBiasProvider.hpp"
 #include "ports/ISensorDetectionModel.hpp"
+#include "ports/ITrackSink.hpp"
 
 // Poisson Multi-Bernoulli Mixture (PMBM) tracker. Sibling to MhtTracker,
 // implementing the same multi-target tracking goal via the Random Finite
@@ -269,6 +270,19 @@ class PmbmTracker {
     bias_provider_ = provider;
   }
 
+  // Optional. Push-based lifecycle observer (Phase 4(B)). After each
+  // processBatch the tracker computes the diff between the prior-scan
+  // emitted track set and the current refreshed aggregated_tracks_,
+  // firing onTrackInitiated (new Tentative), onTrackConfirmed
+  // (new Confirmed OR Tentative→Confirmed transition), onTrackUpdated
+  // (every track present this scan), and onTrackDeleted (id present
+  // prior, absent now — pruned below output_existence_floor). When
+  // null = pull-only mode (legacy, bit-identical to Phase 4(A)).
+  // Trajectory (TPMBM) is accessible via trajectoryFor(id) within
+  // any of these callbacks — the call site holds the dominant
+  // hypothesis until the next predict.
+  void setTrackSink(ITrackSink* sink) { track_sink_ = sink; }
+
   // Per-sensor detection model. When set, the cost matrix, new-target
   // birth weight, and misdetection recursion use the per-(sensor,
   // model, source_id) (P_D, λ_C) and per-coverage missDetectionProb
@@ -375,6 +389,18 @@ class PmbmTracker {
   static constexpr double kContributionWindowSec = 2.0;
   mutable std::vector<Track> aggregated_tracks_;
   mutable bool aggregated_tracks_dirty_{true};
+
+  // Phase 4(B). ITrackSink (optional). prev_emitted_statuses_ maps
+  // emitted TrackId.value → status as of the prior scan; used to
+  // detect Initiated / Tentative→Confirmed / Updated / Deleted
+  // transitions on each processBatch.
+  ITrackSink* track_sink_{nullptr};
+  std::map<std::uint64_t, TrackStatus> prev_emitted_statuses_;
+  // Fire onTrack* events by diffing aggregated_tracks_ against the
+  // prior-scan snapshot. Called at end of processBatch when
+  // track_sink_ != nullptr. Uses scan-front time as the event
+  // timestamp (matches MhtTracker convention).
+  void firePmbmLifecycleEvents(Timestamp event_time);
 };
 
 }  // namespace navtracker::pmbm

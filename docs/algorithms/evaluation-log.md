@@ -8,6 +8,47 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-21 (Phase 4(B)) — [Cl-3 PMBM Phase 4(B)] ITrackSink wiring on PmbmTracker: push-based lifecycle events
+
+**Premise.** Phase 4(A) added per-Bernoulli trajectory recording
+and the `trajectoryFor(id)` pull accessor; Phase 4(B) completes
+the operator-facing interface by firing
+`onTrackInitiated/Confirmed/Updated/Deleted` from PMBM each scan
+(matching MhtTracker semantics through TrackManager).
+
+**Method.** Three additive changes:
+
+- `PmbmTracker::setTrackSink(ITrackSink*)` + `track_sink_`
+  member + `prev_emitted_statuses_` map (prior-scan emitted
+  TrackId → status).
+- `firePmbmLifecycleEvents(scan_time)` diffs current
+  `tracks()` against `prev_emitted_statuses_`:
+  - new id Tentative → `onTrackInitiated`
+  - new id Confirmed → `onTrackInitiated` + `onTrackConfirmed`
+    (single-scan birth-and-confirm path)
+  - prior Tentative → current Confirmed → `onTrackConfirmed`
+  - every present-this-scan id → `onTrackUpdated`
+  - prior id absent now → `onTrackDeleted` (pre-snapshot
+    status reported)
+- Wired into `processBatch` end. No-op when no sink wired (null
+  default; pull-only mode remains bit-identical to Phase 4(A)).
+
+Trajectory consumption: callbacks can call
+`tracker.trajectoryFor(event.id.value)` inside the handler;
+the dominant hypothesis is still live at that point. For
+`onTrackDeleted` the trajectory is gone (pruned) — Phase 4(C)
+candidate: snapshot trajectory before prune so deleted events
+can carry it.
+
+**Tests.** `TrackSinkFiresInitiatedAndConfirmedOnHighRBirth`,
+`TrackSinkFiresDeletedWhenExistenceFallsBelowFloor`. All 722
+tests in the suite pass.
+
+**What this unlocks.** PMBM is now plug-compatible with any
+existing `ITrackSink` consumer (BenchSink, logger, UI). The
+push-vs-pull choice is now consumer-driven; the tracker is no
+longer pull-only.
+
 ## 2026-06-21 (Phase 4 TPMBM increment 1) — [Cl-3 PMBM Phase 4(A)] forward-pass trajectory per Bernoulli: foundation for TPMBM, zero bench regression
 
 **Premise.** Plan doc Phase 3 (our Phase 4) calls for Trajectory
