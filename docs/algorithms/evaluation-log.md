@@ -8,6 +8,93 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-21 (Phase 4(C) + 4(D) + Phase 5) — [Cl-3 PMBM] TPMBM story complete: trajectory snapshot, T-GOSPA, RTS smoother
+
+**Premise.** Finish the Phase 4 (TPMBM) story:
+- 4(C) backward RTS smoothing
+- 4(D) trajectory-on-Deleted snapshot
+- Phase 5 T-GOSPA metric (the only metric that can actually
+  MEASURE trajectory-coherence wins from 4(C))
+
+Ordering matters: 4(C) without Phase 5 is dead code (per-scan
+GOSPA can't see past states), so Phase 5 came first.
+
+**Phase 4(D) — trajectory-on-Deleted snapshot (commit 56c82e5).**
+`firePmbmLifecycleEvents` now snapshots trajectories from the
+current dominant hypothesis at the end of each scan, keyed by
+Bernoulli id. `trajectoryFor(id)` falls back to that snapshot
+when the id is not in any live hypothesis — so `onTrackDeleted`
+handlers calling `tracker.trajectoryFor(event.id.value)` get the
+final trajectory before it would otherwise be lost to pruning.
+Snapshot cleared and refreshed each scan; zero overhead when no
+sink wired.
+
+**Phase 5 — T-GOSPA metric (commit dd6d1d2).**
+`core/scenario/TGospa.hpp` + `core/scenario/TGospa.cpp`.
+Operates on time-indexed `Trajectory{id, samples: map<int, pos>}`:
+
+  T-GOSPA(X, Y; c, p, γ) = ( Σ_k GOSPA_k + γ^p · #switches )^(1/p)
+
+Per-scan assignment via Hungarian on the same augmented matrix
+shape as `Gospa.cpp`; switching penalty applied between adjacent
+scans by comparing matched truth→est ids. Greedy per-scan optimal
++ sum-over-time is the "approximate T-GOSPA" — the LP-relaxed
+formulation gives a tighter bound but adds a solver dependency.
+6 focused tests cover empty, identical, per-scan-error
+accumulation, switch penalty, missed-truth and false-est
+cardinality.
+
+**Phase 4(C) — RTS smoothing (this entry).**
+`rtsSmoothTrajectory(std::vector<TrajectoryPoint>&)` in
+PmbmTracker.cpp. Backward pass per the textbook:
+
+  G_k = P_filt_k · F_k^T · P_pred_{k+1}^{-1}
+  x_smooth_k = x_filt_k + G_k · (x_smooth_{k+1} − x_pred_{k+1})
+  P_smooth_k = P_filt_k + G_k · (P_smooth_{k+1} − P_pred_{k+1}) · G_k^T
+
+`TrajectoryPoint` extended with `predicted_state` /
+`predicted_covariance` so the backward pass is stateless w.r.t.
+the filter run. `appendTrajectoryPoint` captures the pre-update
+(post-predict) state from the parent Bernoulli at every call
+site — birth, detection, misdetection, empty-scan misdetection.
+
+**Approximation.** F_k ≈ I. Exact for stationary targets; biased
+(position-velocity cross-terms lost) for moving targets. The
+covariance-weighted blend `G ≈ P_filt · P_pred^{-1}` still does
+useful work — past states get pulled toward future observations
+weighted by relative uncertainty — but the magnitude of correction
+is conservative for moving targets. **Real fix:** extend
+`IEstimator` with `transitionMatrix(track, t)`; pass per-step F
+through. Out of scope this session; documented in the smoother
+header.
+
+**Tests (PmbmTrackerUpdate.Rts*, 3 cases):**
+- RtsSmoothNoOpOnShortTrajectory (empty + single-point are no-ops)
+- RtsSmoothShrinksCovarianceOnStationaryTrajectory (covariance
+  doesn't inflate on a no-information stationary trajectory)
+- RtsSmoothPullsPastTowardFutureUpdate (numerical: σ²=4 at k=0,
+  4 m position jump at k=1 → smoothed at k=0 lands at 4 m, as the
+  Kalman gain formula predicts)
+
+**Bench impact.** Not measured. Per-scan GOSPA can't see past
+states, and the RTS pass is not wired into the bench
+emit-trajectories path. To validate the wins on autoferry, we'd
+need to: (a) run PMBM with TPMBM enabled, (b) call
+`rtsSmoothTrajectory` on the emitted trajectory per id,
+(c) score with T-GOSPA against truth trajectories. That bench
+wiring is Phase 6.
+
+**722 → 732 tests, all pass** (+6 T-GOSPA, +1 4(D), +3 4(C)).
+
+**TPMBM story status:**
+- 4(A) ✅ trajectory bookkeeping (b3cb89b)
+- 4(B) ✅ ITrackSink wiring (232bbcb)
+- 4(C) ✅ RTS smoothing (this commit, with F≈I approximation)
+- 4(D) ✅ trajectory-on-Deleted snapshot (56c82e5)
+- Phase 5 ✅ T-GOSPA metric (dd6d1d2)
+- **Phase 6 (deferred)**: wire RTS + T-GOSPA into bench so the
+  TPMBM wins on autoferry are quantitatively measured.
+
 ## 2026-06-21 (Phase 4(B)) — [Cl-3 PMBM Phase 4(B)] ITrackSink wiring on PmbmTracker: push-based lifecycle events
 
 **Premise.** Phase 4(A) added per-Bernoulli trajectory recording

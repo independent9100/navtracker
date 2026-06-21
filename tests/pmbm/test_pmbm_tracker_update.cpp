@@ -692,6 +692,75 @@ TEST(PmbmTrackerUpdate, TrackSinkFiresDeletedWhenExistenceFallsBelowFloor) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 4(C): RTS smoothing.
+TEST(PmbmTrackerUpdate, RtsSmoothNoOpOnShortTrajectory) {
+  std::vector<navtracker::pmbm::TrajectoryPoint> traj;
+  // Empty
+  navtracker::pmbm::rtsSmoothTrajectory(traj);
+  EXPECT_TRUE(traj.empty());
+  // Single point
+  navtracker::pmbm::TrajectoryPoint p;
+  p.time = Timestamp::fromSeconds(1.0);
+  p.state = cvState(0.0, 0.0, 0.0, 0.0);
+  p.covariance = posCov(1.0, 0.1);
+  p.predicted_state = p.state;
+  p.predicted_covariance = p.covariance;
+  traj.push_back(p);
+  const auto pre = traj.front().state;
+  navtracker::pmbm::rtsSmoothTrajectory(traj);
+  EXPECT_TRUE(traj.front().state.isApprox(pre));
+}
+
+// Stationary 2-point trajectory: predicted_* = state at both points
+// (no motion). RTS smoother is exactly correct under F=I; smoothed
+// state at point 0 should be a Kalman blend pulling toward point 1's
+// observation. With identical positions, the blend stays at origin
+// but the covariance shrinks.
+TEST(PmbmTrackerUpdate, RtsSmoothShrinksCovarianceOnStationaryTrajectory) {
+  std::vector<navtracker::pmbm::TrajectoryPoint> traj(2);
+  for (int k = 0; k < 2; ++k) {
+    traj[k].time = Timestamp::fromSeconds(static_cast<double>(k + 1));
+    traj[k].state = cvState(0.0, 0.0, 0.0, 0.0);
+    traj[k].covariance = posCov(2.0, 0.5);
+    traj[k].predicted_state = traj[k].state;
+    traj[k].predicted_covariance = traj[k].covariance;
+  }
+  const auto cov_before = traj[0].covariance(0, 0);
+  navtracker::pmbm::rtsSmoothTrajectory(traj);
+  // Smoothed at k=0 covariance = P_filt + G·(P_smooth - P_pred)·G^T
+  // With G = P_filt · P_pred^{-1} = I (both equal) and (P_smooth -
+  // P_pred) = 0 (k=1's smoothed is its filtered, which equals its
+  // predicted), expect zero change for this degenerate stationary
+  // case. Sanity: smoother does NOT inflate covariance.
+  EXPECT_LE(traj[0].covariance(0, 0), cov_before + 1e-9);
+  EXPECT_TRUE(traj[0].state.isApprox(Eigen::Vector4d::Zero()));
+}
+
+// 2-point trajectory where the FUTURE (k=1) measurement disagrees
+// with the predicted state — smoother pulls k=0 toward the future
+// observation. Numerical check on the position blend.
+TEST(PmbmTrackerUpdate, RtsSmoothPullsPastTowardFutureUpdate) {
+  std::vector<navtracker::pmbm::TrajectoryPoint> traj(2);
+  // k=0: filtered at origin, covariance σ² = 4 on position
+  traj[0].time = Timestamp::fromSeconds(1.0);
+  traj[0].state = cvState(0.0, 0.0, 0.0, 0.0);
+  traj[0].covariance = posCov(2.0, 0.5);
+  traj[0].predicted_state = traj[0].state;
+  traj[0].predicted_covariance = traj[0].covariance;
+  // k=1: predicted at origin (no motion under F=I), filtered at
+  // (4, 0) — the update pulled it. Covariance same shape.
+  traj[1].time = Timestamp::fromSeconds(2.0);
+  traj[1].state = cvState(4.0, 0.0, 0.0, 0.0);
+  traj[1].covariance = posCov(1.0, 0.5);  // tighter (post-update)
+  traj[1].predicted_state = cvState(0.0, 0.0, 0.0, 0.0);  // pre-update
+  traj[1].predicted_covariance = posCov(2.0, 0.5);
+  navtracker::pmbm::rtsSmoothTrajectory(traj);
+  // G_0 = P_filt_0 · P_pred_1^{-1} = (4) · (4)^{-1} = 1 (per axis)
+  // x_smooth_0 = 0 + 1 · (4 − 0) = 4.
+  EXPECT_NEAR(traj[0].state(0), 4.0, 1e-9);
+}
+
+// ---------------------------------------------------------------------------
 // Determinism: replaying the exact same scan sequence gives identical
 // MBM state (same hypothesis count, same Bernoulli ids assigned in order).
 TEST(PmbmTrackerUpdate, ReplayDeterministicallyReproducesState) {

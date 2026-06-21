@@ -17,20 +17,55 @@
 
 namespace navtracker::pmbm {
 
+void rtsSmoothTrajectory(std::vector<TrajectoryPoint>& trajectory) {
+  const std::size_t T = trajectory.size();
+  if (T < 2) return;
+  // Walk backward k = T-2 .. 0. Smoothed at k uses smoothed at k+1.
+  // Approximation: F_k ≈ I (see header). Position 2-D block only —
+  // sufficient for current navtracker output. Higher-dim states get
+  // the same blend on every component.
+  for (std::size_t k_plus = T - 1; k_plus-- > 0;) {
+    auto& curr = trajectory[k_plus];          // x_filt_k
+    const auto& next = trajectory[k_plus + 1];  // smoothed at k+1
+    if (curr.covariance.rows() == 0 ||
+        next.predicted_covariance.rows() == 0) continue;
+    if (next.predicted_covariance.determinant() <= 0.0) continue;
+    // G_k ≈ P_filt_k · P_pred_{k+1}^{-1}.
+    const Eigen::MatrixXd P_pred_inv =
+        next.predicted_covariance.inverse();
+    const Eigen::MatrixXd G = curr.covariance * P_pred_inv;
+    // x_smooth_k = x_filt_k + G · (x_smooth_{k+1} − x_pred_{k+1})
+    curr.state = curr.state +
+                 G * (next.state - next.predicted_state);
+    // P_smooth_k = P_filt_k + G · (P_smooth_{k+1} − P_pred_{k+1}) · G^T
+    curr.covariance = curr.covariance +
+        G * (next.covariance - next.predicted_covariance) * G.transpose();
+  }
+}
+
 namespace {
 
 constexpr double kInf = std::numeric_limits<double>::infinity();
 
 // TPMBM trajectory append + window trim. Called after detection
 // (post-update state) and after misdetection (post-predict state).
+// `predicted_mean` / `predicted_cov` are the PRE-update state at
+// this scan (x_{k|k-1}, P_{k|k-1}) — needed by Phase 4(C) RTS
+// smoothing. For births and misdetections we pass the post-predict
+// state for both pred and filt, so the smoother's first step is a
+// no-op at those points (G ≈ I, smoothed = filtered).
 // Skips when window=0 (TPMBM disabled).
 void appendTrajectoryPoint(Bernoulli& b, std::size_t window_scans,
-                           Timestamp t) {
+                           Timestamp t,
+                           const Eigen::VectorXd& predicted_mean,
+                           const Eigen::MatrixXd& predicted_cov) {
   if (window_scans == 0) return;
   TrajectoryPoint p;
   p.time = t;
   p.state = b.mean;
   p.covariance = b.covariance;
+  p.predicted_state = predicted_mean;
+  p.predicted_covariance = predicted_cov;
   b.trajectory.push_back(std::move(p));
   if (b.trajectory.size() > window_scans) {
     const std::size_t drop = b.trajectory.size() - window_scans;
@@ -360,10 +395,13 @@ void PmbmTracker::enumerateChildren(
     child.bernoullis.reserve(parent.bernoullis.size());
     for (const auto& b : parent.bernoullis) {
       Bernoulli updated = b;
+      // Empty-scan branch: no measurement → no update → post-update
+      // state == post-predict state. Pass b.mean/b.covariance for
+      // both predicted and filtered (smoother G ≈ I at this point).
       if (!should_misdetect(b.id)) {
         updated.existence_probability *= idle_decay_for(b);
         appendTrajectoryPoint(updated, cfg_.trajectory_window_scans,
-                              current_time_);
+                              current_time_, b.mean, b.covariance);
         child.bernoullis.push_back(std::move(updated));
         continue;
       }
@@ -372,7 +410,7 @@ void PmbmTracker::enumerateChildren(
       if (pD <= 0.0) {  // out of any sensor's coverage; no penalty
         updated.existence_probability *= idle_decay_for(b);
         appendTrajectoryPoint(updated, cfg_.trajectory_window_scans,
-                              current_time_);
+                              current_time_, b.mean, b.covariance);
         child.bernoullis.push_back(std::move(updated));
         continue;
       }
@@ -381,7 +419,7 @@ void PmbmTracker::enumerateChildren(
           (miss_norm > 0.0) ? ((1.0 - pD) * r) / miss_norm : 0.0;
       child.log_weight += std::log(std::max(miss_norm, 1e-300));
       appendTrajectoryPoint(updated, cfg_.trajectory_window_scans,
-                            current_time_);
+                            current_time_, b.mean, b.covariance);
       child.bernoullis.push_back(std::move(updated));
     }
     out.push_back(std::move(child));
@@ -470,8 +508,10 @@ void PmbmTracker::enumerateChildren(
         const int l = bernoulli_to_meas[i];
         Bernoulli det = updated[i][l];
         det.last_update = scan[l].time;
+        // Detection: x_pred = parent's state (post-predict, pre-update);
+        //            x_filt = updated state.
         appendTrajectoryPoint(det, cfg_.trajectory_window_scans,
-                              scan[l].time);
+                              scan[l].time, b.mean, b.covariance);
         child.bernoullis.push_back(std::move(det));
         // Full per-Bernoulli detection contribution to log-weight:
         // log(r · p_D · ℓ).  P_D is the assigned measurement's
@@ -488,10 +528,11 @@ void PmbmTracker::enumerateChildren(
         // ghost Bernoullis whose target has stopped reporting do
         // eventually fall below r_min.
         Bernoulli miss = b;
+        // Misdetection: no update at this scan → predicted == filtered.
         if (!should_misdetect(b.id)) {
           miss.existence_probability *= idle_decay_for(b);
           appendTrajectoryPoint(miss, cfg_.trajectory_window_scans,
-                                current_time_);
+                                current_time_, b.mean, b.covariance);
           child.bernoullis.push_back(std::move(miss));
           continue;
         }
@@ -500,7 +541,7 @@ void PmbmTracker::enumerateChildren(
         if (pD <= 0.0) {  // out of any sensor's coverage; no penalty
           miss.existence_probability *= idle_decay_for(b);
           appendTrajectoryPoint(miss, cfg_.trajectory_window_scans,
-                                current_time_);
+                                current_time_, b.mean, b.covariance);
           child.bernoullis.push_back(std::move(miss));
           continue;
         }
@@ -510,7 +551,7 @@ void PmbmTracker::enumerateChildren(
         // Misdetection contribution: log(1 − r · p_D).
         child.log_weight += std::log(std::max(miss_norm, 1e-300));
         appendTrajectoryPoint(miss, cfg_.trajectory_window_scans,
-                              current_time_);
+                              current_time_, b.mean, b.covariance);
         child.bernoullis.push_back(std::move(miss));
       }
     }
@@ -541,8 +582,10 @@ void PmbmTracker::enumerateChildren(
       nb.imm_mode_probabilities = nt.imm_mode_probabilities;
       nb.last_update = scan[l].time;
       nb.birth_time = scan[l].time;
+      // Birth: no prior → predicted = filtered (smoother G ≈ I at
+      // first point, no effect).
       appendTrajectoryPoint(nb, cfg_.trajectory_window_scans,
-                            scan[l].time);
+                            scan[l].time, nb.mean, nb.covariance);
       child.bernoullis.push_back(std::move(nb));
       // New-target contribution: log(ρ_total).
       child.log_weight += std::log(nt.rho_total);

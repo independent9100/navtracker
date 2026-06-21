@@ -53,9 +53,57 @@ namespace navtracker::pmbm {
 // `onTrackDeleted` and (b) is the necessary scaffold for smoothing.
 struct TrajectoryPoint {
   Timestamp time;
-  Eigen::VectorXd state;        // n_state
-  Eigen::MatrixXd covariance;   // n_state × n_state
+  Eigen::VectorXd state;        // n_state (post-update at this scan)
+  Eigen::MatrixXd covariance;   // n_state × n_state (post-update)
+
+  // Phase 4(C) RTS smoother inputs. The post-PREDICT, pre-UPDATE
+  // state and covariance at this scan's time (i.e., x_{k|k-1} and
+  // P_{k|k-1} in textbook notation). For the FIRST trajectory point
+  // (birth), there is no prior, so predicted_* equal state /
+  // covariance (smoother gain G = I at that step, no effect).
+  // Required by the backward RTS pass: gain
+  //   G_{k-1} ≈ P_filt_{k-1} · P_pred_k^{-1}  (F ≈ I approximation)
+  // operates on the PREVIOUS scan's filtered cov and the CURRENT
+  // scan's predicted cov. Carrying both per-point keeps the smoother
+  // stateless w.r.t. the filter run.
+  Eigen::VectorXd predicted_state;
+  Eigen::MatrixXd predicted_covariance;
 };
+
+// Backward Rauch-Tung-Striebel smoother over a trajectory.
+//
+// **Math.** Starting from the final point (smoothed = filtered),
+// walk backward k = T-1 .. 0:
+//   G_k = P_filt_k · F_k^T · P_pred_{k+1}^{-1}
+//   x_smooth_k = x_filt_k + G_k · (x_smooth_{k+1} − x_pred_{k+1})
+//   P_smooth_k = P_filt_k + G_k · (P_smooth_{k+1} − P_pred_{k+1}) · G_k^T
+// where x_pred_{k+1} / P_pred_{k+1} come from TrajectoryPoint at
+// k+1's `predicted_*` fields.
+//
+// **Assumption (this implementation).** F_k ≈ I. Correct for
+// stationary targets, BIASED for moving targets (position-velocity
+// cross-terms lost). The covariance-weighted blend G ≈ P_filt ·
+// P_pred^{-1} still does useful work — the smoothed estimate at k
+// is pulled toward the better-informed posterior at k+1 — but the
+// magnitude of correction is conservative. A correct F (e.g.,
+// constant-velocity F derived from dt) would require either
+// extending IEstimator with a `transitionMatrix(track, t)` method
+// (clean) or hard-coding the CV transition (rigid). Left as
+// Phase 4(C)' refinement.
+//
+// **Rationale.** RTS only helps PAST states (k < T). The
+// current-scan filter estimate at T is already optimal, so per-
+// scan GOSPA is unchanged. The win comes through T-GOSPA, which
+// integrates trajectory error across all k — there RTS smoothing
+// of past points reduces accumulated error.
+//
+// **Ways to improve.** Add `transitionMatrix` to IEstimator, then
+// pass the per-step F through the smoother. IMM-aware smoothing
+// (per-mode RTS then mode mixing) is a further refinement.
+//
+// In-place modification of `trajectory`. No-op when fewer than 2
+// points (nothing to smooth).
+void rtsSmoothTrajectory(std::vector<TrajectoryPoint>& trajectory);
 
 // Stable identifier for a Bernoulli component across hypotheses and
 // scans. Two Bernoullis in different global hypotheses with the same id

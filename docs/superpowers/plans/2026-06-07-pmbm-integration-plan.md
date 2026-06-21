@@ -191,16 +191,31 @@ beats TOMHT on the bus scenarios end-to-end, MHT can be deprecated
   live). Pull-only mode preserved when no sink wired.
   Trajectory-on-Deleted needs a pre-prune snapshot — Phase 3(D)
   candidate, not done.
-- **Phase 3(C) — TODO** — RTS smoothing back through the
-  trajectory. Requires per-scan transition matrix storage
-  (either on `TrajectoryPoint` or a parallel structure on
-  Bernoulli). Expected GOSPA improvement on autoferry.
+- **Phase 3(C) ✅ SHIPPED (with caveat)** — Backward RTS smoother
+  in `rtsSmoothTrajectory(trajectory)`. TrajectoryPoint extended
+  with `predicted_state` / `predicted_covariance` (post-predict,
+  pre-update at each scan), captured at every
+  `appendTrajectoryPoint` call site. Mechanics correct, but uses
+  F ≈ I approximation — accurate for stationary targets,
+  conservative for moving ones. Real fix needs `transitionMatrix`
+  on IEstimator (next refinement). Three numerical tests confirm
+  the mechanic.
+- **Phase 3(D) ✅ SHIPPED** — trajectory-on-Deleted snapshot
+  in `prev_emitted_trajectories_`. `trajectoryFor(id)` falls back
+  to the snapshot when no live hypothesis carries the id —
+  `onTrackDeleted` handlers can drain the final trajectory.
 
 **Test.** `TPmbmTracker.TrajectoryLifecycleEmitsExpectedSinkEvents`
 (pending Phase 3(B)). Forward-pass coverage in
 `PmbmTrackerUpdate.Tpmbm*` (3 tests, 2026-06-21).
 
-### Phase 4: GOSPA / T-GOSPA metrics — ~3 days
+### Phase 4: GOSPA / T-GOSPA metrics — ~3 days (T-GOSPA SHIPPED 2026-06-21)
+
+**Status:** Gospa.hpp landed pre-Phase 4 (used throughout PMBM
+A/B since Phase 1). T-GOSPA shipped 2026-06-21
+(`core/scenario/TGospa.hpp` + `.cpp`, 6 tests). Per-scan
+optimal + sum-over-time greedy approximation of LP-relaxed
+T-GOSPA. **Not yet wired into BenchSink** — that's Phase 6.
 
 **Deliverable.** Add `core/scenario/Gospa.hpp` alongside `Ospa.hpp`.
 Wire into `BenchSink` so reports include both OSPA and GOSPA.
