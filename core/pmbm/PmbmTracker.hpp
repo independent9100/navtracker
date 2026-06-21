@@ -309,6 +309,21 @@ class PmbmTracker {
   // every hypothesis.
   std::vector<TrajectoryPoint> trajectoryFor(BernoulliId id) const;
 
+  // Drain + RTS-smooth all currently-live Bernoulli trajectories from
+  // the dominant global hypothesis. For each Bernoulli still in the
+  // MBM, copies its trajectory and applies rtsSmoothTrajectory in
+  // place. Returns the smoothed trajectories keyed by Bernoulli id.
+  //
+  // Used by the bench to compute T-GOSPA on smoothed trajectories
+  // (Phase 6 measurement). Does NOT include Bernoullis already pruned
+  // mid-scenario; for those, the per-scan filtered state already lives
+  // in BenchResult.steps so the raw T-GOSPA still picks them up.
+  //
+  // Empty when TPMBM is disabled (trajectory_window_scans == 0) or no
+  // hypotheses exist.
+  std::map<BernoulliId, std::vector<TrajectoryPoint>>
+      collectSmoothedTrajectories() const;
+
   // Aggregated single-Track view of the MBM, one entry per unique
   // Bernoulli id (§3.6 of pmbm-design.md):
   //   P(exists | id) = Σ_{j: id ∈ j} w^j · r^{j,id}

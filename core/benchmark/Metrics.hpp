@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/benchmark/BenchRunner.hpp"
+#include "core/pmbm/PmbmTypes.hpp"
 #include "core/types/Ids.hpp"
 
 namespace navtracker {
@@ -46,6 +47,13 @@ struct MetricsResult {
   // switch penalty γ defaults to gospa_cutoff_m. Surfaces fragmentation
   // and id switching directly (the things per-scan OSPA/GOSPA hide).
   double tgospa_raw_m{0.0};
+  // T-GOSPA computed against the RTS-smoothed trajectories the caller
+  // optionally hands in (PMBM-only path via
+  // PmbmTracker::collectSmoothedTrajectories). 0.0 sentinel when no
+  // smoothed trajectories were supplied (typical for MHT / non-TPMBM
+  // runs). The pair (tgospa_raw_m, tgospa_smooth_m) on the same
+  // PMBM run quantifies the smoother win.
+  double tgospa_smooth_m{0.0};
   double lifetime_ratio{0.0};   // [0, 1]
   double track_breaks{0.0};     // count, mean across truth
   double id_switches{0.0};      // count, mean across truth
@@ -125,6 +133,17 @@ RmseResult computeRmse(const BenchResult& result,
 
 MetricsResult computeMetrics(const BenchResult& result,
                              const MetricsParams& params);
+
+// PMBM overload — accepts the RTS-smoothed trajectories from
+// PmbmTracker::collectSmoothedTrajectories. Computes everything the
+// scalar overload does, plus tgospa_smooth_m by replacing the
+// per-step est positions in tgospa_raw_m's stitching with the
+// smoothed positions sampled at each step's time.
+MetricsResult computeMetrics(
+    const BenchResult& result,
+    const MetricsParams& params,
+    const std::map<std::uint64_t, std::vector<pmbm::TrajectoryPoint>>&
+        smoothed_trajectories);
 
 }  // namespace benchmark
 }  // namespace navtracker

@@ -370,6 +370,51 @@ double computeTGospaRawImpl(const BenchResult& result, double cutoff_m) {
 }
 }  // namespace
 
+// Build smoothed-trajectory T-GOSPA: same truth set as the raw path,
+// but est positions come from the smoothed trajectories sampled at
+// matching step times. A position from a smoothed trajectory
+// contributes to step k iff the smoothed trajectory has a sample
+// whose timestamp == result.steps[k].time. Trajectories on a finer
+// time grid still align (the bench snapshots are at truth ticks).
+double computeTGospaSmoothImpl(
+    const BenchResult& result,
+    const std::map<std::uint64_t, std::vector<pmbm::TrajectoryPoint>>&
+        smoothed,
+    double cutoff_m) {
+  if (result.steps.empty()) return 0.0;
+  std::map<std::uint64_t, Trajectory> truth_map;
+  std::map<std::uint64_t, Trajectory> est_map;
+  // Build a time→step_index lookup for snapping smoothed-trajectory
+  // points to step indices.
+  std::map<std::int64_t, int> time_to_idx;
+  for (int k = 0; k < static_cast<int>(result.steps.size()); ++k) {
+    const auto& s = result.steps[k];
+    for (const auto& t : s.truth) {
+      auto& tr = truth_map[t.truth_id];
+      if (tr.samples.empty()) tr.id = t.truth_id;
+      tr.samples[k] = t.position;
+    }
+    time_to_idx[s.time.nanos()] = k;
+  }
+  for (const auto& [id, traj] : smoothed) {
+    if (traj.empty()) continue;
+    auto& e = est_map[id];
+    e.id = id;
+    for (const auto& p : traj) {
+      auto it = time_to_idx.find(p.time.nanos());
+      if (it == time_to_idx.end()) continue;  // off-grid point
+      if (p.state.size() < 2) continue;
+      e.samples[it->second] = Eigen::Vector2d(p.state(0), p.state(1));
+    }
+  }
+  std::vector<Trajectory> truth_vec, est_vec;
+  truth_vec.reserve(truth_map.size());
+  est_vec.reserve(est_map.size());
+  for (auto& [_, t] : truth_map) truth_vec.push_back(std::move(t));
+  for (auto& [_, t] : est_map) est_vec.push_back(std::move(t));
+  return tgospa(truth_vec, est_vec, cutoff_m);
+}
+
 MetricsResult computeMetrics(const BenchResult& result,
                              const MetricsParams& params) {
   MetricsResult m{};
@@ -414,6 +459,17 @@ MetricsResult computeMetrics(const BenchResult& result,
     pt.cog_rmse_deg = r.cog_rmse_deg;
     pt.rmse_n = r.n;
   }
+  return m;
+}
+
+MetricsResult computeMetrics(
+    const BenchResult& result,
+    const MetricsParams& params,
+    const std::map<std::uint64_t, std::vector<pmbm::TrajectoryPoint>>&
+        smoothed_trajectories) {
+  MetricsResult m = computeMetrics(result, params);
+  m.tgospa_smooth_m = computeTGospaSmoothImpl(
+      result, smoothed_trajectories, params.gospa_cutoff_m);
   return m;
 }
 

@@ -1034,6 +1034,26 @@ void PmbmTracker::firePmbmLifecycleEvents(Timestamp event_time) {
   }
 }
 
+std::map<BernoulliId, std::vector<TrajectoryPoint>>
+PmbmTracker::collectSmoothedTrajectories() const {
+  std::map<BernoulliId, std::vector<TrajectoryPoint>> out;
+  if (cfg_.trajectory_window_scans == 0) return out;
+  if (density_.mbm.empty()) return out;
+  // Pick the dominant hypothesis (highest weight).
+  const auto& dom = *std::max_element(
+      density_.mbm.begin(), density_.mbm.end(),
+      [](const GlobalHypothesis& a, const GlobalHypothesis& b) {
+        return a.weight < b.weight;
+      });
+  for (const auto& b : dom.bernoullis) {
+    if (b.trajectory.empty()) continue;
+    auto traj = b.trajectory;
+    rtsSmoothTrajectory(traj);
+    out.emplace(b.id, std::move(traj));
+  }
+  return out;
+}
+
 std::vector<TrajectoryPoint> PmbmTracker::trajectoryFor(BernoulliId id) const {
   // Pick the highest-weight hypothesis containing this id. Trajectory
   // is per-Bernoulli (per-hypothesis), so the dominant interpretation

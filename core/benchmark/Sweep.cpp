@@ -99,6 +99,7 @@ void emit(std::vector<MetricRow>& out,
   out.push_back({p.run_id, config, scenario, seed, "gospa_p95", m.gospa_p95, "m"});
   out.push_back({p.run_id, config, scenario, seed, "gospa_rms", m.gospa_rms, "m"});
   out.push_back({p.run_id, config, scenario, seed, "tgospa_raw", m.tgospa_raw_m, "m"});
+  out.push_back({p.run_id, config, scenario, seed, "tgospa_smooth", m.tgospa_smooth_m, "m"});
   out.push_back({p.run_id, config, scenario, seed, "lifetime_ratio", m.lifetime_ratio, "ratio"});
   out.push_back({p.run_id, config, scenario, seed, "track_breaks", m.track_breaks, "count"});
   out.push_back({p.run_id, config, scenario, seed, "id_switches", m.id_switches, "count"});
@@ -204,6 +205,8 @@ std::vector<MetricRow> runSweep(
         auto est = config.build_estimator();
         BenchResult result;
         NisCollector nis;
+        std::map<std::uint64_t, std::vector<pmbm::TrajectoryPoint>>
+            pmbm_smoothed_trajectories;
         if (config.tracker_kind == TrackerKind::Mht) {
           MhtTracker::Config cfg =
               config.mht_config ? config.mht_config() : MhtTracker::Config{};
@@ -295,6 +298,10 @@ std::vector<MetricRow> runSweep(
                 };
           }
           result = runBenchPmbm(scen, tracker, pmbm_post_scan);
+          // Phase 6 measurement hook: drain + RTS-smooth the alive
+          // Bernoulli trajectories. Empty when trajectory_window_scans
+          // is 0; passed through to computeMetrics for tgospa_smooth.
+          pmbm_smoothed_trajectories = tracker.collectSmoothedTrajectories();
         } else {
           // Per-sensor associator if the scenario has a table and the
           // config opts in; otherwise the scalar factory. Detection
@@ -323,7 +330,10 @@ std::vector<MetricRow> runSweep(
           BenchSink sink;
           result = runBench(scen, tracker, mgr, sink);
         }
-        const auto m = computeMetrics(result, params.metrics);
+        const auto m = pmbm_smoothed_trajectories.empty()
+            ? computeMetrics(result, params.metrics)
+            : computeMetrics(result, params.metrics,
+                             pmbm_smoothed_trajectories);
         const auto c =
             computeConsistency(nis, result, params.metrics.assoc_gate_m);
         emit(rows, params, config.label, desc.label,
