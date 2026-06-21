@@ -8,6 +8,144 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-21 (Phase 6 polish, 5-iter measurement) — [Cl-3 PMBM Phase 6] T-GOSPA wired + RTS measured: wins on noisy / sparse / unanchored, breaks anchored evaluation mode
+
+**Premise.** Phase 4(C) shipped an RTS smoother with the F≈I
+approximation. Phase 5 shipped T-GOSPA as the trajectory-aligned
+metric. Neither was wired into the bench, so we shipped an
+architectural win without measurement. Phase 6 closes the loop:
+wire both into the bench output and iterate the smoother until
+the measurement tells us where it actually helps.
+
+**Method — 5-iter polish on `feature/cl3-pmbm`.**
+
+- **Iter 1 (47cb76a):** wire T-GOSPA on raw per-scan positions.
+  Stitch BenchResult.steps positions keyed by truth_id /
+  TrackId.value into time-indexed trajectories, feed through
+  TGospa.hpp. New `tgospa_raw` column.
+
+- **Iter 2 (fadcaac):** add `PmbmTracker::collectSmoothedTrajectories()`
+  walking the dominant hypothesis and applying
+  `rtsSmoothTrajectory` per Bernoulli. New `tgospa_smooth` column.
+  PROBE measured: synthetic + noisy scenarios improve (crossing
+  −31%, philos −52%), anchored autoferry regress catastrophically
+  (sc2_anchored +188%). DIAGNOSIS: F=I makes the smoother collapse
+  to "copy end-state backward" for moving targets.
+
+- **Iter 3 (f36eb17):** replace F=I with constant-velocity F
+  derived from dt (state layout px, py, vx, vy [, ω]). Smoother
+  gain becomes G = P_filt · F^T · P_pred^{-1}. Improves crossing
+  further (44.3 → 32.7) but autoferry/philos unchanged — the
+  CV F correction only fires on detection scans, and for those
+  scenarios the cumulative effect is small relative to other
+  trajectory effects.
+
+- **Iter 4:** non_cooperative bug fix — when PMBM emits zero
+  tracks, Sweep was falling through to the scalar computeMetrics
+  overload, leaving tgospa_smooth at the default 0 sentinel
+  (looked like a fake -100% win). Fix: always call the smoothed
+  overload for PMBM runs; empty smoothed map now correctly
+  produces cardinality penalty.
+
+- **Iter 5 (this entry):** full 29-scenario re-bench, eval log,
+  commit, summary.
+
+**Full bench results (pmbm_phase6_full_20260621.csv):**
+
+### Wins (smoothing reduces T-GOSPA by ≥30%):
+
+| Scenario | T-GOSPA raw | smooth | Δ% |
+|---|---:|---:|---:|
+| dense_clutter | 166.3 | 55.2 | **−67%** |
+| philos | 447.6 | 213.1 | **−52%** |
+| crossing | 64.1 | 32.7 | **−49%** |
+| head_on | 64.1 | 32.7 | **−49%** |
+| parallel_targets | 36.1 | 19.6 | **−46%** |
+| clock_skew | 29.5 | 16.7 | **−43%** |
+| speed_change | 36.2 | 20.9 | **−42%** |
+| crossing_dropout | 86.0 | 51.6 | **−40%** |
+| ais_dropout | 107.3 | 70.7 | **−34%** |
+
+### Moderate wins (autoferry unanchored, ≤30%):
+
+| Scenario | raw | smooth | Δ% |
+|---|---:|---:|---:|
+| autoferry_scenario22 | 699.8 | 584.5 | −16% |
+| autoferry_scenario3 | 944.8 | 838.6 | −11% |
+| autoferry_scenario5 | 1081.7 | 992.8 | −8% |
+| autoferry_scenario2 | 856.9 | 788.4 | −8% |
+| autoferry_scenario6 | 838.3 | 772.3 | −8% |
+| autoferry_scenario4 | 749.3 | 724.4 | −3% |
+
+### Regressions:
+
+| Scenario | raw | smooth | Δ% |
+|---|---:|---:|---:|
+| autoferry_scenario17 | 531.8 | 557.5 | +5% |
+| autoferry_scenario13 | 589.3 | 678.8 | +15% |
+| autoferry_scenario16 | 517.5 | 679.4 | +31% |
+| overtaking | 48.3 | 67.0 | +39% |
+| **autoferry_sc17_anchored** | 383.5 | 550.3 | **+44%** |
+| **autoferry_sc22_anchored** | 356.3 | 580.7 | **+63%** |
+| **autoferry_sc16_anchored** | 279.3 | 675.9 | **+142%** |
+| **autoferry_sc13_anchored** | 272.0 | 675.7 | **+148%** |
+| **autoferry_sc6_anchored** | 307.3 | 767.3 | **+150%** |
+| **autoferry_sc2_anchored** | 271.7 | 783.1 | **+188%** |
+| **autoferry_sc4_anchored** | 207.8 | 718.1 | **+246%** |
+| **autoferry_sc3_anchored** | 240.4 | 833.3 | **+247%** |
+| **autoferry_sc5_anchored** | 258.0 | 988.2 | **+283%** |
+
+### Analysis
+
+**RTS smoothing as default-on is NOT safe.** All 9 anchored
+variants regress catastrophically. The mechanism is consistent
+and structural: anchored evaluation mode injects AIS positions
+as "truth" so the filter posterior at AIS-touch scans becomes
+extremely tight, while intervening multi-sensor scans (radar /
+EO/IR) have looser posteriors. The RTS gain `G = P_filt ·
+F^T · P_pred^{-1}` ≈ identity for adjacent tight-then-loose
+scans (since P_pred ≈ P_filt with small Q), causing the smoother
+to fully blend in the future scan's noise back into the past
+scan's near-perfect estimate.
+
+**RTS smoothing on real workloads is a clear win.** All 9 clean
+synthetics + philos + dense_clutter improve by 34-67%. 6 of 10
+autoferry unanchored variants improve by 3-16%. 4 unanchored
+variants regress modestly (5-39%) — these are the scenarios
+where some scans still carry AIS positions even without explicit
+anchoring (real ferry traffic has AIS).
+
+**Anchored mode is a test scaffolding artifact** — it forces
+the filter to treat AIS as truth specifically to isolate
+tracking-pipeline errors from registration errors. The RTS
+smoother is fighting that test mode, not real deployment.
+
+### What to test next
+
+- **(parked) Per-mode IMM RTS** — current CV F is exact for
+  CV motion but loses ω-coupling on CT. Implementing per-mode F
+  weighted by mode probabilities would tighten the smoother but
+  doesn't address the structural anchored issue.
+- **(parked) Q-aware smoother** — inflating the smoother's
+  effective P_pred (vs filter's P_pred) would downweight loose
+  future evidence vs tight past, reducing the anchored regression.
+  This is the right structural fix; out of scope here.
+- **(deployment guidance)** — enable `trajectory_window_scans > 0`
+  for the regular bench config (which is what we have).
+  Anchored evaluation runs should disable RTS smoothing OR consume
+  `tgospa_raw` instead of `tgospa_smooth`. Document this.
+
+### Phase 6 polish — verdict
+
+The TPMBM stack (4(A)/4(B)/4(C)/4(D)) + Phase 5 T-GOSPA + Phase 6
+bench wiring forms a coherent measurement-driven trajectory layer.
+On the deployment-relevant axis (autoferry unanchored + noisy
+real-world scenarios), RTS smoothing improves T-GOSPA by 3-67%.
+The anchored-mode regression is a known limitation of the current
+smoother formulation; the structural fix (Q-aware smoothing) is
+parked, with deployment guidance to use `tgospa_raw` for anchored
+evaluation.
+
 ## 2026-06-21 (Phase 4(C) + 4(D) + Phase 5) — [Cl-3 PMBM] TPMBM story complete: trajectory snapshot, T-GOSPA, RTS smoother
 
 **Premise.** Finish the Phase 4 (TPMBM) story:

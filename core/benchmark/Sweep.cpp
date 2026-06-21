@@ -330,10 +330,15 @@ std::vector<MetricRow> runSweep(
           BenchSink sink;
           result = runBench(scen, tracker, mgr, sink);
         }
-        const auto m = pmbm_smoothed_trajectories.empty()
-            ? computeMetrics(result, params.metrics)
-            : computeMetrics(result, params.metrics,
-                             pmbm_smoothed_trajectories);
+        // For PMBM runs (even when no tracks were emitted) call the
+        // smoothed overload so tgospa_smooth_m is computed against
+        // the (possibly empty) smoothed trajectories — empty est
+        // produces a genuine cardinality penalty rather than the
+        // default-0 sentinel from the scalar overload.
+        const auto m = (config.tracker_kind == TrackerKind::Pmbm)
+            ? computeMetrics(result, params.metrics,
+                             pmbm_smoothed_trajectories)
+            : computeMetrics(result, params.metrics);
         const auto c =
             computeConsistency(nis, result, params.metrics.assoc_gate_m);
         emit(rows, params, config.label, desc.label,

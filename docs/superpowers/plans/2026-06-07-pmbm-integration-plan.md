@@ -215,7 +215,11 @@ beats TOMHT on the bus scenarios end-to-end, MHT can be deprecated
 A/B since Phase 1). T-GOSPA shipped 2026-06-21
 (`core/scenario/TGospa.hpp` + `.cpp`, 6 tests). Per-scan
 optimal + sum-over-time greedy approximation of LP-relaxed
-T-GOSPA. **Not yet wired into BenchSink** — that's Phase 6.
+T-GOSPA. **Wired into bench 2026-06-21 (Phase 6 polish):**
+`tgospa_raw` (stitched from BenchResult.steps positions) and
+`tgospa_smooth` (PMBM-only, smoothed via
+PmbmTracker::collectSmoothedTrajectories) emitted as new CSV
+columns. Full 29-scenario measurement in eval log.
 
 **Deliverable.** Add `core/scenario/Gospa.hpp` alongside `Ospa.hpp`.
 Wire into `BenchSink` so reports include both OSPA and GOSPA.
