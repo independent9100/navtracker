@@ -258,7 +258,33 @@ std::vector<MetricRow> runSweep(
               config.pmbm_birth_model ? config.pmbm_birth_model()
                                        : pmbm::PmbmTracker::BirthModelFn{};
           pmbm::PmbmTracker tracker(*est, cfg, std::move(birth));
-          result = runBenchPmbm(scen, tracker);
+
+          // Same item-9 bias-estimator wiring as the MHT path:
+          // per-cycle pair extraction (AIS-anchored position pairs +
+          // bearing pairs + cross-sensor non-AIS pairs), bias-provider
+          // applied to incoming measurements via setSensorBiasProvider.
+          std::shared_ptr<SensorBiasEstimator> bias_est;
+          PmbmPostScanHook pmbm_post_scan;
+          if (config.build_sensor_bias_estimator) {
+            bias_est = config.build_sensor_bias_estimator();
+            scenario_ptr->seedSensorBiasEstimator(*bias_est);
+            tracker.setSensorBiasProvider(bias_est.get());
+            pmbm_post_scan =
+                [bias_est](const pmbm::PmbmTracker& t, Timestamp scan_t) {
+                  bias_est->predictTo(scan_t);
+                  const auto pos_pairs =
+                      extractPositionPairs(t.tracks(), scan_t);
+                  for (const auto& p : pos_pairs) bias_est->observe(p);
+                  const auto brg_pairs =
+                      extractBearingPairs(t.tracks(), scan_t);
+                  for (const auto& p : brg_pairs) bias_est->observe(p);
+                  const auto cross_pairs =
+                      extractCrossSensorPositionPairs(t.tracks(), scan_t,
+                                                      bias_est.get());
+                  for (const auto& p : cross_pairs) bias_est->observe(p);
+                };
+          }
+          result = runBenchPmbm(scen, tracker, pmbm_post_scan);
         } else {
           // Per-sensor associator if the scenario has a table and the
           // config opts in; otherwise the scalar factory. Detection

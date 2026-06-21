@@ -2,14 +2,18 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <map>
+#include <set>
 #include <utility>
 
 #include <Eigen/Dense>
 
 #include "core/association/Murty.hpp"
 #include "core/estimation/MeasurementModels.hpp"
+#include "core/pipeline/BiasCorrection.hpp"
+#include "core/pipeline/SourceTouchPopulate.hpp"
 
 namespace navtracker::pmbm {
 
@@ -417,7 +421,20 @@ void PmbmTracker::pruneAndNormalise() {
   }
 }
 
-void PmbmTracker::processBatch(const std::vector<Measurement>& scan) {
+void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
+  // Apply per-sensor registration bias correction (item 9) + Schmidt-KF
+  // R-inflation before any predict / update. Null provider =
+  // bit-identical to legacy.
+  std::vector<Measurement> scan_corrected;
+  if (bias_provider_ != nullptr) {
+    scan_corrected.reserve(scan_in.size());
+    for (const auto& z : scan_in) {
+      scan_corrected.push_back(applyBiasCorrection(z, bias_provider_));
+    }
+  }
+  const std::vector<Measurement>& scan =
+      bias_provider_ != nullptr ? scan_corrected : scan_in;
+
   // Predict to the latest measurement time in the scan (matches the
   // MhtTracker convention). Empty scan still advances the filter if a
   // future predict() is wired separately; here it's just a no-op for
@@ -531,6 +548,71 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan) {
   }
 
   pruneAndNormalise();
+
+  // Source-touch history. Walk the highest-weighted hypothesis; for
+  // each Bernoulli whose last_update equals this scan's time it was
+  // detected, find the nearest measurement in this scan, and append
+  // a SourceTouch under that Bernoulli's id. Same window-prune /
+  // alive-id-keep semantics as MhtTracker::contribution_history_.
+  if (!density_.mbm.empty() && !scan.empty()) {
+    const auto& dom = *std::max_element(
+        density_.mbm.begin(), density_.mbm.end(),
+        [](const GlobalHypothesis& a, const GlobalHypothesis& b) {
+          return a.weight < b.weight;
+        });
+    for (const auto& b : dom.bernoullis) {
+      // Find the scan measurement at b.last_update == scan time AND
+      // nearest to b.mean in position. Detected Bernoullis carry their
+      // measurement's timestamp; misdetected ones inherit the parent
+      // pre-predict timestamp, so an exact-match filter cleanly
+      // separates the two.
+      double best_d = std::numeric_limits<double>::infinity();
+      const Measurement* best = nullptr;
+      for (const auto& z : scan) {
+        if (!(z.time == b.last_update)) continue;
+        // Use the measurement's ENU position (Position2D models) or
+        // the sensor position fallback (range/bearing-only).
+        Eigen::Vector2d z_xy = (z.value.size() >= 2)
+            ? Eigen::Vector2d(z.value(0), z.value(1))
+            : z.sensor_position_enu;
+        const Eigen::Vector2d b_xy = b.mean.head<2>();
+        const double d = (z_xy - b_xy).squaredNorm();
+        if (d < best_d) { best_d = d; best = &z; }
+      }
+      if (!best) continue;
+      Track::SourceTouch touch;
+      touch.sensor = best->sensor;
+      touch.source_id = best->source_id;
+      touch.time = best->time;
+      fillSourceTouchEnu(touch, *best);
+      touch.sensor_position_enu = best->sensor_position_enu;
+      touch.own_position_std_m = best->sensor_position_std_m;
+      touch.covariance_is_default = best->covariance_is_default;
+      auto& history = contribution_history_[b.id];
+      history.push_back(std::move(touch));
+      const std::int64_t window_ns =
+          static_cast<std::int64_t>(kContributionWindowSec * 1e9);
+      const std::int64_t now_ns = scan.front().time.nanos();
+      auto first_keep = std::find_if(
+          history.begin(), history.end(),
+          [&](const Track::SourceTouch& st) {
+            return (now_ns - st.time.nanos()) <= window_ns;
+          });
+      history.erase(history.begin(), first_keep);
+    }
+    // Drop history entries whose Bernoulli id is no longer present in
+    // any hypothesis (the Bernoulli was pruned).
+    std::set<BernoulliId> alive;
+    for (const auto& h : density_.mbm) {
+      for (const auto& b : h.bernoullis) alive.insert(b.id);
+    }
+    for (auto it = contribution_history_.begin();
+         it != contribution_history_.end();) {
+      if (alive.count(it->first) == 0) it = contribution_history_.erase(it);
+      else ++it;
+    }
+  }
+
   aggregated_tracks_dirty_ = true;
 }
 
@@ -665,6 +747,10 @@ void PmbmTracker::refreshAggregatedTracks() const {
     t.state = a.mean_acc / a.mass;
     // Moment-matched covariance: E[P + μμ'] − mean·mean'
     t.covariance = (a.cov_acc / a.mass) - (t.state * t.state.transpose());
+    auto hit = contribution_history_.find(id);
+    if (hit != contribution_history_.end()) {
+      t.recent_contributions = hit->second;
+    }
     aggregated_tracks_.push_back(std::move(t));
   }
 }

@@ -1,11 +1,14 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <vector>
 
 #include "core/pmbm/PmbmTypes.hpp"
 #include "core/types/Timestamp.hpp"
+#include "core/types/Track.hpp"
 #include "ports/IEstimator.hpp"
+#include "ports/ISensorBiasProvider.hpp"
 
 // Poisson Multi-Bernoulli Mixture (PMBM) tracker. Sibling to MhtTracker,
 // implementing the same multi-target tracking goal via the Random Finite
@@ -177,6 +180,15 @@ class PmbmTracker {
   // Test / introspection hooks.
   PmbmDensity& mutableDensityForTesting() { return density_; }
 
+  // Optional. When non-null, every incoming measurement in
+  // processBatch is corrected by the provider's per-(sensor,
+  // source_id) published bias before reaching the PMBM update (same
+  // contract as MhtTracker::setSensorBiasProvider / Tracker::
+  // setSensorBiasProvider). Null = bit-identical to legacy.
+  void setSensorBiasProvider(const ISensorBiasProvider* provider) {
+    bias_provider_ = provider;
+  }
+
   // Next Bernoulli id that will be minted (introspection / tests).
   BernoulliId nextBernoulliId() const noexcept { return next_bernoulli_id_; }
 
@@ -246,6 +258,17 @@ class PmbmTracker {
   Timestamp current_time_{};
   bool has_current_time_{false};
   BernoulliId next_bernoulli_id_{1};
+  const ISensorBiasProvider* bias_provider_{nullptr};
+  // Per-Bernoulli-id rolling source-touch history. Populated from the
+  // dominant child after each scan; the same shape as
+  // MhtTracker::contribution_history_. Folded into each emitted Track's
+  // recent_contributions by refreshAggregatedTracks so the bias-pair
+  // extractors (extractPositionPairs / extractBearingPairs /
+  // extractCrossSensorPositionPairs) see actual contributions and the
+  // PMBM path matches the MHT path on AIS-anchored scenarios.
+  std::map<BernoulliId, std::vector<Track::SourceTouch>>
+      contribution_history_;
+  static constexpr double kContributionWindowSec = 2.0;
   mutable std::vector<Track> aggregated_tracks_;
   mutable bool aggregated_tracks_dirty_{true};
 };

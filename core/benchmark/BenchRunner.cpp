@@ -247,7 +247,8 @@ BenchStep snapshotAtPmbm(const pmbm::PmbmTracker& tracker,
 }  // namespace
 
 BenchResult runBenchPmbm(const Scenario& scenario,
-                         pmbm::PmbmTracker& tracker) {
+                         pmbm::PmbmTracker& tracker,
+                         const PmbmPostScanHook& post_scan_hook) {
   BenchResult result;
   const auto truth_groups = groupTruth(scenario.truth);
   const auto& meas = scenario.measurements;
@@ -260,6 +261,7 @@ BenchResult runBenchPmbm(const Scenario& scenario,
         ++mi;
       }
       tracker.processBatch(scan);
+      if (post_scan_hook) post_scan_hook(tracker, scan_t);
     }
   };
 
@@ -276,6 +278,7 @@ BenchResult runBenchPmbm(const Scenario& scenario,
       ++mi;
     }
     tracker.processBatch(scan);
+    if (post_scan_hook) post_scan_hook(tracker, scan_t);
   }
   return result;
 }

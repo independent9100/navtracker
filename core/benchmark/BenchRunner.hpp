@@ -79,11 +79,13 @@ BenchResult runBenchMht(const Scenario& scenario, MhtTracker& tracker,
 
 // PMBM-pipeline overload. Mirrors runBenchMht: drives a PmbmTracker
 // over the scenario, snapshotting one Confirmed track per Bernoulli id
-// (aggregated by PmbmTracker::tracks()) at every truth timestamp. No
-// post-scan hook (the PMBM path does not yet wire SensorBiasEstimator
-// — that's planned for Phase 2+).
+// (aggregated by PmbmTracker::tracks()) at every truth timestamp.
+// Optional post-scan hook (same contract as the MHT path) drives the
+// SensorBiasEstimator's pair extraction + observe pipeline when wired.
+using PmbmPostScanHook = std::function<void(const pmbm::PmbmTracker&, Timestamp)>;
 BenchResult runBenchPmbm(const Scenario& scenario,
-                         pmbm::PmbmTracker& tracker);
+                         pmbm::PmbmTracker& tracker,
+                         const PmbmPostScanHook& post_scan_hook = {});
 
 }  // namespace benchmark
 }  // namespace navtracker

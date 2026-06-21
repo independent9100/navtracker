@@ -468,6 +468,13 @@ std::vector<Config> defaultConfigs() {
     c.build_associator = &makeJpda;  // unused
     c.tracker_kind = TrackerKind::Pmbm;
     c.pmbm_config = &makePmbmConfig;
+    // Same SensorBiasEstimator wiring as the MHT canonical so the
+    // PMBM A/B is apples-to-apples on the AIS-anchored variants
+    // (Schmidt-KF measurement correction is unchanged composing in
+    // front of either tracker).
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
     configs.push_back(std::move(c));
   }
   return configs;
