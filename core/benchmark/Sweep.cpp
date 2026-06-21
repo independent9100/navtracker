@@ -257,7 +257,16 @@ std::vector<MetricRow> runSweep(
           pmbm::PmbmTracker::BirthModelFn birth =
               config.pmbm_birth_model ? config.pmbm_birth_model()
                                        : pmbm::PmbmTracker::BirthModelFn{};
+          // Per-sensor detection model from the scenario (same call as
+          // the MHT path). When the scenario declares no table, the
+          // helper returns nullptr and PMBM falls back to its Config
+          // scalars.
+          MhtTracker::Config carrier;
+          carrier.probability_of_detection = cfg.probability_of_detection;
+          carrier.clutter_density = cfg.clutter_intensity;
+          auto det = detectionModelFor(desc, carrier, /*use_clutter_map=*/false);
           pmbm::PmbmTracker tracker(*est, cfg, std::move(birth));
+          if (det) tracker.setSensorDetectionModel(det);
 
           // Same item-9 bias-estimator wiring as the MHT path:
           // per-cycle pair extraction (AIS-anchored position pairs +

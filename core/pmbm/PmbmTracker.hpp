@@ -4,11 +4,14 @@
 #include <map>
 #include <vector>
 
+#include <memory>
+
 #include "core/pmbm/PmbmTypes.hpp"
 #include "core/types/Timestamp.hpp"
 #include "core/types/Track.hpp"
 #include "ports/IEstimator.hpp"
 #include "ports/ISensorBiasProvider.hpp"
+#include "ports/ISensorDetectionModel.hpp"
 
 // Poisson Multi-Bernoulli Mixture (PMBM) tracker. Sibling to MhtTracker,
 // implementing the same multi-target tracking goal via the Random Finite
@@ -203,6 +206,19 @@ class PmbmTracker {
     bias_provider_ = provider;
   }
 
+  // Per-sensor detection model. When set, the cost matrix, new-target
+  // birth weight, and misdetection recursion use the per-(sensor,
+  // model, source_id) (P_D, λ_C) and per-coverage missDetectionProb
+  // instead of the Config-level scalars. The scenario's per-sensor
+  // table is the textbook formulation for multi-sensor PMBM
+  // (García-Fernández 2018 §IV-A); without it, λ_C and P_D are
+  // dimensionally inconsistent across sensors of different MeasurementModels.
+  // Null = fall back to Config::probability_of_detection /
+  // ::clutter_intensity (single-sensor-equivalent behaviour).
+  void setSensorDetectionModel(std::shared_ptr<ISensorDetectionModel> m) {
+    detection_model_ = std::move(m);
+  }
+
   // Next Bernoulli id that will be minted (introspection / tests).
   BernoulliId nextBernoulliId() const noexcept { return next_bernoulli_id_; }
 
@@ -273,6 +289,7 @@ class PmbmTracker {
   bool has_current_time_{false};
   BernoulliId next_bernoulli_id_{1};
   const ISensorBiasProvider* bias_provider_{nullptr};
+  std::shared_ptr<ISensorDetectionModel> detection_model_;
   // Per-Bernoulli-id rolling source-touch history. Populated from the
   // dominant child after each scan; the same shape as
   // MhtTracker::contribution_history_. Folded into each emitted Track's

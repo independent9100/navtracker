@@ -104,9 +104,19 @@ PmbmTracker::buildNewTargetCandidates(
   for (const auto& z : scan) {
     NewTargetCandidate cand;
 
+    // Per-sensor (P_D, λ_C) when a detection model is wired; Config
+    // fallback otherwise. Matches MhtTracker's per-measurement
+    // paramsFor lookup so PMBM is on the same footing for the bench A/B.
+    const double pD_z = detection_model_
+        ? detection_model_->paramsFor(z).probability_of_detection
+        : cfg_.probability_of_detection;
+    const double lambda_z = detection_model_
+        ? detection_model_->paramsFor(z).clutter_intensity
+        : cfg_.clutter_intensity;
+
     if (density_.ppp.empty()) {
       cand.rho_target = 0.0;
-      cand.rho_total = cfg_.clutter_intensity;
+      cand.rho_total = lambda_z;
       out.push_back(std::move(cand));
       continue;
     }
@@ -116,7 +126,7 @@ PmbmTracker::buildNewTargetCandidates(
     log_weights.reserve(density_.ppp.size());
     updated_tracks.reserve(density_.ppp.size());
 
-    const double log_pD = std::log(cfg_.probability_of_detection);
+    const double log_pD = std::log(pD_z);
 
     for (const auto& c : density_.ppp) {
       if (c.weight <= 0.0) continue;
@@ -130,7 +140,7 @@ PmbmTracker::buildNewTargetCandidates(
 
     const double log_rho_target = logSumExp(log_weights);
     cand.rho_target = std::exp(log_rho_target);
-    cand.rho_total = cand.rho_target + cfg_.clutter_intensity;
+    cand.rho_total = cand.rho_target + lambda_z;
 
     if (cand.rho_target > 0.0 && !updated_tracks.empty()) {
       // Moment-match the posterior mixture to a single Gaussian.
@@ -208,6 +218,37 @@ void PmbmTracker::enumerateChildren(
     return false;
   };
 
+  // Per-measurement P_D under the detection model (cost-matrix and
+  // detection log-weight). Config fallback when no model wired.
+  std::vector<double> pD_l(m, cfg_.probability_of_detection);
+  if (detection_model_) {
+    for (int l = 0; l < m; ++l) {
+      pD_l[l] = detection_model_->paramsFor(scan[l]).probability_of_detection;
+    }
+  }
+  // Per-Bernoulli effective miss P_D under the detection model.
+  // Aggregate across scan sensors via "1 − Π (1 − p_D_s · cov_s)" =
+  // probability that at least one in-coverage scan sensor would have
+  // detected this Bernoulli. Coverage = missDetectionProbability !=
+  // 0 (the detection model returns 0 when the Bernoulli is outside
+  // the sensor's max_range / sector). Config fallback when no model.
+  auto compute_miss_pD = [&](const Bernoulli& b) {
+    if (!detection_model_) return cfg_.probability_of_detection;
+    if (b.mean.size() < 2) return cfg_.probability_of_detection;
+    const Eigen::Vector2d b_xy = b.mean.head<2>();
+    double survive = 1.0;
+    bool any_coverage = false;
+    for (const auto& z : scan) {
+      const double pD_s = detection_model_->missDetectionProbability(
+          z.sensor, z.model, b_xy, z.sensor_position_enu, z.source_id);
+      if (pD_s > 0.0) {
+        any_coverage = true;
+        survive *= (1.0 - pD_s);
+      }
+    }
+    return any_coverage ? (1.0 - survive) : 0.0;
+  };
+
   // Edge case: empty scan. Only one child = parent with all-miss updates.
   // Misdetection: r ← (1 − p_D)·r / (1 − r + (1 − p_D)·r), state unchanged.
   // Hypothesis weight gains a Σ log(1 − r·p_D) shift (relative ordering
@@ -224,7 +265,11 @@ void PmbmTracker::enumerateChildren(
         continue;
       }
       const double r = b.existence_probability;
-      const double pD = cfg_.probability_of_detection;
+      const double pD = compute_miss_pD(b);
+      if (pD <= 0.0) {  // out of any sensor's coverage; no penalty
+        child.bernoullis.push_back(std::move(updated));
+        continue;
+      }
       const double miss_norm = 1.0 - r * pD;
       updated.existence_probability =
           (miss_norm > 0.0) ? ((1.0 - pD) * r) / miss_norm : 0.0;
@@ -248,8 +293,6 @@ void PmbmTracker::enumerateChildren(
   std::vector<std::vector<double>> log_lik(n, std::vector<double>(m, -kInf));
   std::vector<std::vector<Bernoulli>> updated(
       n, std::vector<Bernoulli>(m));
-
-  const double log_pD = std::log(cfg_.probability_of_detection);
 
   for (int i = 0; i < n; ++i) {
     const Bernoulli& b = parent.bernoullis[i];
@@ -321,9 +364,11 @@ void PmbmTracker::enumerateChildren(
         det.last_update = scan[l].time;
         child.bernoullis.push_back(std::move(det));
         // Full per-Bernoulli detection contribution to log-weight:
-        // log(r · p_D · ℓ).
+        // log(r · p_D · ℓ).  P_D is the assigned measurement's
+        // per-(sensor, source) P_D under the detection model.
         child.log_weight +=
-            std::log(b.existence_probability) + log_pD + log_lik[i][l];
+            std::log(b.existence_probability) + std::log(pD_l[l]) +
+            log_lik[i][l];
       } else {
         // Misdetection: r ← (1 − p_D) · r / (1 − r·p_D), state unchanged.
         // Skip the recursion entirely when source-aware misdetection
@@ -335,7 +380,11 @@ void PmbmTracker::enumerateChildren(
           continue;
         }
         const double r = b.existence_probability;
-        const double pD = cfg_.probability_of_detection;
+        const double pD = compute_miss_pD(b);
+        if (pD <= 0.0) {  // out of any sensor's coverage; no penalty
+          child.bernoullis.push_back(std::move(miss));
+          continue;
+        }
         const double miss_norm = 1.0 - r * pD;
         miss.existence_probability =
             (miss_norm > 0.0) ? ((1.0 - pD) * r) / miss_norm : 0.0;
