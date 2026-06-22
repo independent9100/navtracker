@@ -1,4 +1,4 @@
-#include "adapters/own_ship/OwnShipProvider.hpp"
+#include "core/own_ship/OwnShipProvider.hpp"
 
 #include <algorithm>
 #include <cmath>

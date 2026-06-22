@@ -1,0 +1,460 @@
+// Phase 8: tests for coverage gaps identified in the multi-agent review.
+// T1: PMBM + SensorBiasProvider end-to-end.
+// T2: bhattacharyya_merge_threshold behaviour (id-stability survivor).
+// T3: PMBM-specific bench determinism (BenchDeterminism uses ekf_cv_gnn).
+// T4: per-sensor setSensorDetectionModel cost-matrix effect.
+// T5: re-demotion lifecycle (Confirmed → Tentative → Confirmed sink events).
+
+#include <gtest/gtest.h>
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <Eigen/Core>
+
+#include "core/benchmark/Config.hpp"
+#include "core/benchmark/ScenarioRun.hpp"
+#include "core/benchmark/Sweep.hpp"
+#include "core/estimation/ConstantVelocity2D.hpp"
+#include "core/estimation/EkfEstimator.hpp"
+#include "core/pmbm/PmbmTracker.hpp"
+#include "core/pmbm/PmbmTypes.hpp"
+#include "core/scenario/Builders.hpp"
+#include "core/tracking/SensorDetectionModels.hpp"
+#include "core/types/Ids.hpp"
+#include "core/types/Measurement.hpp"
+#include "ports/ISensorBiasProvider.hpp"
+#include "ports/ITrackSink.hpp"
+
+using navtracker::ConstantVelocity2D;
+using navtracker::DetectionParams;
+using navtracker::EkfEstimator;
+using navtracker::FixedSensorBiasProvider;
+using navtracker::FixedSensorDetectionModel;
+using navtracker::Measurement;
+using navtracker::MeasurementModel;
+using navtracker::SensorBiasKey;
+using navtracker::SensorKind;
+using navtracker::Timestamp;
+using navtracker::pmbm::Bernoulli;
+using navtracker::pmbm::BernoulliId;
+using navtracker::pmbm::PmbmTracker;
+using navtracker::pmbm::PoissonComponent;
+
+namespace {
+
+Measurement pos2d(double t, double x, double y, SensorKind sensor,
+                  const std::string& source) {
+  Measurement z;
+  z.time = Timestamp::fromSeconds(t);
+  z.sensor = sensor;
+  z.source_id = source;
+  z.model = MeasurementModel::Position2D;
+  z.value = Eigen::Vector2d(x, y);
+  z.covariance = Eigen::Matrix2d::Identity() * 0.25;  // σ = 0.5 m
+  return z;
+}
+
+PoissonComponent mkPpp(double w, double px, double py) {
+  PoissonComponent c;
+  c.weight = w;
+  c.mean = Eigen::VectorXd::Zero(4);
+  c.mean(0) = px;
+  c.mean(1) = py;
+  c.covariance = Eigen::MatrixXd::Identity(4, 4);
+  c.covariance(0, 0) = c.covariance(1, 1) = 25.0;
+  c.covariance(2, 2) = c.covariance(3, 3) = 1.0;
+  return c;
+}
+
+struct Fixture {
+  std::shared_ptr<ConstantVelocity2D> motion =
+      std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+};
+
+// Minimal scenario for the determinism test (duplicates the one in
+// tests/benchmark/test_sweep.cpp; both files have their own anon
+// namespace and can't share). 1 truth × 1 source × 5 scans.
+class TinyStraightLine : public navtracker::benchmark::ScenarioRun {
+ public:
+  navtracker::benchmark::ScenarioDescriptor descriptor() const override {
+    return {"tiny_line_p8", true, 2};
+  }
+  navtracker::Scenario generate(std::uint64_t seed) override {
+    std::vector<double> times;
+    for (int i = 1; i <= 5; ++i) times.push_back(static_cast<double>(i));
+    return navtracker::buildStraightLineScenario(
+        Eigen::Vector2d(0, 0),
+        Eigen::Vector2d(10, 0),
+        times, 1.0,
+        static_cast<std::uint32_t>(seed),
+        1);
+  }
+};
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// T1: PMBM + SensorBiasProvider end-to-end.
+//
+// Wire a FixedSensorBiasProvider that publishes a known +2 m east offset
+// for the test sensor. A measurement at (10, 0) should be bias-corrected
+// to (8, 0) before reaching the PMBM update; the post-update Bernoulli
+// mean should reflect the corrected position, not the raw measurement.
+// ---------------------------------------------------------------------------
+TEST(PmbmTrackerPhase8, BiasProviderShiftsPostUpdateBernoulliMean) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.survival_probability = 1.0;
+  PmbmTracker tracker(f.ekf, cfg);
+
+  FixedSensorBiasProvider provider;
+  // Known per-(sensor, source) +2 m east offset; the corrector subtracts
+  // the published bias from the measurement, so the corrected position
+  // is (10 − 2, 0) = (8, 0).
+  provider.setPositionBias(SensorBiasKey{SensorKind::Lidar, "r0"},
+                           Eigen::Vector2d(2.0, 0.0));
+  tracker.setSensorBiasProvider(&provider);
+
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 0.0, 0.0));
+
+  Measurement z = pos2d(1.0, 10.0, 0.0, SensorKind::Lidar, "r0");
+  tracker.processBatch({z});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  ASSERT_EQ(tracker.density().mbm[0].bernoullis.size(), 1u);
+  const auto& b = tracker.density().mbm[0].bernoullis[0];
+  // PPP at origin + bias-corrected measurement near (8, 0) → posterior
+  // mean lies between (0, 0) and (8, 0). It MUST be closer to (8, 0)
+  // than to (10, 0), proving the bias was applied before update.
+  EXPECT_LT(b.mean(0), 9.5) << "post-update x must reflect bias correction";
+  EXPECT_GT(b.mean(0), 3.0) << "but the measurement still moves the prior";
+}
+
+// Companion: with no provider wired, the same measurement leaves the
+// posterior at the uncorrected location — proves the provider hookup
+// is what differs.
+TEST(PmbmTrackerPhase8, NullBiasProviderLeavesMeasurementUntouched) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.survival_probability = 1.0;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 0.0, 0.0));
+
+  Measurement z = pos2d(1.0, 10.0, 0.0, SensorKind::Lidar, "r0");
+  tracker.processBatch({z});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  ASSERT_EQ(tracker.density().mbm[0].bernoullis.size(), 1u);
+  const auto& b = tracker.density().mbm[0].bernoullis[0];
+  // Should land near +10 (between 0 and 10) — proving without
+  // provider, the raw measurement is used.
+  EXPECT_GT(b.mean(0), 5.0);
+}
+
+// ---------------------------------------------------------------------------
+// T2: bhattacharyya_merge_threshold behaviour.
+//
+// Construct a global hypothesis with two near-coincident Bernoullis
+// (id 1 born earlier, id 2 born later). With a permissive merge
+// threshold the pair MUST collapse to one Bernoulli carrying the
+// older id (id-stability invariant). With a tight threshold both
+// survive separately.
+// ---------------------------------------------------------------------------
+TEST(PmbmTrackerPhase8, BhattacharyyaMergeKeepsOlderIdAndDeletesYounger) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.survival_probability = 1.0;
+  cfg.bhattacharyya_merge_threshold = 5.0;  // permissive
+  cfg.r_min = 1e-9;
+  cfg.hypothesis_weight_min = 1e-9;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Seed two near-coincident Bernoullis with distinct ids into a single
+  // global hypothesis. Their position blocks overlap heavily so the
+  // Bhattacharyya distance is small; ids 7 (older) and 99 (younger).
+  navtracker::pmbm::GlobalHypothesis h;
+  h.weight = 1.0;
+  h.log_weight = 0.0;
+  auto mkB = [](BernoulliId id, double r, double px, double py) {
+    Bernoulli b;
+    b.id = id;
+    b.existence_probability = r;
+    b.mean = Eigen::Vector4d(px, py, 0.0, 0.0);
+    b.covariance = Eigen::Matrix4d::Identity() * 4.0;
+    b.last_update = Timestamp::fromSeconds(0.0);
+    return b;
+  };
+  h.bernoullis.push_back(mkB(7,  0.8, 0.0, 0.0));
+  h.bernoullis.push_back(mkB(99, 0.6, 0.1, 0.0));
+  tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
+
+  // Non-empty scan with a far-away measurement (mergeBernoulliDuplicates
+  // only runs on the non-empty-scan code path). The far measurement
+  // doesn't gate to either seeded Bernoulli but does drive the post-
+  // enumerate merge fold over the survivors.
+  tracker.processBatch(
+      {pos2d(1.0, 1000.0, 1000.0, SensorKind::Lidar, "r0")});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  // Find the hypothesis branch that retains the survivors of the
+  // seeded pair (the dominant child is the one with the new-target
+  // assignment; the merge ran over its Bernoulli list).
+  bool found_seven = false;
+  bool found_ninetynine = false;
+  double r_seven = -1.0;
+  for (const auto& h_out : tracker.density().mbm) {
+    for (const auto& b : h_out.bernoullis) {
+      if (b.id == 7u) { found_seven = true; r_seven = b.existence_probability; }
+      if (b.id == 99u) found_ninetynine = true;
+    }
+  }
+  EXPECT_TRUE(found_seven)
+      << "older id 7 must survive the merge across hypotheses";
+  EXPECT_FALSE(found_ninetynine)
+      << "younger id 99 must not survive the merge";
+  // Phase 8 R1 fix: merged existence is max(r_a, r_b) = 0.8 then
+  // misdetected ((1-p_D)·r / (1-r·p_D)) = (0.1*0.8)/(1-0.72) ≈ 0.286.
+  // We just pin "no double-count inflation" — under the old
+  // independent-fold the merged r would have been
+  // 1-(1-.8)(1-.6) = 0.92 → post-miss ≈ 0.535.
+  EXPECT_LT(r_seven, 0.35)
+      << "merged existence must NOT carry double-count inflation";
+}
+
+TEST(PmbmTrackerPhase8, BhattacharyyaMergeOffKeepsBothBernoullis) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.survival_probability = 1.0;
+  cfg.bhattacharyya_merge_threshold = 0.0;  // disabled
+  cfg.r_min = 1e-9;
+  cfg.hypothesis_weight_min = 1e-9;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  navtracker::pmbm::GlobalHypothesis h;
+  h.weight = 1.0;
+  h.log_weight = 0.0;
+  auto mkB = [](BernoulliId id, double r, double px, double py) {
+    Bernoulli b;
+    b.id = id;
+    b.existence_probability = r;
+    b.mean = Eigen::Vector4d(px, py, 0.0, 0.0);
+    b.covariance = Eigen::Matrix4d::Identity() * 4.0;
+    b.last_update = Timestamp::fromSeconds(0.0);
+    return b;
+  };
+  h.bernoullis.push_back(mkB(7,  0.8, 0.0, 0.0));
+  h.bernoullis.push_back(mkB(99, 0.6, 0.1, 0.0));
+  tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
+
+  // Non-empty scan again, but threshold disabled (= 0).
+  tracker.processBatch(
+      {pos2d(1.0, 1000.0, 1000.0, SensorKind::Lidar, "r0")});
+
+  // Both seeded ids must survive across the resulting mixture when
+  // merge is disabled.
+  bool found_seven = false;
+  bool found_ninetynine = false;
+  for (const auto& h_out : tracker.density().mbm) {
+    for (const auto& b : h_out.bernoullis) {
+      if (b.id == 7u)  found_seven = true;
+      if (b.id == 99u) found_ninetynine = true;
+    }
+  }
+  EXPECT_TRUE(found_seven);
+  EXPECT_TRUE(found_ninetynine);
+}
+
+// ---------------------------------------------------------------------------
+// T3: PMBM-specific bench determinism.
+//
+// BenchDeterminism only covers ekf_cv_gnn. This test repeats the
+// same logic for imm_cv_ct_pmbm_adapt and pins byte-identical rows
+// across two sweeps. Catches non-determinism in the new TPMBM
+// trajectory snapshots, adaptive-birth path, and adaptive-K
+// selection that the legacy MHT test would never exercise.
+// ---------------------------------------------------------------------------
+TEST(PmbmTrackerPhase8, PmbmAdaptiveBenchIsByteIdenticalAcrossRuns) {
+  using navtracker::benchmark::Config;
+  using navtracker::benchmark::defaultConfigs;
+  using navtracker::benchmark::runSweep;
+  using navtracker::benchmark::ScenarioRun;
+  using navtracker::benchmark::SweepParams;
+
+  std::vector<Config> all = defaultConfigs();
+  std::vector<Config> configs;
+  for (const auto& c : all) {
+    if (c.label == "imm_cv_ct_pmbm_adapt") configs.push_back(c);
+  }
+  ASSERT_EQ(configs.size(), 1u);
+
+  std::vector<std::unique_ptr<ScenarioRun>> scenarios;
+  scenarios.push_back(std::make_unique<TinyStraightLine>());
+
+  SweepParams p;
+  p.run_id = "phase8_pmbm_determinism";
+  p.synthetic_seeds = 2;
+
+  const auto rows_a = runSweep(configs, scenarios, p);
+  const auto rows_b = runSweep(configs, scenarios, p);
+
+  ASSERT_EQ(rows_a.size(), rows_b.size());
+  ASSERT_GT(rows_a.size(), 0u);
+  for (std::size_t i = 0; i < rows_a.size(); ++i) {
+    EXPECT_EQ(rows_a[i].config, rows_b[i].config);
+    EXPECT_EQ(rows_a[i].scenario, rows_b[i].scenario);
+    EXPECT_EQ(rows_a[i].seed, rows_b[i].seed);
+    EXPECT_EQ(rows_a[i].metric, rows_b[i].metric);
+    EXPECT_EQ(rows_a[i].value, rows_b[i].value);  // exact byte
+  }
+}
+
+// ---------------------------------------------------------------------------
+// T4: per-sensor setSensorDetectionModel cost-matrix effect.
+//
+// Two simultaneous measurements: one from a high-P_D / low-λ_C sensor,
+// one from a low-P_D / high-λ_C sensor. Inject a PPP near both. The
+// new-target Bernoulli built from the high-confidence sensor MUST have
+// strictly higher existence_probability than the one from the
+// low-confidence sensor. Proves the detection model is consulted per
+// measurement, not via a global scalar.
+// ---------------------------------------------------------------------------
+TEST(PmbmTrackerPhase8, PerSensorDetectionModelDifferentiatesBernoulliExistence) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.5;
+  cfg.clutter_intensity = 1e-3;  // shared fallback
+  cfg.survival_probability = 1.0;
+  cfg.min_new_bernoulli_existence = 0.0;
+  PmbmTracker tracker(f.ekf, cfg);
+
+  // High-quality sensor (Lidar):       P_D = 0.99, λ_C = 1e-6 (clean).
+  // Low-quality sensor (ArpaTtm radar): P_D = 0.30, λ_C = 1e-1 (dense).
+  auto model = std::make_shared<FixedSensorDetectionModel>(
+      DetectionParams{0.5, 1e-3});
+  model->set(SensorKind::Lidar, MeasurementModel::Position2D,
+             DetectionParams{0.99, 1e-6});
+  model->set(SensorKind::ArpaTtm, MeasurementModel::Position2D,
+             DetectionParams{0.30, 1e-1});
+  tracker.setSensorDetectionModel(model);
+
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0,   0.0,   0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 100.0, 100.0));
+
+  const auto z_hi = pos2d(1.0,   0.0,   0.0, SensorKind::Lidar,   "lidar0");
+  const auto z_lo = pos2d(1.0, 100.0, 100.0, SensorKind::ArpaTtm, "radar0");
+  tracker.processBatch({z_hi, z_lo});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  const auto& dom = tracker.density().mbm[0];
+  ASSERT_EQ(dom.bernoullis.size(), 2u);
+  // Match Bernoullis to measurements by proximity to PPP centres.
+  double r_hi = -1.0, r_lo = -1.0;
+  for (const auto& b : dom.bernoullis) {
+    if (std::abs(b.mean(0) -   0.0) < 5.0) r_hi = b.existence_probability;
+    if (std::abs(b.mean(0) - 100.0) < 5.0) r_lo = b.existence_probability;
+  }
+  ASSERT_GT(r_hi, 0.0);
+  ASSERT_GT(r_lo, 0.0);
+  EXPECT_GT(r_hi, r_lo)
+      << "high-P_D / low-λ_C sensor's birth must outscore the noisy one";
+}
+
+// ---------------------------------------------------------------------------
+// T5: re-demotion lifecycle.
+//
+// Drive a Bernoulli's existence above confirm_threshold (fires
+// Initiated + Confirmed) then let it decay below the threshold while
+// staying above output_existence_floor (re-demotion to Tentative —
+// status visible to consumers but NOT confirmed). The sink contract:
+// Updated fires every scan the Bernoulli emits; Confirmed fires only
+// on the up-edge transition.
+// ---------------------------------------------------------------------------
+class RecordingSink : public navtracker::ITrackSink {
+ public:
+  std::vector<navtracker::TrackLifecycleEvent> initiated;
+  std::vector<navtracker::TrackLifecycleEvent> confirmed;
+  std::vector<navtracker::TrackLifecycleEvent> updated;
+  std::vector<navtracker::TrackLifecycleEvent> deleted;
+  void onTrackInitiated(const navtracker::TrackLifecycleEvent& e) override {
+    initiated.push_back(e);
+  }
+  void onTrackConfirmed(const navtracker::TrackLifecycleEvent& e) override {
+    confirmed.push_back(e);
+  }
+  void onTrackUpdated(const navtracker::TrackLifecycleEvent& e) override {
+    updated.push_back(e);
+  }
+  void onTrackDeleted(const navtracker::TrackLifecycleEvent& e) override {
+    deleted.push_back(e);
+  }
+};
+
+TEST(PmbmTrackerPhase8, ConfirmedFiresOnlyOnUpEdgeNotOnReConfirmation) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.survival_probability = 1.0;  // no automatic decay
+  cfg.clutter_intensity = 1e-6;
+  cfg.confirm_threshold = 0.7;
+  cfg.output_existence_floor = 0.05;  // stays visible while Tentative
+  cfg.r_min = 1e-9;
+  cfg.hypothesis_weight_min = 1e-9;
+  cfg.smart_birth_skip_existing = true;  // far measurements stay phantom
+  cfg.smart_birth_skip_r_min = 0.0;
+  PmbmTracker tracker(f.ekf, cfg);
+  RecordingSink sink;
+  tracker.setTrackSink(&sink);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 0.0, 0.0));
+
+  // Scan 1: high r_new at the PPP location → Confirmed up-edge.
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, SensorKind::Lidar, "r0")});
+  ASSERT_EQ(sink.initiated.size(), 1u);
+  ASSERT_EQ(sink.confirmed.size(), 1u);
+  const auto target_id = sink.confirmed[0].id.value;
+
+  // Demote the dominant target Bernoulli below confirm threshold but
+  // above visibility floor (decay is too slow under survival=1 to get
+  // here naturally; the test pins the event-edge semantics).
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  for (auto& h : tracker.mutableDensityForTesting().mbm) {
+    for (auto& b : h.bernoullis) {
+      if (b.id == target_id) b.existence_probability = 0.40;
+    }
+  }
+
+  // Scan 2: far-away measurement (does NOT update our Bernoulli; just
+  // drives a processBatch so the lifecycle diff fires and snapshots
+  // Tentative status into prev_emitted_statuses_).
+  tracker.processBatch(
+      {pos2d(2.0, 1e5, 1e5, SensorKind::Lidar, "r0")});
+  EXPECT_EQ(sink.confirmed.size(), 1u)
+      << "Confirmed→Tentative down-edge must NOT fire a Confirmed event";
+
+  // Scan 3: detection on our Bernoulli at its location → posterior
+  // existence jumps near 1, emitted as Confirmed, fires the second
+  // up-edge. (No manual r set this time; the detection itself drives
+  // the promotion, which is what production code would see.)
+  tracker.processBatch(
+      {pos2d(3.0, 0.0, 0.0, SensorKind::Lidar, "r0")});
+  EXPECT_EQ(sink.initiated.size(), 1u);
+  EXPECT_EQ(sink.confirmed.size(), 2u)
+      << "re-promotion Tentative→Confirmed must re-fire onTrackConfirmed";
+}

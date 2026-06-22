@@ -1,6 +1,6 @@
 #pragma once
 
-#include "adapters/own_ship/OwnShipProvider.hpp"
+#include "core/own_ship/OwnShipProvider.hpp"
 #include "core/geo/Datum.hpp"
 #include "core/types/Timestamp.hpp"
 #include "core/types/Track.hpp"

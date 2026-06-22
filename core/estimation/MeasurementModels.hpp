@@ -50,4 +50,19 @@ Eigen::VectorXd measurementResidual(MeasurementModel model,
                                     const Eigen::VectorXd& z,
                                     const Eigen::VectorXd& z_pred);
 
+// Reject measurements whose covariance is non-finite (NaN/Inf) or
+// degenerate (non-positive diagonal / non-square). Adapters should
+// validate at the edge per CLAUDE.md invariant 6, but a defensive
+// guard at estimator entry prevents one bad NMEA frame from
+// permanently poisoning a track's covariance (Phase 8 R3 fix).
+inline bool isMeasurementCovariancePsd(const Eigen::MatrixXd& R) {
+  if (R.rows() == 0 || R.cols() == 0) return false;
+  if (R.rows() != R.cols()) return false;
+  if (!R.allFinite()) return false;
+  for (Eigen::Index i = 0; i < R.rows(); ++i) {
+    if (R(i, i) <= 0.0) return false;
+  }
+  return true;
+}
+
 }  // namespace navtracker

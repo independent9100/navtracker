@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "adapters/own_ship/OwnShipProvider.hpp"
+#include "core/own_ship/OwnShipProvider.hpp"
 #include "core/collision/CpaOwnShip.hpp"
 #include "core/tracking/TrackManager.hpp"
 #include "core/types/Track.hpp"

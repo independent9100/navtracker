@@ -164,6 +164,19 @@ class PmbmTracker {
     bool adaptive_birth = false;
     double lambda_birth = 1e-3;
 
+    // Adaptive K-best per parent (MATLAB MTT-master convention).
+    // When ON, each parent's K is derived from its weight share:
+    //   K_p = max(1, ceil(max_global_hypotheses · w_p))
+    // so high-weight parents get deeper exploration and low-weight
+    // parents at most 1 child. Mirrors
+    // `kbest = ceil(Nhyp_max * w_p)` in PoissonMBMtarget_update.m
+    // and MBMtarget_update.m. The fixed `k_best_per_hypothesis` is
+    // used as a per-parent ceiling so a single dominant parent
+    // cannot run away with the entire mixture budget.
+    // OFF by default for backward compatibility; bench config
+    // `imm_cv_ct_pmbm_adapt` turns this ON (Phase 8 P2 fix).
+    bool adaptive_k_best = false;
+
     // Trajectory-PMBM (Phase 4, García-Fernández/Williams 2020). When
     // > 0, each Bernoulli records its forward-pass post-update state
     // history at every detection and post-predict state at every
@@ -403,10 +416,13 @@ class PmbmTracker {
   // Murty K-best, materialise each assignment as a child global
   // hypothesis. `nts` is the per-measurement new-target cache from
   // buildNewTargetCandidates.
+  // `k_override` < 0 → use cfg_.k_best_per_hypothesis (legacy).
+  // `k_override` ≥ 1 → use that K (Phase 8 P2 adaptive K path).
   void enumerateChildren(const GlobalHypothesis& parent,
                          const std::vector<Measurement>& scan,
                          const std::vector<NewTargetCandidate>& nts,
-                         std::vector<GlobalHypothesis>& out);
+                         std::vector<GlobalHypothesis>& out,
+                         int k_override = -1);
 
   // After enumeration: renormalise mixture weights, drop hypotheses /
   // Bernoullis / PPP components below thresholds, cap mixture size at

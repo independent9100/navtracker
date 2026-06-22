@@ -49,20 +49,29 @@ void rtsSmoothTrajectory(std::vector<TrajectoryPoint>& trajectory) {
     const auto& next = trajectory[k_plus + 1];  // smoothed at k+1
     if (curr.covariance.rows() == 0 ||
         next.predicted_covariance.rows() == 0) continue;
-    if (next.predicted_covariance.determinant() <= 0.0) continue;
     const double dt = next.time.seconds() - curr.time.seconds();
     const int n = static_cast<int>(curr.state.size());
     const Eigen::MatrixXd F = cvTransitionMatrix(n, dt);
-    // G_k = P_filt_k · F^T · P_pred_{k+1}^{-1}.
-    const Eigen::MatrixXd P_pred_inv =
-        next.predicted_covariance.inverse();
-    const Eigen::MatrixXd G = curr.covariance * F.transpose() * P_pred_inv;
+    // G_k = P_filt_k · F^T · P_pred_{k+1}^{-1}, computed via LDLT
+    // instead of naive .inverse() — the predicted covariance can be
+    // near-singular on long trajectory windows (Phase 8 R2 fix).
+    Eigen::LDLT<Eigen::MatrixXd> ldlt(next.predicted_covariance);
+    if (ldlt.info() != Eigen::Success) continue;
+    const Eigen::VectorXd diag = ldlt.vectorD();
+    if ((diag.array() <= 0.0).any()) continue;
+    // G^T = P_pred^{-1} · (P_filt · F^T)^T = P_pred^{-1} · F · P_filt
+    const Eigen::MatrixXd PF = curr.covariance * F.transpose();
+    const Eigen::MatrixXd G = ldlt.solve(PF.transpose()).transpose();
     // x_smooth_k = x_filt_k + G · (x_smooth_{k+1} − x_pred_{k+1})
     curr.state = curr.state +
                  G * (next.state - next.predicted_state);
     // P_smooth_k = P_filt_k + G · (P_smooth_{k+1} − P_pred_{k+1}) · G^T
-    curr.covariance = curr.covariance +
+    Eigen::MatrixXd P_sm = curr.covariance +
         G * (next.covariance - next.predicted_covariance) * G.transpose();
+    // Resymmetrise to defend against accumulated rounding asymmetry
+    // (Phase 8 R2 fix). LDLT factorisation upstream requires symmetric
+    // input; without this the next iteration silently drifts.
+    curr.covariance = 0.5 * (P_sm + P_sm.transpose());
   }
 }
 
@@ -402,7 +411,8 @@ void PmbmTracker::enumerateChildren(
     const GlobalHypothesis& parent,
     const std::vector<Measurement>& scan,
     const std::vector<NewTargetCandidate>& nts,
-    std::vector<GlobalHypothesis>& out) {
+    std::vector<GlobalHypothesis>& out,
+    int k_override) {
   const int n = static_cast<int>(parent.bernoullis.size());
   const int m = static_cast<int>(scan.size());
 
@@ -536,11 +546,24 @@ void PmbmTracker::enumerateChildren(
   std::vector<std::vector<Bernoulli>> updated(
       n, std::vector<Bernoulli>(m));
 
+  // Phase 8 P1: pre-gate before the expensive estimator.update.
+  // MATLAB MTT-master gates on Mahalanobis before filling cost cells;
+  // we skip update for any cell whose Mahalanobis fails the configured
+  // gate_threshold. Saves the per-cell update (~70% of cells on dense
+  // clutter, ~30% on autoferry). The skipped cell's cost stays +∞ so
+  // the assignment treats it as infeasible.
   for (int i = 0; i < n; ++i) {
     const Bernoulli& b = parent.bernoullis[i];
     if (b.existence_probability <= 0.0) continue;
     Track t = toTrack(b);
     for (int l = 0; l < m; ++l) {
+      if (cfg_.gate_threshold > 0.0 &&
+          !estimator_.gate(t, scan[l], cfg_.gate_threshold)) {
+        // Cell stays at kInf in C; log_lik stays at -kInf; updated[i][l]
+        // left default-constructed (it can never be referenced by the
+        // assignment because the cost is +∞).
+        continue;
+      }
       const double ll = estimator_.logLikelihood(t, scan[l]);
       log_lik[i][l] = ll;
       Track t_upd = t;
@@ -564,8 +587,12 @@ void PmbmTracker::enumerateChildren(
   }
 
   // Murty K-best on the cost matrix.
-  const KBestResult kb =
-      murtyKBest(C, std::max(1, cfg_.k_best_per_hypothesis));
+  // k_override (Phase 8 P2): adaptive K per parent, weight-proportional.
+  // Falls back to cfg_.k_best_per_hypothesis when k_override < 0.
+  const int k_effective = (k_override >= 1)
+      ? k_override
+      : std::max(1, cfg_.k_best_per_hypothesis);
+  const KBestResult kb = murtyKBest(C, k_effective);
 
   for (std::size_t k = 0; k < kb.assignments.size(); ++k) {
     const auto& asn = kb.assignments[k];
@@ -908,7 +935,19 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
   children.reserve(density_.mbm.size() *
                    static_cast<std::size_t>(cfg_.k_best_per_hypothesis));
   for (const auto& p : density_.mbm) {
-    enumerateChildren(p, scan, nts, children);
+    int k_override = -1;
+    if (cfg_.adaptive_k_best) {
+      // MATLAB MTT-master: K_p = max(1, ceil(Nhyp_max · w_p)), capped
+      // at the per-parent ceiling cfg_.k_best_per_hypothesis. With
+      // a single dominant parent (w≈1) the cap binds; with a broad
+      // mixture each parent gets ≥ 1. (Phase 8 P2 fix.)
+      const double w = std::max(0.0, p.weight);
+      const int k_raw = static_cast<int>(std::ceil(
+          static_cast<double>(cfg_.max_global_hypotheses) * w));
+      k_override = std::clamp(k_raw, 1,
+                              std::max(1, cfg_.k_best_per_hypothesis));
+    }
+    enumerateChildren(p, scan, nts, children, k_override);
   }
 
   density_.mbm = std::move(children);
@@ -1002,23 +1041,42 @@ namespace {
 // block (first two state components). Standard form:
 //   d_B = 1/8 · (m1-m2)' P^-1 (m1-m2) + 1/2 · ln(det(P) / sqrt(det(P1)·det(P2)))
 // with P = (P1 + P2) / 2. Returns +∞ for degenerate covariances.
-double bhattacharyya2D(const Eigen::VectorXd& mean_a,
-                       const Eigen::MatrixXd& cov_a,
-                       const Eigen::VectorXd& mean_b,
-                       const Eigen::MatrixXd& cov_b) {
+// Bhattacharyya distance on the (px, py, vx, vy) block when both states
+// have ≥ 4 dims, falling back to (px, py) when one is shorter. Position-
+// only would merge two Bernoullis sitting on top of each other with
+// opposite velocities — an id-merge bomb on crossings; velocity-aware
+// distance keeps them separate (Phase 8 R6 fix).
+double bhattacharyyaState(const Eigen::VectorXd& mean_a,
+                          const Eigen::MatrixXd& cov_a,
+                          const Eigen::VectorXd& mean_b,
+                          const Eigen::MatrixXd& cov_b) {
   if (mean_a.size() < 2 || mean_b.size() < 2) return kInf;
   if (cov_a.rows() < 2 || cov_b.rows() < 2) return kInf;
-  const Eigen::Vector2d d = mean_a.head<2>() - mean_b.head<2>();
-  const Eigen::Matrix2d Pa = cov_a.topLeftCorner<2, 2>();
-  const Eigen::Matrix2d Pb = cov_b.topLeftCorner<2, 2>();
-  const Eigen::Matrix2d P = 0.5 * (Pa + Pb);
-  const double det_P = P.determinant();
-  const double det_Pa = Pa.determinant();
-  const double det_Pb = Pb.determinant();
-  if (det_P <= 0.0 || det_Pa <= 0.0 || det_Pb <= 0.0) return kInf;
-  const double mahal = d.transpose() * P.inverse() * d;
-  return 0.125 * mahal +
-         0.5 * std::log(det_P / std::sqrt(det_Pa * det_Pb));
+  const int dim = (mean_a.size() >= 4 && mean_b.size() >= 4 &&
+                   cov_a.rows() >= 4 && cov_b.rows() >= 4) ? 4 : 2;
+  const Eigen::VectorXd d = mean_a.head(dim) - mean_b.head(dim);
+  const Eigen::MatrixXd Pa = cov_a.topLeftCorner(dim, dim);
+  const Eigen::MatrixXd Pb = cov_b.topLeftCorner(dim, dim);
+  const Eigen::MatrixXd P = 0.5 * (Pa + Pb);
+  // LDLT-based solves are PSD-stable; determinant via the LDLT factor
+  // avoids the ill-conditioning of the naive det() on large covariances.
+  Eigen::LDLT<Eigen::MatrixXd> ldlt_P(P);
+  Eigen::LDLT<Eigen::MatrixXd> ldlt_Pa(Pa);
+  Eigen::LDLT<Eigen::MatrixXd> ldlt_Pb(Pb);
+  if (ldlt_P.info() != Eigen::Success ||
+      ldlt_Pa.info() != Eigen::Success ||
+      ldlt_Pb.info() != Eigen::Success) return kInf;
+  const Eigen::VectorXd diag_P = ldlt_P.vectorD();
+  const Eigen::VectorXd diag_Pa = ldlt_Pa.vectorD();
+  const Eigen::VectorXd diag_Pb = ldlt_Pb.vectorD();
+  if ((diag_P.array() <= 0.0).any() ||
+      (diag_Pa.array() <= 0.0).any() ||
+      (diag_Pb.array() <= 0.0).any()) return kInf;
+  const double log_det_P  = diag_P.array().log().sum();
+  const double log_det_Pa = diag_Pa.array().log().sum();
+  const double log_det_Pb = diag_Pb.array().log().sum();
+  const double mahal = d.transpose() * ldlt_P.solve(d);
+  return 0.125 * mahal + 0.5 * (log_det_P - 0.5 * (log_det_Pa + log_det_Pb));
 }
 
 }  // namespace
@@ -1034,19 +1092,25 @@ void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h) const {
     if (dead[i]) continue;
     for (std::size_t j = i + 1; j < h.bernoullis.size(); ++j) {
       if (dead[j]) continue;
-      const double dB = bhattacharyya2D(
+      const double dB = bhattacharyyaState(
           h.bernoullis[i].mean, h.bernoullis[i].covariance,
           h.bernoullis[j].mean, h.bernoullis[j].covariance);
       if (dB > cfg_.bhattacharyya_merge_threshold) continue;
 
-      // Merge j INTO i. Independent-existence fold:
-      //   r_merged = 1 - (1 - r_i)(1 - r_j)
+      // Merge j INTO i. r_merged = max(r_i, r_j) — the merge gate fires
+      // only when (px, py, vx, vy) overlap closely, which in practice
+      // means the two Bernoullis trace back to the same physical
+      // target (split→rejoin under measurement ambiguity). The
+      // textbook independent-existence fold r_m = 1 - (1-r_i)(1-r_j)
+      // assumes uncorrelated existence, which double-counts when
+      // duplicates share a parent. Phase 8 R1 fix: keep the
+      // best-supported existence rather than inflate.
       // Mean / cov: r-weighted moment match.
       Bernoulli& a = h.bernoullis[i];
       const Bernoulli& b = h.bernoullis[j];
       const double r_a = a.existence_probability;
       const double r_b = b.existence_probability;
-      const double r_m = 1.0 - (1.0 - r_a) * (1.0 - r_b);
+      const double r_m = std::max(r_a, r_b);
       const double wa = r_a, wb = r_b;
       const double ws = wa + wb;
       if (ws > 0.0 && a.mean.size() == b.mean.size()) {

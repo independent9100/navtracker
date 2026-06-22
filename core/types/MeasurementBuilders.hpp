@@ -4,7 +4,7 @@
 
 #include <Eigen/Core>
 
-#include "adapters/own_ship/OwnShipProvider.hpp"
+#include "core/own_ship/OwnShipProvider.hpp"
 #include "core/geo/Datum.hpp"
 #include "core/types/Ids.hpp"
 #include "core/types/Measurement.hpp"

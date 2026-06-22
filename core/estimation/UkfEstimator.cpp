@@ -56,6 +56,9 @@ void UkfEstimator::predict(Track& track, Timestamp to) const {
 }
 
 void UkfEstimator::update(Track& track, const Measurement& z) const {
+  // Defensive guard: NaN/non-PSD R would propagate through K and
+  // permanently corrupt track.covariance. (Phase 8 R3 fix.)
+  if (!isMeasurementCovariancePsd(z.covariance)) return;
   // Standard-form UKF update: re-draw sigma points from the predicted
   // (state, covariance) — predict() left them there. That is why the
   // cross-covariance below uses xd = sp.points[i] - track.state: the
@@ -88,10 +91,22 @@ void UkfEstimator::update(Track& track, const Measurement& z) const {
   }
   S += z.covariance;
 
-  const Eigen::MatrixXd K = Pxz * S.inverse();
+  // LDLT-based solve avoids the naive .inverse() failure mode on
+  // ill-conditioned innovation covariance (Phase 8 R4 fix).
+  Eigen::LDLT<Eigen::MatrixXd> ldlt_S(S);
+  Eigen::MatrixXd K;
+  if (ldlt_S.info() == Eigen::Success) {
+    K = ldlt_S.solve(Pxz.transpose()).transpose();
+  } else {
+    K = Pxz * S.inverse();  // fall back to legacy path
+  }
   const Eigen::VectorXd y = measurementResidual(z.model, z.value, z_pred);
   track.state += K * y;
-  track.covariance -= K * S * K.transpose();
+  Eigen::MatrixXd P_new = track.covariance - K * S * K.transpose();
+  // Resymmetrise: UKF lacks a Joseph form, and accumulated rounding
+  // produces asymmetric covariance which then breaks the next predict's
+  // sigma-point Cholesky factor (Phase 8 R4 fix).
+  track.covariance = 0.5 * (P_new + P_new.transpose());
   track.last_update = z.time;
 }
 

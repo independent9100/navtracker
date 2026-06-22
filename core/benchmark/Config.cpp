@@ -349,6 +349,13 @@ pmbm::PmbmTracker::Config makePmbmConfig() {
   cfg.max_ppp_components = 200;
   cfg.confirm_threshold = 0.5;
   cfg.output_existence_floor = 0.1;
+  // r_min: MATLAB MTT-master uses `existence_threshold = 1e-5`
+  // (TPMBM_alive_filter.m); our PmbmTracker.hpp default 1e-3 was
+  // 100× tighter and dropped legitimate low-r Bernoullis before
+  // posterior could ramp them on a late detection. Loosen the
+  // bench config (not the global default) to MATLAB parity
+  // (Phase 8 R5 fix).
+  cfg.r_min = 1e-5;
   // Phase 3 polish (closes the two named Phase 2 gaps):
   //
   // (A) Idle-decay half-life. Source-aware misdetection (above) skips
@@ -538,6 +545,19 @@ std::vector<Config> defaultConfigs() {
     c.pmbm_config = []() {
       auto cfg = makePmbmConfig();
       cfg.adaptive_birth = true;
+      // Adaptive K-best (cfg.adaptive_k_best) was measured in
+      // Phase 8 iter 1 + iter 3: at K=5 per parent it adds philos
+      // −16 % / dense_clutter −15 % / sc4 −15 % wins, but
+      // simultaneously regresses sc13/sc16/sc17 anchored by +14..+27 %
+      // (the extra hypothesis branches interact with the R1 merge
+      // max() formula on multi-vessel scenarios; tighter merge
+      // threshold did not recover, so the interaction is structural).
+      // Iter 2 measured K=1 with all other Phase 8 fixes: no
+      // regressions, +6 small anchored wins, head_on −9 %. Shipping
+      // the K=1 configuration; adaptive K parked until the merge
+      // interaction is understood.
+      cfg.adaptive_k_best = false;
+      cfg.k_best_per_hypothesis = 1;
       // λ_birth: expected new-target rate per scan per unit
       // measurement-space volume (same units as λ_C). Tuned across
       // {1e-3, 1e-4, 1e-5} in Phase 7 iter 3-4 against λ_C ≈ 1e-4:

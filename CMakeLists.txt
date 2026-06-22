@@ -47,6 +47,7 @@ add_library(navtracker_core
   core/bias/SensorBiasPairExtractor.cpp
   core/own_ship/UereEstimator.cpp
   core/own_ship/OwnShipVelocityEstimator.cpp
+  core/own_ship/OwnShipProvider.cpp
   core/collision/Cpa.cpp
   core/collision/CpaOwnShip.cpp
   core/collision/CpaEvaluator.cpp
@@ -75,7 +76,6 @@ add_library(navtracker_core
   core/scenario/Metrics.cpp
   core/scenario/TruthResample.cpp
   core/output/TrackOutput.cpp
-  adapters/own_ship/OwnShipProvider.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
@@ -203,6 +203,7 @@ add_executable(navtracker_tests
   tests/pmbm/test_pmbm_tracker_predict.cpp
   tests/pmbm/test_pmbm_tracker_update.cpp
   tests/pmbm/test_pmbm_scenario.cpp
+  tests/pmbm/test_pmbm_phase8.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
   tests/adapters/own_ship/test_own_ship_provider.cpp

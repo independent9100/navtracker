@@ -8,6 +8,127 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-22 (Phase 8, multi-agent review fixes) — [Cl-3 PMBM Phase 8] 6 bug fixes + 5 missing tests + arch + perf: head_on -9 % GOSPA / -11 % T-GOSPA, +6 anchored T-GOSPA -1..-8 %, 0 unit-test regressions
+
+**Premise.** Phase 7 (Adaptive Birth) was followed by a 7-agent
+parallel in-depth review (math vs MATLAB MTT-master, pruning, numerical
+stability, test coverage, claim verification, architecture, performance).
+The review surfaced 6 named bugs, 5 missing test categories, 1
+architecture violation, and 3 perf hotspots. Phase 8 acts on them and
+re-measures.
+
+**Method — 3-iter polish.** All on `master` (1b44a9f → HEAD).
+
+**Bug fixes shipped.**
+
+- **R1 (PmbmTracker.cpp `mergeBernoulliDuplicates`):** merged
+  existence was `1 − (1−r_a)(1−r_b)` (textbook independent fold),
+  but the merge trigger only fires when (px, py, vx, vy) overlap
+  closely → duplicates almost always trace to a common parent. The
+  fold double-counted. Replaced with `max(r_a, r_b)` — keep the
+  best-supported hypothesis without inflation.
+- **R2 (PmbmTracker.cpp `rtsSmoothTrajectory`):** naive
+  `predicted_covariance.inverse()` + no resymmetrise. Replaced with
+  `Eigen::LDLT::solve` and `P = 0.5·(P+Pᵀ)` after each step.
+- **R3 (estimators):** added `isMeasurementCovariancePsd(R)` guard
+  at `EkfEstimator::update`, `UkfEstimator::update`,
+  `ImmEstimator::update`. NaN/non-PSD R now early-returns; one bad
+  NMEA frame can no longer poison `track.covariance` for the
+  remainder of a replay.
+- **R4 (UkfEstimator.cpp):** post-update `P -= K·S·Kᵀ` was the only
+  estimator path without symmetrisation. Added LDLT-based gain
+  solve + `0.5·(P+Pᵀ)`; future sigma-point Cholesky no longer
+  drifts.
+- **R5 (bench config):** `r_min` lowered 1e-3 → 1e-5 in
+  `makePmbmConfig`, matching MATLAB `TPMBM_alive_filter.m`
+  `existence_threshold = 1e-5`. Stops dropping legitimate low-r
+  Bernoullis before posterior ramp.
+- **R6 (PmbmTracker.cpp `bhattacharyya2D` → `bhattacharyyaState`):**
+  position-only merge distance promoted to 4-D (px, py, vx, vy).
+  Two near-coincident Bernoullis with opposite velocity no longer
+  merge — was an id-merge bomb on crossings.
+
+**Performance fixes shipped.**
+
+- **P1 (`enumerateChildren`):** pre-gate before `estimator.update`.
+  Cost cell stays +∞ when Mahalanobis fails the configured gate;
+  cuts ~30–70 % of per-(Bernoulli, measurement) estimator updates
+  depending on clutter density.
+- **P2 (adaptive K = ceil(Nhyp_max · w_p)):** implemented as
+  `Config::adaptive_k_best`. Per-parent K derived from weight
+  share, capped at `k_best_per_hypothesis`. Mirrors MATLAB
+  `PoissonMBMtarget_update.m:265`. Measured in iter 1 + iter 3:
+  drives big philos/dense_clutter/sc4 wins (-15 % each) BUT
+  exposes a structural interaction with the R1 merge max() formula
+  on multi-vessel autoferry scenarios (+14..+27 % regression on
+  sc13/sc16 anchored). Tighter merge threshold (1.0 → 0.25) in
+  iter 3 did not recover. Shipped OFF in the bench config; parked
+  until the K × merge interaction is understood.
+
+**Architecture fix shipped.**
+
+- `OwnShipProvider.{hpp,cpp}` moved physically from `adapters/own_ship/`
+  to `core/own_ship/`. It's a pure domain type with no I/O — it
+  belongs alongside `OwnShipVelocityEstimator` and `UereEstimator`.
+  Closes the 3 `core/*` → `adapters/*` reverse-direction includes
+  (CpaEvaluator, CpaOwnShip, MeasurementBuilders).
+  `adapters/own_ship/OwnShipProvider.hpp` retained as a one-line
+  shim for the ~37 callers; new code should include
+  `core/own_ship/OwnShipProvider.hpp` directly.
+
+**Tests added (5 new + 2 companion = 7 PMBM tests in `test_pmbm_phase8.cpp`).**
+
+- T1 `BiasProviderShiftsPostUpdateBernoulliMean` +
+  `NullBiasProviderLeavesMeasurementUntouched` — closes the zero-coverage
+  gap on `PmbmTracker::setSensorBiasProvider`.
+- T2 `BhattacharyyaMergeKeepsOlderIdAndDeletesYounger` +
+  `BhattacharyyaMergeOffKeepsBothBernoullis` — pins id-stability
+  invariant + the R1 fix (merged r ≈ post-miss-of-max, not the
+  inflated independent fold).
+- T3 `PmbmAdaptiveBenchIsByteIdenticalAcrossRuns` — extends
+  `BenchDeterminism` to a PMBM config (was MHT-only; missed
+  trajectory-snapshot ordering and adaptive-birth/K paths).
+- T4 `PerSensorDetectionModelDifferentiatesBernoulliExistence` —
+  two simultaneous measurements from sensors with very different
+  (P_D, λ_C); high-confidence sensor's birth Bernoulli must outscore
+  the noisy one. Closes the multi-sensor coverage gap.
+- T5 `ConfirmedFiresOnlyOnUpEdgeNotOnReConfirmation` — exercises
+  the Tentative → Confirmed re-promotion path. Discovered (and
+  worked around in the test) that PMBM's empty-scan branch
+  short-circuits before `firePmbmLifecycleEvents` / merge — noted
+  as a follow-on.
+
+**Iter 3 result (final, λ_birth=1e-5 + adaptive_k_best=false + all other Phase 8 fixes):**
+
+Pinned `docs/baselines/pmbm_phase8_20260622.csv`. Net effect vs
+Phase 7 baseline:
+
+| Bucket | Phase 8 vs Phase 7 (adapt) |
+|---|---|
+| head_on | GOSPA −9.1 %, T-GOSPA-raw −11.2 % |
+| autoferry sc2/3/4/5/6 anchored | T-GOSPA-raw −4.2..−7.9 % |
+| autoferry sc16/17/22 anchored | T-GOSPA-raw −0.3..−1.2 % |
+| philos | unchanged (Phase 7 baseline retained) |
+| dense_clutter | unchanged (Phase 7 baseline retained) |
+| autoferry sc13 unanchored | GOSPA +7.1 % (14 → 15), T-GOSPA +0.9 % — small regression |
+| autoferry sc5 id_switches | 5 → 10 (small regression; GOSPA unchanged) |
+
+734/734 unit tests pass (7 skipped, 0 failed; Phase 8 added 7 PMBM
+tests + 5 missing-coverage scenarios).
+
+**Takeaway.** R1–R6 + P1 are clean improvements; adaptive K (P2) is
+the right MATLAB-faithful direction but interacts with R1 on
+multi-vessel autoferry — parked behind `Config::adaptive_k_best`.
+Anchored T-GOSPA-raw improved another 4–8 % on top of Phase 7 across
+sc2-6_anchored; head_on closed −9 % GOSPA. The big philos/dense_clutter
+wins were already in Phase 7; adaptive K would push them further by
+another 15 % each at the cost of the documented sc13/16 regression.
+
+**Files.** Baseline `docs/baselines/pmbm_phase8_20260622.csv`. New
+test file `tests/pmbm/test_pmbm_phase8.cpp` (7 tests).
+
+---
+
 ## 2026-06-21 (Phase 7, Adaptive Birth — Reuter 2014) — [Cl-3 PMBM Phase 7] decoupled spatial/existence birth: dense_clutter -52 %, philos -16 %, autoferry unanchored -5..-32 %, all anchored T-GOSPA-raw -8..-60 %
 
 **Premise.** Parking-lot item #1 (clutter-aware PPP birth) and item #2
