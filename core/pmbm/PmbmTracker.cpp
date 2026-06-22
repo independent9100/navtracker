@@ -412,7 +412,8 @@ void PmbmTracker::enumerateChildren(
     const std::vector<Measurement>& scan,
     const std::vector<NewTargetCandidate>& nts,
     std::vector<GlobalHypothesis>& out,
-    int k_override) {
+    int k_override,
+    int parent_idx) {
   const int n = static_cast<int>(parent.bernoullis.size());
   const int m = static_cast<int>(scan.size());
 
@@ -696,7 +697,23 @@ void PmbmTracker::enumerateChildren(
         continue;
       }
       Bernoulli nb;
-      nb.id = next_bernoulli_id_++;
+      // Phase 8 iter 5 birth-id cache: under adaptive K, siblings of
+      // the same parent that birth a Bernoulli for the same measurement
+      // share an id so the within-hypothesis merge and weight prune
+      // see one logical hypothesis rather than 5 distinct ids.
+      // parent_idx < 0 disables caching (legacy bit-identical).
+      if (parent_idx >= 0) {
+        const auto key = std::make_pair(parent_idx, l);
+        auto cit = scan_birth_id_cache_.find(key);
+        if (cit != scan_birth_id_cache_.end()) {
+          nb.id = cit->second;
+        } else {
+          nb.id = next_bernoulli_id_++;
+          scan_birth_id_cache_[key] = nb.id;
+        }
+      } else {
+        nb.id = next_bernoulli_id_++;
+      }
       nb.existence_probability = r_new;
       nb.mean = nt.mean;
       nb.covariance = nt.covariance;
@@ -845,7 +862,21 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
       }
       density_.mbm = std::move(children);
     }
+    // Phase 8 iter 4: empty-scan branch must also run the
+    // within-hypothesis Bernoulli merge and fire lifecycle events.
+    // Previously the early-return on line ~850 skipped both, so a
+    // Bernoulli that decayed below output_existence_floor on an
+    // empty scan never fired onTrackDeleted, and a re-promotion on
+    // the *next* non-empty scan saw stale prev_emitted_statuses_.
+    if (cfg_.bhattacharyya_merge_threshold > 0.0) {
+      for (auto& h : density_.mbm) {
+        mergeBernoulliDuplicates(h);
+      }
+    }
     pruneAndNormalise();
+    if (track_sink_ != nullptr) {
+      firePmbmLifecycleEvents(current_time_);
+    }
     return;
   }
 
@@ -934,8 +965,13 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
   std::vector<GlobalHypothesis> children;
   children.reserve(density_.mbm.size() *
                    static_cast<std::size_t>(cfg_.k_best_per_hypothesis));
+  // Phase 8 iter 5: clear per-scan birth-id cache. Populated inside
+  // enumerateChildren when adaptive K is on.
+  scan_birth_id_cache_.clear();
+  int parent_idx_for_cache = 0;
   for (const auto& p : density_.mbm) {
     int k_override = -1;
+    int parent_idx_arg = -1;  // < 0 disables id-caching (legacy bit-identical)
     if (cfg_.adaptive_k_best) {
       // MATLAB MTT-master: K_p = max(1, ceil(Nhyp_max · w_p)), capped
       // at the per-parent ceiling cfg_.k_best_per_hypothesis. With
@@ -946,8 +982,10 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
           static_cast<double>(cfg_.max_global_hypotheses) * w));
       k_override = std::clamp(k_raw, 1,
                               std::max(1, cfg_.k_best_per_hypothesis));
+      parent_idx_arg = parent_idx_for_cache;
     }
-    enumerateChildren(p, scan, nts, children, k_override);
+    enumerateChildren(p, scan, nts, children, k_override, parent_idx_arg);
+    ++parent_idx_for_cache;
   }
 
   density_.mbm = std::move(children);

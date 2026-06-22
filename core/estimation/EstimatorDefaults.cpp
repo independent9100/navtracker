@@ -1,6 +1,7 @@
 #include "ports/IEstimator.hpp"
 
 #include <cmath>
+#include <limits>
 
 #include <Eigen/Dense>
 
@@ -20,6 +21,10 @@ namespace navtracker {
 bool IEstimator::gate(const Track& track,
                       const Measurement& z,
                       double gate_threshold) const {
+  // Defensive guard (Phase 8 iter 4 R3-strengthen): NaN/non-PSD R
+  // would produce a NaN Mahalanobis and a non-deterministic gate
+  // outcome. Reject the measurement (gate fails closed).
+  if (!isMeasurementCovariancePsd(z.covariance)) return false;
   const MeasurementPrediction pred = predictMeasurement(
       z.model, track.state, z.sensor_position_enu);
   const Eigen::VectorXd y =
@@ -27,11 +32,18 @@ bool IEstimator::gate(const Track& track,
   const Eigen::MatrixXd S =
       pred.H * track.covariance * pred.H.transpose() + z.covariance;
   const double d2 = y.transpose() * S.inverse() * y;
-  return d2 <= gate_threshold;
+  return std::isfinite(d2) && d2 <= gate_threshold;
 }
 
 double IEstimator::logLikelihood(const Track& track,
                                  const Measurement& z) const {
+  // Defensive guard (Phase 8 iter 4 R3-strengthen): non-finite R
+  // would produce a NaN log-likelihood that propagates into the
+  // associator cost matrix. Return −inf instead, which the
+  // associator treats as "infeasible cell".
+  if (!isMeasurementCovariancePsd(z.covariance)) {
+    return -std::numeric_limits<double>::infinity();
+  }
   const MeasurementPrediction pred = predictMeasurement(
       z.model, track.state, z.sensor_position_enu);
   const Eigen::VectorXd y =

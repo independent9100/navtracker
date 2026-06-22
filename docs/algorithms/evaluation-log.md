@@ -8,7 +8,7 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
-## 2026-06-22 (Phase 8, multi-agent review fixes) — [Cl-3 PMBM Phase 8] 6 bug fixes + 5 missing tests + arch + perf: head_on -9 % GOSPA / -11 % T-GOSPA, +6 anchored T-GOSPA -1..-8 %, 0 unit-test regressions
+## 2026-06-22 (Phase 8, multi-agent review fixes + iter 4 verification correction) — [Cl-3 PMBM Phase 8] 6 bug fixes + 5 tests + arch + perf: head_on -6.4 % GOSPA / -5.5 % T-GOSPA, +5 anchored T-GOSPA -4..-8 %, 0 unit-test regressions; iter 4 corrects overstated claims and strengthens R3
 
 **Premise.** Phase 7 (Adaptive Birth) was followed by a 7-agent
 parallel in-depth review (math vs MATLAB MTT-master, pruning, numerical
@@ -103,15 +103,19 @@ re-measures.
 Pinned `docs/baselines/pmbm_phase8_20260622.csv`. Net effect vs
 Phase 7 baseline:
 
-| Bucket | Phase 8 vs Phase 7 (adapt) |
+| Bucket | Phase 8 vs Phase 7 (adapt), iter 4 verified |
 |---|---|
-| head_on | GOSPA −9.1 %, T-GOSPA-raw −11.2 % |
-| autoferry sc2/3/4/5/6 anchored | T-GOSPA-raw −4.2..−7.9 % |
-| autoferry sc16/17/22 anchored | T-GOSPA-raw −0.3..−1.2 % |
-| philos | unchanged (Phase 7 baseline retained) |
-| dense_clutter | unchanged (Phase 7 baseline retained) |
-| autoferry sc13 unanchored | GOSPA +7.1 % (14 → 15), T-GOSPA +0.9 % — small regression |
-| autoferry sc5 id_switches | 5 → 10 (small regression; GOSPA unchanged) |
+| head_on | GOSPA −6.4 %, T-GOSPA-raw −5.5 % (eval-log iter 1 originally said −9.1 / −11.2; rounded-int CSV reads were misleading vs full-precision deltas) |
+| autoferry sc2/3/4/5/6 anchored | T-GOSPA-raw −4.2..−7.9 % (verified) |
+| autoferry sc16/22 anchored | T-GOSPA-raw −0.3..−1.2 % small wins. sc17 anchored is 0.0 % — eval-log iter 1 erroneously listed it as a win |
+| philos / dense_clutter GOSPA | unchanged (Phase 7 baseline retained) |
+| autoferry sc13 unanchored | GOSPA +0.66 % (eval-log iter 1 incorrectly said +7.1 %; the rounded-int 14 → 15 was a rounding artifact) |
+| **Unmentioned regressions surfaced in iter 4 verification**: | |
+| autoferry sc5 id_switches | 5 → 10 (GOSPA unchanged) |
+| autoferry sc3/sc2/sc16 id_switches | +1..+1.5 mean per scenario |
+| crossing / head_on / philos id_switches | tiny increases (0.1..0.4 mean) |
+| dense_clutter track_breaks | +11.5 % (1.30 → 1.45 mean) |
+| autoferry sc22 track_breaks | +5.5 % |
 
 734/734 unit tests pass (7 skipped, 0 failed; Phase 8 added 7 PMBM
 tests + 5 missing-coverage scenarios).
@@ -119,10 +123,70 @@ tests + 5 missing-coverage scenarios).
 **Takeaway.** R1–R6 + P1 are clean improvements; adaptive K (P2) is
 the right MATLAB-faithful direction but interacts with R1 on
 multi-vessel autoferry — parked behind `Config::adaptive_k_best`.
-Anchored T-GOSPA-raw improved another 4–8 % on top of Phase 7 across
-sc2-6_anchored; head_on closed −9 % GOSPA. The big philos/dense_clutter
-wins were already in Phase 7; adaptive K would push them further by
-another 15 % each at the cost of the documented sc13/16 regression.
+Anchored T-GOSPA-raw improved 4–8 % on top of Phase 7 across
+sc2-6_anchored (verified); head_on closed −6.4 % GOSPA / −5.5 %
+T-GOSPA-raw (verified, smaller than iter 1's rounded-int claim).
+The big philos/dense_clutter wins were already in Phase 7; adaptive
+K would push them further (~15 % each) at the cost of the documented
+sc13/16 regression.
+
+**Iter 4 — verification correction + R3-strengthen + empty-scan fix.**
+
+A second round of 5 verification subagents (commit `ca2db70`) found:
+
+- Eval-log iter 1 OVERSTATED several wins (rounded-int CSV reads vs
+  full-precision deltas). Numbers corrected in the table above.
+- Several scenarios pick up small id_switches / track_breaks
+  regressions not previously mentioned. Added to the table.
+- R3 (PSD guard) was INCOMPLETE: the diagonal-positivity check let
+  through non-finite/off-diagonal-dominated cases, and the
+  `IEstimator::gate` + `logLikelihood` default impls in
+  `EstimatorDefaults.cpp` lacked the guard. Iter 4 promotes
+  `isMeasurementCovariancePsd` to a full LDLT-based PSD test and
+  guards the two default-impl entry points.
+- PmbmTracker's empty-scan branch returned early before
+  `mergeBernoulliDuplicates` AND before `firePmbmLifecycleEvents`.
+  Iter 4 calls both in the empty-scan path too (lifecycle events
+  fire on every scan now; re-promotion after an empty-scan
+  Tentative emission works correctly).
+- Iter 4 bench (not pinned; byte-identical to
+  `pmbm_phase8_20260622.csv` on every scenario) confirms iter 4
+  fixes are purely defensive — no operational impact, no
+  operational regression.
+
+**Iter 5 — adaptive-K birth-id cache.** A subagent diagnosed the
+iter 1/3 sc13/sc16 regressions as fragmentation: `next_bernoulli_id_++`
+allocates a fresh id per child branch, so under K=5 the same
+measurement gets up to 5 distinct ids per parent and the
+within-hypothesis merge cannot fold them. Iter 5 implements a
+per-(parent_idx, measurement_idx) cache (`scan_birth_id_cache_`)
+so all K children of one parent that birth a Bernoulli for the
+same measurement share one BernoulliId. Re-measured at K=5:
+
+| Bucket | Iter 5 (id-cache + K=5) vs Phase 8 final (K=1) |
+|---|---|
+| philos | GOSPA −17.1 % (82 → 68) |
+| dense_clutter | GOSPA −15.4 % (13 → 11) |
+| autoferry sc4 unanchored | GOSPA −15.4 %, T-GOSPA-raw −14.0 % |
+| autoferry sc2/3/6/17 unanchored | -5..-6.5 % |
+| autoferry sc13 | GOSPA +6.7 %, T-GOSPA +4.6 % |
+| autoferry sc13_anchored | GOSPA +33 %, T-GOSPA +27 % |
+| autoferry sc16 unanchored | GOSPA +16.7 %, T-GOSPA +13.9 % |
+| autoferry sc16_anchored | GOSPA +33 %, T-GOSPA +25 % |
+| autoferry sc17/22 anchored | T-GOSPA +4.3..+8.4 % |
+
+The id-cache is mechanically correct but does NOT unblock adaptive K.
+Regressions on sc13/16/22 are essentially unchanged from iter 1
+(no cache). The diagnosed root cause is wrong; the real bottleneck
+is structural: our flat per-hypothesis Bernoulli list vs MATLAB's
+per-track list of single-target hypotheses. Under adaptive K the
+existing-Bernoulli assignment columns differ across the K children
+of one parent; without per-track-hypothesis bookkeeping the merge
+can't distinguish "branch A's interpretation of target B" from
+"branch C's interpretation of target B". Verdict: keep
+`Config::adaptive_k_best` switch + `scan_birth_id_cache_`
+shipped as future-ready scaffolding; bench config stays K=1 until
+the per-track-hypothesis refactor lands.
 
 **Files.** Baseline `docs/baselines/pmbm_phase8_20260622.csv`. New
 test file `tests/pmbm/test_pmbm_phase8.cpp` (7 tests).

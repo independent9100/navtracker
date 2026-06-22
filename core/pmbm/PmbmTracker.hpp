@@ -418,11 +418,19 @@ class PmbmTracker {
   // buildNewTargetCandidates.
   // `k_override` < 0 → use cfg_.k_best_per_hypothesis (legacy).
   // `k_override` ≥ 1 → use that K (Phase 8 P2 adaptive K path).
+  //
+  // `parent_idx` ≥ 0 enables the Phase 8 iter 5 birth-id cache: all
+  // K children of one parent that birth a new-target Bernoulli for
+  // the same measurement reuse the same BernoulliId, so the
+  // `mergeBernoulliDuplicates` step can fold them by id and the
+  // hypothesis-weight prune sees coherent existence mass per id.
+  // < 0 disables caching (bit-identical to legacy allocation).
   void enumerateChildren(const GlobalHypothesis& parent,
                          const std::vector<Measurement>& scan,
                          const std::vector<NewTargetCandidate>& nts,
                          std::vector<GlobalHypothesis>& out,
-                         int k_override = -1);
+                         int k_override = -1,
+                         int parent_idx = -1);
 
   // After enumeration: renormalise mixture weights, drop hypotheses /
   // Bernoullis / PPP components below thresholds, cap mixture size at
@@ -443,6 +451,11 @@ class PmbmTracker {
   Timestamp current_time_{};
   bool has_current_time_{false};
   BernoulliId next_bernoulli_id_{1};
+  // Phase 8 iter 5 birth-id cache: (parent_idx, measurement_idx) → id.
+  // Cleared at the start of each processBatch. Populated when adaptive
+  // K is enabled so siblings of the same parent for the same
+  // measurement share a BernoulliId — see enumerateChildren docstring.
+  std::map<std::pair<int, int>, BernoulliId> scan_birth_id_cache_;
   const ISensorBiasProvider* bias_provider_{nullptr};
   std::shared_ptr<ISensorDetectionModel> detection_model_;
   // Per-Bernoulli-id rolling source-touch history. Populated from the

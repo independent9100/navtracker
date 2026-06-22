@@ -545,17 +545,17 @@ std::vector<Config> defaultConfigs() {
     c.pmbm_config = []() {
       auto cfg = makePmbmConfig();
       cfg.adaptive_birth = true;
-      // Adaptive K-best (cfg.adaptive_k_best) was measured in
-      // Phase 8 iter 1 + iter 3: at K=5 per parent it adds philos
-      // −16 % / dense_clutter −15 % / sc4 −15 % wins, but
-      // simultaneously regresses sc13/sc16/sc17 anchored by +14..+27 %
-      // (the extra hypothesis branches interact with the R1 merge
-      // max() formula on multi-vessel scenarios; tighter merge
-      // threshold did not recover, so the interaction is structural).
-      // Iter 2 measured K=1 with all other Phase 8 fixes: no
-      // regressions, +6 small anchored wins, head_on −9 %. Shipping
-      // the K=1 configuration; adaptive K parked until the merge
-      // interaction is understood.
+      // Phase 8 P2 adaptive K-best — parked OFF in the bench config.
+      // Iter 1: K=5 measured big philos/dense_clutter/sc4 wins
+      // (-15..-17 %) AND structural sc13/sc16/sc22 anchored
+      // regressions (+25..+33 %). Tighter merge threshold (iter 3)
+      // did not recover. Iter 5 added a birth-id cache so siblings
+      // of one parent share a BernoulliId for the same measurement
+      // — re-measured at K=5: regressions UNCHANGED. The real cause
+      // is structural (our flat per-hypothesis Bernoulli list vs
+      // MATLAB's per-track list of single-target hypotheses); the
+      // adaptive_k_best switch + scan_birth_id_cache_ remain shipped
+      // and correct, ready for the structural refactor.
       cfg.adaptive_k_best = false;
       cfg.k_best_per_hypothesis = 1;
       // λ_birth: expected new-target rate per scan per unit
