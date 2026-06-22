@@ -139,6 +139,31 @@ class PmbmTracker {
     bool smart_birth_skip_existing_ppp = false;
     double smart_birth_skip_existing_ppp_threshold = 0.0;
 
+    // Adaptive Birth (Reuter 2014). Decouples the new-target Bernoulli
+    // **spatial** density (mean at z, covariance from estimator.initiate)
+    // from the **existence** prior. Replaces the contaminated
+    //   r_new_l = ρ_target_l / (ρ_target_l + λ_C(z_l))
+    // — where ρ_target_l is dominated by the just-injected PPP component
+    // centred on z_l under measurement_driven_birth, so r_new ≈ 1 for
+    // every measurement including clutter — with the Reuter formulation:
+    //   r_new_l = λ_birth / (λ_birth + λ_C(z_l))
+    // where λ_birth is a configurable scalar (expected new-target rate
+    // per scan per measurement-space volume, same units as λ_C). Skips
+    // the measurement-driven PPP injection entirely; the spatial state
+    // comes directly from estimator.initiate(z). Falls back on
+    // birth_model_ (BirthModelFn) for explicit prior PPP if wired.
+    //
+    // When ON: phantom-birth gate (min_new_bernoulli_existence) should
+    // be tuned lower (~0.05) because r_new is no longer artificially
+    // pegged near 1 — real targets ramp up via posterior updates over
+    // subsequent scans, not from a high initial r.
+    //
+    // Reference: Reuter, S. et al. (2014), "The Labeled Multi-Bernoulli
+    // Filter", IEEE Trans. Signal Processing 62(12), §IV-B Adaptive
+    // Birth Distribution.
+    bool adaptive_birth = false;
+    double lambda_birth = 1e-3;
+
     // Trajectory-PMBM (Phase 4, García-Fernández/Williams 2020). When
     // > 0, each Bernoulli records its forward-pass post-update state
     // history at every detection and post-predict state at every
@@ -360,6 +385,18 @@ class PmbmTracker {
   };
 
   std::vector<NewTargetCandidate> buildNewTargetCandidates(
+      const std::vector<Measurement>& scan) const;
+
+  // Reuter 2014 Adaptive Birth path (cfg_.adaptive_birth). One
+  // candidate per measurement:
+  //   r_new_l    = λ_birth / (λ_birth + λ_C(z_l))
+  //   spatial f_l(x) ~ estimator.initiate(z_l) (mean = z, cov from
+  //                    the estimator's birth covariance)
+  // Decoupled from the PPP intensity — independent of any
+  // measurement-driven PPP contamination. Non-initiable measurements
+  // yield {rho_target=0, rho_total=λ_C(z)} — never a Bernoulli, just
+  // clutter mass for assignment balance.
+  std::vector<NewTargetCandidate> buildAdaptiveBirthCandidates(
       const std::vector<Measurement>& scan) const;
 
   // Per-parent enumeration: build the (n_j + m) × m cost matrix, solve

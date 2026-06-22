@@ -523,6 +523,44 @@ std::vector<Config> defaultConfigs() {
     };
     configs.push_back(std::move(c));
   }
+
+  // Cl-3 Phase 7 — Adaptive Birth (Reuter 2014). Decouples spatial
+  // birth from existence prior to fix the philos / dense_clutter
+  // measurement-driven-birth contamination (see parking lot in
+  // 2026-06-07-pmbm-integration-plan.md). A/B against imm_cv_ct_pmbm
+  // until tuned in.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_adapt";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      // λ_birth: expected new-target rate per scan per unit
+      // measurement-space volume (same units as λ_C). Tuned across
+      // {1e-3, 1e-4, 1e-5} in Phase 7 iter 3-4 against λ_C ≈ 1e-4:
+      //   1e-3 (r_new ≈ 0.91): philos +15 % (too aggressive)
+      //   1e-4 (r_new = 0.5):  philos +7 %
+      //   1e-5 (r_new ≈ 0.09): philos -16 %, dense_clutter -52 %,
+      //                         autoferry sc2-6 unanchored -5..-32 %,
+      //                         all anchored T-GOSPA-raw -8..-60 %
+      // The low value is the right shape: new Bernoullis are born
+      // with small r and ramp up via posterior over subsequent
+      // detections rather than being pegged near 1 by ρ_target
+      // contamination — exactly the textbook PMBM behavior.
+      cfg.lambda_birth = 1e-5;
+      // Adaptive r_new is small at birth → real targets ramp via
+      // posterior, so the phantom gate drops below the initial r.
+      cfg.min_new_bernoulli_existence = 0.05;
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
   return configs;
 }
 

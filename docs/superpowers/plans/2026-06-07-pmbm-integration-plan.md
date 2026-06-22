@@ -281,7 +281,18 @@ variant we could port if `ReorderBuffer` latency becomes a problem.
 These are **not** on the critical path to TPMBM. Pick up only if a
 deployment workload starts caring about the corresponding gap.
 
-### Clutter-aware PPP birth (philos / dense_clutter)
+### Clutter-aware PPP birth (philos / dense_clutter) — ✅ CLOSED (Phase 7, 2026-06-21)
+
+**Status.** Adaptive Birth (Reuter 2014) shipped as
+`Config::adaptive_birth` + `Config::lambda_birth`. Bench config
+`imm_cv_ct_pmbm_adapt` with λ_birth=1e-5 measures:
+dense_clutter −51.9 % GOSPA (27 → 13), philos −16.3 % (98 → 82),
+all autoferry unanchored −5..−32 %, all anchored T-GOSPA-raw
+−8..−60 %. See `pmbm_phase7_adapt_20260621.csv` and the Phase 7
+eval-log entry. Implementation in `buildAdaptiveBirthCandidates`;
+the smart-birth gate had to be ported into the adaptive path
+explicitly (without it, iter 1 measured id-switch blowup under K=1).
+The retired diagnosis section follows for posterity.
 
 **The problem.** Phase 3 added a "phantom-birth gate" on the
 new-target Bernoulli row: `r_new = ρ_target / (ρ_target + λ_C)`,
@@ -339,7 +350,20 @@ contamination).
 `buildNewTargetCandidates`. TPMBM unlocks larger wins on the
 deployment-relevant autoferry workload, so it goes first.
 
-### Anchored bias gating (sc17 / sc22 anchored regressions)
+### Anchored bias gating (sc17 / sc22 anchored regressions) — PARTIALLY SUPERSEDED by Phase 7
+
+**Status (2026-06-21, post Phase 7).** Adaptive Birth incidentally
+collapsed most of the anchored regressions:
+sc17_anchored 12 → 11 GOSPA + −8.4 % T-GOSPA-raw,
+sc22_anchored 8 → 7 + −19.7 %, sc13_anchored id_switches
+67 → 1, sc16_anchored 55 → 1. Mechanism: under legacy PMBM the
+contaminated ρ_target spawned phantom Bernoullis on every AIS
+broadcast in anchored mode; adaptive birth's small initial r lets
+the existing Bernoulli's update beat the new-target row in
+assignment, so the id stays stable. The Schmidt-KF R-inflation
+fix below is still the principled answer but is no longer urgent —
+anchored T-GOSPA-raw is competitive with MHT without it. Pick up
+only if a fleet workload regresses again on bias-publish events.
 
 `autoferry_scenario17_anchored` and `_scenario22_anchored` show
 PMBM-P2 GOSPA of 12.2 / 8.2 vs MHT's 2.6 / 3.4. When the

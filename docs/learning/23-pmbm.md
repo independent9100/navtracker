@@ -160,6 +160,75 @@ PMBM puts gating, association, birth, and lifecycle into one Bayesian recursion.
 
 ---
 
+## 8b. Birth, the contamination problem, and Adaptive Birth (Reuter 2014)
+
+PMBM has two ways to put a "new target Bernoulli" on the table for each measurement:
+
+1. **PPP-driven birth.** The undetected-target intensity λ^u(x) (the PPP) is updated by every measurement just like a target would be; if the resulting posterior mass at `z` is large enough relative to clutter, the *new-target row* fires and a Bernoulli is born. The math:
+
+   ```
+   r_new_l = ρ_target_l / (ρ_target_l + λ_C(z_l))
+   ```
+
+   where `ρ_target_l = Σ_i p_D · w_i^u · ℓ(z_l | c_i)` is the PPP-posterior mass at measurement `z_l`. Read it as: "the prior odds that this measurement comes from a real (undetected) target rather than from clutter."
+
+2. **Adaptive Birth (Reuter 2014).** Plug a *measurement-independent* scalar `λ_birth` (expected new-target rate per unit measurement-space volume per scan) into the same formula:
+
+   ```
+   r_new_l = λ_birth / (λ_birth + λ_C(z_l))
+   ```
+
+   The spatial state for the new Bernoulli still comes from the measurement (mean at `z`, covariance from `estimator.initiate(z)`), but the *existence prior* is decoupled from any measurement.
+
+**Why this matters in practice.** Our maritime deployments do not have a usable spatial prior over "where do new ships appear" — we use *measurement-driven birth*: every initiable measurement injects a fresh PPP component centred on itself. The next time `buildNewTargetCandidates` runs, that just-injected component dominates `ρ_target` *for every measurement*, including clutter returns. So formula (1) gives `r_new ≈ 1` for everything. The phantom-birth gate (a per-row threshold on `r_new`) never fires.
+
+The mechanism is straightforward enough to draw:
+
+```mermaid
+flowchart LR
+  Z[scan: z_1, z_2, ..., z_m] --> A[inject PPP component per z]
+  A --> B[buildNewTargetCandidates]
+  B --> C{r_new_l from contaminated rho_target}
+  C --> D[r_new ~= 1 for every z]
+  D --> E[every clutter return births a Bernoulli]
+```
+
+Adaptive Birth cuts the contaminated loop:
+
+```mermaid
+flowchart LR
+  Z2[scan: z_1, z_2, ..., z_m] --> B2[buildAdaptiveBirthCandidates]
+  B2 --> R2[r_new = lambda_birth / (lambda_birth + lambda_C)]
+  R2 --> S[small initial r; Bernoulli ramps via posterior updates]
+```
+
+**What changed under the hood** (Phase 7, 2026-06-21):
+
+- `PmbmTracker::Config::adaptive_birth` (bool) and `lambda_birth` (double, units 1/area, same as λ_C).
+- When ON, `processBatch` skips the measurement-driven PPP injection entirely.
+- A new `buildAdaptiveBirthCandidates` produces one candidate per measurement: state from `estimator.initiate(z)`, `r_new = λ_birth / (λ_birth + λ_C)`. The same smart-birth-skip-existing gate (a measurement claimed by a high-`r` Bernoulli skips birth) applies here too — without it K=1 enumeration id-flaps existing tracks.
+
+**What this buys us.** Measured on the 29-scenario bench (`pmbm_phase7_adapt_20260621.csv`):
+
+- `dense_clutter`: GOSPA 27 → 13 (−52 %). Spurious phantom tracks gone.
+- `philos` (sparse-AIS multi-vessel): GOSPA 98 → 82 (−16 %).
+- All autoferry unanchored scenarios: GOSPA −5..−32 %.
+- All autoferry **anchored** scenarios: T-GOSPA-raw −8..−60 %, id_switches typically 50+ → 1. Side benefit: when bias correction shrinks the measurement spread, existing high-`r` Bernoullis used to lose to phantom new-target rows; adaptive birth's small initial `r` lets the existing update win the assignment.
+
+**Tuning.** Probed λ_birth ∈ {1e-3, 1e-4, 1e-5} against λ_C ≈ 1e-4:
+
+- 1e-3 (`r_new ≈ 0.91`): too aggressive, philos +15 %.
+- 1e-4 (`r_new = 0.5`): borderline.
+- 1e-5 (`r_new ≈ 0.09`): the sweet spot. Small initial `r` is *correct* — real targets ramp through posterior updates over the next few detections; phantoms decay below `r_min` instead.
+
+**Assumptions.** λ_C is approximately uniform across the surveillance volume. (For per-sensor λ_C maps, the formula still works per measurement; we just need the per-sensor clutter density at the gate of evaluation.) For deployments where the spatial birth prior is *known* (e.g. radar coverage edges, named ports), an explicit `BirthModelFn` injecting structured PPP at predict-time would beat adaptive birth — Adaptive Birth is the *uniform-prior* default.
+
+**What to try next.** Per-sensor (or per-region) `λ_birth` maps; coupling `λ_birth` to time-since-last-confirmed-track in the local cell; revisiting the deferred Schmidt-KF R-inflation now that anchored T-GOSPA is competitive.
+
+**Reference.** Reuter, Vo, Vo, Dietmayer, *The Labeled Multi-Bernoulli Filter*, IEEE Trans. Signal Processing 62(12), 2014. Adaptive Birth is in §IV-B; the formulation is general (LMB / PMBM / δ-GLMB all use the same trick).
+
+---
+
 ## 9. Where this lives in the repo
 
 When PMBM lands:
@@ -179,4 +248,5 @@ The phased engineering plan is in [`docs/superpowers/plans/2026-06-07-pmbm-integ
 - García-Fernández, Williams, Granström, Svensson, *Poisson Multi-Bernoulli Mixtures for Sets of Trajectories*, arXiv:1912.08718, 2020. **Trajectory variant.**
 - Williams, *Marginal multi-Bernoulli filters: RFS derivation of MHT, JIPDA and association-based MeMBer*, IEEE TAES 51(3), 2015. **Bridge text: derives MHT, JIPDA, and PMBM all from the same RFS framework.**
 - Mahler, *Statistical Multisource-Multitarget Information Fusion*, Artech House, 2007/2014. **RFS textbook.**
+- Reuter, Vo, Vo, Dietmayer, *The Labeled Multi-Bernoulli Filter*, IEEE Trans. Signal Processing 62(12), 2014. **Adaptive Birth Distribution (§IV-B)**, the textbook fix for ρ_target contamination under measurement-driven birth.
 - Reference MATLAB implementation: [Agarciafernandez/MTT](https://github.com/Agarciafernandez/MTT) (BSD-2). Local copy used for cross-check during the port: `third_party/reference/MTT-master/`.

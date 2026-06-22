@@ -325,6 +325,79 @@ PmbmTracker::buildNewTargetCandidates(
   return out;
 }
 
+// Reuter 2014 Adaptive Birth: one candidate per measurement, decoupled
+// from the PPP intensity. Spatial state comes from estimator.initiate
+// (mean at z, covariance from the birth Q/R); existence prior is the
+// configured λ_birth, balanced against per-sensor λ_C. See
+// PmbmTracker::Config::adaptive_birth for math/rationale.
+std::vector<PmbmTracker::NewTargetCandidate>
+PmbmTracker::buildAdaptiveBirthCandidates(
+    const std::vector<Measurement>& scan) const {
+  std::vector<NewTargetCandidate> out;
+  out.reserve(scan.size());
+
+  for (const auto& z : scan) {
+    NewTargetCandidate cand;
+
+    const double lambda_z = detection_model_
+        ? detection_model_->paramsFor(z).clutter_intensity
+        : cfg_.clutter_intensity;
+
+    if (!canInitiateTrack(z.model)) {
+      // Bearing-only or otherwise non-initiable: never births a
+      // Bernoulli. The total intensity is still the clutter mass so
+      // assignment cells stay balanced.
+      cand.rho_target = 0.0;
+      cand.rho_total = lambda_z;
+      out.push_back(std::move(cand));
+      continue;
+    }
+
+    // Smart-birth gate, ported from the legacy measurement-driven
+    // path. Under K=1 the assignment is greedy per measurement-column
+    // and a new-target row whose log-cost exceeds the existing
+    // Bernoulli's update cost will id-flap. Suppressing the candidate
+    // for a measurement already explained by a high-r Bernoulli keeps
+    // the existing track stable. The Reuter formulation is correct
+    // under exact (K large) enumeration; the gate is the standard
+    // workaround for K=1 deployments.
+    if (cfg_.smart_birth_skip_existing) {
+      bool claimed = false;
+      for (const auto& h : density_.mbm) {
+        for (const auto& b : h.bernoullis) {
+          if (b.existence_probability < cfg_.smart_birth_skip_r_min) continue;
+          Track tb = toTrack(b);
+          if (estimator_.gate(tb, z, cfg_.smart_birth_skip_gate)) {
+            claimed = true;
+            break;
+          }
+        }
+        if (claimed) break;
+      }
+      if (claimed) {
+        cand.rho_target = 0.0;
+        cand.rho_total = lambda_z;
+        out.push_back(std::move(cand));
+        continue;
+      }
+    }
+
+    Track t = estimator_.initiate(z);
+    cand.mean = t.state;
+    cand.covariance = t.covariance;
+    cand.imm_means = t.imm_means;
+    cand.imm_covariances = t.imm_covariances;
+    cand.imm_mode_probabilities = t.imm_mode_probabilities;
+
+    cand.rho_target = cfg_.lambda_birth;
+    cand.rho_total = cfg_.lambda_birth + lambda_z;
+
+    out.push_back(std::move(cand));
+  }
+
+  return out;
+}
+
 void PmbmTracker::enumerateChildren(
     const GlobalHypothesis& parent,
     const std::vector<Measurement>& scan,
@@ -764,7 +837,12 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
   // ρ_target is dominated by the just-birthed component centred on the
   // measurement). Bearing-only measurements cannot initiate a state
   // and are skipped, matching MhtTracker birth-on-measurement rules.
-  if (cfg_.measurement_driven_birth) {
+  //
+  // Skipped entirely under Adaptive Birth (Reuter 2014) — the
+  // measurement-driven injection contaminates ρ_target by construction
+  // (just-injected component dominates), which is exactly what Adaptive
+  // Birth fixes by replacing ρ_target with an independent λ_birth.
+  if (cfg_.measurement_driven_birth && !cfg_.adaptive_birth) {
     for (const auto& z : scan) {
       if (!canInitiateTrack(z.model)) continue;
 
@@ -815,8 +893,10 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
     }
   }
 
-  // Per-measurement new-target Bernoulli candidates from PPP.
-  const auto nts = buildNewTargetCandidates(scan);
+  // Per-measurement new-target Bernoulli candidates.
+  const auto nts = cfg_.adaptive_birth
+                       ? buildAdaptiveBirthCandidates(scan)
+                       : buildNewTargetCandidates(scan);
 
   // PPP undetected-mass decay (§3.3). Uniform p_D for Phase 1.
   for (auto& c : density_.ppp) {

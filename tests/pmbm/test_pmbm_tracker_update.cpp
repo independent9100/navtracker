@@ -388,6 +388,83 @@ TEST(PmbmTrackerUpdate, PhantomBirthGateAllowsHighExistenceCandidate) {
 }
 
 // ---------------------------------------------------------------------------
+// Adaptive Birth (Reuter 2014): r_new = λ_birth / (λ_birth + λ_C).
+// With λ_birth = λ_C, r_new must be exactly 0.5 independently of PPP
+// state. The legacy formula would give r_new ≈ 1 under
+// measurement_driven_birth contamination — this test pins the decoupling.
+TEST(PmbmTrackerUpdate, AdaptiveBirthRNewEqualsLambdaRatio) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.survival_probability = 1.0;
+  cfg.clutter_intensity = 0.2;
+  cfg.measurement_driven_birth = true;  // intentionally; adaptive
+                                        // path must override.
+  cfg.adaptive_birth = true;
+  cfg.lambda_birth = 0.2;  // r_new = 0.2/(0.2+0.2) = 0.5
+  cfg.min_new_bernoulli_existence = 0.0;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, 0.5)});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  ASSERT_EQ(tracker.density().mbm[0].bernoullis.size(), 1u);
+  EXPECT_NEAR(tracker.density().mbm[0].bernoullis[0].existence_probability,
+              0.5, 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// Adaptive Birth bypasses the measurement-driven PPP injection: even with
+// measurement_driven_birth = true, the PPP intensity must stay empty
+// after processBatch (the spatial state for the new Bernoulli comes
+// from estimator.initiate, not from the PPP).
+TEST(PmbmTrackerUpdate, AdaptiveBirthDoesNotInjectPpp) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.survival_probability = 1.0;
+  cfg.clutter_intensity = 1e-3;
+  cfg.measurement_driven_birth = true;
+  cfg.adaptive_birth = true;
+  cfg.lambda_birth = 1e-2;
+  cfg.min_new_bernoulli_existence = 0.0;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, 0.5),
+                        pos2d(1.0, 100.0, 100.0, 0.5),
+                        pos2d(1.0, 200.0, 200.0, 0.5)});
+
+  // No PPP components added — adaptive path skips the injection entirely.
+  EXPECT_TRUE(tracker.density().ppp.empty());
+}
+
+// ---------------------------------------------------------------------------
+// Adaptive Birth spatial state: the new Bernoulli's mean must equal the
+// measurement (because estimator.initiate(z) places the Gaussian at z).
+TEST(PmbmTrackerUpdate, AdaptiveBirthSpatialMeanEqualsMeasurement) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.survival_probability = 1.0;
+  cfg.clutter_intensity = 1e-6;  // r_new high
+  cfg.adaptive_birth = true;
+  cfg.lambda_birth = 1.0;
+  cfg.min_new_bernoulli_existence = 0.0;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  tracker.processBatch({pos2d(1.0, 42.0, -17.0, 0.5)});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  ASSERT_EQ(tracker.density().mbm[0].bernoullis.size(), 1u);
+  const auto& b = tracker.density().mbm[0].bernoullis[0];
+  EXPECT_NEAR(b.mean(0), 42.0, 1e-9);
+  EXPECT_NEAR(b.mean(1), -17.0, 1e-9);
+}
+
+// ---------------------------------------------------------------------------
 // PPP-coverage birth gate (Phase 3 polish): under
 // measurement_driven_birth, an injected PoissonComponent contributes
 // ρ_target ≈ peak likelihood on the same measurement. With the

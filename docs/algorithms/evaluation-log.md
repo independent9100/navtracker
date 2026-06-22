@@ -8,6 +8,86 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-06-21 (Phase 7, Adaptive Birth — Reuter 2014) — [Cl-3 PMBM Phase 7] decoupled spatial/existence birth: dense_clutter -52 %, philos -16 %, autoferry unanchored -5..-32 %, all anchored T-GOSPA-raw -8..-60 %
+
+**Premise.** Parking-lot item #1 (clutter-aware PPP birth) and item #2
+(anchored bias gating) both diagnose the same root cause:
+`measurement_driven_birth = true` injects a fresh PoissonComponent
+centred on every measurement, then `buildNewTargetCandidates` uses
+that just-injected component to compute ρ_target — so
+`r_new = ρ_target / (ρ_target + λ_C)` is pegged near 1 for *every*
+measurement, including clutter. The textbook fix (Reuter 2014,
+"The Labeled Multi-Bernoulli Filter", §IV-B): decouple spatial
+birth (mean at z, cov from estimator.initiate) from the existence
+prior (configurable scalar `λ_birth` independent of any
+measurement). New r_new = `λ_birth / (λ_birth + λ_C(z))`.
+
+**Method — 5-iter polish.** All on `master` (b721c94 → HEAD).
+
+- **Iter 1 (no smart-birth gate).** Added `Config::adaptive_birth`
+  + `Config::lambda_birth`, new `buildAdaptiveBirthCandidates`,
+  skipped measurement-driven PPP injection under adaptive_birth=true.
+  Probe at λ_birth=1e-3: big anchored sc17/sc22 wins (−83 % / −62 %
+  GOSPA) BUT all synthetic and unanchored scenarios blew up
+  (+27..+100 % GOSPA, id_switches 0→20+). Root cause: without the
+  legacy `smart_birth_skip_existing` gate (which lived inside the PPP
+  injection block we now skip), every measurement produced an
+  adaptive candidate — including those already claimed by a high-r
+  Bernoulli. Under K=1 enumeration the new-target row id-flapped
+  the existing track.
+
+- **Iter 2 (smart-birth gate ported into adaptive path).**
+  Restored synthetic + autoferry-unanchored (sc4 −10.5 % GOSPA,
+  several −1..−8 % T-GOSPA-smooth wins). The anchored sc17/sc22
+  "wins" from iter 1 disappeared — they were id-switch-driven
+  mirage (sc17_anchored id_switches 0→30 in iter 1), not real
+  algorithmic improvements. The anchored regression structurally
+  needs Schmidt-KF R-inflation post-bias-publish, not adaptive
+  birth. Philos still +15 % GOSPA — λ_birth=1e-3 still too
+  aggressive.
+
+- **Iter 3 (λ_birth probe on philos only).** Bench-filtered to
+  philos. λ_birth=1e-4 (= λ_C, r_new=0.5): +7 % GOSPA.
+  λ_birth=1e-5 (r_new≈0.09): **−16 % GOSPA**. Textbook PMBM shape:
+  new Bernoullis born small-r, ramp via posterior over subsequent
+  detections rather than being pegged near 1 by ρ_target
+  contamination.
+
+- **Iter 4 (full bench at λ_birth=1e-5).** Pinned
+  `docs/baselines/pmbm_phase7_adapt_20260621.csv`. Headline:
+
+  | Bucket | Adaptive Birth vs legacy PMBM |
+  |---|---|
+  | dense_clutter | −51.9 % GOSPA (27 → 13), parking-lot #1 closed |
+  | philos | −16.3 % GOSPA (98 → 82) |
+  | autoferry sc2/4/5/6 unanchored | −9..−32 % GOSPA |
+  | autoferry sc13/16/17 unanchored | −6..−8 % GOSPA |
+  | autoferry sc2-6 anchored | T-GOSPA-raw −13..−60 % |
+  | autoferry sc13/16/22 anchored | T-GOSPA-raw −20..−38 % + id_switches 67→1 / 55→1 / 18→2 |
+  | synthetic clean (crossing, head_on, parallel, …) | flat or small wins |
+  | regressions | none meaningful (a few 2→3 GOSPA noise on anchored mins) |
+
+- **Iter 5 (commit, eval-log, parking-lot close-out).** This
+  entry. `imm_cv_ct_pmbm_adapt` added to the standing config
+  list; canonical `imm_cv_ct_pmbm` left for now as the A/B
+  reference until external review confirms.
+
+**Takeaway.** Adaptive Birth at λ_birth=1e-5 closes parking-lot item
+#1 (dense_clutter / philos) AND incidentally cleans up most
+autoferry regressions including the anchored ones. The anchored
+id_switch collapse is the most striking secondary effect — under
+legacy PMBM the contaminated ρ_target spawned phantom Bernoullis
+on every AIS broadcast in anchored mode; adaptive birth's small
+initial r lets the existing Bernoulli's update beat the new-target
+row in assignment, so the id stays stable. Parking-lot item #2
+(Schmidt-KF post-bias R-inflation) is partially superseded by this
+result — anchored T-GOSPA-raw is now competitive without the
+Schmidt-KF flow.
+
+**Files.** Baseline `docs/baselines/pmbm_phase7_adapt_20260621.csv`.
+
+---
+
 ## 2026-06-21 (Phase 6 polish, 5-iter measurement) — [Cl-3 PMBM Phase 6] T-GOSPA wired + RTS measured: wins on noisy / sparse / unanchored, breaks anchored evaluation mode
 
 **Premise.** Phase 4(C) shipped an RTS smoother with the F≈I
