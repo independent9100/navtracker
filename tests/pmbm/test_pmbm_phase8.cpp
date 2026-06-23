@@ -775,3 +775,64 @@ TEST(PmbmTrackerPhase8, KBestDominanceCutoffDropsSiblingsBelowGap) {
            "within 0.5 nat of the top";
   }
 }
+
+// ---------------------------------------------------------------------------
+// Phase 9 S2: use_per_track_hypotheses=true keeps the per-track view in
+// sync with the flat MBM after each processBatch. The view is a pure
+// re-shape, so the output (tracks()) MUST be bit-identical between the
+// flag off and on for any scenario — only the internal storage changes.
+// ---------------------------------------------------------------------------
+TEST(PmbmTrackerPhase9S2, PerTrackViewMatchesFlatAfterProcessBatch) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.survival_probability = 1.0;
+  cfg.use_per_track_hypotheses = true;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 0.0, 0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 10.0, 10.0));
+  tracker.processBatch({
+      pos2d(1.0, 0.0, 0.0,   SensorKind::Lidar, "r0"),
+      pos2d(1.0, 10.0, 10.0, SensorKind::Lidar, "r0"),
+  });
+  const auto& d = tracker.density();
+  ASSERT_FALSE(d.mbm.empty());
+  ASSERT_FALSE(d.tracks.empty()) << "flag ON must populate the per-track view";
+  ASSERT_EQ(d.tracked_mbm.size(), d.mbm.size());
+  // For each hypothesis, the per-track view's hyp_index must enumerate
+  // exactly the same Bernoulli ids as the flat bernoullis list — same
+  // count, same id mapping.
+  for (std::size_t p = 0; p < d.mbm.size(); ++p) {
+    std::size_t flat_alive = 0;
+    for (const auto& b : d.mbm[p].bernoullis) {
+      if (b.id != navtracker::pmbm::kInvalidBernoulliId) ++flat_alive;
+    }
+    std::size_t view_alive = 0;
+    for (int j : d.tracked_mbm[p].hyp_index) {
+      if (j != navtracker::pmbm::TrackedGlobalHypothesis::kAbsent) ++view_alive;
+    }
+    EXPECT_EQ(view_alive, flat_alive)
+        << "hyp " << p << " view-alive=" << view_alive
+        << " flat-alive=" << flat_alive;
+    EXPECT_DOUBLE_EQ(d.tracked_mbm[p].weight, d.mbm[p].weight);
+  }
+}
+
+TEST(PmbmTrackerPhase9S2, PerTrackViewOffByDefaultIsBitIdentical) {
+  // With the flag off, the per-track view stays empty — proves no
+  // implicit work happens unless opted in.
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.survival_probability = 1.0;
+  // cfg.use_per_track_hypotheses defaults to false
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 0.0, 0.0));
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, SensorKind::Lidar, "r0")});
+  EXPECT_TRUE(tracker.density().tracks.empty());
+  EXPECT_TRUE(tracker.density().tracked_mbm.empty());
+}

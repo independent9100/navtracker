@@ -1077,6 +1077,17 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
 
   pruneAndNormalise();
 
+  // Phase 9 S2: keep the per-track view in sync with the flat MBM
+  // when the gradual-migration flag is on. The view is a pure
+  // re-shape of the post-prune flat representation, so subsequent
+  // pipeline stages (refreshAggregatedTracks under the flag) can
+  // read it without first re-walking the flat list. No behavioural
+  // change — output is still authoritative from the flat path until
+  // S3 re-routes it.
+  if (cfg_.use_per_track_hypotheses) {
+    rebuildPerTrackViewFromFlat(density_);
+  }
+
   // Source-touch history. Walk the highest-weighted hypothesis; for
   // each Bernoulli whose last_update equals this scan's time it was
   // detected, find the nearest measurement in this scan, and append
