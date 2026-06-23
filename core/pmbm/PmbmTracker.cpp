@@ -449,8 +449,18 @@ PmbmTracker::buildAdaptiveBirthCandidates(
     cand.imm_covariances = t.imm_covariances;
     cand.imm_mode_probabilities = t.imm_mode_probabilities;
 
-    cand.rho_target = cfg_.lambda_birth;
-    cand.rho_total = cfg_.lambda_birth + lambda_z;
+    // Per-sensor λ_birth lookup (Phase 9 review Finding 6B): mirror the
+    // ISensorDetectionModel per-(sensor, source) λ_C plumbing. Empty
+    // map → scalar fallback (bit-identical to legacy).
+    double lambda_birth = cfg_.lambda_birth;
+    if (!cfg_.lambda_birth_per_sensor.empty()) {
+      auto it = cfg_.lambda_birth_per_sensor.find(z.sensor);
+      if (it != cfg_.lambda_birth_per_sensor.end()) {
+        lambda_birth = it->second;
+      }
+    }
+    cand.rho_target = lambda_birth;
+    cand.rho_total = lambda_birth + lambda_z;
 
     out.push_back(std::move(cand));
   }

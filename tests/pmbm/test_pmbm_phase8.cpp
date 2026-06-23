@@ -898,6 +898,51 @@ TEST(PmbmTrackerPhase9S3, AltBirthGateStripsBirthsInWeakAltOnly) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 9 review fix — Finding 6B: lambda_birth per-sensor override.
+// When lambda_birth_per_sensor[z.sensor] is set, it overrides the
+// scalar lambda_birth for new-target Bernoullis born from
+// measurement z. AIS vs EO-IR birth-rate gap is order-of-magnitude
+// on autoferry; the scalar mistunes both. Empty map = scalar
+// fallback (bit-identical).
+// ---------------------------------------------------------------------------
+TEST(PmbmTrackerPhase9Review, LambdaBirthPerSensorOverridesScalar) {
+  Fixture f;
+  auto build_r_new = [&](double scalar,
+                          std::map<SensorKind, double> per_sensor) {
+    PmbmTracker::Config cfg;
+    cfg.probability_of_detection = 0.9;
+    cfg.clutter_intensity = 1e-3;
+    cfg.survival_probability = 1.0;
+    cfg.adaptive_birth = true;
+    cfg.lambda_birth = scalar;
+    cfg.lambda_birth_per_sensor = std::move(per_sensor);
+    cfg.min_new_bernoulli_existence = 0.0;
+    PmbmTracker tracker(f.ekf, cfg);
+    tracker.predict(Timestamp::fromSeconds(0.0));
+    // Single AIS measurement → adaptive-birth Bernoulli with
+    // r_new = lambda_birth / (lambda_birth + lambda_C(z)).
+    tracker.processBatch({pos2d(1.0, 0.0, 0.0, SensorKind::Ais, "ais0")});
+    if (tracker.density().mbm.empty()) return -1.0;
+    if (tracker.density().mbm[0].bernoullis.empty()) return -1.0;
+    return tracker.density().mbm[0].bernoullis[0].existence_probability;
+  };
+  // Scalar=1e-3 → r_new ≈ 1e-3/(1e-3+1e-3) = 0.5
+  const double r_scalar = build_r_new(1e-3, {});
+  // Override AIS to 1e-1 → r_new ≈ 1e-1/(1e-1+1e-3) ≈ 0.99
+  const double r_override = build_r_new(1e-3, {{SensorKind::Ais, 1e-1}});
+  ASSERT_GT(r_scalar, 0.0);
+  ASSERT_GT(r_override, 0.0);
+  EXPECT_GT(r_override, r_scalar + 0.3)
+      << "per-sensor override (1e-1) must dominate scalar (1e-3): "
+      << "r_scalar=" << r_scalar << " r_override=" << r_override;
+  // And confirm scalar fallback when sensor not in the map.
+  const double r_other_sensor = build_r_new(
+      1e-3, {{SensorKind::ArpaTtm, 1e-1}});  // Ais NOT in map
+  EXPECT_NEAR(r_other_sensor, r_scalar, 1e-9)
+      << "non-mapped sensor must fall through to scalar";
+}
+
+// ---------------------------------------------------------------------------
 // Phase 9 — cross_parent_birth_id_cache shares birth ids across ALL
 // parents' K-children for the same measurement, mirroring MATLAB's
 // filter-level new-track creation. Off by default = bit-identical.

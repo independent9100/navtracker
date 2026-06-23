@@ -164,6 +164,22 @@ class PmbmTracker {
     bool adaptive_birth = false;
     double lambda_birth = 1e-3;
 
+    // Per-sensor λ_birth override (Phase 9 review Finding 6B).
+    // When non-empty, `lambda_birth_per_sensor[z.sensor]` overrides
+    // the scalar `lambda_birth` for measurement z. Mirrors the
+    // existing per-sensor λ_C plumbing in ISensorDetectionModel.
+    // AIS broadcasts have a much higher prior birth intensity than
+    // EO-IR observations (orders of magnitude); the scalar
+    // `lambda_birth` forces one number for all sensors, mistuning
+    // the new-target Bernoulli existence on whichever sensor isn't
+    // the scalar's reference. Empty map = fall back to scalar
+    // (bit-identical to legacy).
+    //
+    // Reuter 2014 §IV-B treats λ_birth as a measurement-space
+    // intensity; the formulation admits per-sensor stratification
+    // (each sensor contributes its own birth-PHD).
+    std::map<navtracker::SensorKind, double> lambda_birth_per_sensor;
+
     // Adaptive K-best per parent (MATLAB MTT-master convention).
     // When ON, each parent's K is derived from its weight share:
     //   K_p = max(1, ceil(max_global_hypotheses · w_p))
