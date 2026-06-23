@@ -211,60 +211,59 @@ integration may cascade.
 6. Bench-prove sc13/16/22 anchored recovery at K=5.
 7. Flip default; remove flat path after one stable cycle.
 
-## Probe results (2026-06-23)
+## Probe results (2026-06-23) — corrected at 10 seeds
 
-Two diagnostic measurements were run on master before parking
-Phase 9:
+Initial K=3 probe at 2 seeds (since deleted; superseded by the
+shipped 10-seed baseline) appeared to show large synthetic wins
+(clock_skew −9%, head_on −6%, etc.). **Same-run apples-to-apples
+re-measurement at 10 seeds revealed those "wins" were bench-run
+drift between the new 2-seed probe and the pinned phase8 10-seed
+baseline — the actual K-effect on most synthetic scenarios is
+within ±0.5%.** This is exactly the failure mode that
+`tools/bench_diff.py` was added to prevent; lesson learned the
+hard way at the very next opportunity.
 
-**Probe A — adaptive K with K_cap=3** (was K=5 in iter 1). Baseline
-= `docs/baselines/pmbm_phase8_20260622.csv` (shipped K=1). Probe
-output saved at `docs/baselines/phase9_probe_kcap3_*_20260623.csv`.
+The corrected K=3 vs K=1 picture (same run, 10 seeds, pinned at
+`docs/baselines/pmbm_adapt_k3_phase9_20260623.csv`):
 
-Synthetic scenarios (gospa_mean):
-
-| scenario | delta vs K=1 |
-|---|---:|
-| ais_dropout | −2.23% |
-| clock_skew | −9.28% |
-| crossing | −6.16% |
-| crossing_dropout | −2.57% |
-| **dense_clutter** | **−13.12%** |
-| head_on | −6.17% |
-| non_cooperative | +1.20% |
-| overtaking | −5.04% |
-| parallel_targets | −1.94% |
-| speed_change | −6.39% |
-
-Net synthetic: 9 wins (up to −13%), 1 small regression (+1.2%) —
-strong positive signal.
-
-Autoferry scenarios (gospa_mean):
+**Real K=3 wins (gospa_mean)**:
 
 | scenario | delta vs K=1 |
 |---|---:|
-| sc2 | −3.32% |
-| **sc2_anchored** | **+8.53%** |
-| sc3 | −4.95% |
-| sc3_anchored | +2.75% |
-| **sc4** | **−14.90%** |
-| sc4_anchored | −8.69% |
-| sc5 | −0.43% |
-| sc5_anchored | +5.60% |
-| sc6 | −6.20% |
-| sc6_anchored | +8.56% |
-| sc13 | +9.47% |
-| **sc13_anchored** | **+44.97%** |
-| sc16 | +11.87% |
-| **sc16_anchored** | **+38.56%** |
-| sc17 | −4.66% |
-| sc17_anchored | +8.61% |
-| sc22 | −0.60% |
-| sc22_anchored | +14.24% |
+| **philos** (real-world replay) | **−17.23%** |
+| autoferry_scenario4 | −14.90% |
+| autoferry_scenario4_anchored | −8.69% |
+| dense_clutter | −7.79% |
+| autoferry_scenario6 | −6.20% |
+| autoferry_scenario3 | −4.95% |
+| autoferry_scenario17 | −4.66% |
+| autoferry_scenario2 | −3.32% |
 
-Net autoferry: 8 wins, 10 regressions. The anchored regressions on
-sc13 / sc16 are **worse** at K=3 than they were at K=5 (+25..+33% in
-iter 1), so the simple K-dilution hypothesis is refuted — going to
-lower K doesn't monotonically help.
+**Real K=3 regressions (gospa_mean)**:
+
+| scenario | delta vs K=1 |
+|---|---:|
+| **autoferry_scenario13_anchored** | **+44.97%** |
+| **autoferry_scenario16_anchored** | **+38.56%** |
+| non_cooperative | +17.04% |
+| autoferry_scenario22_anchored | +14.24% |
+| autoferry_scenario16 | +11.87% |
+| autoferry_scenario13 | +9.47% |
+| autoferry_scenario17_anchored | +8.61% |
+
+Most other synthetic scenarios are flat within ±0.5%.
+
+Decision: **ship the K=3 config as a sibling** of K=1
+(`imm_cv_ct_pmbm_adapt_k3`, `core/benchmark/Config.cpp`). Consumers
+pick by workload — K=3 for cluttered / multi-target / replay, K=1
+for anchored / low-clutter / non-cooperative. The split is explicit
+per-scenario rather than swallowed by averages, and the K=3 wins on
+philos (−17%) and dense_clutter (−8%) are too large to leave on the
+floor while waiting for the structural refactor.
+
+The anchored regressions on sc13 / sc16 are **worse** at K=3 than
+they were at K=5 (+25..+33% in iter 1), so the simple K-dilution
+hypothesis is refuted — going to lower K doesn't monotonically help.
 
 **Probe B — output marginalization across hypotheses**: already
 shipped in `refreshAggregatedTracks` (`PmbmTracker.cpp:1287-1337`).

@@ -581,6 +581,63 @@ std::vector<Config> defaultConfigs() {
     };
     configs.push_back(std::move(c));
   }
+
+  // Cl-3 Phase 9 — adaptive K with cap=3, shipped alongside K=1
+  // imm_cv_ct_pmbm_adapt. Same-run 10-seed pinned baseline at
+  // docs/baselines/pmbm_adapt_k3_phase9_20260623.csv.
+  //
+  // K=3 vs K=1 is a STRICTLY PER-SCENARIO, PER-METRIC tradeoff.
+  // M1 iter-2 review found 28 exceptions to the natural rubrics
+  // ("K=3 for id-stability" — wrong on 10 scenarios; "K=1 for
+  // velocity-RMSE" — wrong on 18 scenarios). There is no scenario-
+  // class shortcut; some scenarios are strict K=3 losses on every
+  // headline metric (gospa + id_switches + pos_rmse all worse —
+  // sc13, sc2_anc, sc5_anc, sc6_anc), some are strict K=3 wins,
+  // most are mixed.
+  //
+  // Consumers must compute their own (config, scenario, metric)
+  // table against their target workload:
+  //
+  //   python3 tools/bench_diff.py \\
+  //     docs/baselines/pmbm_adapt_k3_phase9_20260623.csv \\
+  //     docs/baselines/pmbm_adapt_k3_phase9_20260623.csv \\
+  //     --metric <metric> --all-metrics
+  //
+  // (point both sides at the baseline — bench_diff joins on
+  //  (config, scenario, metric) within the file). Or split the
+  //  CSV by config and diff externally.
+  //
+  // The strongest single result: philos (real-world replay)
+  // gospa_mean -17.23 % at K=3, but id_switches +50 % and
+  // sog_rmse +16.75 %. Decide by whether the consumer is graded
+  // on cardinality+position (pick K=3) or operator-facing track
+  // continuity+kinematics (stay on K=1).
+  //
+  // Big known regressions (K=3 worse): autoferry_scenario13_
+  // anchored (gospa +44.97 %, NEES +553 %); autoferry_scenario16_
+  // anchored (gospa +38.56 %, sog_rmse +249 %, NEES +167 %);
+  // non_cooperative (gospa +17.04 %). Phase 9 design doc lists
+  // the open hypotheses for the future fix.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_adapt_k3";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.adaptive_k_best = true;
+      cfg.k_best_per_hypothesis = 3;
+      cfg.lambda_birth = 1e-5;
+      cfg.min_new_bernoulli_existence = 0.05;
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
   return configs;
 }
 

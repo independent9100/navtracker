@@ -10,9 +10,11 @@ using navtracker::benchmark::defaultConfigs;
 
 TEST(Config, DefaultConfigsHaveUniqueLabels) {
   const auto configs = defaultConfigs();
-  // 22: 21 prior + Cl-3 Phase 7 imm_cv_ct_pmbm_adapt (Adaptive Birth).
-  // Prior 21 = 20 standing + Cl-3 Phase 1 imm_cv_ct_pmbm.
-  ASSERT_EQ(configs.size(), 22u);
+  // 23: 22 prior + Cl-3 Phase 9 imm_cv_ct_pmbm_adapt_k3 (adaptive
+  // K-best, K_cap=3 — banks the synthetic/unanchored wins from Phase
+  // 8 P2 iter 1 alongside the K=1 imm_cv_ct_pmbm_adapt baseline).
+  // Prior 22 = 21 standing + Cl-3 Phase 7 imm_cv_ct_pmbm_adapt.
+  ASSERT_EQ(configs.size(), 23u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   // Canonical wires the bias estimator unconditionally; the
@@ -24,8 +26,9 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 22u);
+  EXPECT_EQ(labels.size(), 23u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt_k3"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_ekf"), 1u);
   // imm_cv_ct_mht_ukf retired 2026-06-20: UKF promoted to canonical,
   // imm_cv_ct_mht IS the UKF stack now; _ekf preserves the prior canonical.
