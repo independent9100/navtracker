@@ -921,6 +921,39 @@ TEST(PmbmTrackerPhase9XParent, CrossParentCacheDefaultOffBitIdentical) {
   EXPECT_EQ(run(false), run(false));  // determinism baseline
 }
 
+TEST(PmbmTrackerPhase9XParent, CrossParentCacheWorksWithoutAdaptiveKBest) {
+  // Review-2 fix: the flag must work whether or not adaptive_k_best is
+  // on (docs claim independence). Earlier implementation silently
+  // no-op'd when adaptive_k_best=false because parent_idx_arg stayed -1.
+  Fixture f;
+  auto run = [&](bool xparent) -> std::size_t {
+    PmbmTracker::Config c;
+    c.probability_of_detection = 0.9;
+    c.clutter_intensity = 1e-4;
+    c.survival_probability = 1.0;
+    c.adaptive_k_best = false;  // <-- critical: fixed-K path
+    c.k_best_per_hypothesis = 1;
+    c.cross_parent_birth_id_cache = xparent;
+    PmbmTracker tracker(f.ekf, c);
+    tracker.predict(Timestamp::fromSeconds(0.0));
+    auto& d = tracker.mutableDensityForTesting();
+    d.ppp.push_back(mkPpp(1.0, 0.0, 0.0));
+    navtracker::pmbm::GlobalHypothesis h1, h2;
+    h1.weight = 0.5; h1.log_weight = std::log(0.5);
+    h2.weight = 0.5; h2.log_weight = std::log(0.5);
+    d.mbm = {h1, h2};
+    tracker.processBatch({pos2d(1.0, 0.0, 0.0, SensorKind::Lidar, "r0")});
+    std::set<navtracker::pmbm::BernoulliId> ids;
+    for (const auto& h : tracker.density().mbm) {
+      for (const auto& b : h.bernoullis) ids.insert(b.id);
+    }
+    return ids.size();
+  };
+  EXPECT_LE(run(true), run(false))
+      << "xparent must reduce or equal id count even without "
+         "adaptive_k_best (post-review-2 fix)";
+}
+
 TEST(PmbmTrackerPhase9XParent, CrossParentCacheSharesIdsAcrossParents) {
   // Two parent hypotheses each enumerate K children; if either parent
   // has a child that births measurement l, the cross-parent cache

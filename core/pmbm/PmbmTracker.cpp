@@ -1026,9 +1026,20 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
   children.reserve(density_.mbm.size() *
                    static_cast<std::size_t>(cfg_.k_best_per_hypothesis));
   // Phase 8 iter 5: clear per-scan birth-id cache. Populated inside
-  // enumerateChildren when adaptive K is on.
+  // enumerateChildren when the cache is active (see below).
   scan_birth_id_cache_.clear();
   int parent_idx_for_cache = 0;
+  // Phase 9 review-2 fix: thread parent_idx unconditionally when EITHER
+  // adaptive K-best OR cross-parent birth-id cache is on. The original
+  // gate (adaptive_k_best only) made `cross_parent_birth_id_cache` a
+  // silent no-op when adaptive_k_best was off — docs claimed the flags
+  // were independent (mirroring MATLAB's filter-level new-track
+  // creation), but the gate broke that contract. The non-adaptive K=1
+  // path still enumerates one child per parent and benefits from the
+  // cross-parent id share when multiple parents birth the same
+  // measurement.
+  const bool need_cache = cfg_.adaptive_k_best ||
+                          cfg_.cross_parent_birth_id_cache;
   for (const auto& p : density_.mbm) {
     int k_override = -1;
     int parent_idx_arg = -1;  // < 0 disables id-caching (legacy bit-identical)
@@ -1042,6 +1053,8 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
           static_cast<double>(cfg_.max_global_hypotheses) * w));
       k_override = std::clamp(k_raw, 1,
                               std::max(1, cfg_.k_best_per_hypothesis));
+    }
+    if (need_cache) {
       parent_idx_arg = parent_idx_for_cache;
     }
     const std::size_t children_before = children.size();

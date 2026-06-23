@@ -337,8 +337,10 @@ class PmbmTracker {
     // 9 S3 alt-birth gate's mass-accounting hack.
     //
     // OFF by default (bit-identical to S2/S3 baseline). Independent
-    // of alt_birth_log_gap_threshold; the two can be combined or
-    // either can be used alone.
+    // of alt_birth_log_gap_threshold AND of adaptive_k_best — when this
+    // flag is on, the cross-parent cache fires whether K-best per parent
+    // is fixed or adaptive. (Review-2 fix 2026-06-23: earlier
+    // implementation silently no-op'd when adaptive_k_best=false.)
     bool cross_parent_birth_id_cache = false;
 
     // Phase 9 S3 — alt-birth-gate. Per-parent K-best lineage-aware
