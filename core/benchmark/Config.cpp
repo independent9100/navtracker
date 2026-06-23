@@ -631,94 +631,30 @@ std::vector<Config> defaultConfigs() {
       cfg.k_best_per_hypothesis = 3;
       cfg.lambda_birth = 1e-5;
       cfg.min_new_bernoulli_existence = 0.05;
-      // output_merge_* knobs (Phase 9 M3 Option A iter 6): kept off
-      // by default in the bench K=3 config. Iter-6 probe
-      // (th=1.0 + max_age=2.0 + max_hyp_support=3) marginally
-      // recovered philos (-17.23 % → -1.09 % vs iter 5's +0.10 %,
-      // ~1 pt improvement) but didn't restore the marquee win. The
-      // discriminator signal at the output layer is insufficient.
-      // Knobs left wired + unit-tested for future per-scenario
-      // tuning or for a relative-mbm-size hyp-count gate (iter 7
-      // candidate, not run this session).
-      // output_merge_bhattacharyya_threshold: Phase 9 M3 Option A
-      // probe-only knob, kept off by default. The mechanism (fold
-      // spatially-close aggregated ids before emitting) works as
-      // designed and produced the biggest single dent in the
-      // autoferry-anchored regressions yet measured
-      // (sc16_anchored +38.56 % → +23.01 % at th=2.0 + floor=0.5;
-      // sc13_anchored +44.97 % → +35.51 %). But every probe
-      // threshold tested (0.3, 0.5, 1.0, 2.0) flips the philos win
-      // (-17.23 % → +0.10 %): philos has legitimate close-positioned
-      // parallel tracks whose Bhattacharyya distance is < 0.3, and
-      // the merge can't distinguish them from the K=3 alt-hypothesis
-      // phantom births that sc13/16_anchored emit. The knob stays
-      // wired (PmbmTracker::Config::output_merge_bhattacharyya_threshold,
-      // unit-tested) for any consumer who values the autoferry-
-      // anchored fix over philos, but the bench K=3 config does NOT
-      // enable it.
-      // k_best_dominance_log_gap: Phase 9 M2 probe-only knob, kept
-      // off by default. The mechanism (drop K-siblings ≥ N nat
-      // below the top sibling) is implemented and unit-test clean,
-      // but probe at log_gap=1.0 didn't dent the big sc13/16_anc
-      // regressions (their alts sit at 0.69 nat from the top, below
-      // the threshold) and sacrificed the philos -17 % marquee win
-      // (philos has many close-weight legitimate alts). The knob
-      // is left wired for a future per-scenario tuning sweep.
-      // cfg.k_best_dominance_log_gap = 0.0;  // explicit; default 0
-      return cfg;
-    };
-    c.build_sensor_bias_estimator = []() {
-      return std::make_shared<SensorBiasEstimator>();
-    };
-    configs.push_back(std::move(c));
-  }
-
-  // imm_cv_ct_pmbm_adapt_k3_xparent — Phase 9 PROBE config.
-  // Identical to imm_cv_ct_pmbm_adapt_k3 but with
-  // cross_parent_birth_id_cache=true. Probe target: dent K=3 philos
-  // id_switches without the altgate's mass-accounting hack — by
-  // sharing birth ids across ALL parents (not just one parent's K
-  // siblings), mirroring MATLAB filter-level new-track creation.
-  {
-    Config c;
-    c.label = "imm_cv_ct_pmbm_adapt_k3_xparent";
-    c.build_estimator = &makeImmCvCt;
-    c.build_associator = &makeJpda;
-    c.tracker_kind = TrackerKind::Pmbm;
-    c.pmbm_config = []() {
-      auto cfg = makePmbmConfig();
-      cfg.adaptive_birth = true;
-      cfg.adaptive_k_best = true;
-      cfg.k_best_per_hypothesis = 3;
-      cfg.lambda_birth = 1e-5;
-      cfg.min_new_bernoulli_existence = 0.05;
+      // Phase 9 S4: cross-parent birth-id cache. Folded in 2026-06-23
+      // after the _xparent probe recovered the autoferry-anchored
+      // regressions (sc13_anc +44.97 % → +1.30 % vs K=1, sc16_anc
+      // +38.56 % → +7.49 %, sc22_anc +14.24 % → +2.16 %). Tradeoff:
+      // loses the prior K=3 philos GOSPA -17.23 % win (back to K=1
+      // level), but gains philos pos_rmse -25.93 %, sog_rmse
+      // -37.90 %, nees -10.46 % — the GOSPA win was an id-
+      // fragmentation counting artifact; per-track state under
+      // xparent is strictly better. See
+      // docs/superpowers/specs/2026-06-23-pmbm-phase9-per-track-hypotheses.md
+      // for the full mechanism explanation and bench tables.
       cfg.cross_parent_birth_id_cache = true;
-      return cfg;
-    };
-    c.build_sensor_bias_estimator = []() {
-      return std::make_shared<SensorBiasEstimator>();
-    };
-    configs.push_back(std::move(c));
-  }
-
-  // imm_cv_ct_pmbm_adapt_k3_altgate — Phase 9 S3 PROBE config.
-  // Identical to imm_cv_ct_pmbm_adapt_k3 but with the lineage-aware
-  // alt-birth gate enabled. Probe target: dent sc13/16/22_anchored
-  // regressions while preserving philos -17.23 % win.
-  {
-    Config c;
-    c.label = "imm_cv_ct_pmbm_adapt_k3_altgate";
-    c.build_estimator = &makeImmCvCt;
-    c.build_associator = &makeJpda;
-    c.tracker_kind = TrackerKind::Pmbm;
-    c.pmbm_config = []() {
-      auto cfg = makePmbmConfig();
-      cfg.adaptive_birth = true;
-      cfg.adaptive_k_best = true;
-      cfg.k_best_per_hypothesis = 3;
-      cfg.lambda_birth = 1e-5;
-      cfg.min_new_bernoulli_existence = 0.05;
-      cfg.alt_birth_log_gap_threshold = 0.5;  // probe value
+      // Off-by-default probe knobs intentionally NOT enabled here.
+      // Each was a probe that taught us about the mechanism without
+      // becoming the right default:
+      //   - alt_birth_log_gap_threshold (S3 lineage gate): partial
+      //     fix with hacky mass accounting; superseded by xparent.
+      //   - output_merge_bhattacharyya_threshold (M3 Option A): can't
+      //     discriminate phantom from legitimate close-parallel at
+      //     output layer.
+      //   - k_best_dominance_log_gap (M2): drops whole alts;
+      //     sacrifices philos.
+      // All three remain wired + unit-tested for per-consumer
+      // ablation but the bench K=3 config does NOT enable them.
       return cfg;
     };
     c.build_sensor_bias_estimator = []() {
