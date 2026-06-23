@@ -293,23 +293,92 @@ fragmentation across siblings. Three remaining hypotheses:
    `PoissonMBMtarget_update.m:268-330` to see if MATLAB handles this
    differently.
 
+## M2 diagnostic results (2026-06-23)
+
+Both half-day diagnostics ran in M2 of the 2026-06-23 session.
+
+### Diagnostic B — Murty new-target double-count: REFUTED
+
+Cross-read of `third_party/reference/MTT-master/PMBM filter/
+PoissonMBMtarget_update.m` (lines 227-293) vs our
+`core/pmbm/PmbmTracker.cpp:enumerateChildren` (lines 580-735)
+confirmed our handling matches MATLAB exactly: new-target diagonal
+cost block, `log(ρ_total)` only added per K-child when the child's
+assignment claims the measurement for new-birth, unassigned rows
+contribute nothing.
+
+### Diagnostic A — sc13_anchored K-best divergence: ROOT MECHANISM IDENTIFIED
+
+Instrumented per-scan MBM-state dump on `autoferry_scenario13_
+anchored` at K=1 vs K=3 pinned divergence to **scan 3**:
+
+- K=1: 15-measurement scan absorbed as misdetections of 2 low-r
+  priors + clutter. `mbm.size() = 1`, `Σr = 0.179`, no tracks
+  emitted.
+- K=3: same top hypothesis (lw=-43.877, w=0.497), but Murty's
+  K-2 and K-3 (lw≈-44.55, w≈0.25 each) spent 5 measurements on
+  phantom births → `Σr ≈ 1.09`. Output aggregation
+  `Σ w·r` over 3 hyps pushed phantom Bernoulli above
+  `output_existence_floor` → emitted as Confirmed.
+
+End-of-run signature: K=1 has 2 clean tracks, max id ~210; K=3 has
+the same 2 physical targets as ids #1683 / #3299 — ~15× more id
+churn → id-switch + position-blur → gospa +44.97 %.
+
+### M2 fix attempt: dominance cutoff (DIDN'T WORK CLEANLY)
+
+A `Config::k_best_dominance_log_gap` knob (default 0 = off) was
+added at `PmbmTracker.cpp:987-1009`. Drops per-parent K-siblings
+whose log_weight is more than N nat below the top sibling.
+
+Probe at log_gap=1.0 vs K=1 baseline (with K=3-baseline-vs-K=1 → K=3-with-cutoff-vs-K=1):
+- `dense_clutter` -7.79 % → **-14.50 %** (improved!)
+- `autoferry_scenario3` -4.95 % → -10.03 % (improved)
+- `autoferry_scenario2` -3.32 % → -7.33 % (improved)
+- `philos` -17.23 % → **-2.80 %** (regressed — marquee win lost)
+- `autoferry_scenario4_anchored` -8.69 % → +0.58 % (regressed)
+- `autoferry_scenario2_anchored` +8.53 % → +18.50 % (regressed)
+- `sc13_anchored` +44.97 % → +44.31 % (basically unchanged)
+- `sc16_anchored` +38.56 % → +35.59 % (small improvement)
+
+sc13_anchored unchanged because its scan-3 alts sit at 0.69 nat
+from the top (weights 0.497 vs 0.25) — BELOW the 1.0 nat
+threshold, so the cutoff misses them. Tighter (log_gap=0.5) would
+catch them but sacrifice more philos. **There is no log_gap that
+cleanly separates phantom-birth alts from legitimate close-weight
+alts at the log_weight layer alone.**
+
+The knob is kept in the codebase (off by default) for any consumer
+that values dense_clutter/sc3/sc2 wins over philos; the K=3 bench
+config does NOT enable it.
+
+### Updated hypothesis ranking (refuting / superseding the above)
+
+1. **Per-track-hypothesis structural refactor** (Phase 9
+   original): under MATLAB's `tracks{i}.meanB{j}` indexing, alt
+   assignments that birth a Bernoulli for a measurement DON'T
+   create a new physical id — they create a new single-target
+   hypothesis index under the same track. Output aggregation can
+   then weight per-track-hypothesis-marginal correctly. Our flat
+   representation forces birth-id assignment per alt → id churn.
+2. **Output-side cross-id birth merge** (new probe): in
+   `refreshAggregatedTracks` (PmbmTracker.cpp:1287-1337), when
+   two ids have nearly-identical (mean, cov) and both were born
+   in the same scan, fold them. Probably ~30 LOC; cheaper than
+   structural; testable as a 1-day probe.
+3. **Anchored-mode-specific cost-matrix tuning**: investigate
+   whether bias-correction on a static own-ship changes the
+   cost-matrix structure in a way that flattens Murty K-best
+   alt-cost gaps. Cheapest if the hypothesis bites.
+
 ## Recommendation
 
-Park Phase 9 as a multi-day refactor that does NOT have a confirmed
-ROI. The hypotheses-2 and 3 in the section above need to be probed
-first (each ~½-1 day) before the structural refactor's risk/reward
-becomes worth taking.
-
-If a future session wants to revisit, the order is:
-1. Diagnostic dump of sc13_anchored MBM weights K=1 vs K=3 vs K=5
-   (½ day) — pinpoints where the regression begins.
-2. Cross-read of `PoissonMBMtarget_update.m:268-330` vs our
-   `enumerateChildren` new-target-row handling (½ day) — checks for
-   the new-target-log-weight double-count.
-3. Decide refactor vs reroll based on what 1 + 2 surface.
+Hypothesis 3 (Murty double-count) refuted; the shortlist drops to
+(1) structural refactor and (2) output-side birth merge plus (3)
+anchored-mode investigation. The next session should probe (2)
+first (1 day, lowest cost, addresses the diagnostic A mechanism
+directly without the per-track-hypothesis lift).
 
 This doc supersedes the parking note in
-`docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md` parking
-lot item #1 — the "adaptive K is structural" diagnosis is now
-explicitly downgraded from "confirmed" to "candidate hypothesis,
-unfalsified".
+`docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md`
+parking lot item #1.

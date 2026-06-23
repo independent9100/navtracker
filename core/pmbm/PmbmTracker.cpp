@@ -984,8 +984,33 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
                               std::max(1, cfg_.k_best_per_hypothesis));
       parent_idx_arg = parent_idx_for_cache;
     }
+    const std::size_t children_before = children.size();
     enumerateChildren(p, scan, nts, children, k_override, parent_idx_arg);
     ++parent_idx_for_cache;
+
+    // Phase 9 M2 dominance cutoff (per-parent). When this parent's
+    // K-best top child dominates by more than k_best_dominance_log_gap
+    // nats, drop the weaker siblings — they would emit phantom-birth
+    // Bernoullis into the aggregated output via Σ w·r (Diagnostic A
+    // on autoferry_scenario13_anchored). 0 = disabled (legacy
+    // behavior, bit-identical).
+    if (cfg_.k_best_dominance_log_gap > 0.0 &&
+        children.size() > children_before + 1) {
+      double top_lw = -std::numeric_limits<double>::infinity();
+      for (std::size_t i = children_before; i < children.size(); ++i) {
+        if (children[i].log_weight > top_lw) top_lw = children[i].log_weight;
+      }
+      if (std::isfinite(top_lw)) {
+        const double cutoff_lw = top_lw - cfg_.k_best_dominance_log_gap;
+        children.erase(
+            std::remove_if(
+                children.begin() + children_before, children.end(),
+                [cutoff_lw](const GlobalHypothesis& h) {
+                  return h.log_weight < cutoff_lw;
+                }),
+            children.end());
+      }
+    }
   }
 
   density_.mbm = std::move(children);

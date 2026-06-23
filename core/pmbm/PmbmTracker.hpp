@@ -177,6 +177,25 @@ class PmbmTracker {
     // `imm_cv_ct_pmbm_adapt` turns this ON (Phase 8 P2 fix).
     bool adaptive_k_best = false;
 
+    // Per-parent K-best dominance cutoff (Phase 9 M2 diag). When
+    // the top Murty child of a parent dominates by a wide margin,
+    // the weaker K-children inject phantom-birth Bernoullis that
+    // survive into the output aggregation via Σ w·r and emit as
+    // spurious Confirmed tracks (Diagnostic A: this is the
+    // mechanism behind the K=3 autoferry_scenario13_anchored
+    // +44.97 % gospa regression).
+    //
+    // When > 0, drop K-children whose log_weight is below
+    // (top_child_log_weight - k_best_dominance_log_gap). With
+    // k_best_dominance_log_gap = 1.0, alts that are ≤ exp(-1) ≈
+    // 37 % of the top in weight space are pruned at the per-parent
+    // level — much cheaper than letting them propagate through
+    // pruneAndNormalise.
+    //
+    // 0 = disabled (bit-identical to Phase 8/9 baseline). Tuned
+    // bench value lives in the K=3 config.
+    double k_best_dominance_log_gap = 0.0;
+
     // Trajectory-PMBM (Phase 4, García-Fernández/Williams 2020). When
     // > 0, each Bernoulli records its forward-pass post-update state
     // history at every detection and post-predict state at every

@@ -631,6 +631,15 @@ std::vector<Config> defaultConfigs() {
       cfg.k_best_per_hypothesis = 3;
       cfg.lambda_birth = 1e-5;
       cfg.min_new_bernoulli_existence = 0.05;
+      // k_best_dominance_log_gap: Phase 9 M2 probe-only knob, kept
+      // off by default. The mechanism (drop K-siblings ≥ N nat
+      // below the top sibling) is implemented and unit-test clean,
+      // but probe at log_gap=1.0 didn't dent the big sc13/16_anc
+      // regressions (their alts sit at 0.69 nat from the top, below
+      // the threshold) and sacrificed the philos -17 % marquee win
+      // (philos has many close-weight legitimate alts). The knob
+      // is left wired for a future per-scenario tuning sweep.
+      // cfg.k_best_dominance_log_gap = 0.0;  // explicit; default 0
       return cfg;
     };
     c.build_sensor_bias_estimator = []() {
