@@ -525,6 +525,20 @@ void PmbmTracker::enumerateChildren(
   // detected this Bernoulli. Coverage = missDetectionProbability !=
   // 0 (the detection model returns 0 when the Bernoulli is outside
   // the sensor's max_range / sector). Config fallback when no model.
+  //
+  // NOTE — review 2026-06-23 Finding 1: this loop SHOULD dedup by
+  // (sensor, model, source_id) — counting one radar's 50 returns as
+  // 50 separate misdetections drives effective P_D toward 1.0
+  // regardless of the configured value. The math is wrong.
+  //
+  // STATUS: dedup NOT applied (commit 0cf1159 + 2 follow-up probes
+  // showed the fix breaks philos by +92 % gospa). The system was
+  // using the over-aggressive misdetection penalty as an indirect
+  // cardinality control. With the correct penalty, philos
+  // Bernoullis don't decay → phantom bloat → cardinality wrong.
+  // Re-landing the dedup requires first tuning a legitimate
+  // cardinality control (tighter birth gate, higher r_min, lower
+  // output_existence_floor) — multi-knob exercise, parked.
   auto compute_miss_pD = [&](const Bernoulli& b) {
     if (!detection_model_) return cfg_.probability_of_detection;
     if (b.mean.size() < 2) return cfg_.probability_of_detection;

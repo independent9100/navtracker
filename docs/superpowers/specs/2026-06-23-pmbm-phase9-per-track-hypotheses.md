@@ -719,3 +719,114 @@ state estimates are unambiguously better under xparent.
    philos GOSPA but no anchored regressions.
 
 The four ship as siblings; consumer picks per workload.
+
+## Phase 9 Review (2026-06-23/24) — multi-agent adversarial audit
+
+After the S4 fix recovered the autoferry-anchored regressions, a
+6-finding multi-agent structural audit ran in parallel + independent
+re-verification of each finding by a second agent. Every finding
+held under re-verification. Outcomes split between landed,
+deferred, and doc-only:
+
+### Landed fixes
+
+**Finding 4 (commit d7c2bfe) — xparent gate lift.** Earlier
+implementation silently no-op'd `cross_parent_birth_id_cache` when
+`adaptive_k_best=false`, even though the docstring claimed flag
+independence (mirroring MATLAB's filter-level new-track creation,
+which has nothing to do with K-best). Fixed by threading
+`parent_idx_for_cache` whenever EITHER `adaptive_k_best` OR
+`cross_parent_birth_id_cache` is on. Library consumers running
+fixed-K + xparent now get the fix as documented. New test:
+`CrossParentCacheWorksWithoutAdaptiveKBest`. Bit-identical on bench
+K=3 (sc13_anc 3.4618 → 3.4618; bench config already had both flags).
+
+### Doc-only correction
+
+**Finding 5 — M2 Diagnostic A narrative was incomplete.** The
+"K-2/K-3 alts of ONE parent birth phantoms" framing (lines 310-326
+of this doc) is misleading because the Phase 8 iter-5
+`scan_birth_id_cache_` already shares ids within ONE parent's K
+siblings. Within-parent K-best alone cannot mint distinct ids by
+construction. The actual mechanism is **cross-parent collision on
+the post-scan-2 broadened K=3 mixture**: by scan 3, the K=3 mixture
+has expanded beyond K=1's `mbm.size()=1` to multiple parents, and
+each parent's children birthing the same measurement minted distinct
+ids. Supporting evidence: the M2 dominance-cutoff knob at gap=1.0
+(which suppresses within-parent K-2/K-3 alts at 0.69 nat from top)
+did NOT dent sc13_anc (+44.97 → +44.31). If the within-parent story
+were the mechanism, dropping those siblings entirely should have
+helped. It didn't — because the id churn was cross-parent.
+
+The S4 fix narrative (lines 632-700) is structurally correct in its
+mechanism description but mis-attributed the proximate trigger to
+the same scan-3 snapshot the Diagnostic A walkthrough used. The
+spec is consistent at the mechanism level; only the "scan 3"
+example is conflated. Future re-walks of sc13_anc should
+instrument per-parent enumeration to confirm cross-parent collision
+patterns rather than re-using the M2 single-parent dump.
+
+### Deferred fixes (correct math, exposes downstream issues)
+
+**Finding 1 — compute_miss_pD per-measurement aggregation.** The
+loop iterates per-measurement; a 50-return radar scan multiplies
+`(1 − p_D_s)` fifty times for the same physical sensor, driving
+effective P_D toward 1 regardless of the configured value. Fix:
+dedup by `(sensor, model, source_id)`.
+
+Probed: dedup ALONE causes philos **+92 % gospa** (10-seed,
+`scratchpad/after_dedup_only.csv`). The over-aggressive misdetection
+was the de-facto cardinality control in philos; with correct P_D
+(0.9 instead of ~1.0), Bernoullis decay slower and phantom
+cardinality bloats. Tried `idle_halflife_sec=60` as a legitimate
+decay path — no recovery (`scratchpad/dedup_plus_idle.csv`).
+
+Parked. Re-landing requires a multi-knob cardinality-control tune:
+tighter birth gate, higher `r_min`, lower `output_existence_floor`,
+possibly different `idle_halflife_sec`. The wrong-math currently
+shipped is load-bearing for philos; cleaning it up is a separate
+multi-day exercise, not a drive-by fix.
+
+**Finding 3 — source-aware vs compute_miss_pD inconsistency.**
+`should_misdetect` filters by source overlap; `compute_miss_pD`
+does not. AIS-only Bernoulli gets penalized in `compute_miss_pD`
+by every radar return in mixed scans.
+
+Probed alongside dedup: same +92 % philos regression. The
+source-overlap filter is the EXACT thing that, combined with dedup,
+would maximally reduce misdetection penalty in philos — and
+maximally bloat cardinality. Same parking reason as Finding 1.
+
+**Finding 6A — coverage indicator can't see no-return sensors.**
+A sensor in coverage but with no measurement this scan (between-
+sweep gap, blind period) is invisible to `compute_miss_pD`.
+Architectural — needs a new sensor-activity port. Deferred to
+Cl-1/Cl-2 scope.
+
+### Pending fixes (next session)
+
+**Finding 2 — `Bernoulli::trajectory` is per-hypothesis.** Same
+class of bug as the xparent fix, scaled up to trajectory history.
+Id 42 carries different trajectory tails in hypotheses A and B
+(different misdetection/detection lineages); when the dominant
+hypothesis flips, `trajectoryFor(id)` returns a different lineage
+wholesale. Operator-facing fragmentation even though id is
+stable. Fix: extract trajectory from `Bernoulli` to a per-
+`BernoulliId` map at tracker level. ~50-100 LOC restructure.
+
+**Finding 6B — `lambda_birth` not per-sensor.** Trivial change:
+promote scalar to `std::map<SensorKind, double>` following the
+existing per-sensor λ_C pattern (`PmbmTracker.cpp:391`, `hpp:136`).
+AIS-vs-EO-IR birth-rate gap is order-of-magnitude on autoferry;
+material bench impact expected.
+
+### Process lesson
+
+The review's headline find was Finding 4 (a simple
+docs-vs-behavior mismatch, ~10 LOC fix). The "most clearly correct"
+math fix (Finding 1: dedup) turned out to be the one that broke
+production. The lesson: in a system tuned over many sessions, even
+demonstrably-wrong code can be load-bearing for downstream
+behavior. Multi-agent reviews find real bugs; landing those fixes
+still needs the same probe-and-verify discipline as any other
+change.
