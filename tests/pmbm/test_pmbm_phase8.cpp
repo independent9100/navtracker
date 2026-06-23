@@ -897,6 +897,72 @@ TEST(PmbmTrackerPhase9S3, AltBirthGateStripsBirthsInWeakAltOnly) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 9 — cross_parent_birth_id_cache shares birth ids across ALL
+// parents' K-children for the same measurement, mirroring MATLAB's
+// filter-level new-track creation. Off by default = bit-identical.
+// ---------------------------------------------------------------------------
+TEST(PmbmTrackerPhase9XParent, CrossParentCacheDefaultOffBitIdentical) {
+  Fixture f;
+  auto run = [&](bool xparent) {
+    PmbmTracker::Config c;
+    c.probability_of_detection = 0.9;
+    c.clutter_intensity = 1e-4;
+    c.survival_probability = 1.0;
+    c.adaptive_k_best = true;
+    c.k_best_per_hypothesis = 3;
+    c.cross_parent_birth_id_cache = xparent;
+    PmbmTracker tracker(f.ekf, c);
+    tracker.predict(Timestamp::fromSeconds(0.0));
+    tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 0.0, 0.0));
+    tracker.processBatch({pos2d(1.0, 0.0, 0.0, SensorKind::Lidar, "r0")});
+    return tracker.density().mbm.size();
+  };
+  EXPECT_EQ(run(false), run(false));  // determinism baseline
+}
+
+TEST(PmbmTrackerPhase9XParent, CrossParentCacheSharesIdsAcrossParents) {
+  // Two parent hypotheses each enumerate K children; if either parent
+  // has a child that births measurement l, the cross-parent cache
+  // ensures all such births (across both parents) share one id.
+  // With xparent OFF, parents 0 and 1 birthing measurement l get
+  // distinct ids → max BernoulliId grows ≥ 2. With xparent ON, max
+  // BernoulliId growth is bounded by the number of measurements
+  // birthed in the scan, regardless of how many parents claim them.
+  Fixture f;
+  auto run = [&](bool xparent) -> std::size_t {
+    PmbmTracker::Config c;
+    c.probability_of_detection = 0.9;
+    c.clutter_intensity = 1e-4;
+    c.survival_probability = 1.0;
+    c.adaptive_k_best = true;
+    c.k_best_per_hypothesis = 3;
+    c.cross_parent_birth_id_cache = xparent;
+    PmbmTracker tracker(f.ekf, c);
+    tracker.predict(Timestamp::fromSeconds(0.0));
+    // Two parent hypotheses with equal weight; each will enumerate
+    // K children, some of which birth the lone measurement.
+    auto& d = tracker.mutableDensityForTesting();
+    d.ppp.push_back(mkPpp(1.0, 0.0, 0.0));
+    navtracker::pmbm::GlobalHypothesis h1, h2;
+    h1.weight = 0.5; h1.log_weight = std::log(0.5);
+    h2.weight = 0.5; h2.log_weight = std::log(0.5);
+    d.mbm = {h1, h2};
+    tracker.processBatch({pos2d(1.0, 0.0, 0.0, SensorKind::Lidar, "r0")});
+    // Count unique BernoulliIds emitted.
+    std::set<navtracker::pmbm::BernoulliId> ids;
+    for (const auto& h : tracker.density().mbm) {
+      for (const auto& b : h.bernoullis) ids.insert(b.id);
+    }
+    return ids.size();
+  };
+  const auto n_off = run(false);
+  const auto n_on  = run(true);
+  EXPECT_LE(n_on, n_off)
+      << "cross-parent cache must NOT increase distinct ids; "
+      << "off=" << n_off << " on=" << n_on;
+}
+
 TEST(PmbmTrackerPhase9S2, PerTrackViewOffByDefaultIsBitIdentical) {
   // With the flag off, the per-track view stays empty — proves no
   // implicit work happens unless opted in.

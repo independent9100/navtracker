@@ -315,6 +315,32 @@ class PmbmTracker {
     // at K=3 — the only candidate fix left after M1/M2/M3).
     bool use_per_track_hypotheses = false;
 
+    // Phase 9 probe — cross-parent birth-id cache.
+    //
+    // Existing scan_birth_id_cache_ (Phase 8 iter 5) shares Bernoulli
+    // ids across K siblings of one parent that birth the SAME
+    // measurement. But across parents, the cache key is
+    // (parent_idx, measurement_idx) — so two different parents' K-
+    // children birthing the same measurement get DIFFERENT ids. Under
+    // K=3 with a multi-parent mixture (sparse-AIS philos: many
+    // surviving hypotheses every scan), every scan some alt-parent's
+    // child mints a fresh id for an already-tracked target. When that
+    // alt becomes the next-scan top, the OUTPUT id flips →
+    // id_switch.
+    //
+    // When this flag is ON, the cache key drops parent_idx — all
+    // K-children of any parent that birth measurement l share the
+    // same BernoulliId. Mirrors MATLAB MTT-master's filter-level
+    // new-track creation (PoissonMBMtarget_update.m: new tracks
+    // belong to the FILTER, not to a specific globHyp). Probe target:
+    // dent K=3 philos id_switches +50 % regression without the Phase
+    // 9 S3 alt-birth gate's mass-accounting hack.
+    //
+    // OFF by default (bit-identical to S2/S3 baseline). Independent
+    // of alt_birth_log_gap_threshold; the two can be combined or
+    // either can be used alone.
+    bool cross_parent_birth_id_cache = false;
+
     // Phase 9 S3 — alt-birth-gate. Per-parent K-best lineage-aware
     // suppression of new-target Bernoullis in non-top alt children.
     //

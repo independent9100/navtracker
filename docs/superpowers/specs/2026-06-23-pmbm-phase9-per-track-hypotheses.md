@@ -628,3 +628,94 @@ id_switches) but worse mean positions (bad for pos_rmse).
 5. ~~Lineage-aware alt-birth gate at output time~~
    (S3 alt_birth_log_gap_threshold): SHIPPED as probe; works
    mechanically but doesn't fix sc13/16/22_anc.
+
+## S4 — cross-parent birth-id cache (2026-06-23): CORE FIX FOUND
+
+**User intuition**: the philos id_switches -67 % from S3's altgate
+felt suspicious — too big a movement for a clean intervention,
+suggesting a structural issue. Diagnosis: existing
+`scan_birth_id_cache_` (Phase 8 iter 5) shares Bernoulli ids
+across K siblings of ONE parent only — key is `(parent_idx,
+measurement_idx)`. Under K=3 with a multi-parent mixture, every
+scan two different parents' children that birth the SAME
+measurement get DIFFERENT ids. When an alt later becomes top,
+the output id flips → id_switch + position-blur.
+
+Fix: new knob `PmbmTracker::Config::cross_parent_birth_id_cache`.
+When true, the cache key drops `parent_idx` (uses `-1` as the
+parent slot), so ALL K-children of ALL parents birthing
+measurement `l` share one BernoulliId. Mirrors MATLAB MTT-master's
+filter-level new-track creation (PoissonMBMtarget_update.m: new
+tracks belong to the FILTER, not to a specific globHyp). Default
+false = bit-identical to S2/S3 baseline.
+
+Probe config: `imm_cv_ct_pmbm_adapt_k3_xparent` (sibling of
+`_adapt_k3` with the flag on, no altgate).
+
+### S4 probe results — 10-seed bench (vs K=3 baseline)
+
+| scenario | gospa Δ | id_switches Δ | pos_rmse Δ | sog_rmse Δ | nees Δ | ospa Δ |
+|---|---:|---:|---:|---:|---:|---:|
+| **autoferry_scenario13_anchored** | **-30.13 %** | (0→0.5) | **-25.32 %** | +14.16 % | **-81.48 %** | **-42.90 %** |
+| **autoferry_scenario16_anchored** | **-22.42 %** | -33.33 % | -2.25 % | +5.17 % | -3.93 % | **-45.12 %** |
+| **autoferry_scenario22_anchored** | **-10.57 %** | 0 % | -2.39 % | +8.47 % | -2.13 % | -13.72 % |
+| philos | +20.56 % | -33.33 % | **-25.93 %** | **-37.90 %** | -10.46 % | +5.18 % |
+| dense_clutter | +2.70 % | 0 % | -0.04 % | +1.88 % | -0.13 % | +5.48 % |
+
+### S4 vs K=1 baseline (the original Phase 9 regression target)
+
+| scenario | K=1 | K=3 baseline | K=3+xparent | xparent vs K=1 |
+|---|---:|---:|---:|---:|
+| sc13_anchored | 3.4174 | 4.9544 (+44.97 %) | 3.4618 | **+1.30 % — recovered** |
+| sc16_anchored | 3.0279 | 4.1954 (+38.56 %) | 3.2547 | **+7.49 % — mostly recovered** |
+| sc22_anchored | 7.3465 | 8.3926 (+14.24 %) | 7.5052 | **+2.16 % — recovered** |
+
+**The original Phase 9 target is essentially fixed.** The three
+autoferry-anchored regressions are within 8 % of K=1, down from
++15..+45 %.
+
+### Mechanism understood end-to-end
+
+Under K=3 with the truth-anchor measurement σ=5 m feed (sc13/16/22
+_anchored), every scan's Murty alts birth the same physical-vessel
+measurement from different parents because each parent has very
+slight residual disagreement on existing-track associations. Without
+the cross-parent cache, each alt mints a fresh id for the same
+physical vessel → output aggregation can't fold them (different
+ids) → emit as Confirmed Tentative tracks alongside the canonical
+id → 15× more id churn → +44.97 % gospa.
+
+With the cross-parent cache, all alt-births for the same
+measurement collapse to one id → output aggregation sees one
+phantom per measurement instead of K phantoms → mass stays
+concentrated on the genuine top-hypothesis Bernoullis → gospa
+recovers.
+
+### The philos tradeoff is structural too
+
+xparent loses the K=3 philos gospa win (-17.23 % → +0.21 % vs
+K=1). Mechanism: K=3's philos win came from the same mass-spread
+across multiple ids per physical vessel — it happened to
+aggregate "favourably" against the gospa scoring on philos's
+multi-vessel cardinality. xparent removes that spread.
+
+But xparent also delivers philos pos_rmse -25.93 %, sog_rmse
+-37.90 %, nees -10.46 % — all real-world meaningful improvements.
+The gospa "win" was largely a counting artifact; the per-track
+state estimates are unambiguously better under xparent.
+
+### S4 ranking
+
+1. **imm_cv_ct_pmbm_adapt_k3_xparent**: clean structural fix
+   for autoferry-anchored. Loses philos GOSPA but improves
+   philos pos/sog/nees. **Recommended default for any consumer
+   whose grading is on position accuracy + autoferry-anchored
+   reliability.**
+2. **imm_cv_ct_pmbm_adapt_k3** (K=3 baseline): keeps philos
+   GOSPA win, broken on autoferry-anchored.
+3. **imm_cv_ct_pmbm_adapt_k3_altgate**: dense_clutter winner,
+   mixed on philos, no effect on autoferry-anchored.
+4. **imm_cv_ct_pmbm_adapt** (K=1): the safe baseline; conceded
+   philos GOSPA but no anchored regressions.
+
+The four ship as siblings; consumer picks per workload.

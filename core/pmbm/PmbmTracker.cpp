@@ -753,8 +753,17 @@ void PmbmTracker::enumerateChildren(
       // share an id so the within-hypothesis merge and weight prune
       // see one logical hypothesis rather than 5 distinct ids.
       // parent_idx < 0 disables caching (legacy bit-identical).
+      //
+      // Phase 9 cross-parent extension: when
+      // cfg_.cross_parent_birth_id_cache is true, the cache key drops
+      // parent_idx (use -1 as the parent slot) so ALL parents' K-
+      // children birthing the same measurement share one id. Mirrors
+      // MATLAB filter-level new-track creation.
       if (parent_idx >= 0) {
-        const auto key = std::make_pair(parent_idx, l);
+        const int key_parent = cfg_.cross_parent_birth_id_cache
+                                   ? -1
+                                   : parent_idx;
+        const auto key = std::make_pair(key_parent, l);
         auto cit = scan_birth_id_cache_.find(key);
         if (cit != scan_birth_id_cache_.end()) {
           nb.id = cit->second;

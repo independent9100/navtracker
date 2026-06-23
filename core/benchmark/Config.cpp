@@ -673,6 +673,34 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // imm_cv_ct_pmbm_adapt_k3_xparent — Phase 9 PROBE config.
+  // Identical to imm_cv_ct_pmbm_adapt_k3 but with
+  // cross_parent_birth_id_cache=true. Probe target: dent K=3 philos
+  // id_switches without the altgate's mass-accounting hack — by
+  // sharing birth ids across ALL parents (not just one parent's K
+  // siblings), mirroring MATLAB filter-level new-track creation.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_adapt_k3_xparent";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.adaptive_k_best = true;
+      cfg.k_best_per_hypothesis = 3;
+      cfg.lambda_birth = 1e-5;
+      cfg.min_new_bernoulli_existence = 0.05;
+      cfg.cross_parent_birth_id_cache = true;
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // imm_cv_ct_pmbm_adapt_k3_altgate — Phase 9 S3 PROBE config.
   // Identical to imm_cv_ct_pmbm_adapt_k3 but with the lineage-aware
   // alt-birth gate enabled. Probe target: dent sc13/16/22_anchored
