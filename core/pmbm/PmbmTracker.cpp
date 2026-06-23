@@ -1319,6 +1319,11 @@ void PmbmTracker::refreshAggregatedTracks() const {
     Eigen::VectorXd mean_acc;       // Σ w·r · μ
     Eigen::MatrixXd cov_acc;        // Σ w·r · (P + μμ')
     Timestamp last_update{};
+    // M3 iter-6 discriminator signals — populated unconditionally
+    // (cheap), consumed only when the corresponding output-merge
+    // gate knob is enabled.
+    double earliest_birth_sec{std::numeric_limits<double>::infinity()};
+    int hyp_count{0};
   };
   std::map<BernoulliId, Acc> by_id;
 
@@ -1336,6 +1341,86 @@ void PmbmTracker::refreshAggregatedTracks() const {
       a.cov_acc += m * (b.covariance + b.mean * b.mean.transpose());
       if (b.last_update.seconds() > a.last_update.seconds()) {
         a.last_update = b.last_update;
+      }
+      const double birth_s = b.birth_time.seconds();
+      if (birth_s < a.earliest_birth_sec) a.earliest_birth_sec = birth_s;
+      a.hyp_count += 1;
+    }
+  }
+
+  // Phase 9 M3 Option A: output-side cross-id birth merge. Walks
+  // pairs of aggregated ids, folds spatially-close pairs (Bhattacharyya
+  // distance below threshold) into the older id (id-stability
+  // invariant — std::map<BernoulliId, ...> orders ascending). Fixes
+  // the K=3 phantom-birth leak from Diagnostic A: alt hypotheses
+  // birth fresh ids that don't merge in the within-hypothesis pass
+  // (different hyp, different id) but sit on top of the same
+  // physical target — the output aggregation is the only layer that
+  // can see across ids. ≤ 0 disables (bit-identical to legacy).
+  if (cfg_.output_merge_bhattacharyya_threshold > 0.0 && by_id.size() > 1) {
+    std::vector<BernoulliId> ids;
+    ids.reserve(by_id.size());
+    for (const auto& kv : by_id) ids.push_back(kv.first);
+    // Snapshot normalised (mean, cov) per surviving id; recompute
+    // when an id absorbs a sibling so the second-pass comparison
+    // sees the merged state, not the stale one.
+    std::map<BernoulliId, std::pair<Eigen::VectorXd, Eigen::MatrixXd>> stats;
+    auto computeStats = [&](const Acc& a) {
+      Eigen::VectorXd mean = a.mean_acc / a.mass;
+      Eigen::MatrixXd cov = (a.cov_acc / a.mass) - mean * mean.transpose();
+      return std::make_pair(std::move(mean), std::move(cov));
+    };
+    for (BernoulliId id : ids) {
+      const Acc& a = by_id.at(id);
+      if (a.mass > 0.0) stats[id] = computeStats(a);
+    }
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+      auto ait = by_id.find(ids[i]);
+      if (ait == by_id.end() || ait->second.mass <= 0.0) continue;
+      for (std::size_t j = i + 1; j < ids.size(); ++j) {
+        auto bit = by_id.find(ids[j]);
+        if (bit == by_id.end() || bit->second.mass <= 0.0) continue;
+        const auto& sa = stats[ids[i]];
+        const auto& sb = stats[ids[j]];
+        if (sa.first.size() != sb.first.size()) continue;
+        const double dB = bhattacharyyaState(sa.first, sa.second,
+                                             sb.first, sb.second);
+        if (dB > cfg_.output_merge_bhattacharyya_threshold) continue;
+        // M3 iter-6 age gate: both ids must be "young" (born within
+        // the last output_merge_max_age_sec seconds). 0 = no gate.
+        if (cfg_.output_merge_max_age_sec > 0.0) {
+          const double now = current_time_.seconds();
+          const double age_a = now - ait->second.earliest_birth_sec;
+          const double age_b = now - bit->second.earliest_birth_sec;
+          if (std::max(age_a, age_b) > cfg_.output_merge_max_age_sec) continue;
+        }
+        // M3 iter-6 hyp-count gate: at least one of the two ids must
+        // be "weakly supported" (in fewer than max_hyp_support
+        // hypotheses). 0 = no gate.
+        if (cfg_.output_merge_max_hyp_support > 0 &&
+            std::min(ait->second.hyp_count, bit->second.hyp_count) >=
+                cfg_.output_merge_max_hyp_support) {
+          continue;
+        }
+        // Fold j INTO i (ids[i] < ids[j] by std::map ordering, so
+        // i is the older id — survives, id-stability invariant).
+        Acc& a = ait->second;
+        Acc& b = bit->second;
+        a.mass += b.mass;
+        a.mean_acc += b.mean_acc;
+        a.cov_acc += b.cov_acc;
+        if (b.last_update.seconds() > a.last_update.seconds()) {
+          a.last_update = b.last_update;
+        }
+        // Fold discriminator fields too so further j-pair compares
+        // see merged state.
+        if (b.earliest_birth_sec < a.earliest_birth_sec) {
+          a.earliest_birth_sec = b.earliest_birth_sec;
+        }
+        a.hyp_count += b.hyp_count;
+        by_id.erase(bit);
+        // Recompute i's snapshot for any further j-pair comparisons.
+        stats[ids[i]] = computeStats(a);
       }
     }
   }

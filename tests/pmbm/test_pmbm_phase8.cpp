@@ -649,6 +649,81 @@ TEST(PmbmTrackerPhase8, KBestDominanceCutoffDefaultIsBitIdenticalToLegacy) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 9 M3 Option A output_merge_bhattacharyya_threshold knob
+// (PmbmTracker.cpp refreshAggregatedTracks). Two pinned guarantees:
+// (a) default 0.0 is bit-identical to legacy aggregated-output behavior,
+// (b) a positive threshold actually folds two spatially-coincident
+// aggregated ids into one (the younger id disappears from the output).
+// ---------------------------------------------------------------------------
+TEST(PmbmTrackerPhase8, OutputMergeDefaultIsBitIdenticalToLegacy) {
+  Fixture f;
+  PmbmTracker::Config base;
+  base.probability_of_detection = 0.9;
+  base.clutter_intensity = 1e-3;
+  base.survival_probability = 1.0;
+  base.output_merge_bhattacharyya_threshold = 0.0;
+  PmbmTracker a(f.ekf, base), b(f.ekf, base);
+  for (auto* t : {&a, &b}) {
+    t->predict(Timestamp::fromSeconds(0.0));
+    t->mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 0.0, 0.0));
+    t->mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 50.0, 50.0));
+  }
+  const std::vector<Measurement> scan = {
+      pos2d(1.0, 0.0,  0.0,  SensorKind::Lidar, "r0"),
+      pos2d(1.0, 50.0, 50.0, SensorKind::Lidar, "r0"),
+  };
+  a.processBatch(scan);
+  b.processBatch(scan);
+  ASSERT_EQ(a.tracks().size(), b.tracks().size());
+  for (std::size_t i = 0; i < a.tracks().size(); ++i) {
+    EXPECT_EQ(a.tracks()[i].id.value, b.tracks()[i].id.value);
+    EXPECT_DOUBLE_EQ(a.tracks()[i].state(0), b.tracks()[i].state(0));
+    EXPECT_DOUBLE_EQ(a.tracks()[i].state(1), b.tracks()[i].state(1));
+  }
+}
+
+TEST(PmbmTrackerPhase8, OutputMergeFoldsCoincidentIds) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-3;
+  cfg.survival_probability = 1.0;
+  cfg.r_min = 1e-9;
+  cfg.hypothesis_weight_min = 1e-9;
+  cfg.output_existence_floor = 0.05;
+  cfg.bhattacharyya_merge_threshold = 0.0;  // disable within-hyp merge
+  cfg.output_merge_bhattacharyya_threshold = 5.0;  // aggressive
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Seed two near-coincident Bernoullis with distinct ids into a
+  // single global hypothesis. Output aggregation by id would emit
+  // them as two output tracks; the cross-id merge must fold them.
+  navtracker::pmbm::GlobalHypothesis h;
+  h.weight = 1.0;
+  h.log_weight = 0.0;
+  auto mkB = [](BernoulliId id, double r, double px, double py) {
+    Bernoulli b;
+    b.id = id;
+    b.existence_probability = r;
+    b.mean = Eigen::Vector4d(px, py, 0.0, 0.0);
+    b.covariance = Eigen::Matrix4d::Identity() * 4.0;
+    b.last_update = Timestamp::fromSeconds(0.0);
+    return b;
+  };
+  h.bernoullis.push_back(mkB(7,  0.8, 0.0, 0.0));
+  h.bernoullis.push_back(mkB(99, 0.6, 0.1, 0.0));
+  tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
+
+  const auto& tracks_out = tracker.tracks();
+  ASSERT_EQ(tracks_out.size(), 1u)
+      << "two coincident-id aggregated tracks must fold to one with "
+         "output_merge_bhattacharyya_threshold > 0";
+  EXPECT_EQ(tracks_out[0].id.value, 7u)
+      << "the older id (7) must survive the fold";
+}
+
 TEST(PmbmTrackerPhase8, KBestDominanceCutoffDropsSiblingsBelowGap) {
   Fixture f;
   PmbmTracker::Config cfg;

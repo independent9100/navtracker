@@ -233,6 +233,47 @@ class PmbmTracker {
     // same target. Set ≤ 0 to disable; typical 0.5–2.0.
     double bhattacharyya_merge_threshold = 1.0;
 
+    // Output-side cross-id birth merge (Phase 9 M3 Option A).
+    // refreshAggregatedTracks aggregates per-id mass/state across
+    // global hypotheses. When two ids in the OUTPUT-LAYER
+    // aggregation are spatially close (Bhattacharyya distance below
+    // this threshold), fold the lighter (smaller mass) into the
+    // heavier before emitting. Addresses the K=3 phantom-birth leak
+    // from M2 Diagnostic A: alt hypotheses (sc13_anchored scan 3,
+    // K-2/K-3 with w around 0.25 each) birth Bernoullis with fresh
+    // ids that DON'T merge in the within-hypothesis pass (different
+    // hypothesis, different id) but DO sit on top of the same
+    // physical target. The output aggregation can see across ids;
+    // the within-hypothesis merge can't.
+    //
+    // <= 0 disables (bit-identical to legacy). Same Bhattacharyya
+    // semantics as bhattacharyya_merge_threshold; typical 0.5-2.0.
+    double output_merge_bhattacharyya_threshold = 0.0;
+
+    // M3 iter-6 discriminator gates (Phase 9 M3 Option A iter-2).
+    // Iters 1-5 found the Bhattacharyya threshold alone can't
+    // separate K=3 alt-hypothesis phantom births (sc13/16_anchored)
+    // from legitimate close parallel tracks (philos). These gates
+    // use signals already in the aggregation loop:
+    //   - birth_time (per Bernoulli, populated at enumerateChildren)
+    //   - hyp_count (how many global hypotheses an id appears in)
+    // Phantoms are YOUNG (just born this scan) and WEAKLY supported
+    // (in 1-2 alt hyps out of many); legitimate parallel tracks are
+    // MATURE and WELL supported.
+    //
+    // max_age_sec: skip merge if max(age_a, age_b) > this value,
+    // where age_i = current_time - earliest_birth_time(id_i).
+    // 0 = no age gate.
+    //
+    // max_hyp_support: skip merge if min(hyp_count_a, hyp_count_b)
+    // >= this value (i.e. BOTH ids are in N+ hypotheses → both
+    // mature). 0 = no hyp-count gate.
+    //
+    // Both knobs default 0 = inactive. Threshold knob above must
+    // also be > 0 for the merge block to run at all.
+    double output_merge_max_age_sec = 0.0;
+    int output_merge_max_hyp_support = 0;
+
     // PPP component count cap (applied after each prune). Without a
     // cap, every clutter return adds a PoissonComponent that takes
     // several scans to decay under (1-P_D)·p_S, growing unbounded on

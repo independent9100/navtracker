@@ -631,6 +631,31 @@ std::vector<Config> defaultConfigs() {
       cfg.k_best_per_hypothesis = 3;
       cfg.lambda_birth = 1e-5;
       cfg.min_new_bernoulli_existence = 0.05;
+      // output_merge_* knobs (Phase 9 M3 Option A iter 6): kept off
+      // by default in the bench K=3 config. Iter-6 probe
+      // (th=1.0 + max_age=2.0 + max_hyp_support=3) marginally
+      // recovered philos (-17.23 % → -1.09 % vs iter 5's +0.10 %,
+      // ~1 pt improvement) but didn't restore the marquee win. The
+      // discriminator signal at the output layer is insufficient.
+      // Knobs left wired + unit-tested for future per-scenario
+      // tuning or for a relative-mbm-size hyp-count gate (iter 7
+      // candidate, not run this session).
+      // output_merge_bhattacharyya_threshold: Phase 9 M3 Option A
+      // probe-only knob, kept off by default. The mechanism (fold
+      // spatially-close aggregated ids before emitting) works as
+      // designed and produced the biggest single dent in the
+      // autoferry-anchored regressions yet measured
+      // (sc16_anchored +38.56 % → +23.01 % at th=2.0 + floor=0.5;
+      // sc13_anchored +44.97 % → +35.51 %). But every probe
+      // threshold tested (0.3, 0.5, 1.0, 2.0) flips the philos win
+      // (-17.23 % → +0.10 %): philos has legitimate close-positioned
+      // parallel tracks whose Bhattacharyya distance is < 0.3, and
+      // the merge can't distinguish them from the K=3 alt-hypothesis
+      // phantom births that sc13/16_anchored emit. The knob stays
+      // wired (PmbmTracker::Config::output_merge_bhattacharyya_threshold,
+      // unit-tested) for any consumer who values the autoferry-
+      // anchored fix over philos, but the bench K=3 config does NOT
+      // enable it.
       // k_best_dominance_log_gap: Phase 9 M2 probe-only knob, kept
       // off by default. The mechanism (drop K-siblings ≥ N nat
       // below the top sibling) is implemented and unit-test clean,

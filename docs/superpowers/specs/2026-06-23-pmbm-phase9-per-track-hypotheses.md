@@ -371,13 +371,156 @@ config does NOT enable it.
    cost-matrix structure in a way that flattens Murty K-best
    alt-cost gaps. Cheapest if the hypothesis bites.
 
+## M3 Option B result (2026-06-23): BIAS HYPOTHESIS REFUTED + IMPORTANT REFRAMING
+
+**Critical finding**: "anchored" in this codebase is NOT static
+own-ship as I assumed. Per
+`adapters/replay/AutoferryJsonReplay.cpp:364` and
+`adapters/benchmark/ReplayScenarioRun.cpp:176`,
+`inject_truth_anchor=true` injects synthetic AIS-style
+**truth measurements** (sensor=Ais, source="autoferry_truth_anchor",
+σ=5 m, one per truth scan per target). The own-ship trajectory is
+identical between anchored and unanchored variants. Anchored mode
+is essentially "RTK-quality observations of every target".
+
+Bias-correction probe: built `imm_cv_ct_pmbm_adapt_k3_nobias`
+(K=3 minus `build_sensor_bias_estimator`), ran sc13/13_anc/16/16_anc
+at K=1 vs K=3 vs K=3-no-bias:
+
+| scenario | K=1 | K=3 | K=3 no-bias |
+|---|---|---|---|
+| sc13_anchored | 3.42 | 4.95 | 4.69 |
+| sc16_anchored | 3.03 | 4.20 | 4.28 |
+
+Disabling bias barely moves the regression (sc13_anc 44.9 % → 37.2 %,
+sc16_anc 38.6 % → 41.4 %). Bias-flattening is **not** the mechanism.
+
+Actual mechanism: when the top assignment has very high likelihood
+(truth-anchor σ=5 m measurements feed cleanly into the JPDA-gated
+cost matrix, top is very confident and very localized), K=3 alts
+must pick **worse** assignments that K=1 would never consider —
+these are exactly the phantom-birth alts from Diagnostic A. The
+mechanism is "easy main hypothesis → alts must invent rare events
+to differ", not "uniform R-inflation flattens costs".
+
+This rules out one of the three remaining hypotheses cleanly and
+adds a sharper statement of what IS happening: PMBM under K=3 can
+not exploit high-quality observations because Murty K>1 forces
+spurious-association alts even when no genuine assignment ambiguity
+exists.
+
+## M3 Option A probe results (2026-06-23)
+
+The output-side cross-id birth merge from M2's hypothesis-(2) was
+implemented as `PmbmTracker::Config::output_merge_bhattacharyya_
+threshold` (PmbmTracker.hpp ~line 236, PmbmTracker.cpp
+refreshAggregatedTracks). When > 0, walks pairs of aggregated
+ids and folds those whose Bhattacharyya distance is below the
+threshold into the older id. Default 0 = off, bit-identical to
+legacy. Two unit tests pin both behaviors.
+
+6-iteration bench tuning against `imm_cv_ct_pmbm_adapt_k3`:
+
+| iter | knobs | sc13_anc | sc16_anc | philos |
+|---|---|---:|---:|---:|
+| 1 | th=1.0 | +35.93 % | +27.54 % | +0.10 % |
+| 2 | th=0.3 | +35.93 % | +27.88 % | +0.10 % |
+| 3 | floor=0.3 only | +44.97 % | +37.74 % | -17.23 % |
+| 4 | th=2.0 + floor=0.5 | +35.51 % | **+23.01 %** | -0.31 % |
+| 5 | th=0.5 | +35.93 % | +27.50 % | +0.10 % |
+| 6 | th=1.0 + max_age=2s + max_hyp_support=3 | +36.23 % | +29.48 % | -1.09 % |
+| (K=3 baseline) | th=0 | +44.97 % | +38.56 % | -17.23 % |
+
+Iter 6 added two discriminators (`output_merge_max_age_sec`,
+`output_merge_max_hyp_support`) suggested by an M3-A adversarial
+review subagent. Idea: phantoms are young + weakly supported;
+legitimate parallel tracks are mature + well supported. **The
+discriminators help, but not enough**: philos recovered ~1 pt
+(+0.10 % → -1.09 %) but still lost most of the marquee win
+(-17.23 %). Likely cause: philos's mbm cardinality is small
+(few well-separated targets), so legitimate parallel tracks are
+in few hypotheses and tripped the merge anyway.
+
+Candidate iter-7 not run: **relative-mbm-size hyp-count gate**
+(require min(hyp_count) < α * mbm_size, e.g. α=0.3). With α=0.3
+and mbm=3 (philos), threshold = 0.9 → no merge ever. With
+mbm=10 (anchored K=3), threshold = 3 → catches phantoms in 1-2
+hyps. Untested.
+
+Findings:
+
+- The merge **works as designed**. At any positive threshold it
+  drives sc16_anchored from +38.56 % down toward +23-27 % (-11 to
+  -15 pts) and sc13_anchored from +44.97 % down to ~+36 % (-9 pts).
+  Biggest single dent in the anchored regressions yet measured.
+- Iterations 1, 2, 5 (thresholds 0.3 / 0.5 / 1.0) produce
+  near-identical results, which means the merge is firing on the
+  same pairs at all three thresholds — those pairs have
+  Bhattacharyya distance << 0.3. The threshold doesn't tune the
+  merge population, only whether the merge runs at all.
+- Iteration 3 (raise output_existence_floor with no merge): no
+  effect. The phantoms have mass >= 0.3 already (the diagnostic
+  reported r=0.55), so they pass the higher floor.
+- Iteration 4 (loose merge + high floor) gave the best sc16_anc
+  result but didn't help philos either — the floor doesn't catch
+  philos's specific failure mode.
+- **Every threshold flips the philos win** (-17.23 % → +0.10 %).
+  philos has legitimate close-positioned parallel tracks
+  (different physical vessels passing close) whose Bhattacharyya
+  distance is also < 0.3. The output-layer merge can't tell them
+  apart from the K=3 alt-hypothesis phantom births that
+  sc13/16_anchored emit.
+
+The mechanism IS the right one — folding cross-id duplicates at
+output is exactly what's needed for the K=3 alt-phantom case —
+but the output layer's information (id, mass, mean, cov) doesn't
+carry enough signal to discriminate "phantom from alt hypothesis"
+from "legitimate close parallel track". The discriminator that
+would work (per-track-hypothesis lineage: was this birthed in a
+weak alt of the same parent as the other id?) lives in the
+data structure Phase 9 (1) would refactor.
+
+### Decision
+
+Ship the knob OFF in the bench K=3 config; keep it wired and
+unit-tested in case a consumer wants the sc13/16-anchored fix at
+the cost of philos. The K=3 config is unchanged.
+
+## Updated hypothesis ranking (Phase 9 M3 — after A+B done)
+
+1. **Per-track-hypothesis structural refactor** (Phase 9
+   original): would carry the lineage information that the output-
+   layer merge probe lacks. Still the only candidate fix that can
+   plausibly separate phantom-from-alt from legitimate-close at
+   the data structure level rather than at the output layer.
+2. **Anchored-mode cost-matrix tuning** (M3 Option B): **REFUTED**.
+   Bias-flattening is not the mechanism. Truth-anchor measurements
+   make the top assignment so confident that K=3 alts must
+   manufacture phantom births to differ.
+3. **Output-side merge with relative-mbm-size discriminator**
+   (iter-7 candidate, not run): the iter-6 absolute hyp-count
+   threshold (3) failed because philos's mbm is small. A relative
+   threshold (e.g. min(hyp_count) < 0.3 * mbm_size) might work but
+   the underlying mechanism doesn't go away — Murty K>1 is still
+   manufacturing spurious assignments under high-confidence top.
+4. **Suppress K>1 when top assignment is unambiguous** (new): if
+   the top Murty assignment's cost is much better than any feasible
+   alternative, just emit K=1 even when adaptive K asks for more.
+   This is the `k_best_dominance_log_gap` knob shipped in M2 —
+   probe at gap=1.0 didn't dent sc13_anc, but with B's reframing
+   (alts genuinely are FAR worse than top in anchored scenarios),
+   a tighter gap (e.g. 0.3) combined with iter-6 discriminators
+   might work. Untested.
+
 ## Recommendation
 
-Hypothesis 3 (Murty double-count) refuted; the shortlist drops to
-(1) structural refactor and (2) output-side birth merge plus (3)
-anchored-mode investigation. The next session should probe (2)
-first (1 day, lowest cost, addresses the diagnostic A mechanism
-directly without the per-track-hypothesis lift).
+Output-side birth merge (M3 Option A) ran 5 iterations and is
+documented as "mechanism correct, discriminator insufficient at
+the output layer". Phase 9 (1) is still the only candidate fix
+with a plausible path to separating phantoms from legitimates.
+
+Next probe — M3 Option B (anchored-mode investigation) — is in
+progress in the same session.
 
 This doc supersedes the parking note in
 `docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md`
