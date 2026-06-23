@@ -458,3 +458,148 @@ TEST(PmbmTrackerPhase8, ConfirmedFiresOnlyOnUpEdgeNotOnReConfirmation) {
   EXPECT_EQ(sink.confirmed.size(), 2u)
       << "re-promotion Tentative→Confirmed must re-fire onTrackConfirmed";
 }
+
+// ---------------------------------------------------------------------------
+// T4 strengthening (Option 2): the original T4 varies BOTH P_D and λ_C
+// per sensor, so the assertion r_hi > r_lo cannot distinguish whether
+// per-sensor P_D or per-sensor λ_C is the lever. These two follow-up
+// tests pin one channel at a time so a regression in either path
+// fails a test on its own.
+// ---------------------------------------------------------------------------
+TEST(PmbmTrackerPhase8, PerSensorPdAloneDifferentiatesBernoulliExistence) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.5;          // fallback, unused on this path
+  cfg.clutter_intensity = 1e-3;                // matched per-sensor below
+  cfg.survival_probability = 1.0;
+  cfg.min_new_bernoulli_existence = 0.0;
+  PmbmTracker tracker(f.ekf, cfg);
+
+  // Same λ_C on both sensors — isolate P_D as the only differentiator.
+  auto model = std::make_shared<FixedSensorDetectionModel>(
+      DetectionParams{0.5, 1e-3});
+  model->set(SensorKind::Lidar, MeasurementModel::Position2D,
+             DetectionParams{0.99, 1e-3});
+  model->set(SensorKind::ArpaTtm, MeasurementModel::Position2D,
+             DetectionParams{0.30, 1e-3});
+  tracker.setSensorDetectionModel(model);
+
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0,   0.0,   0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 100.0, 100.0));
+
+  const auto z_hi = pos2d(1.0,   0.0,   0.0, SensorKind::Lidar,   "lidar0");
+  const auto z_lo = pos2d(1.0, 100.0, 100.0, SensorKind::ArpaTtm, "radar0");
+  tracker.processBatch({z_hi, z_lo});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  const auto& dom = tracker.density().mbm[0];
+  ASSERT_EQ(dom.bernoullis.size(), 2u);
+  double r_hi = -1.0, r_lo = -1.0;
+  for (const auto& b : dom.bernoullis) {
+    if (std::abs(b.mean(0) -   0.0) < 5.0) r_hi = b.existence_probability;
+    if (std::abs(b.mean(0) - 100.0) < 5.0) r_lo = b.existence_probability;
+  }
+  ASSERT_GT(r_hi, 0.0);
+  ASSERT_GT(r_lo, 0.0);
+  EXPECT_GT(r_hi, r_lo)
+      << "with λ_C equal across sensors, higher P_D must drive higher r_new";
+}
+
+TEST(PmbmTrackerPhase8, PerSensorLambdaCAloneDifferentiatesBernoulliExistence) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.5;
+  cfg.clutter_intensity = 1e-3;
+  cfg.survival_probability = 1.0;
+  cfg.min_new_bernoulli_existence = 0.0;
+  PmbmTracker tracker(f.ekf, cfg);
+
+  // Same P_D on both sensors — isolate λ_C as the only differentiator.
+  auto model = std::make_shared<FixedSensorDetectionModel>(
+      DetectionParams{0.5, 1e-3});
+  model->set(SensorKind::Lidar, MeasurementModel::Position2D,
+             DetectionParams{0.9, 1e-6});      // clean clutter env
+  model->set(SensorKind::ArpaTtm, MeasurementModel::Position2D,
+             DetectionParams{0.9, 1e-1});      // dense clutter env
+  tracker.setSensorDetectionModel(model);
+
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0,   0.0,   0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 100.0, 100.0));
+
+  const auto z_hi = pos2d(1.0,   0.0,   0.0, SensorKind::Lidar,   "lidar0");
+  const auto z_lo = pos2d(1.0, 100.0, 100.0, SensorKind::ArpaTtm, "radar0");
+  tracker.processBatch({z_hi, z_lo});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  const auto& dom = tracker.density().mbm[0];
+  ASSERT_EQ(dom.bernoullis.size(), 2u);
+  double r_hi = -1.0, r_lo = -1.0;
+  for (const auto& b : dom.bernoullis) {
+    if (std::abs(b.mean(0) -   0.0) < 5.0) r_hi = b.existence_probability;
+    if (std::abs(b.mean(0) - 100.0) < 5.0) r_lo = b.existence_probability;
+  }
+  ASSERT_GT(r_hi, 0.0);
+  ASSERT_GT(r_lo, 0.0);
+  EXPECT_GT(r_hi, r_lo)
+      << "with P_D equal across sensors, lower λ_C must drive higher r_new";
+}
+
+// ---------------------------------------------------------------------------
+// T5 strengthening (Option 2): the original T5 manually pokes
+// b.existence_probability = 0.40 to fake the Confirmed → Tentative
+// transition. This variant lets the production decay path drive r
+// naturally — survival_probability < 1 thins r per predict, missed-
+// detection in enumerateChildren thins it again per unmatched scan.
+// If either decay path regresses, the lifecycle assertions fail.
+// ---------------------------------------------------------------------------
+TEST(PmbmTrackerPhase8, NaturalSurvivalDecayDrivesConfirmedDownEdge) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  // Soft decay: survival=0.9 + one missed scan brings r ≈ 0.45 —
+  // below confirm_threshold=0.7 but well above output_existence_floor
+  // and r_min so the Bernoulli survives as Tentative. Faster decay
+  // (e.g. survival=0.6) crosses the floor in two scans and pins the
+  // *re-birth* path (a new id) instead of the *re-promotion* path
+  // (same id), which is what this test exists to pin.
+  cfg.survival_probability = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.confirm_threshold = 0.7;
+  cfg.output_existence_floor = 0.05;
+  cfg.r_min = 1e-9;
+  cfg.hypothesis_weight_min = 1e-9;
+  cfg.smart_birth_skip_existing = true;
+  cfg.smart_birth_skip_r_min = 0.0;
+  PmbmTracker tracker(f.ekf, cfg);
+  RecordingSink sink;
+  tracker.setTrackSink(&sink);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 0.0, 0.0));
+
+  // Scan 1: detection → Confirmed up-edge. NO manual r poke.
+  tracker.processBatch({pos2d(1.0, 0.0, 0.0, SensorKind::Lidar, "r0")});
+  ASSERT_EQ(sink.initiated.size(), 1u);
+  ASSERT_EQ(sink.confirmed.size(), 1u);
+  const auto first_target_id = sink.confirmed[0].id.value;
+
+  // Scan 2: far-away measurement → predict applies survival decay,
+  // enumerateChildren applies missed-detection thinning to our
+  // Bernoulli. The post-update r ≈ (1 − P_D)·survival·r /
+  // (1 − P_D·survival·r) ≈ 0.45 → Tentative without deletion.
+  tracker.processBatch({pos2d(2.0, 1e5, 1e5, SensorKind::Lidar, "r0")});
+  EXPECT_EQ(sink.confirmed.size(), 1u)
+      << "natural decay below confirm_threshold must NOT re-fire Confirmed";
+
+  // Scan 3: detection on our Bernoulli → posterior r jumps near 1 →
+  // re-Confirmed up-edge fires. Same id as scan 1 — proves
+  // re-promotion, not re-birth.
+  tracker.processBatch({pos2d(3.0, 0.0, 0.0, SensorKind::Lidar, "r0")});
+  EXPECT_EQ(sink.initiated.size(), 1u)
+      << "re-promotion of a still-living Bernoulli must NOT fire Initiated";
+  ASSERT_EQ(sink.confirmed.size(), 2u)
+      << "natural re-promotion must re-fire onTrackConfirmed exactly once";
+  EXPECT_EQ(sink.confirmed[1].id.value, first_target_id)
+      << "re-Confirmed event must carry the original id, not a new one";
+}
