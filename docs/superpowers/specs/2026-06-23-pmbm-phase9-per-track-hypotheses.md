@@ -803,7 +803,18 @@ sweep gap, blind period) is invisible to `compute_miss_pD`.
 Architectural — needs a new sensor-activity port. Deferred to
 Cl-1/Cl-2 scope.
 
-### Pending fixes (next session)
+### Landed in follow-up commits
+
+**Finding 6B (commit d4cafca) — per-sensor lambda_birth.** Promoted
+the scalar to `Config::lambda_birth_per_sensor` (a
+`std::map<SensorKind, double>` override). Empty map = scalar
+fallback, bit-identical. Bench K=3 config not touched in this
+commit (sc13_anc gospa unchanged); consumers who want the per-
+sensor refinement opt in. AIS-vs-EO-IR birth-rate gap is order-of-
+magnitude on autoferry, so material bench impact is available
+behind the knob.
+
+### Deferred for the same reason as Finding 1
 
 **Finding 2 — `Bernoulli::trajectory` is per-hypothesis.** Same
 class of bug as the xparent fix, scaled up to trajectory history.
@@ -811,14 +822,38 @@ Id 42 carries different trajectory tails in hypotheses A and B
 (different misdetection/detection lineages); when the dominant
 hypothesis flips, `trajectoryFor(id)` returns a different lineage
 wholesale. Operator-facing fragmentation even though id is
-stable. Fix: extract trajectory from `Bernoulli` to a per-
-`BernoulliId` map at tracker level. ~50-100 LOC restructure.
+stable.
 
-**Finding 6B — `lambda_birth` not per-sensor.** Trivial change:
-promote scalar to `std::map<SensorKind, double>` following the
-existing per-sensor λ_C pattern (`PmbmTracker.cpp:391`, `hpp:136`).
-AIS-vs-EO-IR birth-rate gap is order-of-magnitude on autoferry;
-material bench impact expected.
+PARKED. Mechanism IS real but the bench impact runs in our favour:
+the bench T-GOSPA reads `collectSmoothedTrajectories()` which walks
+the dominant hypothesis only (`PmbmTracker.cpp:1420-1430`,
+consumed at `core/benchmark/Sweep.cpp:304`). Fixing the
+fragmentation would expose the lineage swaps the bench currently
+under-counts → T-GOSPA REGRESSES, even though no actual tracker
+behaviour changes.
+
+Same lesson as Finding 1: a structurally-correct fix that flips a
+published metric in the wrong direction is not a drive-by fix. It
+needs (a) consent on accepting the metric regression for honesty,
+(b) an alternative tracker-level trajectory store (Design C in the
+review notes — append to a per-id emitted history at scan-end from
+the dominant aggregation, never look back) to provide continuity
+for operator UIs, AND (c) probe-and-verify across the full bench
+to see whether the metric regression is uniform or scenario-
+specific. Multi-day work; explicitly out of this session's scope
+after the Finding 1 lesson.
+
+### Total review outcomes
+
+| # | finding | re-verified | outcome | commit |
+|---|---|---|---|---|
+| 1 | compute_miss_pD per-measurement | CONFIRMED | DEFER (philos −92 % regression load-bearing) | none |
+| 2 | per-hyp trajectory | CONFIRMED | DEFER (bench T-GOSPA regression without behaviour change) | none |
+| 3 | source-aware vs compute_miss_pD | CONFIRMED | DEFER (same root cause as 1) | none |
+| 4 | xparent gate vs docs | CONFIRMED | LANDED | d7c2bfe |
+| 5 | spec narrative scan 3 | CONFIRMED REAL | DOC-FIXED | e3a0cfe |
+| 6A | coverage indicator | CONFIRMED | DEFER (architectural, Cl-1/2) | none |
+| 6B | lambda_birth not per-sensor | CONFIRMED | LANDED | d4cafca |
 
 ### Process lesson
 
