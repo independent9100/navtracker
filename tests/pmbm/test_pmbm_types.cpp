@@ -75,6 +75,94 @@ TEST(PmbmTypes, PmbmDensityTotalMbmWeightSumsAcrossHypotheses) {
   EXPECT_FALSE(d.empty());
 }
 
+TEST(PerTrackView, EmptyMbmYieldsEmptyView) {
+  nt::PmbmDensity d;
+  nt::rebuildPerTrackViewFromFlat(d);
+  EXPECT_TRUE(d.tracks.empty());
+  EXPECT_TRUE(d.tracked_mbm.empty());
+}
+
+TEST(PerTrackView, SingleHypSingleBernoulliRebuildsOneTrackOneHyp) {
+  nt::PmbmDensity d;
+  nt::GlobalHypothesis h;
+  h.weight = 1.0;
+  h.log_weight = 0.0;
+  auto b = makeBernoulli(42, 0.8);
+  b.last_update = navtracker::Timestamp::fromSeconds(10.0);
+  h.bernoullis.push_back(b);
+  d.mbm.push_back(h);
+  nt::rebuildPerTrackViewFromFlat(d);
+  ASSERT_EQ(d.tracks.size(), 1u);
+  EXPECT_EQ(d.tracks[0].id, 42u);
+  EXPECT_DOUBLE_EQ(d.tracks[0].birth_time.seconds(), 10.0);
+  ASSERT_EQ(d.tracks[0].hypotheses.size(), 1u);
+  EXPECT_DOUBLE_EQ(d.tracks[0].hypotheses[0].existence_probability, 0.8);
+  ASSERT_EQ(d.tracked_mbm.size(), 1u);
+  EXPECT_DOUBLE_EQ(d.tracked_mbm[0].weight, 1.0);
+  ASSERT_EQ(d.tracked_mbm[0].hyp_index.size(), 1u);
+  EXPECT_EQ(d.tracked_mbm[0].hyp_index[0], 0);
+}
+
+TEST(PerTrackView, AbsentTrackInHypothesisFlaggedKAbsent) {
+  // h1 has Bernoullis {1, 2}; h2 has Bernoulli {2} only. After view
+  // rebuild, h2.hyp_index for track 1 (id=1) must be kAbsent.
+  nt::PmbmDensity d;
+  nt::GlobalHypothesis h1;
+  h1.weight = 0.7;
+  h1.bernoullis.push_back(makeBernoulli(1, 0.9));
+  h1.bernoullis.push_back(makeBernoulli(2, 0.8));
+  nt::GlobalHypothesis h2;
+  h2.weight = 0.3;
+  h2.bernoullis.push_back(makeBernoulli(2, 0.5));
+  d.mbm = {h1, h2};
+  nt::rebuildPerTrackViewFromFlat(d);
+  ASSERT_EQ(d.tracks.size(), 2u);
+  EXPECT_EQ(d.tracks[0].id, 1u);
+  EXPECT_EQ(d.tracks[1].id, 2u);
+  ASSERT_EQ(d.tracked_mbm.size(), 2u);
+  EXPECT_EQ(d.tracked_mbm[0].hyp_index[0], 0);  // h1 sees track 1 → hyp 0
+  EXPECT_EQ(d.tracked_mbm[0].hyp_index[1], 0);  // h1 sees track 2 → hyp 0
+  EXPECT_EQ(d.tracked_mbm[1].hyp_index[0],
+            nt::TrackedGlobalHypothesis::kAbsent);  // h2 lacks track 1
+  EXPECT_EQ(d.tracked_mbm[1].hyp_index[1], 1);     // h2 sees track 2 → hyp 1
+  EXPECT_EQ(d.tracks[1].hypotheses.size(), 2u);
+  EXPECT_DOUBLE_EQ(d.tracks[1].hypotheses[0].existence_probability, 0.8);
+  EXPECT_DOUBLE_EQ(d.tracks[1].hypotheses[1].existence_probability, 0.5);
+}
+
+TEST(PerTrackView, BirthTimeIsMinOfFlatLastUpdateForId) {
+  // Same id appears in two hypotheses with different last_update; view
+  // birth_time should be the minimum (lower bound on the true birth).
+  nt::PmbmDensity d;
+  nt::GlobalHypothesis h1;
+  h1.weight = 0.5;
+  auto b1 = makeBernoulli(7, 0.9);
+  b1.last_update = navtracker::Timestamp::fromSeconds(20.0);
+  h1.bernoullis.push_back(b1);
+  nt::GlobalHypothesis h2;
+  h2.weight = 0.5;
+  auto b2 = makeBernoulli(7, 0.7);
+  b2.last_update = navtracker::Timestamp::fromSeconds(5.0);
+  h2.bernoullis.push_back(b2);
+  d.mbm = {h1, h2};
+  nt::rebuildPerTrackViewFromFlat(d);
+  ASSERT_EQ(d.tracks.size(), 1u);
+  EXPECT_DOUBLE_EQ(d.tracks[0].birth_time.seconds(), 5.0);
+}
+
+TEST(PerTrackView, RebuildIsIdempotent) {
+  nt::PmbmDensity d;
+  nt::GlobalHypothesis h;
+  h.weight = 1.0;
+  h.bernoullis.push_back(makeBernoulli(1, 0.9));
+  d.mbm.push_back(h);
+  nt::rebuildPerTrackViewFromFlat(d);
+  const auto first_size = d.tracks.size();
+  nt::rebuildPerTrackViewFromFlat(d);
+  EXPECT_EQ(d.tracks.size(), first_size);
+  EXPECT_EQ(d.tracks[0].hypotheses.size(), 1u);
+}
+
 TEST(PmbmTypes, PpmAndMbmEvolveIndependently) {
   // Smoke test: PPP and MBM are stored independently and have independent
   // empty()/size() semantics. PMBM math composes them only at output time.

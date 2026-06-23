@@ -75,6 +75,57 @@ void rtsSmoothTrajectory(std::vector<TrajectoryPoint>& trajectory) {
   }
 }
 
+void rebuildPerTrackViewFromFlat(PmbmDensity& density) {
+  density.tracks.clear();
+  density.tracked_mbm.clear();
+  if (density.mbm.empty()) return;
+
+  std::map<BernoulliId, std::size_t> id_to_track_idx;
+  for (const auto& gh : density.mbm) {
+    for (const auto& b : gh.bernoullis) {
+      auto it = id_to_track_idx.find(b.id);
+      if (it == id_to_track_idx.end()) {
+        const std::size_t idx = density.tracks.size();
+        id_to_track_idx.emplace(b.id, idx);
+        PmbmTrack t;
+        t.id = b.id;
+        t.birth_time = b.last_update;
+        density.tracks.push_back(std::move(t));
+      } else {
+        auto& t = density.tracks[it->second];
+        if (b.last_update.seconds() < t.birth_time.seconds()) {
+          t.birth_time = b.last_update;
+        }
+      }
+    }
+  }
+
+  density.tracked_mbm.resize(density.mbm.size());
+  for (std::size_t p = 0; p < density.mbm.size(); ++p) {
+    const auto& gh = density.mbm[p];
+    auto& tg = density.tracked_mbm[p];
+    tg.weight = gh.weight;
+    tg.log_weight = gh.log_weight;
+    tg.hyp_index.assign(density.tracks.size(),
+                        TrackedGlobalHypothesis::kAbsent);
+    for (const auto& b : gh.bernoullis) {
+      const std::size_t i = id_to_track_idx.at(b.id);
+      auto& track = density.tracks[i];
+      TrackHypothesis th;
+      th.existence_probability = b.existence_probability;
+      th.mean = b.mean;
+      th.covariance = b.covariance;
+      th.imm_means = b.imm_means;
+      th.imm_covariances = b.imm_covariances;
+      th.imm_mode_probabilities = b.imm_mode_probabilities;
+      th.last_update = b.last_update;
+      th.trajectory = b.trajectory;
+      tg.hyp_index[i] = static_cast<int>(track.hypotheses.size());
+      track.hypotheses.push_back(std::move(th));
+    }
+  }
+}
+
 namespace {
 
 constexpr double kInf = std::numeric_limits<double>::infinity();

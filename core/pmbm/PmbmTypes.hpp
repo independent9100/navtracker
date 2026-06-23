@@ -223,29 +223,141 @@ struct GlobalHypothesis {
   }
 };
 
+// ---------------------------------------------------------------------------
+// Phase 9 per-track-hypothesis types (additive — feature-gated).
+//
+// Mirrors the MATLAB MTT-master representation (García-Fernández 2018
+// `PMBMtarget_filter`): per-track single-target hypothesis lists with a
+// global-hypothesis index matrix. See
+// docs/superpowers/specs/2026-06-23-pmbm-phase9-per-track-hypotheses.md
+// for design rationale and the structural diff vs. the legacy flat
+// `GlobalHypothesis::bernoullis` representation.
+//
+// Status: ADDITIVE only. The legacy `GlobalHypothesis::bernoullis` flat
+// path remains canonical; these types are populated only when
+// `PmbmTracker::Config::use_per_track_hypotheses == true` (default
+// false → bit-identical to Phase 8 baseline). Migration order in
+// PmbmTracker.cpp follows the doc's "gradual migration" plan.
+// ---------------------------------------------------------------------------
+
+// One single-target hypothesis of a Track — MATLAB `tracks{i}.meanB{j}`.
+// Multiple TrackHypothesis under a Track ≡ "same target's state under
+// different association histories". Carries the same kinematic and
+// trajectory fields as the legacy Bernoulli, minus the id (lives one
+// level up on Track).
+struct TrackHypothesis {
+  double existence_probability{0.0};
+  Eigen::VectorXd mean;
+  Eigen::MatrixXd covariance;
+  Eigen::MatrixXd imm_means;
+  std::vector<Eigen::MatrixXd> imm_covariances;
+  Eigen::VectorXd imm_mode_probabilities;
+  Timestamp last_update{};
+  std::vector<TrajectoryPoint> trajectory;
+};
+
+// One persistent track — MATLAB `tracks{i}`. Carries the stable
+// BernoulliId (id-stability invariant: never reused after birth), the
+// scan-time birth timestamp, and the per-track single-target
+// hypothesis list `hypotheses[j]`.
+//
+// Named `PmbmTrack` (not `Track`) to avoid collision with
+// `navtracker::Track` — the existing kinematic track value type used
+// across the codebase for IEstimator interop and TrackOutput emission.
+// The two are intentionally different: `navtracker::Track` is one
+// observable state, `pmbm::PmbmTrack` is a stable identity carrying a
+// list of state hypotheses.
+struct PmbmTrack {
+  BernoulliId id{kInvalidBernoulliId};
+  Timestamp birth_time{};
+  std::vector<TrackHypothesis> hypotheses;
+};
+
+// One global hypothesis under the per-track structure — MATLAB
+// `globHyp(p, :)`. `hyp_index[i] = j` means "this global hypothesis
+// selects hypothesis `j` of track `i`"; `j = kAbsent` means "track `i`
+// is absent in this global hypothesis". Tracks are indexed by position
+// in `PmbmDensity::tracks`.
+struct TrackedGlobalHypothesis {
+  static constexpr int kAbsent = -1;
+  double weight{0.0};
+  double log_weight{-std::numeric_limits<double>::infinity()};
+  std::vector<int> hyp_index;  // one entry per Track in PmbmDensity::tracks
+};
+
 // The full PMBM posterior: PPP (undetected) plus a mixture (MBM) of
 // global hypotheses (detected). The two parts evolve under the same
 // Bayesian recursion (PmbmTracker::predict, PmbmTracker::update) but
 // are stored separately because they have very different shapes —
 // PPP is a flat Gaussian mixture, MBM is a *mixture of multi-Bernoulli
 // sets*.
+//
+// Phase 9 transitional layout: legacy `mbm` (flat `GlobalHypothesis`)
+// stays authoritative; `tracks` + `tracked_mbm` are populated only
+// under `Config::use_per_track_hypotheses`. The two views must agree
+// when both are populated (verified by an invariant check in tests).
 struct PmbmDensity {
   std::vector<PoissonComponent> ppp;
   std::vector<GlobalHypothesis> mbm;
 
+  // Phase 9 per-track view (additive). Empty when
+  // `use_per_track_hypotheses == false`. Track ordering is stable
+  // across scans (new tracks appended; deleted tracks tombstoned via
+  // `hypotheses.empty()` then compacted at end of scan to keep
+  // hyp_index references valid).
+  std::vector<PmbmTrack> tracks;
+  std::vector<TrackedGlobalHypothesis> tracked_mbm;
+
   // The MBM is empty at filter start (no detected targets yet). The PPP
   // carries the prior birth intensity — also empty until the user wires
   // a birth model.
-  bool empty() const noexcept { return ppp.empty() && mbm.empty(); }
+  bool empty() const noexcept {
+    return ppp.empty() && mbm.empty() && tracks.empty();
+  }
 
   // Convenience: total mixture weight (should sum to 1 after each
-  // update; tests use this to verify normalisation).
+  // update; tests use this to verify normalisation). Uses the flat
+  // `mbm` view when populated, otherwise the `tracked_mbm` view.
   double totalMbmWeight() const noexcept {
     double s = 0.0;
-    for (const auto& h : mbm) s += h.weight;
+    if (!mbm.empty()) {
+      for (const auto& h : mbm) s += h.weight;
+    } else {
+      for (const auto& h : tracked_mbm) s += h.weight;
+    }
     return s;
   }
 };
+
+// Phase 9 view-builder. Derives `tracks` + `tracked_mbm` from the
+// flat `mbm` view. Pure derivation — no behavioral change. Used by
+// the gradual-migration plan to flip the flag without rewriting
+// enumerateChildren in one go.
+//
+// **Algorithm**.
+//   1. Walk all `mbm[p].bernoullis` and collect unique BernoulliIds in
+//      first-seen order. Each id becomes one `tracks[i]` entry; its
+//      `birth_time` is the minimum `last_update` seen across hypotheses
+//      where it first appears (acts as a stable lower bound; the real
+//      birth time will live on `PmbmTrack` after S2).
+//   2. For each global hypothesis p and each Bernoulli b in it, append
+//      one `TrackHypothesis` to `tracks[b.id].hypotheses` carrying
+//      (r, mean, cov, imm_*, last_update, trajectory) copied verbatim.
+//      Record the resulting `(track_idx, hyp_idx)` in
+//      `tracked_mbm[p].hyp_index[track_idx] = hyp_idx`.
+//   3. For tracks absent from p, `hyp_index[track_idx] = kAbsent`.
+//
+// Result invariants (verified by unit test):
+//   - `tracked_mbm.size() == mbm.size()` and matching `weight` /
+//     `log_weight`.
+//   - For each (p, i, j) with `tracked_mbm[p].hyp_index[i] = j`,
+//     `tracks[i].hypotheses[j]` matches the corresponding Bernoulli in
+//     `mbm[p].bernoullis` (modulo id, which lives on `tracks[i]`).
+//   - The set of Bernoulli ids across all hypotheses equals the set of
+//     `tracks[i].id`.
+//
+// Idempotent: clears `tracks` + `tracked_mbm` before rebuilding.
+void rebuildPerTrackViewFromFlat(PmbmDensity& density);
 
 // IEstimator interop. The repository's IEstimator interface operates on
 // Track values; PMBM stores Bernoullis and PoissonComponents as smaller

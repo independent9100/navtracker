@@ -298,6 +298,23 @@ class PmbmTracker {
     // for parity with prior behaviour; the bench config sets ~60 s.
     double idle_halflife_sec = 0.0;
 
+    // Per-track-hypothesis structural path (Phase 9). When true,
+    // `PmbmDensity::tracks` + `tracked_mbm` are populated alongside
+    // the legacy flat `mbm` view. Phase 9 milestone S1 ships the
+    // view-builder only (no behavioral change); subsequent milestones
+    // re-route enumerateChildren, refreshAggregatedTracks, predict
+    // and the smoother to read from the per-track view. Off by
+    // default → bit-identical to Phase 8/9-M3 baseline.
+    //
+    // Background: see
+    // docs/superpowers/specs/2026-06-23-pmbm-phase9-per-track-hypotheses.md
+    // for the structural diff vs. flat `bernoullis` lists and the
+    // mechanism by which per-track-hypothesis lineage discriminates
+    // K-best alt-hypothesis phantom births from legitimate close
+    // parallel tracks (sc13/16_anchored gospa +44/+38 % regression
+    // at K=3 — the only candidate fix left after M1/M2/M3).
+    bool use_per_track_hypotheses = false;
+
     // Birth gate: new-target row Bernoulli birth threshold. The
     // standard PMBM new-target Bernoulli existence is
     //   r_new_l = ρ_target_l / (ρ_target_l + λ_C(z_l))
