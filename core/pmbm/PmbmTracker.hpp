@@ -315,6 +315,48 @@ class PmbmTracker {
     // at K=3 — the only candidate fix left after M1/M2/M3).
     bool use_per_track_hypotheses = false;
 
+    // Phase 9 S3 — alt-birth-gate. Per-parent K-best lineage-aware
+    // suppression of new-target Bernoullis in non-top alt children.
+    //
+    // Mechanism (M2 Diagnostic A, M3 Option B reframing): under K>1
+    // with a very confident top assignment (truth-anchor σ=5 m
+    // measurements feed cleanly into the cost matrix; the autoferry-
+    // anchored scenarios sc13/16/22), alt K-children must claim
+    // measurements for spurious new-target rows in order to differ
+    // from the top — Murty has no other room to manoeuvre. These
+    // phantom births survive output aggregation Σ w·r above the
+    // output_existence_floor and emit as Confirmed tracks → +44.97 %
+    // gospa on sc13_anchored, +38.56 % on sc16_anchored.
+    //
+    // The Phase 9 spec proposed a full per-track-hypothesis structural
+    // refactor (~1000 LOC, 3-5 days) to carry per-Bernoulli "born in
+    // a weak alt of which parent" lineage. This knob achieves the
+    // same effect using information already on hand at enumeration
+    // time: Murty's `cost_k - cost_0` IS the log-weight gap from the
+    // top sibling. When that gap exceeds `alt_birth_log_gap_threshold`
+    // for K-child `k >= 1`, the new-target row Bernoullis in that
+    // child are SUPPRESSED — the assignment cell is still feasible
+    // and consumes ρ_total mass through the log_weight (so the K-best
+    // mixture stays balanced), but no fresh Bernoulli is materialised
+    // for the suppressed birth. Detection-row and misdetection-row
+    // contributions of the alt child are kept (those represent
+    // genuine assignment ambiguity on existing tracks, not phantom
+    // mass).
+    //
+    // Different from `k_best_dominance_log_gap` (M2): that knob drops
+    // the WHOLE child past the threshold; this knob keeps the child
+    // but filters its phantom-birth contribution. M2 probe showed
+    // log_gap=1.0 doesn't separate phantoms (gap 0.69 nat) from
+    // legitimate close alts; the lineage gate solves the same problem
+    // at a tighter level.
+    //
+    // <= 0 disables (bit-identical to Phase 9 S1/S2 baseline). Typical
+    // bench value 0.3-1.0; tighter than k_best_dominance_log_gap
+    // because only births are gated, not whole hypotheses. Active
+    // only when k_override >= 2 (single-child enumeration has no
+    // top-vs-alt comparison).
+    double alt_birth_log_gap_threshold = 0.0;
+
     // Birth gate: new-target row Bernoulli birth threshold. The
     // standard PMBM new-target Bernoulli existence is
     //   r_new_l = ρ_target_l / (ρ_target_l + λ_C(z_l))

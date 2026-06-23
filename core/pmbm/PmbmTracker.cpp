@@ -1062,6 +1062,45 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
             children.end());
       }
     }
+
+    // Phase 9 S3 alt-birth gate (per-parent, lineage-aware). Captures
+    // the per-track-hypothesis "born in a weak alt" discriminator the
+    // M3 Option A output-side merge probe lacked — without the full
+    // structural refactor. Mechanism: when a non-top K-child's log
+    // weight is more than alt_birth_log_gap_threshold below the parent's
+    // top K-child, strip its NEW-BORN Bernoullis (birth_time ==
+    // scan time) while keeping its detection / misdetection
+    // contributions. The log_weight of the alt child is unchanged
+    // (the assignment is still scored as feasible); only the phantom-
+    // birth output mass is suppressed.
+    //
+    // Different from k_best_dominance_log_gap (drops the whole child)
+    // and from min_new_bernoulli_existence (per-cell r_new gate, no
+    // sibling context). Active only when ≥ 2 K-children survived
+    // (no top-vs-alt comparison otherwise). 0 = disabled (bit-
+    // identical to S2 baseline).
+    if (cfg_.alt_birth_log_gap_threshold > 0.0 && !scan.empty() &&
+        children.size() > children_before + 1) {
+      double top_lw = -std::numeric_limits<double>::infinity();
+      for (std::size_t i = children_before; i < children.size(); ++i) {
+        if (children[i].log_weight > top_lw) top_lw = children[i].log_weight;
+      }
+      if (std::isfinite(top_lw)) {
+        const double cutoff_lw = top_lw - cfg_.alt_birth_log_gap_threshold;
+        const double scan_t = scan.front().time.seconds();
+        for (std::size_t i = children_before; i < children.size(); ++i) {
+          if (children[i].log_weight >= cutoff_lw) continue;
+          auto& bs = children[i].bernoullis;
+          bs.erase(
+              std::remove_if(
+                  bs.begin(), bs.end(),
+                  [scan_t](const Bernoulli& b) {
+                    return b.birth_time.seconds() == scan_t;
+                  }),
+              bs.end());
+        }
+      }
+    }
   }
 
   density_.mbm = std::move(children);

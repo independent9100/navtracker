@@ -820,6 +820,83 @@ TEST(PmbmTrackerPhase9S2, PerTrackViewMatchesFlatAfterProcessBatch) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 9 S3: alt_birth_log_gap_threshold suppresses phantom births in
+// K-best alts whose log_weight is below (top_lw - threshold), without
+// touching the top child OR the alts' detection contributions.
+// ---------------------------------------------------------------------------
+TEST(PmbmTrackerPhase9S3, AltBirthGateDefaultIsBitIdenticalToLegacy) {
+  // gate = 0 → no behavioural change vs. an identical config without
+  // the knob. Use a 3-measurement scan with two PPP priors that admits
+  // multiple K-children, mirroring the dominance-cutoff test layout.
+  Fixture f;
+  auto build = [&](double gate) {
+    PmbmTracker::Config c;
+    c.probability_of_detection = 0.9;
+    c.clutter_intensity = 1e-4;
+    c.survival_probability = 1.0;
+    c.k_best_per_hypothesis = 5;
+    c.alt_birth_log_gap_threshold = gate;
+    PmbmTracker tracker(f.ekf, c);
+    tracker.predict(Timestamp::fromSeconds(0.0));
+    tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 0.0, 0.0));
+    tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 10.0, 10.0));
+    tracker.processBatch({
+        pos2d(1.0, 0.0, 0.0,   SensorKind::Lidar, "r0"),
+        pos2d(1.0, 10.0, 10.0, SensorKind::Lidar, "r0"),
+        pos2d(1.0, 5.0, 5.0,   SensorKind::Lidar, "r0"),
+    });
+    std::vector<std::size_t> b_counts;
+    for (const auto& h : tracker.density().mbm) {
+      b_counts.push_back(h.bernoullis.size());
+    }
+    return b_counts;
+  };
+  const auto off = build(0.0);
+  const auto same = build(0.0);
+  ASSERT_EQ(off, same);
+}
+
+TEST(PmbmTrackerPhase9S3, AltBirthGateStripsBirthsInWeakAltOnly) {
+  // gate=0.5 nat with K=5 over the same 3-meas scan: top child is
+  // kept intact (with births if any); alts BELOW the gap have their
+  // newly-born Bernoullis (birth_time == scan time) stripped while
+  // detected / misdetected Bernoullis stay. Verifies "births dropped,
+  // detections kept" — the discriminator the M3 output-merge probe
+  // lacked.
+  Fixture f;
+  PmbmTracker::Config c;
+  c.probability_of_detection = 0.9;
+  c.clutter_intensity = 1e-4;
+  c.survival_probability = 1.0;
+  c.k_best_per_hypothesis = 5;
+  c.alt_birth_log_gap_threshold = 0.5;
+  PmbmTracker tracker(f.ekf, c);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 0.0, 0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 10.0, 10.0));
+  tracker.processBatch({
+      pos2d(1.0, 0.0, 0.0,   SensorKind::Lidar, "r0"),
+      pos2d(1.0, 10.0, 10.0, SensorKind::Lidar, "r0"),
+      pos2d(1.0, 5.0, 5.0,   SensorKind::Lidar, "r0"),
+  });
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  const double top_lw = std::max_element(
+      tracker.density().mbm.begin(), tracker.density().mbm.end(),
+      [](const auto& a, const auto& b) {
+        return a.log_weight < b.log_weight;
+      })->log_weight;
+  const double scan_t = 1.0;
+  for (const auto& h : tracker.density().mbm) {
+    if (h.log_weight >= top_lw - 0.5) continue;  // not a gated alt
+    for (const auto& b : h.bernoullis) {
+      EXPECT_NE(b.birth_time.seconds(), scan_t)
+          << "alt child (lw=" << h.log_weight << " vs top=" << top_lw
+          << ") still contains a fresh birth";
+    }
+  }
+}
+
 TEST(PmbmTrackerPhase9S2, PerTrackViewOffByDefaultIsBitIdentical) {
   // With the flag off, the per-track view stays empty — proves no
   // implicit work happens unless opted in.

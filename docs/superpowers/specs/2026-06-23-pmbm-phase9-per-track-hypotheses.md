@@ -525,3 +525,106 @@ progress in the same session.
 This doc supersedes the parking note in
 `docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md`
 parking lot item #1.
+
+## Phase 9 S1/S2/S3 implementation (2026-06-23)
+
+Three milestones shipped from the "gradual migration" plan:
+
+### S1 (commit e559b49) — per-track types + view-builder
+
+Additive scaffold: `TrackHypothesis`, `PmbmTrack` (named to avoid
+collision with `navtracker::Track`), `TrackedGlobalHypothesis`
+landed in `core/pmbm/PmbmTypes.hpp` alongside existing
+`Bernoulli` / `GlobalHypothesis`. `rebuildPerTrackViewFromFlat()`
+derives the per-track view from the flat MBM (pure re-shape).
+Config flag `use_per_track_hypotheses` declared but unused.
+5 new unit tests; bit-identical baseline; 753/753 pass.
+
+### S2 (commit 516ae62) — view-rebuild plumbing under flag
+
+`processBatch` calls `rebuildPerTrackViewFromFlat` after each
+`pruneAndNormalise` when the flag is on. Pure re-shape — output
+still authoritative from the flat path. 2 new unit tests
+(view-matches-flat + flag-off-leaves-view-empty); 755/755 pass.
+
+### S3 (this commit) — lineage-aware alt-birth gate
+
+Pragmatic shortcut to the structural refactor: rather than
+rewriting `enumerateChildren` (~600 LOC) to carry per-track-
+hypothesis lineage, observe that Murty's `cost_k - cost_0`
+ALREADY encodes the log-weight gap from the top sibling — the
+exact discriminator the per-track refactor would surface. Adds
+a post-hoc filter in the enumeration caller that, when a K-child's
+log_weight is below `top_lw - alt_birth_log_gap_threshold`, strips
+its NEWLY-BORN Bernoullis (birth_time == scan_time) while keeping
+its detection / misdetection contributions. The alt child's
+log_weight is unchanged (the assignment is still scored as
+feasible); only the phantom-birth output mass is suppressed.
+
+Distinct from `k_best_dominance_log_gap` (which drops the whole
+child past the threshold) and `min_new_bernoulli_existence`
+(which is a per-cell r_new gate with no sibling context).
+
+Knob: `PmbmTracker::Config::alt_birth_log_gap_threshold`,
+default 0 = off. Bench probe config:
+`imm_cv_ct_pmbm_adapt_k3_altgate` (sibling of `_adapt_k3` with
+threshold 0.5 nat).
+
+### S3 probe results — 10-seed bench, K=3 vs K=3+altgate
+
+| scenario | gospa Δ | id_switches Δ | pos_rmse Δ | ospa Δ | nees Δ |
+|---|---:|---:|---:|---:|---:|
+| philos | **-12.71 %** | **-66.67 %** | +15.93 % | -4.33 % | +199.73 % |
+| dense_clutter | -4.77 % | +33.33 % | -7.48 % | **-24.02 %** | -8.71 % |
+| autoferry_scenario16_anchored | -2.02 % | +166.67 % | -0.32 % | -3.78 % | -0.25 % |
+| autoferry_scenario13_anchored | +0.31 % | 0 % | +0.15 % | +0.39 % | +0.09 % |
+| autoferry_scenario22_anchored | -0.01 % | 0 % | +0.00 % | +0.00 % | +0.01 % |
+| autoferry_scenario2 | -1.71 % | (n/a) | | | |
+| autoferry_scenario5 | -1.38 % | | | | |
+
+**Reading**: the lineage hypothesis is **partially validated**.
+The gate produces a clean **dense_clutter win** (gospa -4.8 %,
+ospa -24 %, pos_rmse -7.5 %, sog_rmse -12.5 %) and a **philos
+gospa + id_switches win** at the cost of philos pos_rmse +15.9 %
+and NEES +200 %. The autoferry-anchored regressions
+(sc13/16/22_anc) **DO NOT move materially**, refuting the
+hypothesis that lineage-aware alt-birth suppression alone fixes
+them.
+
+The pos_rmse / NEES regression on philos is the mechanism's
+shadow side: by suppressing alt-birth Bernoullis, the top
+hypothesis's Bernoulli stays the canonical position estimate,
+even when an alt's birth would have provided a better-fitting
+state for some measurements. The output gets fewer ids (good for
+id_switches) but worse mean positions (bad for pos_rmse).
+
+### Decision
+
+- Implementation (knob + unit tests) ships as `alt_birth_log_gap_threshold`.
+- Probe config `imm_cv_ct_pmbm_adapt_k3_altgate` ships as a
+  consumer choice (best on dense_clutter; mixed on philos; no
+  effect on autoferry-anchored).
+- Default bench config `imm_cv_ct_pmbm_adapt_k3` is unchanged.
+- **sc13/16/22_anchored regressions remain unresolved**. The
+  structural per-track-hypothesis refactor is still the only
+  candidate that hasn't been falsified.
+
+### Hypothesis ranking — final after S1/S2/S3
+
+1. **Per-track-hypothesis structural refactor with full state-
+   merging across alts**: only candidate that can both share
+   identity across K-children's births AND merge the alt's
+   state contribution into the top hypothesis's Bernoulli (so
+   the output gets the better-fitting state without inflating
+   id_switches). The S3 lineage gate captures the discriminator
+   but throws away the alt's state information; the structural
+   refactor would preserve and merge it.
+2. ~~Output-side merge with relative-mbm-size discriminator~~
+   (M3-A iter-7 candidate): not run; mechanism shown insufficient
+   in iters 1-6.
+3. ~~Anchored-mode cost-matrix tuning~~ (M3-B): REFUTED.
+4. ~~Suppress K>1 when top assignment is unambiguous~~
+   (k_best_dominance_log_gap): probed M2, doesn't discriminate.
+5. ~~Lineage-aware alt-birth gate at output time~~
+   (S3 alt_birth_log_gap_threshold): SHIPPED as probe; works
+   mechanically but doesn't fix sc13/16/22_anc.

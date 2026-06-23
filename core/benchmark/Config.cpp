@@ -672,6 +672,32 @@ std::vector<Config> defaultConfigs() {
     };
     configs.push_back(std::move(c));
   }
+
+  // imm_cv_ct_pmbm_adapt_k3_altgate — Phase 9 S3 PROBE config.
+  // Identical to imm_cv_ct_pmbm_adapt_k3 but with the lineage-aware
+  // alt-birth gate enabled. Probe target: dent sc13/16/22_anchored
+  // regressions while preserving philos -17.23 % win.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_adapt_k3_altgate";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.adaptive_k_best = true;
+      cfg.k_best_per_hypothesis = 3;
+      cfg.lambda_birth = 1e-5;
+      cfg.min_new_bernoulli_existence = 0.05;
+      cfg.alt_birth_log_gap_threshold = 0.5;  // probe value
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
   return configs;
 }
 
