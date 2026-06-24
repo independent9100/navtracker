@@ -10,9 +10,9 @@ using navtracker::benchmark::defaultConfigs;
 
 TEST(Config, DefaultConfigsHaveUniqueLabels) {
   const auto configs = defaultConfigs();
-  // 25: 24 standing + Task 3 imm_cv_ct_pmbm_cmap
-  // (radar spatial clutter map wired into PMBM to suppress shore-return births).
-  ASSERT_EQ(configs.size(), 25u);
+  // 26: 25 standing + Task 2c imm_cv_ct_pmbm_bundle
+  // (principled PMBM bundle: dedup_miss_pd + birth_existence_target + source_aware_identity).
+  ASSERT_EQ(configs.size(), 26u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   // Canonical wires the bias estimator unconditionally; the
@@ -24,7 +24,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 25u);
+  EXPECT_EQ(labels.size(), 26u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt_k3"), 1u);
   // Phase 9 probe siblings dropped 2026-06-23 (S4 fold-in):
@@ -56,6 +56,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_birthtarget"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_cmap"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_pmbm_bundle"), 1u);
   // biascal label removed — its wiring is now the canonical.
   EXPECT_EQ(labels.count("imm_cv_ct_mht_biascal"), 0u);
 }

@@ -637,6 +637,38 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // Task 2c — principled PMBM bundle: correct misdetection math (dedup_miss_pd)
+  // + clutter-invariant births (birth_existence_target) + per-vessel identity
+  // gate (source_aware_identity) + raised cardinality-control floors.
+  // Without the floor/target lifts, dedup_miss_pd alone causes +92 % philos
+  // GOSPA phantom bloat (phantom Bernoullis survive the correct lower miss
+  // penalty). The bundle compensates via principled birth sizing + tighter
+  // emission gate so the tracker never needed the wrong math to stay sane.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_bundle";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.adaptive_k_best = false;
+      cfg.birth_existence_target = 0.15;   // sweep target (start); see Task 2c report
+      cfg.source_aware_identity = true;    // Task 2a: per-vessel sensor gate
+      cfg.dedup_miss_pd = true;            // Task 2b: correct misdetection math
+      cfg.min_new_bernoulli_existence = 0.1;  // raised cardinality control (was 0.05)
+      cfg.output_existence_floor = 0.3;    // raised emission gate (was 0.1)
+      cfg.lambda_birth = 1e-5;             // ignored when birth_existence_target > 0
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Cl-3 Phase 9 — adaptive K with cap=3, shipped alongside K=1
   // imm_cv_ct_pmbm_adapt. Same-run 10-seed pinned baseline at
   // docs/baselines/pmbm_adapt_k3_phase9_20260623.csv.
