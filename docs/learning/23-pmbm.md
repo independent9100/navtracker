@@ -221,9 +221,61 @@ flowchart LR
 - 1e-4 (`r_new = 0.5`): borderline.
 - 1e-5 (`r_new ≈ 0.09`): the sweet spot. Small initial `r` is *correct* — real targets ramp through posterior updates over the next few detections; phantoms decay below `r_min` instead.
 
+**The remaining problem: λ_birth is mis-scaled across sensors and scenarios.**
+
+The sweet spot `λ_birth = 1e-5` was tuned at `λ_C ≈ 1e-4` (autoferry radar).
+When you switch to a different sensor or scenario where `λ_C` is much smaller,
+`r_new` changes even though `λ_birth` stays fixed:
+
+| Scenario / sensor | λ_C      | r_new = 1e-5 / (1e-5 + λ_C) |
+|-------------------|----------|------------------------------|
+| autoferry radar   | 1e-4     | 0.091 (intended)             |
+| philos radar      | 2.7e-6   | 0.79 (way too confident)     |
+| philos AIS        | 1e-9     | ≈ 1.0 (certain!)             |
+
+So on the `philos` replay, every ungated radar blip — including shore returns —
+is born with `r_new = 0.79`, *already above the 0.5 confirm threshold*, and
+immediately emits as a Confirmed track. That is the over-counting engine.
+
+**Fix: clutter-invariant birth existence (`birth_existence_target`).**
+
+The insight is that the design *intent* is `r_new = a small constant`.
+So instead of choosing an absolute `λ_birth` and hoping `λ_C` matches,
+choose the target `r* = r_new` you want and derive `λ_birth` from the live
+`λ_C` each time:
+
+```
+λ_birth = (r* / (1 − r*)) · λ_C
+r_new   = λ_birth / (λ_birth + λ_C)
+        = (r*·λ_C) / (r*·λ_C + (1−r*)·λ_C)
+        = r*        ← independent of λ_C
+```
+
+Setting `birth_existence_target = 0.1` means every new track starts with
+`r = 0.1`, regardless of whether `λ_C` is 1e-4 (autoferry) or 1e-9 (AIS).
+Real targets ramp to Confirmed over the next 3-4 detections; clutter returns
+don't get a second detection, so their `r` decays below `r_min` and they prune.
+
+Config knob: `PmbmTracker::Config::birth_existence_target` (double, default 0.0
+= legacy absolute `lambda_birth`). Set to 0.1 as the first probe value.
+
+Measured result on `philos` replay (Task 1, 2026-06-24):
+
+| Config                      | gospa_mean | pos_rmse_m |
+|-----------------------------|------------|------------|
+| imm_cv_ct_pmbm_adapt (base) | 82.63 m    | (mixed)    |
+| birthtarget=0.1             | **48.50 m** | 23.3 m    |
+
+−41 % gospa. The cross-reference in the algorithm doc is §3.2.2 of
+[pmbm-design.md](../algorithms/pmbm-design.md).
+
 **Assumptions.** λ_C is approximately uniform across the surveillance volume. (For per-sensor λ_C maps, the formula still works per measurement; we just need the per-sensor clutter density at the gate of evaluation.) For deployments where the spatial birth prior is *known* (e.g. radar coverage edges, named ports), an explicit `BirthModelFn` injecting structured PPP at predict-time would beat adaptive birth — Adaptive Birth is the *uniform-prior* default.
 
-**What to try next.** Per-sensor (or per-region) `λ_birth` maps; coupling `λ_birth` to time-since-last-confirmed-track in the local cell; revisiting the deferred Schmidt-KF R-inflation now that anchored T-GOSPA is competitive.
+**What to try next.** Sweep `birth_existence_target ∈ {0.05, 0.1, 0.2, 0.3}`
+on both philos and autoferry; choose the value that minimises philos GOSPA
+without regressing autoferry. Pair with Task 2 (clutter-aware deletion) for
+the full cardinality fix — `birth_existence_target` controls how many phantom
+tracks are *born*, and Task 2 controls how quickly they die.
 
 **Reference.** Reuter, Vo, Vo, Dietmayer, *The Labeled Multi-Bernoulli Filter*, IEEE Trans. Signal Processing 62(12), 2014. Adaptive Birth is in §IV-B; the formulation is general (LMB / PMBM / δ-GLMB all use the same trick).
 

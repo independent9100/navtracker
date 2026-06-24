@@ -582,6 +582,34 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // Task 1 probe: clutter-invariant birth existence. Same as
+  // imm_cv_ct_pmbm_adapt but r_new is pinned to a target instead of a
+  // fixed absolute λ_birth — fixes the philos over-confident-birth bug.
+  // With birth_existence_target=0.1, λ_birth = (0.1/0.9)·λ_C so r_new=0.1
+  // exactly regardless of sensor/scenario λ_C (autoferry 1e-4, philos
+  // radar 2.7e-6, AIS 1e-9 all yield r_new=0.1 without manual retuning).
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_birthtarget";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.adaptive_k_best = false;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.lambda_birth = 1e-5;          // ignored when target > 0
+      cfg.birth_existence_target = 0.1; // <-- the knob under test
+      cfg.min_new_bernoulli_existence = 0.05;
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Cl-3 Phase 9 — adaptive K with cap=3, shipped alongside K=1
   // imm_cv_ct_pmbm_adapt. Same-run 10-seed pinned baseline at
   // docs/baselines/pmbm_adapt_k3_phase9_20260623.csv.

@@ -176,6 +176,55 @@ f^new_m(x) = p_D · g(z_m | x) · λ^u_{k|k−1}(x) / ρ_m_target
 where `ρ_m_target` is the first integral alone. Gaussian-mixture math gives
 this in closed form.
 
+#### 3.2.1 Adaptive Birth (Reuter 2014) — `adaptive_birth = true`
+
+Standard measurement-driven PPP birth contaminates `ρ_m_target` because
+every clutter return injects a fresh `PoissonComponent` centred on itself
+(see `measurement_driven_birth`). The contaminated value makes `r_new ≈ 1`
+for every measurement, including clutter. Reuter 2014 decouples the spatial
+density from the existence prior:
+
+```
+r^new_m   = λ_birth / (λ_birth + λ^FA(z_m))
+f^new_m(x) = estimator.initiate(z_m)         (Gaussian centred at z_m)
+```
+
+`λ_birth` is the expected new-target birth rate per scan per
+measurement-space volume unit (same units as `λ^FA`). The PPP injection is
+skipped; the spatial mean comes from `IEstimator::initiate` directly.
+
+#### 3.2.2 Clutter-invariant birth existence (`birth_existence_target > 0`)
+
+The problem with a fixed absolute `λ_birth`: it was tuned when `λ^FA ≈ 1e-4`.
+On a different scenario/sensor where `λ^FA` is very different, `r_new` drifts
+far from the intended design point:
+
+| Scenario / sensor  | λ^FA     | r_new (λ_birth=1e-5) |
+|--------------------|----------|----------------------|
+| autoferry radar    | 1e-4     | 0.091 (≈ intended)   |
+| philos radar       | 2.7e-6   | 0.79 (over-confident)|
+| philos AIS         | 1e-9     | ≈ 1.0 (certain!)     |
+
+The fix: set `birth_existence_target = r*` and derive `λ_birth` per
+measurement from the live `λ^FA(z_m)`:
+
+```
+λ_birth  = (r* / (1 − r*)) · λ^FA(z_m)
+r_new    = λ_birth / (λ_birth + λ^FA(z_m))
+         = (r*·λ^FA) / (r*·λ^FA + (1−r*)·λ^FA)  [substituting]
+         = r*                                      (independent of λ^FA)
+```
+
+This is **clutter-invariant**: autoferry `λ^FA=1e-4`, philos radar
+`λ^FA=2.7e-6`, and philos AIS `λ^FA=1e-9` all yield `r_new = r*` without
+per-scenario or per-sensor retuning of `λ_birth`.
+
+Config knobs:
+- `birth_existence_target = 0.0` — legacy (use absolute `lambda_birth`).
+  Bit-identical to pre-Task-1 behaviour.
+- `birth_existence_target = 0.1` — bench probe value (Task 1, 2026-06-24):
+  philos `gospa_mean` dropped from 82.63 to 48.50 (−41 %).
+
 ### 3.3 PPP update — undetected mass loss
 
 After the scan, undetected mass decays:
@@ -255,6 +304,10 @@ The conjugacy result relies on the **standard point-target model**:
    association.
 3. **Poisson birth** with intensity `λ^b(x)` per scan. Tunable per sensor
    region. For the first cut, uniform over the local ENU patch.
+   With `birth_existence_target > 0` (§3.2.2), `λ^b` is derived per
+   measurement from `λ^FA` so `r_new` is scenario-invariant; this assumption
+   changes: the birth intensity is now a *function of* clutter density, not
+   an independent parameter.
 4. **Poisson clutter** with intensity `λ^FA(z)` per measurement space.
    Constant per sensor matches our current per-sensor `clutter_density`.
 5. **Bernoulli survival** with constant `p_S` per scan. Sensor-conditional
@@ -379,18 +432,27 @@ In order of expected payoff:
 4. **TPMBM** (Phase 3 — trajectory-augmented Bernoullis). Replaces the
    current `MhtTracker` *structurally* once it beats TOMHT-IMM by ≥10 %
    GOSPA across the bus scenarios.
-5. **Poisson birth intensity tuning.** First cut is uniform over local ENU
-   patch. Real wins come from sensor-region-conditional birth — radar
-   coverage edges, AIS broadcast zones, named ports. Pin a synthetic
+5. **Clutter-invariant birth existence tuning** (Task 1, 2026-06-24, §3.2.2).
+   `birth_existence_target = 0.1` is the first probe value; sweep
+   `{0.05, 0.1, 0.2, 0.3}` against philos + autoferry to find the optimal
+   target. The design intent is that real targets earn confidence over 2-3
+   detections (posterior `r` ramps from `r*` → 1.0), so `r* < 0.5` is
+   appropriate; keep it high enough that the phantom-birth gate
+   (`min_new_bernoulli_existence`) can still suppress the near-zero-r clutter
+   births (set `min_new_bernoulli_existence = r*/2`). The task-1 probe
+   `gospa_mean` on philos: 48.50 m vs 82.63 m baseline (−41 %).
+6. **Poisson birth intensity spatial tuning.** First cut is uniform over
+   local ENU patch. Real wins come from sensor-region-conditional birth —
+   radar coverage edges, AIS broadcast zones, named ports. Pin a synthetic
    "fixed-birth-region" scenario to A/B uniform vs tuned.
-6. **Sensor-conditional `p_S`.** Ships pop in and out of radar coverage; a
+7. **Sensor-conditional `p_S`.** Ships pop in and out of radar coverage; a
    single `p_S` mis-handles entry/exit. Likely small effect; revisit only
    if a scenario shows track loss attributable to coastal radar geometry.
-7. **OOSM-PMBM** (Phase 5, optional). Out-of-sequence measurements
+8. **OOSM-PMBM** (Phase 5, optional). Out-of-sequence measurements
    (late-arriving AIS) handled by retrodiction. Our `ReorderBuffer` is the
    pragmatic substitute today; revisit only if buffer latency becomes a
    problem.
-8. **Cluster decomposition for Murty cost.** PMBM Murty cost matrices have
+9. **Cluster decomposition for Murty cost.** PMBM Murty cost matrices have
    the same block-sparsity that MHT cost matrices have (a target with no
    in-gate measurement is independent of the rest). Reusing the planned
    cluster decomposition for `MhtTracker` benefits both.

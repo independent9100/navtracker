@@ -838,6 +838,36 @@ TEST(PmbmTrackerUpdate, RtsSmoothPullsPastTowardFutureUpdate) {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Clutter-invariant birth existence (Task 1, 2026-06-24).
+// With birth_existence_target = r*, r_new must equal r* regardless of
+// clutter_intensity (lambda_c). Without the fix, r_new =
+// lambda_birth/(lambda_birth+lambda_c) varies from ~1.0 on AIS-lambda_c
+// (1e-9) to ~0.09 on autoferry lambda_c (1e-4) for a fixed lambda_birth=1e-5.
+// With the fix, lambda_birth = (r*/(1-r*))*lambda_c so r_new = r* exactly.
+TEST(PmbmTrackerUpdate, BirthExistenceTargetIsClutterInvariant) {
+  for (double lambda_c : {1e-9, 2.7e-6, 1e-4}) {
+    Fixture f;
+    PmbmTracker::Config cfg;
+    cfg.adaptive_birth = true;
+    cfg.measurement_driven_birth = false;
+    cfg.smart_birth_skip_existing = false;
+    cfg.min_new_bernoulli_existence = 0.0;  // don't gate the birth away
+    cfg.clutter_intensity = lambda_c;       // no detection model → this is λ_C
+    cfg.birth_existence_target = 0.2;
+    PmbmTracker tracker(f.ekf, cfg);
+
+    tracker.processBatch({pos2d(1.0, 100.0, 50.0)});
+
+    double r_max = 0.0;
+    for (const auto& h : tracker.density().mbm)
+      for (const auto& b : h.bernoullis)
+        r_max = std::max(r_max, b.existence_probability);
+    EXPECT_NEAR(r_max, 0.2, 1e-6) << "lambda_c=" << lambda_c;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Determinism: replaying the exact same scan sequence gives identical
 // MBM state (same hypothesis count, same Bernoulli ids assigned in order).
 TEST(PmbmTrackerUpdate, ReplayDeterministicallyReproducesState) {

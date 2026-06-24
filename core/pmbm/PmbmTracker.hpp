@@ -180,6 +180,18 @@ class PmbmTracker {
     // (each sensor contributes its own birth-PHD).
     std::map<navtracker::SensorKind, double> lambda_birth_per_sensor;
 
+    // Clutter-invariant birth existence (Task 1, 2026-06-24). When > 0,
+    // the adaptive-birth path derives λ_birth from the per-measurement
+    // λ_C so the new-target existence is exactly r_new = this value,
+    // independent of the sensor/scenario clutter density:
+    //   λ_birth = (r*/(1−r*))·λ_C  ⇒  r_new = λ_birth/(λ_birth+λ_C) = r*.
+    // Fixes the philos over-confident-birth bug: a fixed *absolute*
+    // λ_birth gives r_new ≈ 0.79 (radar) / ≈1.0 (AIS) on philos because
+    // λ_C there is 2.7e-6 / 1e-9, not the 1e-4 the scalar was tuned for.
+    // 0 = legacy (use lambda_birth / lambda_birth_per_sensor). Typical
+    // 0.1–0.3 so real targets ramp via posterior over later detections.
+    double birth_existence_target = 0.0;
+
     // Adaptive K-best per parent (MATLAB MTT-master convention).
     // When ON, each parent's K is derived from its weight share:
     //   K_p = max(1, ceil(max_global_hypotheses · w_p))

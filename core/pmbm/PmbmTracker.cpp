@@ -452,8 +452,18 @@ PmbmTracker::buildAdaptiveBirthCandidates(
     // Per-sensor λ_birth lookup (Phase 9 review Finding 6B): mirror the
     // ISensorDetectionModel per-(sensor, source) λ_C plumbing. Empty
     // map → scalar fallback (bit-identical to legacy).
+    // Task 1 (2026-06-24): when birth_existence_target > 0, derive
+    // λ_birth from λ_C so r_new = target exactly, independent of λ_C.
+    //   λ_birth = (r*/(1−r*))·λ_C  ⇒  r_new = λ_birth/(λ_birth+λ_C) = r*.
+    // This is clutter-invariant: autoferry λ_C=1e-4, philos λ_C=2.7e-6,
+    // AIS λ_C=1e-9 all yield r_new = target without manual per-sensor
+    // tuning. Legacy path unchanged when target = 0.
     double lambda_birth = cfg_.lambda_birth;
-    if (!cfg_.lambda_birth_per_sensor.empty()) {
+    if (cfg_.birth_existence_target > 0.0) {
+      // Clutter-invariant: choose λ_birth so r_new == target for this z.
+      const double r = cfg_.birth_existence_target;
+      lambda_birth = (r / (1.0 - r)) * lambda_z;
+    } else if (!cfg_.lambda_birth_per_sensor.empty()) {
       auto it = cfg_.lambda_birth_per_sensor.find(z.sensor);
       if (it != cfg_.lambda_birth_per_sensor.end()) {
         lambda_birth = it->second;
