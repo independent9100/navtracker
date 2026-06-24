@@ -277,7 +277,7 @@ std::vector<MetricRow> runSweep(
           MhtTracker::Config carrier;
           carrier.probability_of_detection = cfg.probability_of_detection;
           carrier.clutter_density = cfg.clutter_intensity;
-          auto det = detectionModelFor(desc, carrier, /*use_clutter_map=*/false);
+          auto det = detectionModelFor(desc, carrier, config.use_clutter_map);
           pmbm::PmbmTracker tracker(*est, cfg, std::move(birth));
           if (det) tracker.setSensorDetectionModel(det);
 

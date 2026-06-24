@@ -610,6 +610,33 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // Task 3: PMBM with the radar spatial clutter map. Same as
+  // imm_cv_ct_pmbm_adapt but the ClutterMapSensorDetectionModel wraps
+  // the scenario's fixed detection table, learning a higher λ_C on cells
+  // with persistent shore / moored-structure returns. This lowers
+  // r_new = λ_birth/(λ_birth+λ_C) on those cells, suppressing phantom
+  // births at the birth rate rather than post-hoc via lifecycle pruning.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_cmap";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.lambda_birth = 1e-5;
+      cfg.min_new_bernoulli_existence = 0.05;
+      return cfg;
+    };
+    c.use_clutter_map = true;  // radar position map suppresses shore births
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Cl-3 Phase 9 — adaptive K with cap=3, shipped alongside K=1
   // imm_cv_ct_pmbm_adapt. Same-run 10-seed pinned baseline at
   // docs/baselines/pmbm_adapt_k3_phase9_20260623.csv.

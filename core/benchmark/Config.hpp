@@ -57,8 +57,8 @@ struct Config {
   std::function<MhtTracker::Config()> mht_config{};
   // Backlog item 5 ablation: wrap the scenario's fixed detection table
   // in a ClutterMapSensorDetectionModel (spatially-varying λ_C learned
-  // online from unassociated returns). Mht only; no effect when the
-  // scenario declares no detection table.
+  // online from unassociated returns). Applies to Mht and Pmbm paths;
+  // no effect when the scenario declares no detection table.
   bool use_clutter_map{false};
   // When set and the scenario declares a per-sensor detection table,
   // this takes precedence over `build_associator` — the scenario's
