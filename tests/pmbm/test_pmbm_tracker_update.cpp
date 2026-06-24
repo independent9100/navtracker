@@ -9,11 +9,14 @@
 #include "core/estimation/EkfEstimator.hpp"
 #include "core/pmbm/PmbmTracker.hpp"
 #include "core/pmbm/PmbmTypes.hpp"
+#include "core/tracking/SensorDetectionModels.hpp"
 #include "core/types/Ids.hpp"
 #include "core/types/Measurement.hpp"
 
 using navtracker::ConstantVelocity2D;
+using navtracker::DetectionParams;
 using navtracker::EkfEstimator;
+using navtracker::FixedSensorDetectionModel;
 using navtracker::Measurement;
 using navtracker::MeasurementModel;
 using navtracker::SensorKind;
@@ -900,4 +903,294 @@ TEST(PmbmTrackerUpdate, ReplayDeterministicallyReproducesState) {
     EXPECT_EQ(a[i].first, b[i].first);
     EXPECT_DOUBLE_EQ(a[i].second, b[i].second);
   }
+}
+
+// ---------------------------------------------------------------------------
+// 2a: source_aware_identity — per-vessel separation for AIS Bernoullis.
+//
+// Two AIS Bernoullis (source_id="ais") born from two vessels with different
+// MMSI. With source_aware_identity=true, a scan containing ONLY vessel A's
+// broadcast (hints.mmsi = A) must leave vessel B's existence unchanged
+// (B's vessel_id is absent from the scan). Without the flag (legacy),
+// B decays because the gate sees "ais" present.
+//
+// Approach: two PPP components seed two Bernoullis from two AIS measurements
+// (same source_id="ais", different hints.mmsi) in scan 1. After step 2a.4,
+// the contribution_history entries carry vessel_id from hints.mmsi. Scan 2
+// contains only vessel A's broadcast → check B's existence.
+TEST(PmbmTrackerUpdate, SourceAwareIdentityProtectsAbsentVessels) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.survival_probability = 1.0;
+  cfg.clutter_intensity = 1e-9;   // effectively zero → r_new ≈ 1
+  cfg.k_best_per_hypothesis = 1;
+  cfg.source_aware_misdetection = true;
+  cfg.source_aware_identity = true;
+  cfg.r_min = 1e-9;               // keep even low-r Bernoullis alive
+
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Two PPP components: A at origin, B at (10000, 0).
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 1.0e4, 0.0));
+
+  // Scan 1: two AIS broadcasts — vessel A (mmsi=1001) and vessel B (mmsi=2002).
+  Measurement zA1, zB1;
+  zA1.time = Timestamp::fromSeconds(1.0);
+  zA1.sensor = SensorKind::Ais;
+  zA1.source_id = "ais";
+  zA1.model = MeasurementModel::Position2D;
+  zA1.value = Eigen::Vector2d(0.0, 0.0);
+  zA1.covariance = Eigen::Matrix2d::Identity() * 25.0;
+  zA1.hints.mmsi = 1001u;
+
+  zB1.time = Timestamp::fromSeconds(1.0);
+  zB1.sensor = SensorKind::Ais;
+  zB1.source_id = "ais";
+  zB1.model = MeasurementModel::Position2D;
+  zB1.value = Eigen::Vector2d(1.0e4, 0.0);
+  zB1.covariance = Eigen::Matrix2d::Identity() * 25.0;
+  zB1.hints.mmsi = 2002u;
+
+  tracker.processBatch({zA1, zB1});
+
+  // After scan 1: two Bernoullis should exist with high existence.
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  // Find the Bernoulli near (10000, 0) — that's vessel B.
+  navtracker::pmbm::BernoulliId id_b = navtracker::pmbm::kInvalidBernoulliId;
+  double r_b_scan1 = -1.0;
+  for (const auto& b : tracker.density().mbm.front().bernoullis) {
+    if (std::abs(b.mean(0) - 1.0e4) < 500.0) {
+      id_b = b.id;
+      r_b_scan1 = b.existence_probability;
+    }
+  }
+  ASSERT_NE(id_b, navtracker::pmbm::kInvalidBernoulliId)
+      << "vessel B Bernoulli must be born from scan 1";
+  ASSERT_GT(r_b_scan1, 0.8) << "vessel B born with high existence";
+
+  // Scan 2: ONLY vessel A broadcasts (mmsi=1001). Vessel B is silent.
+  Measurement zA2;
+  zA2.time = Timestamp::fromSeconds(2.0);
+  zA2.sensor = SensorKind::Ais;
+  zA2.source_id = "ais";
+  zA2.model = MeasurementModel::Position2D;
+  zA2.value = Eigen::Vector2d(0.0, 0.0);
+  zA2.covariance = Eigen::Matrix2d::Identity() * 25.0;
+  zA2.hints.mmsi = 1001u;
+
+  tracker.processBatch({zA2});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  double r_b_scan2 = -1.0;
+  for (const auto& b : tracker.density().mbm.front().bernoullis) {
+    if (b.id == id_b) { r_b_scan2 = b.existence_probability; break; }
+  }
+  ASSERT_GE(r_b_scan2, 0.0) << "vessel B Bernoulli must survive (not pruned)";
+  // With source_aware_identity=true, vessel B's existence is unchanged
+  // (its vessel_id 2002 is not in the scan → misdetection skipped).
+  EXPECT_NEAR(r_b_scan2, r_b_scan1, 1e-9)
+      << "vessel B must NOT decay when only vessel A broadcasts";
+}
+
+// Companion: without the flag (legacy), vessel B decays because "ais"
+// source_id IS in the scan.
+TEST(PmbmTrackerUpdate, SourceAwareIdentityLegacyFlagDecaysAbsentVessel) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.survival_probability = 1.0;
+  cfg.clutter_intensity = 1e-9;
+  cfg.k_best_per_hypothesis = 1;
+  cfg.source_aware_misdetection = true;
+  cfg.source_aware_identity = false;  // legacy: channel-only gate
+  cfg.r_min = 1e-9;
+
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 1.0e4, 0.0));
+
+  Measurement zA1, zB1;
+  zA1.time = Timestamp::fromSeconds(1.0);
+  zA1.sensor = SensorKind::Ais;
+  zA1.source_id = "ais";
+  zA1.model = MeasurementModel::Position2D;
+  zA1.value = Eigen::Vector2d(0.0, 0.0);
+  zA1.covariance = Eigen::Matrix2d::Identity() * 25.0;
+  zA1.hints.mmsi = 1001u;
+
+  zB1.time = Timestamp::fromSeconds(1.0);
+  zB1.sensor = SensorKind::Ais;
+  zB1.source_id = "ais";
+  zB1.model = MeasurementModel::Position2D;
+  zB1.value = Eigen::Vector2d(1.0e4, 0.0);
+  zB1.covariance = Eigen::Matrix2d::Identity() * 25.0;
+  zB1.hints.mmsi = 2002u;
+
+  tracker.processBatch({zA1, zB1});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  navtracker::pmbm::BernoulliId id_b = navtracker::pmbm::kInvalidBernoulliId;
+  double r_b_scan1 = -1.0;
+  for (const auto& b : tracker.density().mbm.front().bernoullis) {
+    if (std::abs(b.mean(0) - 1.0e4) < 500.0) {
+      id_b = b.id;
+      r_b_scan1 = b.existence_probability;
+    }
+  }
+  ASSERT_NE(id_b, navtracker::pmbm::kInvalidBernoulliId);
+  ASSERT_GT(r_b_scan1, 0.8);
+
+  // Scan 2: only vessel A.
+  Measurement zA2;
+  zA2.time = Timestamp::fromSeconds(2.0);
+  zA2.sensor = SensorKind::Ais;
+  zA2.source_id = "ais";
+  zA2.model = MeasurementModel::Position2D;
+  zA2.value = Eigen::Vector2d(0.0, 0.0);
+  zA2.covariance = Eigen::Matrix2d::Identity() * 25.0;
+  zA2.hints.mmsi = 1001u;
+
+  tracker.processBatch({zA2});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  double r_b_scan2 = -1.0;
+  for (const auto& b : tracker.density().mbm.front().bernoullis) {
+    if (b.id == id_b) { r_b_scan2 = b.existence_probability; break; }
+  }
+  ASSERT_GE(r_b_scan2, 0.0);
+  // Legacy: vessel B decays because source_id "ais" is in scan.
+  EXPECT_LT(r_b_scan2, r_b_scan1)
+      << "vessel B MUST decay in legacy mode (source-level gate sees 'ais')";
+}
+
+// ---------------------------------------------------------------------------
+// 2b: dedup_miss_pd — one detection opportunity per distinct sensor channel.
+//
+// A Bernoulli at origin is left undetected while 5 radar returns (same
+// sensor, same model, same source_id) all appear far away. With
+// dedup_miss_pd=true, the effective miss-P_D is 0.07 (one channel, one
+// opportunity). Legacy gives 1−(1−0.07)^5 ≈ 0.3017. The two update
+// paths produce measurably different existence posteriors.
+//
+// r=0.8, p_D=0.07 single:    r_new = (1−0.07)·0.8/(1−0.07·0.8) ≈ 0.7881
+// r=0.8, p_D≈0.3017 (5-fold): r_new = (1−0.3017)·0.8/(1−0.3017·0.8) ≈ 0.7363
+TEST(PmbmTrackerUpdate, DedupMissPdUsesOneOpportunityPerChannel) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;  // scalar fallback (unused here)
+  cfg.clutter_intensity = 1e-6;
+  cfg.survival_probability = 1.0;
+  cfg.k_best_per_hypothesis = 1;
+  cfg.r_min = 1e-6;
+  cfg.dedup_miss_pd = true;
+
+  // Detection model: ArpaTtm / Position2D → P_D = 0.07, full coverage.
+  auto model = std::make_shared<FixedSensorDetectionModel>(
+      DetectionParams{0.9, 1e-6});
+  model->set(SensorKind::ArpaTtm, MeasurementModel::Position2D,
+             DetectionParams{0.07, 1e-6});
+
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.setSensorDetectionModel(model);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Single Bernoulli at origin.
+  GlobalHypothesis h;
+  h.weight = 1.0;
+  h.log_weight = 0.0;
+  h.bernoullis.push_back(mkBernoulli(1, 0.8, 0.0, 0.0));
+  tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
+
+  // 5 radar returns from the same sensor channel, all far from origin.
+  // sensor_position_enu = (0,0) by default → sensor is AT origin → Bernoulli
+  // at origin is within coverage (distance 0 < max_range=∞).
+  // Measurement position far away → no gate match → Murty puts them in
+  // new-target rows → Bernoulli takes the miss branch.
+  std::vector<Measurement> scan;
+  for (int i = 0; i < 5; ++i) {
+    Measurement z;
+    z.time = Timestamp::fromSeconds(1.0);
+    z.sensor = SensorKind::ArpaTtm;
+    z.source_id = "radar0";
+    z.model = MeasurementModel::Position2D;
+    z.value = Eigen::Vector2d(1.0e4 + i * 10.0, 0.0);
+    z.covariance = Eigen::Matrix2d::Identity() * 25.0;
+    scan.push_back(z);
+  }
+  tracker.processBatch(scan);
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  const double r_after =
+      tracker.density().mbm.front().bernoullis.front().existence_probability;
+
+  // Expected: one-channel miss → effective p_D = 0.07.
+  const double pD = 0.07;
+  const double r0 = 0.8;
+  const double r_expected = (1.0 - pD) * r0 / (1.0 - pD * r0);
+
+  // Legacy path: five-fold → effective p_D ≈ 0.3017.
+  const double pD_legacy = 1.0 - std::pow(1.0 - 0.07, 5.0);
+  const double r_legacy = (1.0 - pD_legacy) * r0 / (1.0 - pD_legacy * r0);
+
+  EXPECT_NEAR(r_after, r_expected, 1e-9)
+      << "dedup_miss_pd=true: effective P_D must be single-channel 0.07";
+  EXPECT_GT(r_after, r_legacy + 1e-3)
+      << "dedup path must give strictly higher existence than legacy";
+}
+
+// Companion: with dedup_miss_pd=false (legacy), the five-fold P_D applies.
+TEST(PmbmTrackerUpdate, DedupMissPdLegacyMultipliesPerReturn) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.survival_probability = 1.0;
+  cfg.k_best_per_hypothesis = 1;
+  cfg.r_min = 1e-6;
+  cfg.dedup_miss_pd = false;  // legacy
+
+  auto model = std::make_shared<FixedSensorDetectionModel>(
+      DetectionParams{0.9, 1e-6});
+  model->set(SensorKind::ArpaTtm, MeasurementModel::Position2D,
+             DetectionParams{0.07, 1e-6});
+
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.setSensorDetectionModel(model);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  GlobalHypothesis h;
+  h.weight = 1.0;
+  h.log_weight = 0.0;
+  h.bernoullis.push_back(mkBernoulli(1, 0.8, 0.0, 0.0));
+  tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
+
+  std::vector<Measurement> scan;
+  for (int i = 0; i < 5; ++i) {
+    Measurement z;
+    z.time = Timestamp::fromSeconds(1.0);
+    z.sensor = SensorKind::ArpaTtm;
+    z.source_id = "radar0";
+    z.model = MeasurementModel::Position2D;
+    z.value = Eigen::Vector2d(1.0e4 + i * 10.0, 0.0);
+    z.covariance = Eigen::Matrix2d::Identity() * 25.0;
+    scan.push_back(z);
+  }
+  tracker.processBatch(scan);
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  const double r_after =
+      tracker.density().mbm.front().bernoullis.front().existence_probability;
+
+  const double pD_legacy = 1.0 - std::pow(1.0 - 0.07, 5.0);
+  const double r0 = 0.8;
+  const double r_expected_legacy =
+      (1.0 - pD_legacy) * r0 / (1.0 - pD_legacy * r0);
+
+  EXPECT_NEAR(r_after, r_expected_legacy, 1e-9)
+      << "legacy path must use per-return P_D product";
 }

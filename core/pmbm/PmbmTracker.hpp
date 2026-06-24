@@ -248,6 +248,28 @@ class PmbmTracker {
     // bench config.
     bool source_aware_misdetection = false;
 
+    // Per-vessel identity for the source-aware misdetection gate (2a).
+    // AIS broadcasts all share source_id="ais", so the channel-keyed gate
+    // cannot distinguish individual vessels: vessel A's broadcast causes
+    // vessel B to be misdetected. When source_aware_identity=true AND a
+    // SourceTouch entry has a vessel_id, the gate uses vessel_id instead
+    // of source_id for that touch — so only a scan measurement with the
+    // same vessel_id (hints.mmsi) counts as coverage. Channel fallback
+    // applies when vessel_id is absent (bit-identical to legacy).
+    // Off by default = bit-identical to source_aware_misdetection only.
+    // DO NOT change AIS source_id="ais" — MHT's miss-dedup keys on it.
+    bool source_aware_identity = false;
+
+    // Per-scan dedup of compute_miss_pD (2b). Textbook: one detection
+    // opportunity per distinct (sensor, model, source_id) channel per
+    // scan, not one per return. With dedup_miss_pd=true, N returns from
+    // one radar sweep count as ONE opportunity: effective miss-P_D =
+    // 1−(1−P_D) rather than 1−(1−P_D)^N. Off by default = legacy
+    // per-measurement product (bit-identical to Phase 8/9 baseline).
+    // Requires a detection model to have any effect; falls back to the
+    // Config::probability_of_detection scalar when no model is set.
+    bool dedup_miss_pd = false;
+
     // Within-hypothesis Bernoulli merging. Generalised from
     // MhtTracker::mergeBranches (cross-tree Bhattacharyya merge): after
     // enumerateChildren, fold pairs of Bernoullis within the same

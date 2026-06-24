@@ -6,6 +6,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <tuple>
 #include <utility>
 
 #include <Eigen/Dense>
@@ -488,13 +489,19 @@ void PmbmTracker::enumerateChildren(
   const int n = static_cast<int>(parent.bernoullis.size());
   const int m = static_cast<int>(scan.size());
 
-  // Source-aware misdetection: collect this scan's source_ids once.
+  // Source-aware misdetection: collect this scan's source_ids (and
+  // vessel_ids when source_aware_identity is on) once per scan.
   // Bernoullis whose contribution-history sources are entirely absent
   // from this set get a no-op misdetection (state and r unchanged) —
-  // see Config::source_aware_misdetection.
+  // see Config::source_aware_misdetection and ::source_aware_identity.
   std::set<std::string> scan_sources;
+  std::set<std::uint32_t> scan_vessels;
   if (cfg_.source_aware_misdetection) {
-    for (const auto& z : scan) scan_sources.insert(z.source_id);
+    for (const auto& z : scan) {
+      scan_sources.insert(z.source_id);
+      if (cfg_.source_aware_identity && z.hints.mmsi.has_value())
+        scan_vessels.insert(*z.hints.mmsi);
+    }
   }
   auto should_misdetect = [&](BernoulliId id) {
     if (!cfg_.source_aware_misdetection) return true;
@@ -503,7 +510,11 @@ void PmbmTracker::enumerateChildren(
       return true;  // no prior history; treat as observable
     }
     for (const auto& touch : it->second) {
-      if (scan_sources.count(touch.source_id)) return true;
+      if (cfg_.source_aware_identity && touch.vessel_id.has_value()) {
+        if (scan_vessels.count(*touch.vessel_id)) return true;  // this vessel is in-scan
+        continue;  // identity known but absent → this touch gives no coverage
+      }
+      if (scan_sources.count(touch.source_id)) return true;  // channel fallback
     }
     return false;
   };
@@ -546,31 +557,33 @@ void PmbmTracker::enumerateChildren(
   // 0 (the detection model returns 0 when the Bernoulli is outside
   // the sensor's max_range / sector). Config fallback when no model.
   //
-  // NOTE — review 2026-06-23 Finding 1: this loop SHOULD dedup by
-  // (sensor, model, source_id) — counting one radar's 50 returns as
-  // 50 separate misdetections drives effective P_D toward 1.0
-  // regardless of the configured value. The math is wrong.
-  //
-  // STATUS: dedup NOT applied (commit 0cf1159 + 2 follow-up probes
-  // showed the fix breaks philos by +92 % gospa). The system was
-  // using the over-aggressive misdetection penalty as an indirect
-  // cardinality control. With the correct penalty, philos
-  // Bernoullis don't decay → phantom bloat → cardinality wrong.
-  // Re-landing the dedup requires first tuning a legitimate
-  // cardinality control (tighter birth gate, higher r_min, lower
-  // output_existence_floor) — multi-knob exercise, parked.
+  // With cfg_.dedup_miss_pd = true: dedup by (sensor, model, source_id)
+  // so N returns from one radar sweep count as ONE detection opportunity
+  // (textbook "one sweep = one detection opportunity" model). Off by
+  // default (legacy per-measurement product, bit-identical to Phase 8/9
+  // baseline). See Config::dedup_miss_pd.
   auto compute_miss_pD = [&](const Bernoulli& b) {
     if (!detection_model_) return cfg_.probability_of_detection;
     if (b.mean.size() < 2) return cfg_.probability_of_detection;
     const Eigen::Vector2d b_xy = b.mean.head<2>();
     double survive = 1.0;
     bool any_coverage = false;
-    for (const auto& z : scan) {
-      const double pD_s = detection_model_->missDetectionProbability(
-          z.sensor, z.model, b_xy, z.sensor_position_enu, z.source_id);
-      if (pD_s > 0.0) {
-        any_coverage = true;
-        survive *= (1.0 - pD_s);
+    if (cfg_.dedup_miss_pd) {
+      // Textbook: one detection opportunity per distinct sensor channel
+      // that surveyed this scan, NOT one per return.
+      std::set<std::tuple<SensorKind, MeasurementModel, std::string>> seen;
+      for (const auto& z : scan) {
+        auto key = std::make_tuple(z.sensor, z.model, z.source_id);
+        if (!seen.insert(key).second) continue;  // already counted this channel
+        const double pD_s = detection_model_->missDetectionProbability(
+            z.sensor, z.model, b_xy, z.sensor_position_enu, z.source_id);
+        if (pD_s > 0.0) { any_coverage = true; survive *= (1.0 - pD_s); }
+      }
+    } else {
+      for (const auto& z : scan) {  // legacy per-measurement (buggy) path
+        const double pD_s = detection_model_->missDetectionProbability(
+            z.sensor, z.model, b_xy, z.sensor_position_enu, z.source_id);
+        if (pD_s > 0.0) { any_coverage = true; survive *= (1.0 - pD_s); }
       }
     }
     return any_coverage ? (1.0 - survive) : 0.0;
@@ -1217,6 +1230,7 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
       Track::SourceTouch touch;
       touch.sensor = best->sensor;
       touch.source_id = best->source_id;
+      touch.vessel_id = best->hints.mmsi;  // per-vessel identity when present
       touch.time = best->time;
       fillSourceTouchEnu(touch, *best);
       touch.sensor_position_enu = best->sensor_position_enu;

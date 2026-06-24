@@ -162,6 +162,68 @@ r^{j,i}_{miss}   = (1 − p_D) · r^{j,i}_{k|k−1}  /  (1 − r^{j,i}_{k|k−1}
 f^{j,i}_{miss}   = f^{j,i}_{k|k−1}                                          (no measurement update)
 ```
 
+`p_D` here is the *effective* detection probability for Bernoulli `i` given
+the current scan — see below.
+
+#### 3.1.1 Effective miss-P_D and per-scan dedup (`dedup_miss_pd`)
+
+The standard formula assumes one measurement per target per sensor per scan.
+When a scan contains `N` returns from the same radar sweep, the naive loop
+multiplies the miss contribution `N` times:
+
+```
+survive_legacy = ∏_{l=1}^{N} (1 − p_D)  =  (1 − p_D)^N   [WRONG for a single sweep]
+```
+
+This drives effective `p_D → 1` regardless of the configured value (N=50
+radar returns → effective `p_D ≈ 1 − 0.9^50 ≈ 1.0`). The tracker was
+relying on this over-penalty as a cardinality brake.
+
+**Textbook fix** (`dedup_miss_pd = true`): dedup by distinct `(sensor, model,
+source_id)` channel — one detection opportunity per sensor per scan:
+
+```
+effective p_D = 1 − ∏_{c ∈ unique channels in scan} (1 − p_D^c · coverage^c)
+```
+
+For a single radar sweep with N returns: effective `p_D = p_D^radar` (one
+opportunity). For a simultaneous AIS+radar scan: two independent opportunities
+(one per sensor type). This is the correct textbook model and makes the
+detect-branch `p_D` and the miss-branch `p_D` consistent.
+
+**Off by default** (bit-identical to Phase 8/9 baseline). Config flag:
+`dedup_miss_pd = false` → legacy per-measurement product.
+
+#### 3.1.2 Source-aware misdetection gate (`source_aware_misdetection`)
+
+AIS broadcasts are per-vessel: vessel A's broadcast contains no information
+about vessel B's existence. With `source_aware_misdetection = true`, a
+Bernoulli skips the misdetection recursion when none of its
+contributing `source_id`s appear in the current scan. Fresh Bernoullis with
+no contribution history are not protected (they decay normally).
+
+#### 3.1.3 Per-vessel identity for the AIS gate (`source_aware_identity`)
+
+All AIS vessels share `source_id = "ais"`. With only channel-level gating
+(`source_aware_identity = false`), vessel A's broadcast protects vessel B
+from misdetection — wrong. With `source_aware_identity = true`, a
+`SourceTouch` entry with a `vessel_id` (from `Measurement::hints.mmsi`) uses
+the vessel-level key instead of the channel key:
+
+```
+should_misdetect(id) =
+  ∀ touch ∈ contribution_history[id]:
+    if touch.vessel_id set → touch.vessel_id ∈ scan_vessel_ids
+    else                   → touch.source_id ∈ scan_source_ids   (channel fallback)
+```
+
+**Off by default** — bit-identical to `source_aware_misdetection` alone.
+
+Note: `source_id = "ais"` is intentionally left unchanged. MHT's miss-dedup
+(`TrackTree.cpp`) collapses all `"ais"` to one detection opportunity by
+channel; per-vessel `source_id` would silently break MHT. Per-vessel
+separation goes through `SourceTouch::vessel_id` only.
+
 ### 3.2 New-target Bernoulli from PPP
 
 For each measurement `z_m`:
@@ -321,6 +383,20 @@ multipath — the recursion is approximate. The trajectory-PMBM variant
 relaxes (1) and (2) for trajectory association but keeps the point-target
 generation model.
 
+**Additional assumptions for `source_aware_identity = true`:**
+- `Measurement::hints.mmsi` is populated for all AIS measurements. If MMSI
+  is absent on a measurement, the gate falls back to channel-level keying.
+- The `SourceTouch::vessel_id` carried in `contribution_history_` is set at
+  detection time from the matched measurement's `hints.mmsi`. Bernoullis born
+  before this flag was enabled carry no `vessel_id` and use the channel
+  fallback (benign degradation).
+
+**Additional assumption for `dedup_miss_pd = true`:**
+- Returns from the same radar sweep share identical `(sensor, model,
+  source_id)`. If two physically separate sensors happen to share the same
+  triple (misconfigured source_id), they will be deduplicated as one
+  opportunity — an operator configuration error, not a filter bug.
+
 ---
 
 ## 5. Rationale
@@ -441,6 +517,17 @@ In order of expected payoff:
    (`min_new_bernoulli_existence`) can still suppress the near-zero-r clutter
    births (set `min_new_bernoulli_existence = r*/2`). The task-1 probe
    `gospa_mean` on philos: 48.50 m vs 82.63 m baseline (−41 %).
+5a. **Misdetection dedup + cardinality control bundle** (Task 2, 2026-06-24,
+   §3.1.1–3.1.3). `source_aware_identity = true` and `dedup_miss_pd = true`
+   are now behind config flags (default off = bit-identical). The correct
+   cardinality control (Task 2c) must be tuned before enabling `dedup_miss_pd`
+   in a bench config: with the over-penalty removed, phantoms no longer
+   self-prune and `output_existence_floor` / `r_min` must do the work instead.
+   Grid: `output_existence_floor ∈ {0.2, 0.3, 0.5}`, `min_new_bernoulli_existence
+   ∈ {0.05, 0.1, 0.2}`, combined with Task 1 `birth_existence_target = 0.1` and
+   `source_aware_identity = true`. Accept the combination whose philos
+   `gospa_mean < 82.63` AND autoferry guard is not worse than
+   `imm_cv_ct_pmbm_adapt`.
 6. **Poisson birth intensity spatial tuning.** First cut is uniform over
    local ENU patch. Real wins come from sensor-region-conditional birth —
    radar coverage edges, AIS broadcast zones, named ports. Pin a synthetic
