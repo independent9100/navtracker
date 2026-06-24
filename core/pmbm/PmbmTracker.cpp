@@ -460,8 +460,11 @@ PmbmTracker::buildAdaptiveBirthCandidates(
     // AIS λ_C=1e-9 all yield r_new = target without manual per-sensor
     // tuning. Legacy path unchanged when target = 0.
     double lambda_birth = cfg_.lambda_birth;
-    if (cfg_.birth_existence_target > 0.0) {
+    if (cfg_.birth_existence_target > 0.0 && cfg_.birth_existence_target < 1.0) {
       // Clutter-invariant: choose λ_birth so r_new == target for this z.
+      // Guard: r must be in (0, 1); values >= 1.0 would divide by zero
+      // or go negative. Fall through to the lambda_birth_per_sensor /
+      // scalar path instead (finite, predictable).
       const double r = cfg_.birth_existence_target;
       lambda_birth = (r / (1.0 - r)) * lambda_z;
     } else if (!cfg_.lambda_birth_per_sensor.empty()) {

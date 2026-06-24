@@ -188,6 +188,13 @@ class PmbmTracker {
     // Fixes the philos over-confident-birth bug: a fixed *absolute*
     // λ_birth gives r_new ≈ 0.79 (radar) / ≈1.0 (AIS) on philos because
     // λ_C there is 2.7e-6 / 1e-9, not the 1e-4 the scalar was tuned for.
+    //
+    // Must be in (0, 1); values outside this range (0 or >= 1) fall back
+    // to the lambda_birth / lambda_birth_per_sensor path (finite, predictable).
+    // Values >= 1 would produce zero or negative denominator (→ Inf/NaN);
+    // the guard in buildAdaptiveBirthCandidates enforces the contract.
+    // Only effective when adaptive_birth = true.
+    //
     // 0 = legacy (use lambda_birth / lambda_birth_per_sensor). Typical
     // 0.1–0.3 so real targets ramp via posterior over later detections.
     double birth_existence_target = 0.0;

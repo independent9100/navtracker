@@ -626,6 +626,7 @@ std::vector<Config> defaultConfigs() {
       auto cfg = makePmbmConfig();
       cfg.adaptive_birth = true;
       cfg.k_best_per_hypothesis = 1;
+      cfg.adaptive_k_best = false;  // explicit: mirrors imm_cv_ct_pmbm_adapt; safe if default changes
       cfg.lambda_birth = 1e-5;
       cfg.min_new_bernoulli_existence = 0.05;
       return cfg;
@@ -640,10 +641,9 @@ std::vector<Config> defaultConfigs() {
   // Task 2c — principled PMBM bundle: correct misdetection math (dedup_miss_pd)
   // + clutter-invariant births (birth_existence_target) + per-vessel identity
   // gate (source_aware_identity) + raised cardinality-control floors.
-  // Without the floor/target lifts, dedup_miss_pd alone causes +92 % philos
-  // GOSPA phantom bloat (phantom Bernoullis survive the correct lower miss
-  // penalty). The bundle compensates via principled birth sizing + tighter
-  // emission gate so the tracker never needed the wrong math to stay sane.
+  // dedup_miss_pd in isolation gave +92% philos GOSPA historically
+  // (eval-log PHILOS-T1); this bundle (with controlled births + floors)
+  // is ~+36% vs adapt — still a philos regression, hence ablation-only.
   {
     Config c;
     c.label = "imm_cv_ct_pmbm_bundle";

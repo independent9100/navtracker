@@ -871,6 +871,51 @@ TEST(PmbmTrackerUpdate, BirthExistenceTargetIsClutterInvariant) {
 }
 
 // ---------------------------------------------------------------------------
+// Regression: birth_existence_target >= 1.0 must fall back to the
+// lambda_birth scalar path, NOT produce NaN/Inf existence.
+//
+// Before the guard, birth_existence_target = 1.5 caused
+// lambda_birth = (1.5 / (1.0 - 1.5)) * lambda_C = -3 * lambda_C (negative),
+// which in turn gave r_new = -3*lambda_C / (-3*lambda_C + lambda_C) — a
+// non-finite or negative ratio that silently poisoned the Bernoulli.
+//
+// After the guard (target < 1.0 required), the code falls through to the
+// scalar lambda_birth path. r_new = lambda_birth / (lambda_birth + lambda_C).
+TEST(PmbmTrackerUpdate, BirthExistenceTargetOutOfRangeFallsBackToLambdaBirth) {
+  const double lambda_birth = 5e-4;
+  const double lambda_C     = 1e-4;
+  const double r_expected   = lambda_birth / (lambda_birth + lambda_C);
+
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.adaptive_birth               = true;
+  cfg.measurement_driven_birth     = false;
+  cfg.smart_birth_skip_existing    = false;
+  cfg.min_new_bernoulli_existence  = 0.0;
+  cfg.clutter_intensity            = lambda_C;
+  cfg.lambda_birth                 = lambda_birth;
+  cfg.birth_existence_target       = 1.5;  // invalid: >= 1.0
+
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.processBatch({pos2d(1.0, 100.0, 50.0)});
+
+  double r_max = 0.0;
+  bool any_bernoulli = false;
+  for (const auto& h : tracker.density().mbm) {
+    for (const auto& b : h.bernoullis) {
+      any_bernoulli = true;
+      EXPECT_TRUE(std::isfinite(b.existence_probability))
+          << "birth_existence_target >= 1.0 must not produce NaN/Inf";
+      r_max = std::max(r_max, b.existence_probability);
+    }
+  }
+  if (any_bernoulli) {
+    EXPECT_NEAR(r_max, r_expected, 1e-6)
+        << "fallback must use scalar lambda_birth path";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Determinism: replaying the exact same scan sequence gives identical
 // MBM state (same hypothesis count, same Bernoulli ids assigned in order).
 TEST(PmbmTrackerUpdate, ReplayDeterministicallyReproducesState) {

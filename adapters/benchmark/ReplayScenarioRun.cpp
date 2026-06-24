@@ -303,7 +303,6 @@ class AutoferryScenarioRun : public ScenarioRun {
         std::string("data/autoferry/") + label_, label_, opts);
   }
 
- public:
   // Seed the bias estimator with the offline-calibrated EO/IR bearing
   // bias for env-2 scenarios. Numbers from tools/autoferry_r_calibration.py
   // (per-scenario report, 2026-06-16): env-2 IR mean ≈ 4.9°, EO mean ≈
