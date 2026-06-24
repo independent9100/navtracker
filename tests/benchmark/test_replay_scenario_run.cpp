@@ -14,9 +14,9 @@
 
 using namespace navtracker::benchmark;
 
-TEST(ReplayScenarioRun, TwoReplaysWithExpectedLabels) {
+TEST(ReplayScenarioRun, ReplaysWithExpectedLabels) {
   const auto scenarios = defaultReplayScenarios();
-  ASSERT_EQ(scenarios.size(), 2u);
+  ASSERT_EQ(scenarios.size(), 3u);
   std::set<std::string> labels;
   for (const auto& s : scenarios) {
     labels.insert(s->descriptor().label);
@@ -24,6 +24,7 @@ TEST(ReplayScenarioRun, TwoReplaysWithExpectedLabels) {
     EXPECT_EQ(s->descriptor().seed_count, 1u);
   }
   EXPECT_EQ(labels.count("philos"), 1u);
+  EXPECT_EQ(labels.count("philos_radartruth"), 1u);
   EXPECT_EQ(labels.count("haxr"), 1u);
 }
 

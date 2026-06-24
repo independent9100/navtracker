@@ -97,6 +97,7 @@ add_library(navtracker_replay
   adapters/replay/AisCsvReplayAdapter.cpp
   adapters/replay/OwnshipCsvReader.cpp
   adapters/replay/AutoferryJsonReplay.cpp
+  adapters/replay/RadarTruthCsvReader.cpp
 )
 target_include_directories(navtracker_replay PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_replay PUBLIC navtracker_core Eigen3::Eigen)
@@ -275,6 +276,7 @@ add_executable(navtracker_tests
   tests/output/test_track_output.cpp
   tests/replay/test_haxr_ospa.cpp
   tests/replay/test_philos_ospa.cpp
+  tests/replay/test_radar_truth_loader.cpp
   tests/replay/test_autoferry_json_replay.cpp
   tests/estimation/test_noise_models.cpp
   tests/tracking/test_sensor_detection_models.cpp
