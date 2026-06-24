@@ -10,13 +10,9 @@ using navtracker::benchmark::defaultConfigs;
 
 TEST(Config, DefaultConfigsHaveUniqueLabels) {
   const auto configs = defaultConfigs();
-  // 23: 22 standing + Phase 9 imm_cv_ct_pmbm_adapt_k3 (now folds in
-  // S4 cross_parent_birth_id_cache=true by default — the structural
-  // fix for autoferry-anchored regressions). The earlier S3 _altgate
-  // and _xparent probe configs were dropped 2026-06-23 after the
-  // xparent fix proved the right default; their knobs remain
-  // wired+unit-tested for per-consumer ablation.
-  ASSERT_EQ(configs.size(), 23u);
+  // 24: 23 standing + Task 1 imm_cv_ct_pmbm_birthtarget
+  // (clutter-invariant birth existence target for philos over-birth fix).
+  ASSERT_EQ(configs.size(), 24u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   // Canonical wires the bias estimator unconditionally; the
@@ -28,7 +24,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 23u);
+  EXPECT_EQ(labels.size(), 24u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt_k3"), 1u);
   // Phase 9 probe siblings dropped 2026-06-23 (S4 fold-in):
@@ -58,6 +54,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   EXPECT_EQ(labels.count("imm_cv_ct_noisy_mht"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_recapture"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_pmbm_birthtarget"), 1u);
   // biascal label removed — its wiring is now the canonical.
   EXPECT_EQ(labels.count("imm_cv_ct_mht_biascal"), 0u);
 }

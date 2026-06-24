@@ -85,6 +85,53 @@ std::vector<double> computeGospaPerStep(const BenchResult& result,
   return out;
 }
 
+// Math:        per-step GOSPA decomposition at p=α=2. Calls
+//              gospaComponents() for each step and returns four
+//              parallel vectors:
+//                localization[k] = Σ d(x_i,y_j)² over matched pairs at step k
+//                missed[k]       = n_missed_k * c²/α
+//                false_[k]       = n_false_k  * c²/α
+//                card_err[k]     = int(|est_k|) − int(|truth_k|)  (signed)
+//              Each vector has length result.steps.size().
+// Assumptions: same as computeGospaPerStep.
+// Rationale:   single solve per step (gospaComponents is DRY over
+//              gospaGreedy); vectors are in power-p space so they
+//              sum exactly to total_k = localization_k + missed_k + false_k.
+// Improve next: per-target breakdown (which truth was missed / which
+//               est was false) for drill-down visualisation.
+struct GospaDecompPerStep {
+  std::vector<double> localization;
+  std::vector<double> missed;
+  std::vector<double> false_;
+  std::vector<double> card_err;  // signed
+};
+
+GospaDecompPerStep computeGospaDecompPerStep(const BenchResult& result,
+                                              double cutoff_m) {
+  const std::size_t N = result.steps.size();
+  GospaDecompPerStep out;
+  out.localization.reserve(N);
+  out.missed.reserve(N);
+  out.false_.reserve(N);
+  out.card_err.reserve(N);
+  for (const auto& step : result.steps) {
+    std::vector<Eigen::Vector2d> truth;
+    truth.reserve(step.truth.size());
+    for (const auto& t : step.truth) truth.push_back(t.position);
+    std::vector<Eigen::Vector2d> est;
+    est.reserve(step.tracks.size());
+    for (const auto& tr : step.tracks) est.push_back(tr.position);
+    const GospaComponents g = gospaComponents(truth, est, cutoff_m);
+    out.localization.push_back(g.localization);
+    out.missed.push_back(g.missed);
+    out.false_.push_back(g.false_);
+    out.card_err.push_back(
+        static_cast<double>(static_cast<int>(est.size()) -
+                            static_cast<int>(truth.size())));
+  }
+  return out;
+}
+
 double mean(const std::vector<double>& v) {
   if (v.empty()) return 0.0;
   return std::accumulate(v.begin(), v.end(), 0.0) / v.size();
@@ -421,8 +468,20 @@ MetricsResult computeMetrics(const BenchResult& result,
   const auto per_step = computeOspaPerStep(result, params.ospa_cutoff_m);
   m.ospa_mean = mean(per_step);
   m.ospa_p95 = percentile(per_step, 0.95);
-  const auto gospa_per_step =
-      computeGospaPerStep(result, params.gospa_cutoff_m);
+  // Compute GOSPA decomposition once; derive scalar aggregates from it
+  // (DRY: avoids a second gospaGreedy solve per step).
+  const auto decomp =
+      computeGospaDecompPerStep(result, params.gospa_cutoff_m);
+  // Reconstruct the per-step GOSPA scalar series from the decomposition
+  // totals so gospa_mean and gospa_p95 remain bit-for-bit identical to
+  // the previous gospaGreedy path.
+  std::vector<double> gospa_per_step;
+  gospa_per_step.reserve(decomp.localization.size());
+  for (std::size_t k = 0; k < decomp.localization.size(); ++k) {
+    const double total_k =
+        decomp.localization[k] + decomp.missed[k] + decomp.false_[k];
+    gospa_per_step.push_back(total_k == 0.0 ? 0.0 : std::sqrt(total_k));
+  }
   m.gospa_mean = mean(gospa_per_step);
   m.gospa_p95 = percentile(gospa_per_step, 0.95);
   m.tgospa_raw_m = computeTGospaRawImpl(result, params.gospa_cutoff_m);
@@ -432,6 +491,11 @@ MetricsResult computeMetrics(const BenchResult& result,
   m.gospa_rms = gospa_per_step.empty()
                     ? 0.0
                     : std::sqrt(sumsq / static_cast<double>(gospa_per_step.size()));
+  // GOSPA sub-cost means (pre-root, power-p space).
+  m.gospa_localization = mean(decomp.localization);
+  m.gospa_missed       = mean(decomp.missed);
+  m.gospa_false        = mean(decomp.false_);
+  m.card_err_mean      = mean(decomp.card_err);
   const auto assigns = assignPerStep(result, params.assoc_gate_m);
   const auto cont = computeContinuity(result, assigns);
   m.lifetime_ratio = cont.lifetime_ratio;

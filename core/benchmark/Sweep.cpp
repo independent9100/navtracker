@@ -102,6 +102,10 @@ void emit(std::vector<MetricRow>& out,
   out.push_back({p.run_id, config, scenario, seed, "gospa_mean", m.gospa_mean, "m"});
   out.push_back({p.run_id, config, scenario, seed, "gospa_p95", m.gospa_p95, "m"});
   out.push_back({p.run_id, config, scenario, seed, "gospa_rms", m.gospa_rms, "m"});
+  out.push_back({p.run_id, config, scenario, seed, "gospa_localization", m.gospa_localization, "m2"});
+  out.push_back({p.run_id, config, scenario, seed, "gospa_missed", m.gospa_missed, "m2"});
+  out.push_back({p.run_id, config, scenario, seed, "gospa_false", m.gospa_false, "m2"});
+  out.push_back({p.run_id, config, scenario, seed, "card_err_mean", m.card_err_mean, "tracks"});
   out.push_back({p.run_id, config, scenario, seed, "tgospa_raw", m.tgospa_raw_m, "m"});
   out.push_back({p.run_id, config, scenario, seed, "tgospa_smooth", m.tgospa_smooth_m, "m"});
   out.push_back({p.run_id, config, scenario, seed, "lifetime_ratio", m.lifetime_ratio, "ratio"});

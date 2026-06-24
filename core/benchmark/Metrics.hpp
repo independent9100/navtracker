@@ -41,6 +41,19 @@ struct MetricsResult {
   // Helgesen 2022 reports in Tables 6 / 7 ("GOSPA is reported as RMS")
   // and is what to compare against the paper's headline numbers.
   double gospa_rms{0.0};        // metres
+  // GOSPA decomposition (Rahmathullah 2017): arithmetic mean over steps of
+  // the three pre-root sub-costs (power-p space, p=2 convention).
+  //   gospa_localization = mean_k Σ_{matched pairs k} d(x_i,y_j)²
+  //   gospa_missed       = mean_k n_missed_k * c²/α
+  //   gospa_false        = mean_k n_false_k  * c²/α
+  // Identity: gospa_localization + gospa_missed + gospa_false ≈ mean_k(GOSPA_k²)
+  //   (exact when gospa_mean = mean(√total_k) ≈ √(mean(total_k))).
+  // card_err_mean = mean_k(|est_k| − |truth_k|), signed: positive means
+  //   over-counting (more estimates than truth); negative means under-counting.
+  double gospa_localization{0.0};  // m² (pre-root, p=2)
+  double gospa_missed{0.0};        // m² (pre-root, p=2)
+  double gospa_false{0.0};         // m² (pre-root, p=2)
+  double card_err_mean{0.0};       // tracks (signed mean cardinality error)
   // Trajectory-aligned T-GOSPA over BenchResult.steps. Stitches truth
   // and estimated positions into time-indexed trajectories keyed by
   // truth_id / TrackId.value, then runs core/scenario/TGospa.hpp. The
