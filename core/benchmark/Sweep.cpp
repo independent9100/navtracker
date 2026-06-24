@@ -1,5 +1,7 @@
 #include "core/benchmark/Sweep.hpp"
 
+#include <chrono>
+
 // Sweep — drives the (config x scenario x seed) matrix, runs BenchRunner,
 // computes metrics, emits long-format rows.
 //
@@ -92,7 +94,9 @@ void emit(std::vector<MetricRow>& out,
           const std::string& scenario,
           std::uint64_t seed,
           const MetricsResult& m,
-          const ConsistencyResult& c) {
+          const ConsistencyResult& c,
+          double wall_seconds) {
+  out.push_back({p.run_id, config, scenario, seed, "wall_seconds", wall_seconds, "s"});
   out.push_back({p.run_id, config, scenario, seed, "ospa_mean", m.ospa_mean, "m"});
   out.push_back({p.run_id, config, scenario, seed, "ospa_p95", m.ospa_p95, "m"});
   out.push_back({p.run_id, config, scenario, seed, "gospa_mean", m.gospa_mean, "m"});
@@ -207,6 +211,7 @@ std::vector<MetricRow> runSweep(
         NisCollector nis;
         std::map<std::uint64_t, std::vector<pmbm::TrajectoryPoint>>
             pmbm_smoothed_trajectories;
+        const auto t_cell0 = std::chrono::steady_clock::now();
         if (config.tracker_kind == TrackerKind::Mht) {
           MhtTracker::Config cfg =
               config.mht_config ? config.mht_config() : MhtTracker::Config{};
@@ -335,6 +340,9 @@ std::vector<MetricRow> runSweep(
         // the (possibly empty) smoothed trajectories — empty est
         // produces a genuine cardinality penalty rather than the
         // default-0 sentinel from the scalar overload.
+        const auto t_cell1 = std::chrono::steady_clock::now();
+        const double wall_seconds =
+            std::chrono::duration<double>(t_cell1 - t_cell0).count();
         const auto m = (config.tracker_kind == TrackerKind::Pmbm)
             ? computeMetrics(result, params.metrics,
                              pmbm_smoothed_trajectories)
@@ -342,7 +350,7 @@ std::vector<MetricRow> runSweep(
         const auto c =
             computeConsistency(nis, result, params.metrics.assoc_gate_m);
         emit(rows, params, config.label, desc.label,
-             static_cast<std::uint64_t>(seed), m, c);
+             static_cast<std::uint64_t>(seed), m, c, wall_seconds);
       }
     }
   }
