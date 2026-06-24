@@ -655,11 +655,19 @@ std::vector<Config> defaultConfigs() {
       cfg.adaptive_birth = true;
       cfg.k_best_per_hypothesis = 1;
       cfg.adaptive_k_best = false;
-      cfg.birth_existence_target = 0.15;   // sweep target (start); see Task 2c report
+      // Task 2c sweep winner: target=0.1, floor=0.1 (lowest gospa 112.0,
+      // card_err +46.25 — least overcounting in the sweep). All 6 combinations
+      // (target∈{0.1,0.15,0.2} × floor∈{0.1,0.3}) yield gospa 112–119,
+      // card_err +46..+57; none beats imm_cv_ct_pmbm_adapt (82.63). The root
+      // cause is dedup_miss_pd=true reducing miss penalty → phantom Bernoullis
+      // from clutter accumulate to r>0.3 before pruning. output_existence_floor
+      // has negligible effect (phantoms' r>0.3). This config ships as ablation
+      // documenting the dedup_miss_pd bottleneck.
+      cfg.birth_existence_target = 0.1;    // Task 2c sweep winner
       cfg.source_aware_identity = true;    // Task 2a: per-vessel sensor gate
       cfg.dedup_miss_pd = true;            // Task 2b: correct misdetection math
       cfg.min_new_bernoulli_existence = 0.1;  // raised cardinality control (was 0.05)
-      cfg.output_existence_floor = 0.3;    // raised emission gate (was 0.1)
+      cfg.output_existence_floor = 0.1;    // Task 2c sweep: floor has no effect on phantoms (r>0.3)
       cfg.lambda_birth = 1e-5;             // ignored when birth_existence_target > 0
       return cfg;
     };

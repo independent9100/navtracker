@@ -519,15 +519,24 @@ In order of expected payoff:
    `gospa_mean` on philos: 48.50 m vs 82.63 m baseline (−41 %).
 5a. **Misdetection dedup + cardinality control bundle** (Task 2, 2026-06-24,
    §3.1.1–3.1.3). `source_aware_identity = true` and `dedup_miss_pd = true`
-   are now behind config flags (default off = bit-identical). The correct
-   cardinality control (Task 2c) must be tuned before enabling `dedup_miss_pd`
-   in a bench config: with the over-penalty removed, phantoms no longer
-   self-prune and `output_existence_floor` / `r_min` must do the work instead.
-   Grid: `output_existence_floor ∈ {0.2, 0.3, 0.5}`, `min_new_bernoulli_existence
-   ∈ {0.05, 0.1, 0.2}`, combined with Task 1 `birth_existence_target = 0.1` and
-   `source_aware_identity = true`. Accept the combination whose philos
-   `gospa_mean < 82.63` AND autoferry guard is not worse than
-   `imm_cv_ct_pmbm_adapt`.
+   are now behind config flags (default off = bit-identical). Task 2c
+   (2026-06-24) ran the full bundle (`dedup_miss_pd=true`,
+   `source_aware_identity=true`, `birth_existence_target∈{0.1,0.15,0.2}`,
+   `output_existence_floor∈{0.1,0.3}`, `min_new_bernoulli_existence=0.1`):
+   best philos result was gospa_mean=112.0 (target=0.1, floor=0.1,
+   card_err=+46.3) — significantly worse than the adapt baseline (82.63) and
+   the task-1 birthtarget result (48.5). The bottleneck is structural:
+   `dedup_miss_pd=true` reduces the miss penalty for phantom Bernoullis born
+   from radar clutter so they accumulate to r>0.3 before idle-decay prunes
+   them; the `output_existence_floor` has negligible effect on them (they
+   exceed it). Autoferry guard is *unexpectedly better* (bundle mean 8.70 vs
+   adapt 10.50, −18.3%, 16 of 18 scenarios improved); the dedup+identity
+   combination helps autoferry where radar detections are dense and per-vessel
+   gating is clean. The bundle ships as `imm_cv_ct_pmbm_bundle` in
+   `Config.cpp` for ablation use. To make `dedup_miss_pd` viable on philos,
+   the next candidate fix is a tighter clutter-conditional r_min (raise
+   `r_min` per-sensor when λ_C is sparse-AIS, not uniform 1e-5), or a
+   PPP-coverage birth gate that suppresses births in AIS-only regions.
 6. **Poisson birth intensity spatial tuning.** First cut is uniform over
    local ENU patch. Real wins come from sensor-region-conditional birth —
    radar coverage edges, AIS broadcast zones, named ports. Pin a synthetic
