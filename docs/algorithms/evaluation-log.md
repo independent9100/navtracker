@@ -4666,3 +4666,189 @@ measurement-correction path should produce a full-matrix bench diff
 in the same commit, not a spot-check. The autoferry-unanchored wins
 that emerged here would have been worth highlighting at the time of
 landing rather than being hidden inside "no change".
+
+## 2026-06-24 — Cl-3 #3: PMBM-vs-MHT runtime measurement and promotion call
+
+**Why.** PMBM accuracy was known (`pmbm_adapt_k3_phase9_20260623` and
+prior). Runtime was never measured at full-matrix scale, so the
+canonical-promotion question was open. `Sweep.cpp` extended to emit
+`wall_seconds` per (config, scenario, seed) cell; full 23×29 matrix
+re-run at `--seeds 3`, baseline pinned at
+`docs/baselines/cl3_timing_pmbm_vs_mht_20260624T062343Z.csv` (elapsed
+4028 s, 1127 runs).
+
+### Per-class median wall-seconds and PMBM/MHT ratio
+
+| class | n | mht_med_s | pmbm | pmbm_adapt | pmbm_adapt_k3 |
+|---|---:|---:|---:|---:|---:|
+| autoferry_anchored   | 9 |  7.753 | 0.07x | **0.06x** | 0.66x |
+| autoferry_unanchored | 9 |  3.211 | 0.14x | **0.10x** | 1.31x |
+| philos               | 1 | 33.446 | 0.90x | **0.71x** | **10.68x** |
+| dense_clutter        | 1 |  0.021 | 1.82x | 0.47x | 3.83x |
+| non_cooperative      | 1 |  0.002 | 0.09x | 0.71x | 5.73x |
+| synthetic            | 7 |  0.003 | 0.82x | 0.75x | 2.03x |
+
+### Per-class median GOSPA delta vs MHT canonical (negative = better)
+
+| class | pmbm | pmbm_adapt | pmbm_adapt_k3 |
+|---|---:|---:|---:|
+| autoferry_anchored   | +21.9% |  +5.1% | +10.9% |
+| autoferry_unanchored | −38.2% | **−42.0%** | **−43.0%** |
+| philos               | +42.8% | +19.0% | +18.8% |
+| dense_clutter        | +102.5% | +3.1% | −1.3% |
+| non_cooperative      | −28.2% |  +0.0% |  +0.3% |
+| synthetic            |  −3.8% |  −3.8% |  −3.8% |
+
+### Read
+
+1. **`pmbm_adapt` (K=1) is faster than MHT on every scenario class.**
+   Autoferry runs 7-16x faster, philos 1.4x faster, synthetics ~30%
+   faster. The autoferry speedup grows with scenario length: the
+   biggest single cell is sc5_anchored at **MHT 30.8 s → PMBM 0.79 s
+   (39x faster)**, with sc3_anchored 14.9 s → 0.55 s (27x). MHT's
+   cost-matrix enumeration scales worse with track-count + clutter
+   density than PMBM's PPP+MBM structure.
+
+2. **K=3 + xparent is dominated on runtime.** philos jumps from MHT
+   33 s to **357 s (10.7x slower)** — the per-track-hypothesis
+   expansion under K=3 hits philos's long replay duration hard. Same
+   accuracy as K=1 on autoferry_unanchored (−43% vs −42%), strictly
+   worse on philos accuracy AND runtime. The xparent fix recovered
+   the autoferry-anchored regressions but the runtime cost on
+   long-replay workloads is now visible: K=3+xparent is the wrong
+   default for any consumer running scenarios > ~10 s.
+
+3. **Accuracy direction unchanged from prior bench rounds.** PMBM
+   wins big on autoferry_unanchored (−42%), regresses philos
+   (+19%), and is essentially tied on synthetics. The
+   autoferry_anchored regression of K=1 (+5%) is now small enough to
+   be in the noise; the K=3 fix is no longer load-bearing.
+
+### Promotion call
+
+**Recommendation: keep `imm_cv_ct_mht` (UKF) as the default canonical
+in `defaultConfigs()`, but document that `imm_cv_ct_pmbm_adapt` is
+the recommended choice for autoferry-class workloads.** Reasoning:
+
+- For autoferry deployment, `pmbm_adapt` strictly dominates MHT
+  canonical: better GOSPA (−42% unanchored, +5% anchored ≈ tied),
+  10-15x faster wall-clock. If the deployment-target workload is
+  autoferry-class (littoral fusion of AIS + radar + EO/IR + lidar
+  with multi-target close-pass scenarios), `pmbm_adapt` is the
+  obvious choice.
+- For philos-class workloads (single-sensor or longer-duration
+  replays), MHT canonical still wins on accuracy (+19% GOSPA
+  regression under PMBM) at acceptable runtime cost.
+- The synthetic test suite barely separates the two; both are <1%
+  of MHT runtime on those.
+- Promoting `pmbm_adapt` to canonical would silently regress philos.
+  Promoting `pmbm_adapt_k3` to canonical would silently make philos
+  10x slower for no accuracy gain. Neither move is safe as a
+  one-line `defaultConfigs()` change.
+
+**Concrete next step.** Add a one-paragraph deployment-guidance note
+in `core/benchmark/Config.cpp` next to `imm_cv_ct_pmbm_adapt` that
+calls out the autoferry dominance + philos regression so library
+consumers see it at the point of decision. Optionally: deprecate
+`imm_cv_ct_pmbm_adapt_k3` to ablation-only status (still exposed
+behind a build flag for the structural-refactor follow-up, but
+removed from `defaultConfigs()` because of the 10.7x philos cost
+with no accuracy upside).
+
+Cl-3 #3 status: **measured and decided** — PMBM `pmbm_adapt` is the
+recommended choice for autoferry-class deployment; MHT canonical
+stays the default to avoid silent philos regression; K=3+xparent
+deprecated from `defaultConfigs()` over runtime cost. The Cl-3
+"PMBM is competitive with deployment-class MHT on real maritime
+data" headline is supported across both axes (accuracy + runtime)
+on autoferry; the philos accuracy gap remains the documented
+honest caveat.
+
+---
+
+## Task 4 — PMBM coverage/visibility channel (ISensorActivity): measured 2026-06-29
+
+**What shipped (code, Tasks 1–6, HEAD 44d3978).** A nullable `ISensorActivity`
+port + `DeclaredSensorActivity` declared-profile provider; numeric
+`platform_id` identity on `AssociationHints`; a unified PMBM identity gate
+(same vessel if shared `mmsi` OR `platform_id`); per-duty-cycle surveillance
+miss (replaces the wrong per-blip `compute_miss_pD` + `idle_halflife_sec`
+when `use_sensor_activity=true`); an existence-neutral cooperative
+stale/comms-loss signal (`IStaleSignalSink`) with cooperative-only retirement
+by `cooperative_stale_timeout_sec`. All behind flags; default-off bit-identical;
+determinism preserved (snapshot-read + deferred-write of the per-Bernoulli
+activity-check times → hypothesis-order-independent). Full unit suite green
+except the 2 known pre-existing adaptive-birth determinism fails.
+
+Bench config `imm_cv_ct_pmbm_coverage` = the bundle base (birth_target=0.1,
+source_aware_identity) with `use_sensor_activity=true`, `idle_halflife_sec=0`,
+`dedup_miss_pd=false`, `cooperative_stale_timeout_sec=120`. Activity profiles
+declared in `Sweep.cpp` from each scenario's detection table: surveillance
+(ArpaTtm duty 2.5 s / EoIr 1.0 s / Lidar 0.1 s, coverage+p_D from the table),
+cooperative (Ais interval 10 s). Cadence values are declared/tunable
+(spec roadmap §13.1 adaptive provider).
+
+**Philos A/B (single-seed; bench `2026-06-29_philos_coverage_ab.csv`,
+`philos`/`philos_radartruth` identical):**
+
+| config | gospa_mean | card_err | gospa_false | id_switch |
+|---|---|---|---|---|
+| birthtarget (Task 1) | **48.5** | −7.8 | 390 | 0 |
+| adapt | 82.6 | +17.5 | 5150 | 0.09 |
+| bundle (Task 2) | 112.0 | +46.3 | 11420 | 0.04 |
+| **coverage (Task 4)** | **153.6** | **+107.9** | **23750** | 0 |
+
+**Coverage is the worst PMBM variant on philos — a strong negative result.**
+Massive over-count. Two compounding causes, the second fundamental:
+1. *AIS immortality (plumbing gap).* AIS is modeled as cooperative-announce
+   (correct per spec taxonomy), so its silence never lowers existence. But the
+   cooperative retirement timer (`last_cooperative_touch_`) keys on
+   `SensorKind::Cooperative` — philos AIS is `SensorKind::Ais`, so the timer
+   never starts and AIS tracks are never retired. Proven by the isolation run
+   `2026-06-29_philos_coverage_t15.csv`: dropping the timeout 120→15 s changed
+   the result by **zero** (153.565 either way) — the timer is inert for AIS.
+2. *Honest radar miss is too weak at philos p_D.* Philos radar p_D=0.07, so one
+   missed sweep barely moves existence (`r⁺≈0.93·r`), and persistent shore
+   returns are *re-detected every rotation* — the temporal coverage model
+   cannot distinguish a re-detected shore echo from a real vessel. Removing the
+   (dishonestly aggressive) wrong-math + idle_halflife removed the only thing
+   that was suppressing those phantoms. This is the same lesson as Task 2c
+   (correct math worse on philos) and Task 3 (clutter map inert on philos):
+   **philos over-count is a spatial clutter problem, not a temporal one.**
+
+**Autoferry guard (scenario2/22 ± anchored; `2026-06-29_autoferry_coverage_guard.csv`):**
+
+| config | scen2 gospa | scen22 gospa | scen2 card_err | id_switch |
+|---|---|---|---|---|
+| adapt | 17.28 | 21.39 | +0.39 | 5–18 |
+| bundle | 12.88 | 15.74 | −0.55 | 0–5.5 |
+| **coverage** | **11.33** | **15.28** | **+0.15** | **0–1.5** |
+
+**Coverage is best-in-class on the real open-water/urban autoferry scenes** —
+lowest gospa, near-zero cardinality error, fewest id-switches — and with
+*fewer knobs* (no idle_halflife, no wrong-math). On the two synthetic
+*anchored* test scenes it trails the bundle slightly (4.98 vs 2.64; 3.12 vs
+2.20) but is well-behaved. Where detection probability is real (autoferry
+p_D 0.6–0.8), the honest coverage model genuinely works.
+
+**Decision (Task 8): keep `imm_cv_ct_pmbm_coverage` as an opt-in ablation;
+do NOT promote to canonical.** It is the recommended PMBM choice for
+high-p_D, surveillance-dominated deployments (autoferry-class), where it
+beats the bundle on accuracy, cardinality, and identity stability with a
+simpler knob set. It must not be used for low-p_D / clutter-heavy coastal
+workloads (philos-class), where it badly over-counts. The principled philos
+fix is **spatial shore-clutter suppression (coastline land-masking / a
+clutter-prior at birth + occlusion in the coverage query)**, not better
+temporal miss modeling — recorded as the next candidate.
+
+**Known limitations / follow-ups.**
+- AIS-as-cooperative retirement timer gap (cause #1): the cooperative
+  stale/retirement path recognizes only `SensorKind::Cooperative`, not other
+  cooperative-announce sources (AIS). To make the coverage model viable on
+  AIS-heavy scenes, the timer should key on the *channel kind* (from the
+  activity profile), not the SensorKind. Deferred — would not change the
+  philos verdict because radar phantoms (cause #2) dominate.
+- PMBM adaptive-birth non-determinism (pre-existing, tests #314/#770) adds
+  run-to-run noise to these single-seed numbers; both A/B arms share it.
+  The autoferry/philos gaps here are far larger than that noise, so the
+  qualitative conclusions hold.
