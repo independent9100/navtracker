@@ -222,6 +222,53 @@ TEST(PmbmIdentityGate, CooperativeOnlyKeyedByPlatformId) {
 // carries platform_id (not mmsi), the Bernoulli is still observable because
 // it shares platform_id with its contribution history.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Task 4: setSensorActivity seam — bit-identical default contract.
+//
+// A tracker with NO activity wired (sensor_activity_ == nullptr and
+// use_sensor_activity == false) must produce exactly the same existence
+// decay as the pre-Task-4 baseline.  Canonical misdetection math:
+//   r ← (1 − p_D) · r / (1 − r · p_D)
+//   = 0.1 · 0.8 / (1 − 0.72) = 0.08 / 0.28
+// This test calls setSensorActivity(nullptr) explicitly to verify the
+// nullable setter compiles and is side-effect-free.  Without the
+// implementation the test fails to compile (RED → GREEN after Step 3).
+// ---------------------------------------------------------------------------
+TEST(PmbmSensorActivity, NullActivityIsBehaviourNeutral) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.survival_probability = 1.0;  // isolate update math from predict
+  PmbmTracker tracker(ekf, cfg);
+
+  // Prove the nullable setter compiles and is behaviour-neutral.
+  tracker.setSensorActivity(nullptr);
+
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Seed one Bernoulli at r=0.8.
+  GlobalHypothesis h;
+  h.weight = 1.0;
+  h.log_weight = 0.0;
+  Bernoulli b;
+  b.id = navtracker::pmbm::BernoulliId{1};
+  b.existence_probability = 0.8;
+  b.mean = gCvState(0.0, 0.0, 0.0, 0.0);
+  b.covariance = gPosCov(2.0, 0.5);
+  b.last_update = Timestamp::fromSeconds(0.0);
+  h.bernoullis.push_back(b);
+  tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
+
+  tracker.processBatch({});  // empty scan: every Bernoulli is a miss
+
+  ASSERT_EQ(tracker.density().mbm.size(), 1u);
+  ASSERT_EQ(tracker.density().mbm[0].bernoullis.size(), 1u);
+  EXPECT_NEAR(tracker.density().mbm[0].bernoullis[0].existence_probability,
+              0.08 / 0.28, 1e-9)
+      << "setSensorActivity(nullptr) must leave misdetection math bit-identical";
+}
+
 TEST(PmbmIdentityGate, SharedEitherKeyIsSameVessel) {
   auto motion = std::make_shared<ConstantVelocity2D>(0.1);
   EkfEstimator ekf(motion, 5.0);

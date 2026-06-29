@@ -12,6 +12,7 @@
 #include "ports/IEstimator.hpp"
 #include "ports/ISensorBiasProvider.hpp"
 #include "ports/ISensorDetectionModel.hpp"
+#include "ports/ISensorActivity.hpp"
 #include "ports/ITrackSink.hpp"
 
 // Poisson Multi-Bernoulli Mixture (PMBM) tracker. Sibling to MhtTracker,
@@ -355,6 +356,16 @@ class PmbmTracker {
     // for parity with prior behaviour; the bench config sets ~60 s.
     double idle_halflife_sec = 0.0;
 
+    // Task 4: when true AND sensor_activity is wired, existence moves only
+    // on a genuine per-duty-cycle surveillance miss; idle_halflife and the
+    // per-blip miss path are bypassed (spec §4, §12). Default false ->
+    // today's behaviour, bit-identical.
+    bool use_sensor_activity = false;
+    // Task 4 (spec §4 case 2): a cooperative-only track is retired only
+    // after this many seconds with no own-identity report (0 = never by
+    // this rule). Never a per-sweep existence penalty.
+    double cooperative_stale_timeout_sec = 0.0;
+
     // Per-track-hypothesis structural path (Phase 9). When true,
     // `PmbmDensity::tracks` + `tracked_mbm` are populated alongside
     // the legacy flat `mbm` view. Phase 9 milestone S1 ships the
@@ -538,6 +549,12 @@ class PmbmTracker {
     detection_model_ = std::move(m);
   }
 
+  // Task 4: optional sensor-activity port. When null (default) the tracker
+  // behaves exactly as before Task 4 (bit-identical). When set and
+  // cfg_.use_sensor_activity == true, the misdetection step consults the
+  // port to distinguish genuine surveillance misses from idle intervals.
+  void setSensorActivity(const ISensorActivity* a) { sensor_activity_ = a; }
+
   // Next Bernoulli id that will be minted (introspection / tests).
   BernoulliId nextBernoulliId() const noexcept { return next_bernoulli_id_; }
 
@@ -662,6 +679,7 @@ class PmbmTracker {
   std::map<std::pair<int, int>, BernoulliId> scan_birth_id_cache_;
   const ISensorBiasProvider* bias_provider_{nullptr};
   std::shared_ptr<ISensorDetectionModel> detection_model_;
+  const ISensorActivity* sensor_activity_{nullptr};
   // Per-Bernoulli-id rolling source-touch history. Populated from the
   // dominant child after each scan; the same shape as
   // MhtTracker::contribution_history_. Folded into each emitted Track's
