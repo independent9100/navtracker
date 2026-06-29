@@ -82,6 +82,13 @@ struct Config {
   // birth). When pmbm_config.measurement_driven_birth is false, a
   // user-supplied factory is required for any new Bernoulli to spawn.
   std::function<pmbm::PmbmTracker::BirthModelFn()> pmbm_birth_model{};
+  // Task 4: build a DeclaredSensorActivity coverage model from the
+  // scenario's detection table + declared cadence and wire it into the
+  // PMBM tracker. When true, Sweep.cpp constructs a DeclaredSensorActivity
+  // from the per-sensor detection entries and calls
+  // tracker.setSensorActivity(). Only meaningful when tracker_kind == Pmbm
+  // and the scenario declares a detection_table.
+  bool use_sensor_activity_model{false};
 };
 
 // Returns the five baseline configurations in fixed order:

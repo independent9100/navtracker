@@ -677,6 +677,51 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // Task 4 coverage model: honest per-duty-cycle surveillance miss +
+  // cooperative stale signal, replacing idle_halflife + wrong-math
+  // per-blip miss. Cadence/coverage declared in Sweep.cpp.
+  // Clone of imm_cv_ct_pmbm_bundle with use_sensor_activity_model=true,
+  // use_sensor_activity=true, idle_halflife_sec=0 (retired), dedup_miss_pd
+  // disabled (coverage path bypasses compute_miss_pD wrong-math), and
+  // cooperative_stale_timeout_sec for AIS-only track retirement.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_coverage";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;  // unused for Pmbm
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_sensor_activity_model = true;  // Task 4: wire DeclaredSensorActivity
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.adaptive_k_best = false;
+      // Same sweep winner as the bundle (target=0.1, floor=0.1).
+      cfg.birth_existence_target = 0.1;
+      cfg.source_aware_identity = true;
+      cfg.min_new_bernoulli_existence = 0.1;
+      cfg.output_existence_floor = 0.1;
+      cfg.lambda_birth = 1e-5;             // ignored when birth_existence_target > 0
+      // Coverage path: honest surveillance miss via ISensorActivity.
+      cfg.use_sensor_activity = true;
+      // Retire the idle-halflife hack: the honest coverage model owns the
+      // surveillance-absence signal; idle_halflife would double-count.
+      cfg.idle_halflife_sec = 0.0;
+      // The coverage path bypasses compute_miss_pD wrong-math — dedup is
+      // irrelevant (and was the load-bearing brake in the bundle).
+      cfg.dedup_miss_pd = false;
+      // AIS is cooperative here → it never lowers existence via miss math.
+      // Cooperative-only/AIS-only tracks must be retired by stale timeout or
+      // cardinality grows. 120 s ≈ several missed AIS reports (declared/tunable).
+      cfg.cooperative_stale_timeout_sec = 120.0;
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Cl-3 Phase 9 — adaptive K with cap=3, shipped alongside K=1
   // imm_cv_ct_pmbm_adapt. Same-run 10-seed pinned baseline at
   // docs/baselines/pmbm_adapt_k3_phase9_20260623.csv.

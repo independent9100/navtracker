@@ -38,9 +38,11 @@
 #include "core/benchmark/Consistency.hpp"
 #include "core/bias/SensorBiasPairExtractor.hpp"
 #include "core/pipeline/Tracker.hpp"
+#include "core/sensor_activity/DeclaredSensorActivity.hpp"
 #include "core/tracking/ClutterMapDetectionModel.hpp"
 #include "core/tracking/SensorDetectionModels.hpp"
 #include "core/tracking/TrackManager.hpp"
+#include "ports/ISensorActivity.hpp"
 
 namespace navtracker {
 namespace benchmark {
@@ -280,6 +282,50 @@ std::vector<MetricRow> runSweep(
           auto det = detectionModelFor(desc, carrier, config.use_clutter_map);
           pmbm::PmbmTracker tracker(*est, cfg, std::move(birth));
           if (det) tracker.setSensorDetectionModel(det);
+
+          // Task 4: build a DeclaredSensorActivity from the scenario's
+          // per-sensor detection table and wire it into the PMBM tracker.
+          // The shared_ptr is kept alive until after the synchronous
+          // runBenchPmbm call below (the tracker holds only a raw pointer).
+          // Declared per-sensor cadence constants (decision §9a); tunable —
+          // see spec roadmap §13.1 adaptive provider.
+          constexpr double kArpaDutyCycleSec     = 2.5;   // typical radar rotation period
+          constexpr double kEoIrDutyCycleSec     = 1.0;   // EO/IR frame period
+          constexpr double kLidarDutyCycleSec    = 0.1;   // lidar scan period
+          constexpr double kAisReportIntervalSec = 10.0;  // AIS/cooperative broadcast interval
+          std::shared_ptr<DeclaredSensorActivity> activity;
+          if (config.use_sensor_activity_model && !desc.detection_table.empty()) {
+            std::vector<DeclaredSensorActivity::ChannelProfile> profiles;
+            for (const auto& e : desc.detection_table) {
+              DeclaredSensorActivity::ChannelProfile prof;
+              prof.sensor = e.sensor;
+              switch (e.sensor) {
+                case SensorKind::ArpaTtm:
+                case SensorKind::EoIr:
+                case SensorKind::Lidar:
+                  prof.kind            = ChannelKind::Surveillance;
+                  prof.max_range_m     = e.params.max_range_m;
+                  prof.sector_center_rad = e.params.sector_center_rad;
+                  prof.sector_width_rad  = e.params.sector_width_rad;
+                  prof.p_D             = e.params.probability_of_detection;
+                  prof.duty_cycle_sec  =
+                      (e.sensor == SensorKind::ArpaTtm) ? kArpaDutyCycleSec :
+                      (e.sensor == SensorKind::EoIr)    ? kEoIrDutyCycleSec :
+                                                           kLidarDutyCycleSec;
+                  break;
+                case SensorKind::Ais:
+                case SensorKind::Cooperative:
+                  prof.kind                      = ChannelKind::Cooperative;
+                  prof.expected_report_interval_sec = kAisReportIntervalSec;
+                  break;
+                default:
+                  continue;  // skip Unknown, OwnShip, ArpaTll
+              }
+              profiles.push_back(prof);
+            }
+            activity = std::make_shared<DeclaredSensorActivity>(std::move(profiles));
+            tracker.setSensorActivity(activity.get());
+          }
 
           // Same item-9 bias-estimator wiring as the MHT path:
           // per-cycle pair extraction (AIS-anchored position pairs +
