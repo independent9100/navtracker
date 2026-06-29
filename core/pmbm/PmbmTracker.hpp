@@ -726,6 +726,26 @@ class PmbmTracker {
   // absent (freshly born / never detected by a cooperative source).
   // Cleaned up alongside contribution_history_ when Bernoullis are pruned.
   std::map<BernoulliId, Timestamp> last_cooperative_touch_;
+  // Task 5 Step-4 fix: per-scan staging maps for hypothesis-consistent
+  // surveillance-miss / cooperative-touch windows. enumerateChildren runs
+  // once PER PARENT global hypothesis; the same BernoulliId appears across
+  // many parents. Mutating last_activity_check_ / last_cooperative_touch_
+  // mid-enumeration makes a later parent read a window a sibling parent
+  // just advanced, so the result depends on parent order. Instead every
+  // parent READS the persistent map as a read-only snapshot for the whole
+  // scan, and WRITES the resolved-this-scan time into these staging maps
+  // (max-merged so order-independent). processBatch merges the staging
+  // maps into the persistent maps ONCE, after all parents are enumerated.
+  // Both stay empty (inert, bit-identical) when use_sensor_activity is off.
+  std::map<BernoulliId, Timestamp> staged_activity_check_;
+  std::map<BernoulliId, Timestamp> staged_cooperative_touch_;
+  // Stage a resolved-this-scan window time, keeping the latest (max) value
+  // so the result is independent of which parent/assignment wrote first.
+  void stageActivityCheck(BernoulliId id, Timestamp t);
+  void stageCooperativeTouch(BernoulliId id, Timestamp t);
+  // Apply the staging maps to the persistent maps (called once per scan,
+  // after every parent has been enumerated). No-op when both are empty.
+  void mergeStagedActivityMaps();
   // Phase 4(D). Snapshot trajectories from the prior scan's dominant
   // hypothesis, keyed by Bernoulli id. Updated at end of each
   // processBatch alongside prev_emitted_statuses_. Two purposes:

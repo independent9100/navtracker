@@ -439,6 +439,134 @@ TEST(PmbmSensorActivity, MidSweepNoPenalty) {
 }
 
 // ---------------------------------------------------------------------------
+// Task 5 Step-4 fix (defect #1): a DETECTION must reset the surveillance-miss
+// window. Before the fix the detection branch never wrote last_activity_check_,
+// so the first dropout after a detection computed dt = now - birth_time, which
+// can exceed the duty cycle even though only one short interval has elapsed
+// since the detection -> a full miss is wrongly charged.
+//
+// survival_probability is set < 1 so the post-detection existence is < 1 and
+// the miss math is observable (a miss applied to r == 1 is a no-op:
+// (1-pD)*1/(1-pD) == 1, which would hide the defect).
+//
+// Timeline (chosen so NO miss fires at the detection scan in the broken
+// code, which would otherwise mask the defect by mutating the window):
+//   detection at t=30 (dt=30 < 60 duty from birth=0 -> alt hypotheses don't
+//   charge a miss either), then an empty scan at t=80 (only 50 s < 60 s duty
+//   since the detection, but 80 s > 60 s since birth).
+//   GREEN (fixed): detection stages window=30 -> dt=50 < 60 -> no miss ->
+//                  r stays at the post-detection-and-predict value (0.9).
+//   RED (broken):  detection never writes the window and no miss fired at
+//                  t=30, so the window falls back to birth_time=0 -> dt=80 >
+//                  60 -> a miss wrongly drops r to
+//                  (1-0.7)*0.9 / (1 - 0.9*0.7) = 0.27/0.37 ~= 0.7297.
+// ---------------------------------------------------------------------------
+TEST(PmbmSensorActivity, SurveillanceDetectionResetsMissWindow) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  auto activity = gRadarActivity();  // duty=60 s, range=10 km, pD=0.7
+
+  auto cfg = gActivityCfg();
+  cfg.survival_probability = 0.9;  // make post-detection r < 1 (miss observable)
+  PmbmTracker tracker(ekf, cfg);
+  tracker.setSensorActivity(&activity);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Seed Bernoulli id 99 at (5000, 0) (in radar coverage), birth_time = 0.
+  gSeedBernoulli(tracker, 5000.0, 0.0, 0.8);
+
+  // Detection scan at t=30 (< 60 s duty since birth): a radar return exactly
+  // at the track position. processBatch predicts to 30 internally; the
+  // detection sets existence to 1 and (after the fix) advances the
+  // surveillance-miss window to t=30. No miss is charged anywhere this scan.
+  Measurement z;
+  z.time = Timestamp::fromSeconds(30.0);
+  z.sensor = SensorKind::ArpaTtm;
+  z.source_id = "radar";
+  z.model = MeasurementModel::Position2D;
+  z.value = Eigen::Vector2d(5000.0, 0.0);
+  z.covariance = Eigen::Matrix2d::Identity();
+  tracker.processBatch({z});
+  const double r_after_det = gMaxR(tracker.density());
+  ASSERT_GT(r_after_det, 0.95)
+      << "detection must drive existence to ~1 (detected target)";
+
+  // Empty scan at t=80: 50 s < 60 s duty since the detection -> NO miss.
+  tracker.predict(Timestamp::fromSeconds(80.0));  // r *= survival -> 0.9
+  tracker.processBatch({});
+  const double r_after_gap = gMaxR(tracker.density());
+
+  EXPECT_NEAR(r_after_gap, 0.9, 1e-9)
+      << "A detection at t=30 resolves observability up to t=30, so it must "
+         "advance the surveillance-miss window. Only 50 s (< 60 s duty) have "
+         "elapsed since the detection, so NO miss may be charged. Before the "
+         "fix the window falls back to birth_time=0, dt=80 s > 60 s, and a "
+         "miss wrongly drops r to ~0.7297.";
+}
+
+// ---------------------------------------------------------------------------
+// Task 5 Step-4 fix (defect #2): a surveillance miss must be applied
+// CONSISTENTLY across every parent global hypothesis that contains the same
+// BernoulliId. enumerateChildren runs once per parent; before the fix the
+// FIRST parent to charge a miss for id X mutated last_activity_check_[X]=now,
+// so a LATER parent enumerating the SAME id saw dt=0 and skipped the miss ->
+// the two parents' copies of id X diverged (one missed, one untouched).
+//
+// Seed TWO global hypotheses, each holding a Bernoulli with id 99 at (5000,0).
+// Empty scan after a full duty cycle: with the snapshot-read + deferred-write
+// fix BOTH parents read the same pre-scan window (birth_time=0), so BOTH charge
+// the miss and BOTH copies end at the same existence. survival=1 isolates the
+// miss math.
+//   GREEN: both copies -> r = (1-0.7)*0.8 / (1 - 0.8*0.7) = 0.24/0.44.
+//   RED:   one copy 0.24/0.44, the other still 0.8 (order-dependent).
+// ---------------------------------------------------------------------------
+TEST(PmbmSensorActivity, SurveillanceMissAppliedConsistentlyAcrossHypotheses) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  auto activity = gRadarActivity();  // duty=60 s, pD=0.7
+
+  PmbmTracker tracker(ekf, gActivityCfg());  // survival = 1.0
+  tracker.setSensorActivity(&activity);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Seed two parent global hypotheses, BOTH carrying Bernoulli id 99 at the
+  // same in-coverage position. Distinct log_weights keep both above the
+  // hypothesis weight floor and make the order deterministic. There is no
+  // global-hypothesis dedup in pruneAndNormalise, so both survive the scan.
+  auto seedHyp = [&](double log_w) {
+    GlobalHypothesis h;
+    h.weight = 1.0;
+    h.log_weight = log_w;
+    Bernoulli b;
+    b.id = navtracker::pmbm::BernoulliId{99};
+    b.existence_probability = 0.8;
+    b.mean = gCvState(5000.0, 0.0, 0.0, 0.0);
+    b.covariance = gPosCov(2.0, 0.5);
+    b.last_update = Timestamp::fromSeconds(0.0);
+    h.bernoullis.push_back(b);
+    tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
+  };
+  seedHyp(0.0);             // weight ~0.62 after normalise
+  seedHyp(std::log(0.5));   // weight ~0.38 after normalise
+
+  // Full duty cycle elapses, then an empty scan -> surveillance miss for BOTH.
+  tracker.predict(Timestamp::fromSeconds(60.0));
+  tracker.processBatch({});
+
+  ASSERT_EQ(tracker.density().mbm.size(), 2u)
+      << "both parent hypotheses must survive (no global-hypothesis dedup)";
+  const double expected = 0.24 / 0.44;
+  for (const auto& h : tracker.density().mbm) {
+    ASSERT_EQ(h.bernoullis.size(), 1u);
+    EXPECT_EQ(h.bernoullis[0].id, navtracker::pmbm::BernoulliId{99});
+    EXPECT_NEAR(h.bernoullis[0].existence_probability, expected, 1e-9)
+        << "every parent containing id 99 must receive the SAME surveillance "
+           "miss. Before the fix the second parent reads a window the first "
+           "parent already advanced (dt=0) and keeps r=0.8.";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Task 6: cooperative stale / comms-loss signal tests.
 //
 // Key invariant (spec §9c): a cooperative own-identity report being overdue

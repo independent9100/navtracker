@@ -671,7 +671,10 @@ void PmbmTracker::enumerateChildren(
           continue;
         }
         // One completed sweep with no return: charge exactly one miss.
-        last_activity_check_[b.id] = current_time_;
+        // Deferred write: stage (not mutate) the window so every parent
+        // sees the same pre-scan snapshot. Charging a miss resolves
+        // observability up to current_time_, so the window advances there.
+        stageActivityCheck(b.id, current_time_);
         const double r = b.existence_probability;
         const double pD = opp.p_D;
         const double miss_norm = 1.0 - r * pD;
@@ -813,8 +816,18 @@ void PmbmTracker::enumerateChildren(
         // retirement timer.  Radar/EO-IR/AIS detections must NOT reset it,
         // otherwise a vessel that goes silent on its cooperative link but
         // stays on radar would never be retired by cooperative_stale_timeout_sec.
+        // Deferred write (staged): keep the retirement-timeout read snapshot
+        // hypothesis-consistent across parents.
         if (scan[l].sensor == navtracker::SensorKind::Cooperative)
-          last_cooperative_touch_[b.id] = scan[l].time;
+          stageCooperativeTouch(b.id, scan[l].time);
+        // Task 5 Step-4 fix (defect #1): a detection resolves observability
+        // up to scan[l].time, so it ADVANCES the surveillance-miss window.
+        // Without this, the first dropout after a normal tracking run sees
+        // dt = now - birth_time (or last miss) and wrongly charges a full
+        // miss even though only one short scan interval elapsed since the
+        // detection. Staged (deferred) + gated so it is inert in legacy mode.
+        if (cfg_.use_sensor_activity && sensor_activity_ != nullptr)
+          stageActivityCheck(b.id, scan[l].time);
         // Full per-Bernoulli detection contribution to log-weight:
         // log(r · p_D · ℓ).  P_D is the assigned measurement's
         // per-(sensor, source) P_D under the detection model.
@@ -872,7 +885,9 @@ void PmbmTracker::enumerateChildren(
             continue;
           }
           // One completed sweep with no return: charge exactly one miss.
-          last_activity_check_[b.id] = current_time_;
+          // Deferred write: stage (not mutate) the window so every parent
+          // reads the same pre-scan snapshot (hypothesis-consistent).
+          stageActivityCheck(b.id, current_time_);
           const double r = b.existence_probability;
           const double pD = opp.p_D;
           const double miss_norm = 1.0 - r * pD;
@@ -1051,9 +1066,33 @@ void PmbmTracker::pruneAndNormalise() {
   }
 }
 
+void PmbmTracker::stageActivityCheck(BernoulliId id, Timestamp t) {
+  auto [it, inserted] = staged_activity_check_.insert({id, t});
+  if (!inserted && t.seconds() > it->second.seconds()) it->second = t;
+}
+
+void PmbmTracker::stageCooperativeTouch(BernoulliId id, Timestamp t) {
+  auto [it, inserted] = staged_cooperative_touch_.insert({id, t});
+  if (!inserted && t.seconds() > it->second.seconds()) it->second = t;
+}
+
+void PmbmTracker::mergeStagedActivityMaps() {
+  // Deferred write: advance the persistent windows to this scan's resolved
+  // times. Applied once, after all parents are enumerated, so the read
+  // snapshot was identical for every parent (hypothesis-order-independent).
+  for (const auto& [id, t] : staged_activity_check_) last_activity_check_[id] = t;
+  for (const auto& [id, t] : staged_cooperative_touch_)
+    last_cooperative_touch_[id] = t;
+}
+
 void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
   // Task 6: reset per-scan stale set. enumerateChildren will populate it.
   cooperative_overdue_ids_.clear();
+  // Task 5 Step-4 fix: reset the per-scan staging maps. enumerateChildren
+  // reads the persistent maps as a frozen snapshot and writes resolved
+  // window times here; merged into the persistent maps after all parents.
+  staged_activity_check_.clear();
+  staged_cooperative_touch_.clear();
   // Apply per-sensor registration bias correction (item 9) + Schmidt-KF
   // R-inflation before any predict / update. Null provider =
   // bit-identical to legacy.
@@ -1099,6 +1138,9 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
       }
       density_.mbm = std::move(children);
     }
+    // Task 5 Step-4 fix: apply the deferred window writes once, after every
+    // parent has been enumerated against the frozen pre-scan snapshot.
+    mergeStagedActivityMaps();
     // Phase 8 iter 4: empty-scan branch must also run the
     // within-hypothesis Bernoulli merge and fire lifecycle events.
     // Previously the early-return on line ~850 skipped both, so a
@@ -1313,6 +1355,12 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
   }
 
   density_.mbm = std::move(children);
+
+  // Task 5 Step-4 fix: apply the deferred window writes once, after every
+  // parent has been enumerated against the frozen pre-scan snapshot. This is
+  // what makes the surveillance-miss / cooperative-touch windows
+  // hypothesis-order-independent.
+  mergeStagedActivityMaps();
 
   // Within-hypothesis Bernoulli merge: fold near-duplicate Bernoullis
   // (Bhattacharyya position-block distance < threshold) into a single
