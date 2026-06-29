@@ -555,6 +555,200 @@ In order of expected payoff:
 
 ---
 
+## 9. Coverage / Visibility Channel (`ISensorActivity`)
+
+*Shipped: Task 4, 2026-06-29. Port: `ports/ISensorActivity.hpp`,
+`ports/IStaleSignalSink.hpp`. Provider: `core/sensor_activity/DeclaredSensorActivity.{hpp,cpp}`.
+Wired in `core/pmbm/PmbmTracker.cpp` (surveillance miss + cooperative stale).
+Plain-English introduction: [learning §24](../learning/24-coverage-visibility-channel.md).*
+
+---
+
+### 9.1 Math
+
+The Bernoulli existence recursion after a missed detection is:
+
+```
+r⁺ = (1 − p_D) · r / (1 − r · p_D)
+```
+
+The whole point of the coverage channel is to feed that recursion the **right
+`p_D`, charged at the right time**. The rule:
+
+**Charge at most one miss per sensor duty cycle, not per timestamp-batch.**
+
+For each Bernoulli and each channel that `ISensorActivity` knows:
+
+1. **Surveillance channel** (`ChannelKind::Surveillance` — radar, EO/IR, lidar).
+   The sensor sweeps an area on a known duty cycle (e.g. 2.5 s per radar
+   rotation). The miss penalty fires *only* when all three hold simultaneously:
+   - the sensor is active,
+   - the track's predicted ENU position is inside the declared coverage
+     (`max_range_m`, azimuth sector), and
+   - a full sweep has completed since `last_activity_check_` for this Bernoulli.
+
+   When all three hold and no associated return arrived → `MissOpportunity
+   {surveillance_miss=true, p_D=<channel p_D>}` → one miss is charged.
+   Otherwise `p_D = 0` → the recursion simplifies to `r⁺ = r` (unchanged).
+
+2. **Cooperative-announce channel** (`ChannelKind::Cooperative` — AIS, fleet
+   link). Does **not** enter the existence recursion at all (decision spec §9c).
+   If the track's own-identity report is overdue (elapsed since last contact
+   exceeds `expected_report_interval_sec`), `MissOpportunity
+   {cooperative_overdue=true}` → `IStaleSignalSink::onTrackStale` is raised and
+   `r` is left unchanged. A cooperative-only track is retired *only* by an
+   explicit `cooperative_stale_timeout_sec` (configured, operator-tunable), never
+   by the miss-existence recursion.
+
+3. **Between sweeps / outside coverage / sensor off** → no opportunity → `r`
+   unchanged. This replaces `idle_halflife_sec`: existence bleeds only from a
+   genuine surveillance miss, never from wall-clock time alone.
+
+**Snapshot + deferred write** (`last_activity_check_` / `staged_activity_check_`
+in `PmbmTracker`). The per-Bernoulli activity-check timestamp is read as a
+frozen pre-scan snapshot before the hypothesis loop begins, and writes are
+staged in `staged_activity_check_`, then applied *once* after all hypotheses are
+enumerated. This makes the activity-check window hypothesis-order-independent:
+every parent hypothesis sees the same `last_checked` for a given Bernoulli id,
+regardless of which hypothesis the loop processes first.
+
+---
+
+### 9.2 Assumptions
+
+1. **Known surveillance coverage and cadence.** Each surveillance sensor has a
+   declared `max_range_m`, azimuth sector, `duty_cycle_sec`, and `p_D` in a
+   `DeclaredSensorActivity::ChannelProfile`. An adaptive learned provider is a
+   planned later implementation behind the same `ISensorActivity` interface (spec
+   roadmap §13.1).
+2. **Known cooperative cadence.** Each cooperative source has a declared
+   `expected_report_interval_sec` per channel profile.
+3. **Identity stable enough to key cadence.** The per-Bernoulli
+   `last_activity_check_` lookup uses the Bernoulli's track id. Cooperative
+   overdue detection uses `hints.mmsi` or `hints.platform_id` — these are hints
+   (not the fusion key), but must be populated and stable enough for the cadence
+   window to be meaningful.
+4. **No re-feeding of stale measurements.** The consumer supplies
+   coverage/cadence state via the `ISensorActivity` port, not by reinjecting
+   old positions as fresh measurements. `ISensorActivity::evaluate` is a pure
+   function of declared profiles and its timestamp arguments: no wall-clock, no
+   RNG.
+5. **Sensor at ENU origin in the declared profile.** The range/sector coverage
+   check uses the track's ENU position relative to origin. A sensor mounted off-
+   centre requires either a translated profile or an adapter.
+
+---
+
+### 9.3 Rationale
+
+**Why per-duty-cycle, not per-timestamp-batch.** Before this change, a "scan"
+was whatever measurements happened to share the same timestamp — accidental
+batching, not a physical sweep boundary. That made the miss-penalty accidental:
+a sensor only counted as "looked and found nothing" if it happened to emit some
+other measurement at the exact same instant. One radar rotation was one
+*opportunity* regardless of how many blips arrived in that rotation. The
+per-duty-cycle rule matches that physical model, and matches what MHT already
+approximated with its IPDA/VIMM visibility channel.
+
+**Why AIS/Cooperative channels do not touch existence.** Cooperative-announce
+sources are asymmetric: a report is strong evidence (the target exists, here,
+with an identity), but silence is weak evidence (transponder congestion, link
+drop, range, switched off). Penalising `r` on a quiet fleet member would wrongly
+kill cooperative-only tracks on a comms drop. The architecture separates the two
+signals: a stale cooperative link raises a human-visible flag (`IStaleSignalSink`
+→ operator display) while the filter continues to coast on whatever surveillance
+evidence it has. Retirement on cooperative silence happens only through a long,
+explicitly-tunable timeout, or after a surveillance channel that covers the
+position confirms absence.
+
+**What three crutches this retires.**
+- *Wrong per-blip `compute_miss_pD`*: charged once per measurement not per
+  sweep. Was the only thing suppressing phantom Bernoullis on philos (a
+  load-bearing crutch that happened to work by accident).
+- *`idle_halflife_sec` fade-out*: a global wall-clock decay applied uniformly to
+  all tracks regardless of whether any sensor had a real chance to observe them.
+- *`source_id="ais"` patch (Task 2a)*: ad-hoc AIS identity gate, folded into the
+  unified identity gate (`mmsi` else `platform_id`) and the cooperative stale
+  path.
+
+**Port is nullable.** `PmbmTracker::setSensorActivity(nullptr)` → bit-identical
+legacy behaviour. Every new config defaults to `use_sensor_activity=false`; the
+old code paths are not removed. The interface is exchangeable: `DeclaredSensorActivity`
+is implementation #1; an adaptive provider with learned cadence/coverage is
+implementation #2, behind the same `ISensorActivity` port (spec roadmap §13.1).
+
+---
+
+### 9.4 Ways to improve / what to test next
+
+**Measured result (2026-06-29; see [evaluation-log.md](evaluation-log.md) §"Task 4").**
+
+Coverage channel is **best-in-class on autoferry** (high p_D 0.6–0.8,
+open-water surveillance-dominated):
+
+| scenario | coverage gospa | bundle gospa | adapt gospa |
+|---|---|---|---|
+| scen2 | **11.33** | 12.88 | 17.28 |
+| scen22 | **15.28** | 15.74 | 21.39 |
+| scen2 card_err | **+0.15** | −0.55 | +0.39 |
+| scen2 id_switches | **0–1.5** | 0–5.5 | 5–18 |
+
+Wins on accuracy, cardinality control, and identity stability, with *fewer
+knobs* (no `idle_halflife`, no wrong-math `dedup_miss_pd`).
+
+Coverage **regresses badly on philos** (coastal radar, p_D=0.07):
+
+| config | gospa_mean | card_err |
+|---|---|---|
+| birthtarget (Task 1) | **48.5** | −7.8 |
+| adapt | 82.6 | +17.5 |
+| bundle (Task 2) | 112.0 | +46.3 |
+| **coverage (Task 4)** | **153.6** | **+107.9** |
+
+Two compounding causes:
+1. **AIS immortality (plumbing gap).** The cooperative retirement timer
+   (`last_cooperative_touch_`) fires only for `SensorKind::Cooperative` — philos
+   AIS is `SensorKind::Ais`, so the timer never starts and AIS tracks are never
+   retired. Confirmed by isolation: changing `cooperative_stale_timeout_sec` from
+   120 s to 15 s changes the result by zero.
+2. **Honest radar miss is too weak at p_D=0.07.** A single missed sweep moves
+   existence only marginally (`r⁺ ≈ 0.93 · r`). Persistent shore returns are
+   re-detected every rotation so they never miss; removing the wrong-math and
+   idle_halflife removed the only thing suppressing those phantoms. Same lesson as
+   Task 2c (correct math worse on philos) and Task 3 (clutter map inert): **philos
+   over-count is a spatial clutter problem, not a temporal one.**
+
+**Decision (Task 8).** Keep `imm_cv_ct_pmbm_coverage` as an opt-in ablation
+config, not the canonical default. It is the recommended PMBM choice for
+high-p_D surveillance-dominated deployments (autoferry-class); it must not be
+used for low-p_D coastal workloads (philos-class).
+
+**Follow-up candidates in expected payoff order:**
+
+1. **Coastline / land-mask clutter suppression at birth** (next candidate for
+   philos). A spatial prior over the surveillance area suppresses shore-echo
+   Bernoullis at birth — a clutter-prior at the PPP birth step, or an occlusion
+   mask in the coverage query. Addresses the root cause: once phantom births are
+   prevented, the temporal miss model no longer has to compensate.
+2. **Timer key on `ChannelKind`, not `SensorKind`.** The cooperative stale/
+   retirement path should key on `ChannelKind::Cooperative` from the activity
+   profile, not on `SensorKind`. This fixes the AIS immortality gap (cause #1)
+   and makes the coverage model viable for AIS-heavy deployments. Deferred
+   because it would not change the philos verdict (radar phantoms, cause #2,
+   dominate), but needed before promoting `coverage` to any AIS-heavy scene.
+3. **Adaptive cadence provider** (spec roadmap §13.1). Replace the declared
+   static profile with a learned model that infers each source's cadence and
+   coverage from observed report gaps, behind the same `ISensorActivity`
+   interface. No tracker changes; a drop-in replacement.
+4. **Birth confidence by sensor kind** (spec §9b). Timid surveillance births /
+   confident cooperative births / most-confident fleet-link births. Compounds
+   with Task 1; pick up once the coverage model is stable.
+5. **Target-dependent p_D** (RCS / size). Small vessels are genuinely harder to
+   detect; today p_D is per-sensor not per-target. A surveillance-side term so
+   faint intermittent targets are not over-penalised on a miss.
+
+---
+
 ## 8. References
 
 Same as [sota-roadmap.md §4](sota-roadmap.md#4-trajectory-pmbm-as-a-third-idataassociator).

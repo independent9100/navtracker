@@ -134,6 +134,25 @@
   track from an unassociated measurement.
 - **"score"** — log-likelihood-ratio accumulated over a track's
   history; used for confirm/delete and as the MHT objective.
+- **"duty cycle"** — the period of one complete sensor sweep or
+  rotation (e.g. 2.5 s for a radar that rotates 24 times per
+  minute). One duty cycle = one opportunity to see any target
+  inside coverage. See §24.
+- **"cooperative-announce source"** — a sensor kind where the
+  target sends its own reports on its own schedule (AIS, fleet
+  link). Silence is weak evidence; reports are strong. Contrasted
+  with surveillance sources. See §24.
+- **"surveillance sensor"** — a sensor kind that actively searches
+  an area on a known duty cycle (radar, EO/IR, lidar). Silence
+  over covered ground is strong, symmetric evidence. See §24.
+- **"coverage / visibility channel"** — the ISensorActivity port
+  that tells the tracker which sensor had a real chance to observe
+  a track during a given time window. Enables per-duty-cycle miss
+  charging instead of per-blip. See §24.
+- **"comms-loss signal"** — a flag raised when a cooperative
+  source's own-identity report is overdue. Tells the operator
+  contact was lost; does NOT lower the track's existence
+  probability. See §24.
 
 ---
 
