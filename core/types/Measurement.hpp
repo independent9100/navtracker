@@ -15,6 +15,10 @@ namespace navtracker {
 struct AssociationHints {
   std::optional<std::uint32_t> mmsi;
   std::optional<std::int32_t> sensor_track_id;
+  // Cooperative-channel native id (numeric, settled 2026-06-29). Always
+  // set by the Cooperative adapter; assumed unique per fleet member. A
+  // strong association prior but still a hint, never the fusion key.
+  std::optional<std::uint64_t> platform_id;
 };
 
 // Normalized sensor output consumed by the tracker. `value` and `covariance`
