@@ -680,6 +680,12 @@ class PmbmTracker {
   const ISensorBiasProvider* bias_provider_{nullptr};
   std::shared_ptr<ISensorDetectionModel> detection_model_;
   const ISensorActivity* sensor_activity_{nullptr};
+  // Task 5: per-Bernoulli "last activity check" timestamp for the sensor-
+  // activity path. Keyed by BernoulliId; absent = use b.birth_time as the
+  // window start.  Updated to current_time_ each time a surveillance miss
+  // fires, so only ONE miss per duty_cycle is charged regardless of scan rate.
+  // Cleaned up alongside contribution_history_ when Bernoullis are pruned.
+  std::map<BernoulliId, Timestamp> last_activity_check_;
   // Per-Bernoulli-id rolling source-touch history. Populated from the
   // dominant child after each scan; the same shape as
   // MhtTracker::contribution_history_. Folded into each emitted Track's

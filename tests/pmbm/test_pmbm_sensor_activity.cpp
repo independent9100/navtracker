@@ -8,6 +8,7 @@
 
 #include "core/estimation/ConstantVelocity2D.hpp"
 #include "core/estimation/EkfEstimator.hpp"
+#include "core/sensor_activity/DeclaredSensorActivity.hpp"
 #include "core/pmbm/PmbmTracker.hpp"
 #include "core/pmbm/PmbmTypes.hpp"
 #include "core/types/Measurement.hpp"
@@ -299,4 +300,140 @@ TEST(PmbmIdentityGate, SharedEitherKeyIsSameVessel) {
          "fires `continue` (correct), but shared platform_id=7 SHOULD still "
          "make the Bernoulli observable → miss math reduces r "
          "(fails before platform_id gate is wired)";
+}
+
+// ---------------------------------------------------------------------------
+// Task 5: Per-duty-cycle surveillance miss behind use_sensor_activity.
+//
+// DeclaredSensorActivity with a radar profile: pD=0.9, range=10km, duty=60s.
+// All three tests isolate the surveillance-miss path with survival=1.0 so the
+// only r change comes from the misdetection update.
+// ---------------------------------------------------------------------------
+namespace {
+
+navtracker::DeclaredSensorActivity gRadarActivity() {
+  navtracker::DeclaredSensorActivity::ChannelProfile p;
+  p.kind = navtracker::ChannelKind::Surveillance;
+  p.sensor = navtracker::SensorKind::ArpaTtm;  // radar; Radar enum doesn't exist, ArpaTtm is closest
+  p.duty_cycle_sec = 60.0;
+  p.max_range_m = 10000.0;
+  p.sector_width_rad = 6.283185307179586;  // full circle
+  p.p_D = 0.9;
+  return navtracker::DeclaredSensorActivity{{p}};
+}
+
+// Tracker config with use_sensor_activity=true, no other knobs active so
+// the new code path is isolated. survival=1.0 means predict has no r effect.
+PmbmTracker::Config gActivityCfg() {
+  PmbmTracker::Config c;
+  c.probability_of_detection = 0.9;
+  c.clutter_intensity = 1e-6;
+  c.survival_probability = 1.0;
+  c.use_sensor_activity = true;
+  c.idle_halflife_sec = 0.0;
+  c.r_min = 1e-4;
+  c.weight_min = 1e-5;
+  c.hypothesis_weight_min = 1e-5;
+  return c;
+}
+
+// Seed one Bernoulli at (px, py) with r=r0 into a tracker that already had
+// predict(0.0) called. birth_time defaults to 0.0 (same as epoch).
+void gSeedBernoulli(PmbmTracker& tracker, double px, double py, double r0) {
+  GlobalHypothesis h;
+  h.weight = 1.0;
+  h.log_weight = 0.0;
+  Bernoulli b;
+  b.id = navtracker::pmbm::BernoulliId{99};
+  b.existence_probability = r0;
+  b.mean = gCvState(px, py, 0.0, 0.0);
+  b.covariance = gPosCov(2.0, 0.5);
+  b.last_update = Timestamp::fromSeconds(0.0);
+  // b.birth_time defaults to Timestamp{} = 0.0 (same as predict epoch)
+  h.bernoullis.push_back(b);
+  tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// Active radar sweeps past the track position (5 km, in range) and returns
+// nothing.  dt=60s >= duty_cycle=60s → ONE surveillance miss at pD=0.9.
+// Expected: r = (1-0.9)*0.8 / (1 - 0.8*0.9) = 0.08/0.28 ≈ 0.285714.
+// ---------------------------------------------------------------------------
+TEST(PmbmSensorActivity, SurveillanceCoveredSweepAppliesOneMiss) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  auto activity = gRadarActivity();
+
+  PmbmTracker tracker(ekf, gActivityCfg());
+  tracker.setSensorActivity(&activity);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Seed Bernoulli at (5000, 0) — inside 10 km radar coverage.
+  gSeedBernoulli(tracker, 5000.0, 0.0, 0.8);
+
+  // Advance 60 s (>= duty_cycle) then process empty scan.
+  tracker.predict(Timestamp::fromSeconds(60.0));
+  tracker.processBatch({});
+
+  ASSERT_EQ(tracker.density().mbm.size(), 1u);
+  ASSERT_EQ(tracker.density().mbm[0].bernoullis.size(), 1u);
+  const double r = tracker.density().mbm[0].bernoullis[0].existence_probability;
+  EXPECT_NEAR(r, 0.08 / 0.28, 1e-9)
+      << "Covered sweep + no return: must apply EXACTLY ONE miss with pD=0.9. "
+         "Expected r = (1-pD)*r0 / (1 - r0*pD) = 0.08/0.28";
+}
+
+// ---------------------------------------------------------------------------
+// Track at (20000, 0) is OUTSIDE the radar's 10 km max range.
+// DeclaredSensorActivity returns surveillance_miss=false → r unchanged.
+// ---------------------------------------------------------------------------
+TEST(PmbmSensorActivity, OutOfCoverageNoPenalty) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  auto activity = gRadarActivity();
+
+  PmbmTracker tracker(ekf, gActivityCfg());
+  tracker.setSensorActivity(&activity);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Track at 20 km — beyond radar max_range.
+  gSeedBernoulli(tracker, 20000.0, 0.0, 0.8);
+
+  tracker.predict(Timestamp::fromSeconds(60.0));
+  tracker.processBatch({});
+
+  ASSERT_EQ(tracker.density().mbm.size(), 1u);
+  ASSERT_EQ(tracker.density().mbm[0].bernoullis.size(), 1u);
+  EXPECT_NEAR(tracker.density().mbm[0].bernoullis[0].existence_probability,
+              0.8, 1e-9)
+      << "Track outside radar range: no surveillance miss → r must stay 0.8";
+}
+
+// ---------------------------------------------------------------------------
+// dt=30s < duty_cycle=60s: radar has NOT completed a sweep since last check.
+// DeclaredSensorActivity returns surveillance_miss=false → r unchanged.
+// ---------------------------------------------------------------------------
+TEST(PmbmSensorActivity, MidSweepNoPenalty) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  auto activity = gRadarActivity();
+
+  PmbmTracker tracker(ekf, gActivityCfg());
+  tracker.setSensorActivity(&activity);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Track at (5000, 0) — inside radar coverage.
+  gSeedBernoulli(tracker, 5000.0, 0.0, 0.8);
+
+  // Only 30 s elapsed: radar has not completed a full sweep yet.
+  tracker.predict(Timestamp::fromSeconds(30.0));
+  tracker.processBatch({});
+
+  ASSERT_EQ(tracker.density().mbm.size(), 1u);
+  ASSERT_EQ(tracker.density().mbm[0].bernoullis.size(), 1u);
+  EXPECT_NEAR(tracker.density().mbm[0].bernoullis[0].existence_probability,
+              0.8, 1e-9)
+      << "Mid-sweep (dt < duty_cycle): no surveillance miss → r must stay 0.8";
 }

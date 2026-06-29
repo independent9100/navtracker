@@ -628,6 +628,39 @@ void PmbmTracker::enumerateChildren(
         child.bernoullis.push_back(std::move(updated));
         continue;
       }
+      // Task 5: honest per-duty-cycle coverage model (spec §4).
+      // When wired, replace compute_miss_pD/idle_decay_for with a single
+      // evaluate() call — one miss charged only when the surveillance sensor
+      // completed a full sweep over this track's predicted position.
+      if (cfg_.use_sensor_activity && sensor_activity_ != nullptr) {
+        auto ait = last_activity_check_.find(b.id);
+        const Timestamp last_check =
+            (ait != last_activity_check_.end()) ? ait->second : b.birth_time;
+        const MissOpportunity opp = sensor_activity_->evaluate(
+            b.mean.head<2>(), /*mmsi*/std::nullopt, /*platform_id*/std::nullopt,
+            last_check, current_time_);
+        if (!opp.surveillance_miss) {
+          // Sensor mid-sweep or track out of coverage → existence UNCHANGED.
+          // (cooperative_overdue is handled by the stale-signal path, Task 6.)
+          appendTrajectoryPoint(updated, cfg_.trajectory_window_scans,
+                                current_time_, b.mean, b.covariance);
+          child.bernoullis.push_back(std::move(updated));
+          continue;
+        }
+        // One completed sweep with no return: charge exactly one miss.
+        last_activity_check_[b.id] = current_time_;
+        const double r = b.existence_probability;
+        const double pD = opp.p_D;
+        const double miss_norm = 1.0 - r * pD;
+        updated.existence_probability =
+            (miss_norm > 0.0) ? ((1.0 - pD) * r) / miss_norm : 0.0;
+        child.log_weight += std::log(std::max(miss_norm, 1e-300));
+        appendTrajectoryPoint(updated, cfg_.trajectory_window_scans,
+                              current_time_, b.mean, b.covariance);
+        child.bernoullis.push_back(std::move(updated));
+        continue;
+      }
+      // Legacy path (use_sensor_activity == false): unchanged, bit-identical.
       const double r = b.existence_probability;
       const double pD = compute_miss_pD(b);
       if (pD <= 0.0) {  // out of any sensor's coverage; no penalty
@@ -776,6 +809,37 @@ void PmbmTracker::enumerateChildren(
           child.bernoullis.push_back(std::move(miss));
           continue;
         }
+        // Task 5: honest per-duty-cycle coverage model (spec §4).
+        if (cfg_.use_sensor_activity && sensor_activity_ != nullptr) {
+          auto ait = last_activity_check_.find(b.id);
+          const Timestamp last_check =
+              (ait != last_activity_check_.end()) ? ait->second : b.birth_time;
+          const MissOpportunity opp = sensor_activity_->evaluate(
+              b.mean.head<2>(), /*mmsi*/std::nullopt,
+              /*platform_id*/std::nullopt, last_check, current_time_);
+          if (!opp.surveillance_miss) {
+            // No surveillance opportunity → existence UNCHANGED.
+            // (cooperative_overdue handled by the stale-signal path, Task 6.)
+            appendTrajectoryPoint(miss, cfg_.trajectory_window_scans,
+                                  current_time_, b.mean, b.covariance);
+            child.bernoullis.push_back(std::move(miss));
+            continue;
+          }
+          // One completed sweep with no return: charge exactly one miss.
+          last_activity_check_[b.id] = current_time_;
+          const double r = b.existence_probability;
+          const double pD = opp.p_D;
+          const double miss_norm = 1.0 - r * pD;
+          miss.existence_probability =
+              (miss_norm > 0.0) ? ((1.0 - pD) * r) / miss_norm : 0.0;
+          // Misdetection contribution: log(1 − r · p_D).
+          child.log_weight += std::log(std::max(miss_norm, 1e-300));
+          appendTrajectoryPoint(miss, cfg_.trajectory_window_scans,
+                                current_time_, b.mean, b.covariance);
+          child.bernoullis.push_back(std::move(miss));
+          continue;
+        }
+        // Legacy path (use_sensor_activity == false): unchanged, bit-identical.
         const double r = b.existence_probability;
         const double pD = compute_miss_pD(b);
         if (pD <= 0.0) {  // out of any sensor's coverage; no penalty
@@ -1276,6 +1340,12 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
     for (auto it = contribution_history_.begin();
          it != contribution_history_.end();) {
       if (alive.count(it->first) == 0) it = contribution_history_.erase(it);
+      else ++it;
+    }
+    // Task 5: prune last_activity_check_ alongside contribution_history_.
+    for (auto it = last_activity_check_.begin();
+         it != last_activity_check_.end();) {
+      if (alive.count(it->first) == 0) it = last_activity_check_.erase(it);
       else ++it;
     }
   }
