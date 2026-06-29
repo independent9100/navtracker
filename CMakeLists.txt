@@ -76,6 +76,7 @@ add_library(navtracker_core
   core/scenario/Metrics.cpp
   core/scenario/TruthResample.cpp
   core/output/TrackOutput.cpp
+  core/sensor_activity/DeclaredSensorActivity.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
@@ -298,6 +299,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_render_markdown.cpp
   tests/benchmark/test_compare.cpp
   tests/benchmark/test_bench_determinism.cpp
+  tests/sensor_activity/test_declared_sensor_activity.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
