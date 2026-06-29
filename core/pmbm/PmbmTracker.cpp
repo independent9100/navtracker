@@ -492,20 +492,28 @@ void PmbmTracker::enumerateChildren(
   const int n = static_cast<int>(parent.bernoullis.size());
   const int m = static_cast<int>(scan.size());
 
-  // Source-aware misdetection: collect this scan's source_ids (and
-  // vessel_ids when source_aware_identity is on) once per scan.
-  // Bernoullis whose contribution-history sources are entirely absent
-  // from this set get a no-op misdetection (state and r unchanged) —
-  // see Config::source_aware_misdetection and ::source_aware_identity.
+  // Source-aware misdetection: collect this scan's source_ids, vessel_ids
+  // (mmsi), and platform_ids once per scan.  Bernoullis whose
+  // contribution-history identity is entirely absent from this set get a
+  // no-op misdetection (state and r unchanged) — see
+  // Config::source_aware_misdetection and ::source_aware_identity.
   std::set<std::string> scan_sources;
-  std::set<std::uint32_t> scan_vessels;
+  std::set<std::uint32_t> scan_vessels;   // mmsi-keyed identity
+  std::set<std::uint64_t> scan_platforms; // platform_id-keyed identity
   if (cfg_.source_aware_misdetection) {
     for (const auto& z : scan) {
       scan_sources.insert(z.source_id);
       if (cfg_.source_aware_identity && z.hints.mmsi.has_value())
         scan_vessels.insert(*z.hints.mmsi);
+      if (cfg_.source_aware_identity && z.hints.platform_id.has_value())
+        scan_platforms.insert(*z.hints.platform_id);
     }
   }
+  // Unified identity gate: a touch is "covered" in this scan if it shares
+  // EITHER mmsi (vessel_id) OR platform_id with a scan measurement.
+  // When any identity key is known for a touch, the source_id channel
+  // fallback is suppressed (continue) — prevents "broadcast-channel"
+  // false observability between vessels that share only a source_id.
   auto should_misdetect = [&](BernoulliId id) {
     if (!cfg_.source_aware_misdetection) return true;
     auto it = contribution_history_.find(id);
@@ -513,9 +521,16 @@ void PmbmTracker::enumerateChildren(
       return true;  // no prior history; treat as observable
     }
     for (const auto& touch : it->second) {
-      if (cfg_.source_aware_identity && touch.vessel_id.has_value()) {
-        if (scan_vessels.count(*touch.vessel_id)) return true;  // this vessel is in-scan
-        continue;  // identity known but absent → this touch gives no coverage
+      if (cfg_.source_aware_identity) {
+        if (touch.vessel_id.has_value()) {
+          if (scan_vessels.count(*touch.vessel_id)) return true;   // matched by mmsi
+        }
+        if (touch.platform_id.has_value()) {
+          if (scan_platforms.count(*touch.platform_id)) return true;  // matched by platform_id
+        }
+        if (touch.vessel_id.has_value() || touch.platform_id.has_value()) {
+          continue;  // identity known but absent from scan → no coverage
+        }
       }
       if (scan_sources.count(touch.source_id)) return true;  // channel fallback
     }
@@ -1233,7 +1248,8 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
       Track::SourceTouch touch;
       touch.sensor = best->sensor;
       touch.source_id = best->source_id;
-      touch.vessel_id = best->hints.mmsi;  // per-vessel identity when present
+      touch.vessel_id = best->hints.mmsi;        // per-vessel identity via mmsi
+      touch.platform_id = best->hints.platform_id;  // per-vessel identity via platform_id
       touch.time = best->time;
       fillSourceTouchEnu(touch, *best);
       touch.sensor_position_enu = best->sensor_position_enu;

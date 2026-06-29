@@ -55,8 +55,12 @@ struct Track {
   struct SourceTouch {
     SensorKind sensor{SensorKind::Unknown};
     std::string source_id;
-    std::optional<std::uint32_t> vessel_id;  // per-vessel identity (e.g. MMSI),
-                                             // used by PMBM source-aware gate.
+    std::optional<std::uint32_t> vessel_id;   // per-vessel identity via MMSI,
+                                              // used by PMBM source-aware gate.
+    std::optional<std::uint64_t> platform_id; // per-vessel identity via platform_id,
+                                              // parallel key for PMBM identity gate:
+                                              // a Bernoulli is observable if the scan
+                                              // shares EITHER vessel_id OR platform_id.
     Timestamp time;
     Eigen::Vector2d value_enu{Eigen::Vector2d::Zero()};
     Eigen::Matrix2d covariance{Eigen::Matrix2d::Identity()};
