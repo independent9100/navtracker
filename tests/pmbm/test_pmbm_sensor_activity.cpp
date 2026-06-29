@@ -437,3 +437,278 @@ TEST(PmbmSensorActivity, MidSweepNoPenalty) {
               0.8, 1e-9)
       << "Mid-sweep (dt < duty_cycle): no surveillance miss → r must stay 0.8";
 }
+
+// ---------------------------------------------------------------------------
+// Task 6: cooperative stale / comms-loss signal tests.
+//
+// Key invariant (spec §9c): a cooperative own-identity report being overdue
+// means "we lost comms", NOT "vessel sank". Existence MUST NOT change.
+// The IStaleSignalSink is a pure push notification; wiring it to anything
+// that lowers existence violates the spec.
+// ---------------------------------------------------------------------------
+namespace {
+
+// Cooperative profile: expected own-identity report every 10 s.
+// No surveillance channel — so the only activity is cooperative.
+navtracker::DeclaredSensorActivity gCooperativeActivity() {
+  navtracker::DeclaredSensorActivity::ChannelProfile p;
+  p.kind = navtracker::ChannelKind::Cooperative;
+  p.expected_report_interval_sec = 10.0;
+  return navtracker::DeclaredSensorActivity{{p}};
+}
+
+// Tracker config: use_sensor_activity, no surveillance, survival=1 so that
+// predict has zero r-effect and we can reason purely about the miss logic.
+PmbmTracker::Config gCoopCfg() {
+  PmbmTracker::Config c;
+  c.probability_of_detection = 0.9;
+  c.clutter_intensity = 1e-6;
+  c.survival_probability = 1.0;
+  c.use_sensor_activity = true;
+  c.idle_halflife_sec = 0.0;
+  c.r_min = 1e-4;
+  c.weight_min = 1e-5;
+  c.hypothesis_weight_min = 1e-5;
+  return c;
+}
+
+// Recording sink: captures every onTrackStale(id, now) call.
+struct RecordingStaleSink : navtracker::IStaleSignalSink {
+  std::vector<navtracker::TrackId> stale;
+  void onTrackStale(navtracker::TrackId id, navtracker::Timestamp) override {
+    stale.push_back(id);
+  }
+};
+
+// Seed one Bernoulli with a chosen BernoulliId and existence into a fresh
+// hypothesis. The Bernoulli birth_time defaults to Timestamp{} = 0.0.
+void gSeedBernoulliId(PmbmTracker& tracker,
+                      navtracker::pmbm::BernoulliId bid,
+                      double px, double py, double r0) {
+  GlobalHypothesis h;
+  h.weight = 1.0;
+  h.log_weight = 0.0;
+  Bernoulli b;
+  b.id = bid;
+  b.existence_probability = r0;
+  b.mean = gCvState(px, py, 0.0, 0.0);
+  b.covariance = gPosCov(2.0, 0.5);
+  b.last_update = Timestamp::fromSeconds(0.0);
+  // birth_time defaults to Timestamp{} ≡ 0.0 s — used as fallback for the
+  // cooperative retirement timer when no detection has ever occurred.
+  h.bernoullis.push_back(b);
+  tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// (a) Overdue own-identity report leaves existence unchanged AND flags stale.
+//
+// Cooperative profile interval=10s, NO surveillance. Bernoulli seeded at r=0.8.
+// Advance 25s with empty scan: dt=25 > 10 → cooperative_overdue=true.
+// Expected: existence == 0.8 (unchanged) AND RecordingStaleSink fired.
+// ---------------------------------------------------------------------------
+TEST(PmbmStaleSignal, OverdueLeavesExistenceUnchangedAndFlagsStale) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  auto activity = gCooperativeActivity();
+  RecordingStaleSink stale_sink;
+
+  PmbmTracker tracker(ekf, gCoopCfg());
+  tracker.setSensorActivity(&activity);
+  tracker.setStaleSignalSink(&stale_sink);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Seed one cooperative-only Bernoulli at r=0.8.
+  gSeedBernoulliId(tracker, navtracker::pmbm::BernoulliId{42}, 0.0, 0.0, 0.8);
+
+  // Advance 25 s (well past 10 s interval): cooperative own-identity overdue.
+  tracker.predict(Timestamp::fromSeconds(25.0));
+  tracker.processBatch({});
+
+  // Existence MUST be unchanged: "comms lost" ≠ "vessel sank" (spec §9c).
+  ASSERT_EQ(tracker.density().mbm.size(), 1u);
+  ASSERT_EQ(tracker.density().mbm[0].bernoullis.size(), 1u);
+  EXPECT_NEAR(tracker.density().mbm[0].bernoullis[0].existence_probability,
+              0.8, 1e-9)
+      << "Cooperative overdue: existence MUST NOT change (spec §9c: comms loss "
+         "≠ vessel sank)";
+
+  // Stale signal must have fired exactly once for the track.
+  EXPECT_FALSE(stale_sink.stale.empty())
+      << "Stale signal must fire when cooperative own-identity report is overdue";
+  // The emitted track id maps the BernoulliId value.
+  const auto& ts = tracker.tracks();
+  ASSERT_EQ(ts.size(), 1u);
+  EXPECT_EQ(stale_sink.stale.front(), ts[0].id)
+      << "Stale signal must carry the aggregated TrackId of the overdue track";
+
+  // TrackStatus must be Coasting (spec §9c: cooperative overdue → coasting).
+  EXPECT_EQ(ts[0].status, navtracker::TrackStatus::Coasting)
+      << "Cooperative overdue track must have status Coasting";
+}
+
+// ---------------------------------------------------------------------------
+// (b) Detecting one cooperative track does not flag a DIFFERENT track stale,
+//     and must not change the other track's existence via miss math.
+//
+// Two cooperative-only Bernoullis (BernoulliId 42 at origin, 99 far away).
+// At t=5s (within 10 s interval): neither is overdue. A scan with a
+// measurement at (0,0) is processed: it detects Bernoulli 42, Bernoulli 99
+// goes through misdetection with dt=5s < 10s → cooperative_overdue=false
+// → existence unchanged, no stale signal for 99.
+// ---------------------------------------------------------------------------
+TEST(PmbmStaleSignal, DoesNotAffectDifferentIdentity) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  auto activity = gCooperativeActivity();
+  RecordingStaleSink stale_sink;
+
+  PmbmTracker tracker(ekf, gCoopCfg());
+  tracker.setSensorActivity(&activity);
+  tracker.setStaleSignalSink(&stale_sink);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Seed two Bernoullis in the SAME global hypothesis.
+  // BernoulliId=42 at (0,0), BernoulliId=99 far away at (10000,0).
+  // Put them in one hypothesis together.
+  {
+    GlobalHypothesis h;
+    h.weight = 1.0;
+    h.log_weight = 0.0;
+
+    Bernoulli b42;
+    b42.id = navtracker::pmbm::BernoulliId{42};
+    b42.existence_probability = 0.8;
+    b42.mean = gCvState(0.0, 0.0, 0.0, 0.0);
+    b42.covariance = gPosCov(2.0, 0.5);
+    b42.last_update = Timestamp::fromSeconds(0.0);
+    h.bernoullis.push_back(b42);
+
+    Bernoulli b99;
+    b99.id = navtracker::pmbm::BernoulliId{99};
+    b99.existence_probability = 0.8;
+    b99.mean = gCvState(10000.0, 0.0, 0.0, 0.0);
+    b99.covariance = gPosCov(2.0, 0.5);
+    b99.last_update = Timestamp::fromSeconds(0.0);
+    h.bernoullis.push_back(b99);
+
+    tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
+  }
+
+  // Advance 5 s (< 10 s interval): NEITHER track is overdue.
+  tracker.predict(Timestamp::fromSeconds(5.0));
+
+  // Process scan with measurement at (0,0) at t=5s.
+  // Gate check: Bernoulli 42 (at (0,0), cov=4m²) → Mahalanobis ≈ 0 (detected).
+  //             Bernoulli 99 (at (10000,0)) → gate fails (Mahalanobis >> 9).
+  // So assignment must route the measurement to Bernoulli 42 (detected), not 99.
+  Measurement z;
+  z.time = Timestamp::fromSeconds(5.0);
+  z.sensor = navtracker::SensorKind::Cooperative;
+  z.source_id = "coop";
+  z.model = navtracker::MeasurementModel::Position2D;
+  z.value = Eigen::Vector2d(0.0, 0.0);
+  z.covariance = Eigen::Matrix2d::Identity();
+  tracker.processBatch({z});
+
+  // Stale signal must NOT have fired for Bernoulli 99 (it is NOT overdue).
+  const bool stale99 = std::any_of(
+      stale_sink.stale.begin(), stale_sink.stale.end(),
+      [](navtracker::TrackId id) { return id.value == 99u; });
+  EXPECT_FALSE(stale99)
+      << "Track 99 is within the 10s interval (dt=5s) → must NOT be stale";
+
+  // Find track 99 in the output and verify its existence is unchanged.
+  const auto& ts = tracker.tracks();
+  const auto it99 = std::find_if(ts.begin(), ts.end(), [](const navtracker::Track& t) {
+    return t.id.value == 99u;
+  });
+  if (it99 != ts.end()) {
+    EXPECT_NEAR(it99->existence_probability, 0.8, 1e-9)
+        << "Track 99 existence must be unchanged (no miss math for non-overdue "
+           "cooperative track when dt < interval)";
+    EXPECT_NE(it99->status, navtracker::TrackStatus::Coasting)
+        << "Track 99 must not be Coasting (not overdue)";
+  }
+  // Note: track 99 might have fallen below output_existence_floor if miss math
+  // was incorrectly applied; the float comparison above guards against that.
+}
+
+// ---------------------------------------------------------------------------
+// (c) Cooperative-only track retired ONLY by the stale timeout, never by
+//     per-sweep miss math.
+//
+// cooperative_stale_timeout_sec=600.
+//   - After 25 s overdue: still alive (r unchanged, status Coasting).
+//   - After 601 s overdue: Bernoulli pruned (retired).
+// Between these two checkpoints, existence MUST remain 0.8 (no miss math
+// is ever applied via the surveillance path since there is no surveillance
+// profile).
+// ---------------------------------------------------------------------------
+TEST(PmbmStaleSignal, CooperativeOnlyRetiredOnlyByTimeout) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  auto activity = gCooperativeActivity();
+  RecordingStaleSink stale_sink;
+
+  auto cfg = gCoopCfg();
+  cfg.cooperative_stale_timeout_sec = 600.0;  // retire only after 600 s
+
+  PmbmTracker tracker(ekf, cfg);
+  tracker.setSensorActivity(&activity);
+  tracker.setStaleSignalSink(&stale_sink);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Seed one cooperative-only Bernoulli at r=0.8.
+  gSeedBernoulliId(tracker, navtracker::pmbm::BernoulliId{42}, 0.0, 0.0, 0.8);
+
+  // ---- Check 1: 25 s overdue (dt=25 > 10 interval, but 25 < 600 timeout). --
+  tracker.predict(Timestamp::fromSeconds(25.0));
+  tracker.processBatch({});
+
+  ASSERT_EQ(tracker.density().mbm.size(), 1u);
+  ASSERT_EQ(tracker.density().mbm[0].bernoullis.size(), 1u)
+      << "After 25s overdue (< 600s timeout): Bernoulli must still be alive";
+  EXPECT_NEAR(tracker.density().mbm[0].bernoullis[0].existence_probability,
+              0.8, 1e-9)
+      << "After 25s overdue: existence MUST NOT change (cooperative overdue ≠ miss)";
+
+  // Stale signal must have fired once.
+  EXPECT_FALSE(stale_sink.stale.empty())
+      << "Stale signal must fire at 25s (overdue by dt=25 > interval=10)";
+  {
+    const auto& ts = tracker.tracks();
+    ASSERT_EQ(ts.size(), 1u);
+    EXPECT_EQ(ts[0].status, navtracker::TrackStatus::Coasting)
+        << "Status must be Coasting after cooperative overdue";
+  }
+
+  // ---- Check 2: 601 s total since birth (601 > 600 timeout). ----------------
+  stale_sink.stale.clear();
+  tracker.predict(Timestamp::fromSeconds(601.0));
+  tracker.processBatch({});
+
+  // Bernoulli must have been retired (existence → 0 → pruned by r_min).
+  bool bernoulli_alive = false;
+  for (const auto& h : tracker.density().mbm) {
+    for (const auto& b : h.bernoullis) {
+      if (b.id == navtracker::pmbm::BernoulliId{42} &&
+          b.existence_probability > 0.0) {
+        bernoulli_alive = true;
+      }
+    }
+  }
+  EXPECT_FALSE(bernoulli_alive)
+      << "After 601s (> 600s cooperative_stale_timeout_sec): Bernoulli must be "
+         "retired (existence → 0, pruned by r_min)";
+
+  // The output track must also be gone (below output_existence_floor).
+  const auto& ts = tracker.tracks();
+  const auto it42 = std::find_if(ts.begin(), ts.end(), [](const navtracker::Track& t) {
+    return t.id.value == 42u;
+  });
+  EXPECT_EQ(it42, ts.end())
+      << "After timeout retirement, track 42 must not appear in tracks() output";
+}

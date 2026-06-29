@@ -640,8 +640,31 @@ void PmbmTracker::enumerateChildren(
             b.mean.head<2>(), /*mmsi*/std::nullopt, /*platform_id*/std::nullopt,
             last_check, current_time_);
         if (!opp.surveillance_miss) {
-          // Sensor mid-sweep or track out of coverage → existence UNCHANGED.
-          // (cooperative_overdue is handled by the stale-signal path, Task 6.)
+          // No surveillance opportunity (sensor mid-sweep, out of coverage,
+          // or cooperative-only channel). Existence UNCHANGED by miss math.
+          if (opp.cooperative_overdue) {
+            // Task 6: cooperative own-identity report is overdue.
+            // NEVER touch existence here (spec §9c: comms loss ≠ vessel sank).
+            // Check cooperative-only timeout retirement: last known report is
+            // b.birth_time (or last_cooperative_touch_ if detected before).
+            auto tit = last_cooperative_touch_.find(b.id);
+            const double last_report_sec =
+                (tit != last_cooperative_touch_.end())
+                    ? tit->second.seconds()
+                    : b.birth_time.seconds();
+            if (cfg_.cooperative_stale_timeout_sec > 0.0 &&
+                current_time_.seconds() - last_report_sec >
+                    cfg_.cooperative_stale_timeout_sec) {
+              // Cooperative-only retirement: force existence to 0 so
+              // pruneAndNormalise removes this Bernoulli. onTrackDeleted
+              // fires via the lifecycle sink on the next scan. We do NOT
+              // fire the stale signal here (retirement supersedes staleness).
+              updated.existence_probability = 0.0;
+            } else {
+              // Still within timeout: mark stale but leave existence.
+              cooperative_overdue_ids_.insert(b.id);
+            }
+          }
           appendTrajectoryPoint(updated, cfg_.trajectory_window_scans,
                                 current_time_, b.mean, b.covariance);
           child.bernoullis.push_back(std::move(updated));
@@ -786,6 +809,8 @@ void PmbmTracker::enumerateChildren(
         appendTrajectoryPoint(det, cfg_.trajectory_window_scans,
                               scan[l].time, b.mean, b.covariance);
         child.bernoullis.push_back(std::move(det));
+        // Task 6: a detection resets the cooperative-only retirement timer.
+        last_cooperative_touch_[b.id] = scan[l].time;
         // Full per-Bernoulli detection contribution to log-weight:
         // log(r · p_D · ℓ).  P_D is the assigned measurement's
         // per-(sensor, source) P_D under the detection model.
@@ -818,8 +843,25 @@ void PmbmTracker::enumerateChildren(
               b.mean.head<2>(), /*mmsi*/std::nullopt,
               /*platform_id*/std::nullopt, last_check, current_time_);
           if (!opp.surveillance_miss) {
-            // No surveillance opportunity → existence UNCHANGED.
-            // (cooperative_overdue handled by the stale-signal path, Task 6.)
+            // No surveillance opportunity (mid-sweep, out of coverage,
+            // or cooperative-only channel). Existence UNCHANGED by miss math.
+            if (opp.cooperative_overdue) {
+              // Task 6: cooperative own-identity report is overdue.
+              // NEVER touch existence (spec §9c). Check timeout retirement.
+              auto tit = last_cooperative_touch_.find(b.id);
+              const double last_report_sec =
+                  (tit != last_cooperative_touch_.end())
+                      ? tit->second.seconds()
+                      : b.birth_time.seconds();
+              if (cfg_.cooperative_stale_timeout_sec > 0.0 &&
+                  current_time_.seconds() - last_report_sec >
+                      cfg_.cooperative_stale_timeout_sec) {
+                // Retire: force existence to 0 → pruned by r_min.
+                miss.existence_probability = 0.0;
+              } else {
+                cooperative_overdue_ids_.insert(b.id);
+              }
+            }
             appendTrajectoryPoint(miss, cfg_.trajectory_window_scans,
                                   current_time_, b.mean, b.covariance);
             child.bernoullis.push_back(std::move(miss));
@@ -1006,6 +1048,8 @@ void PmbmTracker::pruneAndNormalise() {
 }
 
 void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
+  // Task 6: reset per-scan stale set. enumerateChildren will populate it.
+  cooperative_overdue_ids_.clear();
   // Apply per-sensor registration bias correction (item 9) + Schmidt-KF
   // R-inflation before any predict / update. Null provider =
   // bit-identical to legacy.
@@ -1063,6 +1107,16 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
       }
     }
     pruneAndNormalise();
+    aggregated_tracks_dirty_ = true;
+    // Task 6: fire stale signals for cooperative-overdue tracks.
+    if (stale_sink_ != nullptr && !cooperative_overdue_ids_.empty()) {
+      const auto& ts = tracks();  // triggers refreshAggregatedTracks (Coasting)
+      for (const auto& t : ts) {
+        if (cooperative_overdue_ids_.count(t.id.value)) {
+          stale_sink_->onTrackStale(t.id, current_time_);
+        }
+      }
+    }
     if (track_sink_ != nullptr) {
       firePmbmLifecycleEvents(current_time_);
     }
@@ -1348,9 +1402,24 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
       if (alive.count(it->first) == 0) it = last_activity_check_.erase(it);
       else ++it;
     }
+    // Task 6: prune last_cooperative_touch_ alongside the other per-Bernoulli maps.
+    for (auto it = last_cooperative_touch_.begin();
+         it != last_cooperative_touch_.end();) {
+      if (alive.count(it->first) == 0) it = last_cooperative_touch_.erase(it);
+      else ++it;
+    }
   }
 
   aggregated_tracks_dirty_ = true;
+  // Task 6: fire stale signals for cooperative-overdue tracks.
+  if (stale_sink_ != nullptr && !cooperative_overdue_ids_.empty()) {
+    const auto& ts = tracks();  // triggers refreshAggregatedTracks (Coasting)
+    for (const auto& t : ts) {
+      if (cooperative_overdue_ids_.count(t.id.value)) {
+        stale_sink_->onTrackStale(t.id, current_time_);
+      }
+    }
+  }
   // Phase 4(B) push-based lifecycle events. Diffs against the prior-
   // scan emitted set. No-op when no sink is wired.
   if (track_sink_ != nullptr && !scan.empty()) {
@@ -1695,6 +1764,11 @@ void PmbmTracker::refreshAggregatedTracks() const {
     t.existence_probability = std::min(a.mass, 1.0);
     t.status = (a.mass >= cfg_.confirm_threshold) ? TrackStatus::Confirmed
                                                    : TrackStatus::Tentative;
+    // Task 6: cooperative own-identity overdue → override with Coasting.
+    // Existence is NOT reduced (spec §9c: "comms loss ≠ vessel sank").
+    if (cooperative_overdue_ids_.count(id)) {
+      t.status = TrackStatus::Coasting;
+    }
     t.state = a.mean_acc / a.mass;
     // Moment-matched covariance: E[P + μμ'] − mean·mean'
     t.covariance = (a.cov_acc / a.mass) - (t.state * t.state.transpose());

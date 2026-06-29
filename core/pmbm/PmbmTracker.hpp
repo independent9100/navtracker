@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <map>
+#include <set>
 #include <vector>
 
 #include <memory>
@@ -13,6 +14,7 @@
 #include "ports/ISensorBiasProvider.hpp"
 #include "ports/ISensorDetectionModel.hpp"
 #include "ports/ISensorActivity.hpp"
+#include "ports/IStaleSignalSink.hpp"
 #include "ports/ITrackSink.hpp"
 
 // Poisson Multi-Bernoulli Mixture (PMBM) tracker. Sibling to MhtTracker,
@@ -536,6 +538,12 @@ class PmbmTracker {
   // hypothesis until the next predict.
   void setTrackSink(ITrackSink* sink) { track_sink_ = sink; }
 
+  // Task 6: optional cooperative stale-signal sink. When non-null, fires
+  // onTrackStale(id, now) once per scan per track whose cooperative own-
+  // identity report is overdue (spec §9c: "we lost comms"). MUST NOT be
+  // wired to anything that reduces existence — pure notification only.
+  void setStaleSignalSink(IStaleSignalSink* s) { stale_sink_ = s; }
+
   // Per-sensor detection model. When set, the cost matrix, new-target
   // birth weight, and misdetection recursion use the per-(sensor,
   // model, source_id) (P_D, λ_C) and per-coverage missDetectionProb
@@ -705,6 +713,19 @@ class PmbmTracker {
   // transitions on each processBatch.
   ITrackSink* track_sink_{nullptr};
   std::map<std::uint64_t, TrackStatus> prev_emitted_statuses_;
+  // Task 6: optional cooperative stale-signal sink.
+  IStaleSignalSink* stale_sink_{nullptr};
+  // Task 6: set of Bernoulli ids whose cooperative own-identity report was
+  // overdue in the current scan (populated by enumerateChildren, cleared at
+  // the start of each processBatch, read by refreshAggregatedTracks to set
+  // TrackStatus::Coasting and by processBatch to fire onTrackStale).
+  mutable std::set<BernoulliId> cooperative_overdue_ids_;
+  // Task 6: last time a cooperative source's measurement was DETECTED for
+  // each Bernoulli. Used as the "last own-identity report time" for the
+  // cooperative-only retirement timeout. Falls back to b.birth_time when
+  // absent (freshly born / never detected by a cooperative source).
+  // Cleaned up alongside contribution_history_ when Bernoullis are pruned.
+  std::map<BernoulliId, Timestamp> last_cooperative_touch_;
   // Phase 4(D). Snapshot trajectories from the prior scan's dominant
   // hypothesis, keyed by Bernoulli id. Updated at end of each
   // processBatch alongside prev_emitted_statuses_. Two purposes:
