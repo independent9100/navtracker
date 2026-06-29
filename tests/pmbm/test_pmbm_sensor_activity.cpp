@@ -318,7 +318,7 @@ navtracker::DeclaredSensorActivity gRadarActivity() {
   p.duty_cycle_sec = 60.0;
   p.max_range_m = 10000.0;
   p.sector_width_rad = 6.283185307179586;  // full circle
-  p.p_D = 0.9;
+  p.p_D = 0.7;
   return navtracker::DeclaredSensorActivity{{p}};
 }
 
@@ -380,9 +380,9 @@ TEST(PmbmSensorActivity, SurveillanceCoveredSweepAppliesOneMiss) {
   ASSERT_EQ(tracker.density().mbm.size(), 1u);
   ASSERT_EQ(tracker.density().mbm[0].bernoullis.size(), 1u);
   const double r = tracker.density().mbm[0].bernoullis[0].existence_probability;
-  EXPECT_NEAR(r, 0.08 / 0.28, 1e-9)
-      << "Covered sweep + no return: must apply EXACTLY ONE miss with pD=0.9. "
-         "Expected r = (1-pD)*r0 / (1 - r0*pD) = 0.08/0.28";
+  EXPECT_NEAR(r, 0.24 / 0.44, 1e-9)
+      << "Covered sweep + no return: must apply EXACTLY ONE miss with pD=0.7. "
+         "Expected r = (1-pD)*r0 / (1 - r0*pD) = 0.24/0.44";
 }
 
 // ---------------------------------------------------------------------------
