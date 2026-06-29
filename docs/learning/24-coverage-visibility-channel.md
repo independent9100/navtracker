@@ -102,18 +102,18 @@ coverage channel once per update. Here is what happens:
 
 ```mermaid
 flowchart TD
-    A["For each Bernoulli track:\nquery ISensorActivity::evaluate()"]
+    A["For each Bernoulli track:<br/>query ISensorActivity::evaluate()"]
     A --> B{What channel kind?}
 
-    B -->|Surveillance\nradar / EO-IR / lidar| C{"In coverage AND\nsweep completed\nsince last check?"}
-    C -->|No — mid-sweep or\noutside coverage| D["p_D = 0\nr stays the same\nno opportunity charged"]
-    C -->|Yes| E{"Did a detection\narrive for this track?"}
-    E -->|Yes| F["Normal update path\nr rises toward 1"]
-    E -->|No| G["ONE miss charged per sweep\nr⁺ = (1−p_D)·r / (1−r·p_D)"]
+    B -->|Surveillance<br/>radar / EO-IR / lidar| C{"In coverage AND<br/>sweep completed<br/>since last check?"}
+    C -->|No — mid-sweep or<br/>outside coverage| D["p_D = 0<br/>r stays the same<br/>no opportunity charged"]
+    C -->|Yes| E{"Did a detection<br/>arrive for this track?"}
+    E -->|Yes| F["Normal update path<br/>r rises toward 1"]
+    E -->|No| G["ONE miss charged per sweep<br/>r⁺ = (1−p_D)·r / (1−r·p_D)"]
 
-    B -->|Cooperative-announce\nAIS / fleet link| H{"Own-identity report\noverdue for this vessel?"}
+    B -->|Cooperative-announce<br/>AIS / fleet link| H{"Own-identity report<br/>overdue for this vessel?"}
     H -->|No| I["r unchanged"]
-    H -->|Yes| J["Raise comms-loss signal\nto operator display\nr is NEVER changed\nby a missed report"]
+    H -->|Yes| J["Raise comms-loss signal<br/>to operator display<br/>r is NEVER changed<br/>by a missed report"]
 ```
 
 Two things stand out:
