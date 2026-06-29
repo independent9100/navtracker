@@ -625,15 +625,13 @@ TEST(PmbmStaleSignal, DoesNotAffectDifferentIdentity) {
   const auto it99 = std::find_if(ts.begin(), ts.end(), [](const navtracker::Track& t) {
     return t.id.value == 99u;
   });
-  if (it99 != ts.end()) {
-    EXPECT_NEAR(it99->existence_probability, 0.8, 1e-9)
-        << "Track 99 existence must be unchanged (no miss math for non-overdue "
-           "cooperative track when dt < interval)";
-    EXPECT_NE(it99->status, navtracker::TrackStatus::Coasting)
-        << "Track 99 must not be Coasting (not overdue)";
-  }
-  // Note: track 99 might have fallen below output_existence_floor if miss math
-  // was incorrectly applied; the float comparison above guards against that.
+  ASSERT_NE(it99, ts.end())
+      << "Track 99 erroneously pruned — miss math applied to non-overdue cooperative track";
+  EXPECT_NEAR(it99->existence_probability, 0.8, 1e-9)
+      << "Track 99 existence must be unchanged (no miss math for non-overdue "
+         "cooperative track when dt < interval)";
+  EXPECT_NE(it99->status, navtracker::TrackStatus::Coasting)
+      << "Track 99 must not be Coasting (not overdue)";
 }
 
 // ---------------------------------------------------------------------------

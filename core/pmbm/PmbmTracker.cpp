@@ -809,8 +809,12 @@ void PmbmTracker::enumerateChildren(
         appendTrajectoryPoint(det, cfg_.trajectory_window_scans,
                               scan[l].time, b.mean, b.covariance);
         child.bernoullis.push_back(std::move(det));
-        // Task 6: a detection resets the cooperative-only retirement timer.
-        last_cooperative_touch_[b.id] = scan[l].time;
+        // Task 6: only a Cooperative detection resets the cooperative-only
+        // retirement timer.  Radar/EO-IR/AIS detections must NOT reset it,
+        // otherwise a vessel that goes silent on its cooperative link but
+        // stays on radar would never be retired by cooperative_stale_timeout_sec.
+        if (scan[l].sensor == navtracker::SensorKind::Cooperative)
+          last_cooperative_touch_[b.id] = scan[l].time;
         // Full per-Bernoulli detection contribution to log-weight:
         // log(r · p_D · ℓ).  P_D is the assigned measurement's
         // per-(sensor, source) P_D under the detection model.
