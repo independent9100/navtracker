@@ -54,6 +54,12 @@ struct ScenarioDescriptor {
   // these entries (tracker-config defaults for unlisted sensors) and
   // `clutter_density` above is ignored.
   std::vector<SensorDetectionEntry> detection_table;
+
+  // Optional path to a GeoJSON coastline file for land-prior wiring.
+  // Non-empty signals that this scenario has a known coastline fixture;
+  // Sweep.cpp checks this (+ file existence) before building a
+  // CoastlineModel. Relative to the process cwd (project root).
+  std::string coastline_geojson_path;
 };
 
 // Port: produces a Scenario (measurements + truth) for a given seed.

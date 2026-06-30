@@ -582,6 +582,183 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // Task 1 probe: clutter-invariant birth existence. Same as
+  // imm_cv_ct_pmbm_adapt but r_new is pinned to a target instead of a
+  // fixed absolute λ_birth — fixes the philos over-confident-birth bug.
+  // With birth_existence_target=0.1, λ_birth = (0.1/0.9)·λ_C so r_new=0.1
+  // exactly regardless of sensor/scenario λ_C (autoferry 1e-4, philos
+  // radar 2.7e-6, AIS 1e-9 all yield r_new=0.1 without manual retuning).
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_birthtarget";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.adaptive_k_best = false;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.lambda_birth = 1e-5;          // ignored when target > 0
+      cfg.birth_existence_target = 0.1; // <-- the knob under test
+      cfg.min_new_bernoulli_existence = 0.05;
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
+  // Task 3: PMBM with the radar spatial clutter map. Same as
+  // imm_cv_ct_pmbm_adapt but the ClutterMapSensorDetectionModel wraps
+  // the scenario's fixed detection table, learning a higher λ_C on cells
+  // with persistent shore / moored-structure returns. This lowers
+  // r_new = λ_birth/(λ_birth+λ_C) on those cells, suppressing phantom
+  // births at the birth rate rather than post-hoc via lifecycle pruning.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_cmap";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.adaptive_k_best = false;  // explicit: mirrors imm_cv_ct_pmbm_adapt; safe if default changes
+      cfg.lambda_birth = 1e-5;
+      cfg.min_new_bernoulli_existence = 0.05;
+      return cfg;
+    };
+    c.use_clutter_map = true;  // radar position map suppresses shore births
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
+  // Task 2c — principled PMBM bundle: correct misdetection math (dedup_miss_pd)
+  // + clutter-invariant births (birth_existence_target) + per-vessel identity
+  // gate (source_aware_identity) + raised cardinality-control floors.
+  // dedup_miss_pd in isolation gave +92% philos GOSPA historically
+  // (eval-log PHILOS-T1); this bundle (with controlled births + floors)
+  // is ~+36% vs adapt — still a philos regression, hence ablation-only.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_bundle";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.adaptive_k_best = false;
+      // Task 2c sweep winner: target=0.1, floor=0.1 (lowest gospa 112.0,
+      // card_err +46.25 — least overcounting in the sweep). All 6 combinations
+      // (target∈{0.1,0.15,0.2} × floor∈{0.1,0.3}) yield gospa 112–119,
+      // card_err +46..+57; none beats imm_cv_ct_pmbm_adapt (82.63). The root
+      // cause is dedup_miss_pd=true reducing miss penalty → phantom Bernoullis
+      // from clutter accumulate to r>0.3 before pruning. output_existence_floor
+      // has negligible effect (phantoms' r>0.3). This config ships as ablation
+      // documenting the dedup_miss_pd bottleneck.
+      cfg.birth_existence_target = 0.1;    // Task 2c sweep winner
+      cfg.source_aware_identity = true;    // Task 2a: per-vessel sensor gate
+      cfg.dedup_miss_pd = true;            // Task 2b: correct misdetection math
+      cfg.min_new_bernoulli_existence = 0.1;  // raised cardinality control (was 0.05)
+      cfg.output_existence_floor = 0.1;    // Task 2c sweep: floor has no effect on phantoms (r>0.3)
+      cfg.lambda_birth = 1e-5;             // ignored when birth_existence_target > 0
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
+  // Task 4 coverage model: honest per-duty-cycle surveillance miss +
+  // cooperative stale signal, replacing idle_halflife + wrong-math
+  // per-blip miss. Cadence/coverage declared in Sweep.cpp.
+  // Clone of imm_cv_ct_pmbm_bundle with use_sensor_activity_model=true,
+  // use_sensor_activity=true, idle_halflife_sec=0 (retired), dedup_miss_pd
+  // disabled (coverage path bypasses compute_miss_pD wrong-math), and
+  // cooperative_stale_timeout_sec for AIS-only track retirement.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_coverage";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;  // unused for Pmbm
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_sensor_activity_model = true;  // Task 4: wire DeclaredSensorActivity
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.adaptive_k_best = false;
+      // Same sweep winner as the bundle (target=0.1, floor=0.1).
+      cfg.birth_existence_target = 0.1;
+      cfg.source_aware_identity = true;
+      cfg.min_new_bernoulli_existence = 0.1;
+      cfg.output_existence_floor = 0.1;
+      cfg.lambda_birth = 1e-5;             // ignored when birth_existence_target > 0
+      // Coverage path: honest surveillance miss via ISensorActivity.
+      cfg.use_sensor_activity = true;
+      // Retire the idle-halflife hack: the honest coverage model owns the
+      // surveillance-absence signal; idle_halflife would double-count.
+      cfg.idle_halflife_sec = 0.0;
+      // The coverage path bypasses compute_miss_pD wrong-math — dedup is
+      // irrelevant (and was the load-bearing brake in the bundle).
+      cfg.dedup_miss_pd = false;
+      // AIS is cooperative here → it never lowers existence via miss math.
+      // Cooperative-only/AIS-only tracks must be retired by stale timeout or
+      // cardinality grows. 120 s ≈ several missed AIS reports (declared/tunable).
+      cfg.cooperative_stale_timeout_sec = 120.0;
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
+  // Task 6 — land-prior wiring: same as imm_cv_ct_pmbm_coverage but
+  // CoastlineModel (Boston Harbor GeoJSON) suppresses adaptive-birth
+  // intensity at land positions. Wiring happens in Sweep.cpp when the
+  // scenario declares a coastline_geojson_path (philos only); autoferry
+  // and synthetic scenarios have no coastline fixture, so the land model
+  // is inert there — the run is bit-identical to imm_cv_ct_pmbm_coverage.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_coverage_land";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;  // unused for Pmbm
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_sensor_activity_model = true;  // coverage model (same as parent)
+    c.use_land_model = true;             // Task 6: wire CoastlineModel
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.adaptive_k_best = false;
+      cfg.birth_existence_target = 0.1;
+      cfg.source_aware_identity = true;
+      cfg.min_new_bernoulli_existence = 0.1;
+      cfg.output_existence_floor = 0.1;
+      cfg.lambda_birth = 1e-5;
+      cfg.use_sensor_activity = true;
+      cfg.idle_halflife_sec = 0.0;
+      cfg.dedup_miss_pd = false;
+      cfg.cooperative_stale_timeout_sec = 120.0;
+      cfg.use_land_model = true;   // activate land-prior birth gate
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Cl-3 Phase 9 — adaptive K with cap=3, shipped alongside K=1
   // imm_cv_ct_pmbm_adapt. Same-run 10-seed pinned baseline at
   // docs/baselines/pmbm_adapt_k3_phase9_20260623.csv.

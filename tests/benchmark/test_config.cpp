@@ -10,13 +10,10 @@ using navtracker::benchmark::defaultConfigs;
 
 TEST(Config, DefaultConfigsHaveUniqueLabels) {
   const auto configs = defaultConfigs();
-  // 23: 22 standing + Phase 9 imm_cv_ct_pmbm_adapt_k3 (now folds in
-  // S4 cross_parent_birth_id_cache=true by default — the structural
-  // fix for autoferry-anchored regressions). The earlier S3 _altgate
-  // and _xparent probe configs were dropped 2026-06-23 after the
-  // xparent fix proved the right default; their knobs remain
-  // wired+unit-tested for per-consumer ablation.
-  ASSERT_EQ(configs.size(), 23u);
+  // 28: 27 standing + Task 6 (Step 6) imm_cv_ct_pmbm_coverage_land
+  // (CoastlineModel land-prior wiring: suppresses adaptive-birth intensity
+  // at land positions via Boston Harbor GeoJSON, philos only).
+  ASSERT_EQ(configs.size(), 28u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   // Canonical wires the bias estimator unconditionally; the
@@ -28,7 +25,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 23u);
+  EXPECT_EQ(labels.size(), 28u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt_k3"), 1u);
   // Phase 9 probe siblings dropped 2026-06-23 (S4 fold-in):
@@ -58,23 +55,32 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   EXPECT_EQ(labels.count("imm_cv_ct_noisy_mht"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_mht_recapture"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_pmbm_birthtarget"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_pmbm_cmap"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_pmbm_bundle"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_pmbm_coverage"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_pmbm_coverage_land"), 1u);
   // biascal label removed — its wiring is now the canonical.
   EXPECT_EQ(labels.count("imm_cv_ct_mht_biascal"), 0u);
 }
 
-// Backlog item 5 ablation: the clutter-map config is the canonical MHT
-// stack with the spatial clutter map switched on, and is the ONLY config
-// with the flag — everything else must keep the fixed-table path.
-TEST(Config, ClutterMapAblationFlagsExactlyOneConfig) {
-  int flagged = 0;
+// The clutter-map flag is set on exactly two configs: the canonical MHT
+// ablation (imm_cv_ct_mht_cmap) and the PMBM ablation (imm_cv_ct_pmbm_cmap).
+// All other configs must keep the fixed-table path.
+TEST(Config, ClutterMapAblationFlagsExactlyTwoConfigs) {
+  const std::set<std::string> expected_cmap_labels = {
+      "imm_cv_ct_mht_cmap", "imm_cv_ct_pmbm_cmap"};
+  std::set<std::string> flagged_labels;
   for (const auto& c : defaultConfigs()) {
     if (c.use_clutter_map) {
-      ++flagged;
-      EXPECT_EQ(c.label, "imm_cv_ct_mht_cmap");
-      EXPECT_EQ(c.tracker_kind, navtracker::benchmark::TrackerKind::Mht);
+      flagged_labels.insert(c.label);
+      EXPECT_EQ(expected_cmap_labels.count(c.label), 1u)
+          << "Unexpected clutter-map config: " << c.label;
     }
   }
-  EXPECT_EQ(flagged, 1);
+  EXPECT_EQ(flagged_labels.size(), 2u);
+  EXPECT_EQ(flagged_labels.count("imm_cv_ct_mht_cmap"), 1u);
+  EXPECT_EQ(flagged_labels.count("imm_cv_ct_pmbm_cmap"), 1u);
 }
 
 TEST(Config, FactoriesProduceUsableObjects) {

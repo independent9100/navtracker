@@ -57,8 +57,8 @@ struct Config {
   std::function<MhtTracker::Config()> mht_config{};
   // Backlog item 5 ablation: wrap the scenario's fixed detection table
   // in a ClutterMapSensorDetectionModel (spatially-varying λ_C learned
-  // online from unassociated returns). Mht only; no effect when the
-  // scenario declares no detection table.
+  // online from unassociated returns). Applies to Mht and Pmbm paths;
+  // no effect when the scenario declares no detection table.
   bool use_clutter_map{false};
   // When set and the scenario declares a per-sensor detection table,
   // this takes precedence over `build_associator` — the scenario's
@@ -82,6 +82,22 @@ struct Config {
   // birth). When pmbm_config.measurement_driven_birth is false, a
   // user-supplied factory is required for any new Bernoulli to spawn.
   std::function<pmbm::PmbmTracker::BirthModelFn()> pmbm_birth_model{};
+  // Task 4: build a DeclaredSensorActivity coverage model from the
+  // scenario's detection table + declared cadence and wire it into the
+  // PMBM tracker. When true, Sweep.cpp constructs a DeclaredSensorActivity
+  // from the per-sensor detection entries and calls
+  // tracker.setSensorActivity(). Only meaningful when tracker_kind == Pmbm
+  // and the scenario declares a detection_table.
+  bool use_sensor_activity_model{false};
+  // Task 6: build a CoastlineModel from the scenario's GeoJSON coastline
+  // fixture and wire it into the PMBM tracker via setLandModel(). When
+  // true, Sweep.cpp loads the GeoJSON (if the file exists), constructs
+  // CoastlineModel with the scenario's ENU datum, and calls
+  // tracker.setLandModel(). Only meaningful when tracker_kind == Pmbm,
+  // cfg.use_land_model == true, and the scenario declares a
+  // coastline_geojson_path. Scenarios without a coastline fixture silently
+  // skip wiring (land model stays null → bit-identical to no-land behaviour).
+  bool use_land_model{false};
 };
 
 // Returns the five baseline configurations in fixed order:

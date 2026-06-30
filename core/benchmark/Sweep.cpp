@@ -1,5 +1,8 @@
 #include "core/benchmark/Sweep.hpp"
 
+#include <chrono>
+#include <fstream>
+
 // Sweep — drives the (config x scenario x seed) matrix, runs BenchRunner,
 // computes metrics, emits long-format rows.
 //
@@ -31,14 +34,18 @@
 //     remain deterministic since each cell is independent.
 //   - Per-config Tracker construction parameters when they need to vary.
 
+#include "adapters/land/GeoJsonCoastline.hpp"
 #include "core/benchmark/BenchRunner.hpp"
 #include "core/benchmark/BenchSink.hpp"
 #include "core/benchmark/Consistency.hpp"
 #include "core/bias/SensorBiasPairExtractor.hpp"
+#include "core/land/CoastlineModel.hpp"
 #include "core/pipeline/Tracker.hpp"
+#include "core/sensor_activity/DeclaredSensorActivity.hpp"
 #include "core/tracking/ClutterMapDetectionModel.hpp"
 #include "core/tracking/SensorDetectionModels.hpp"
 #include "core/tracking/TrackManager.hpp"
+#include "ports/ISensorActivity.hpp"
 
 namespace navtracker {
 namespace benchmark {
@@ -92,12 +99,18 @@ void emit(std::vector<MetricRow>& out,
           const std::string& scenario,
           std::uint64_t seed,
           const MetricsResult& m,
-          const ConsistencyResult& c) {
+          const ConsistencyResult& c,
+          double wall_seconds) {
+  out.push_back({p.run_id, config, scenario, seed, "wall_seconds", wall_seconds, "s"});
   out.push_back({p.run_id, config, scenario, seed, "ospa_mean", m.ospa_mean, "m"});
   out.push_back({p.run_id, config, scenario, seed, "ospa_p95", m.ospa_p95, "m"});
   out.push_back({p.run_id, config, scenario, seed, "gospa_mean", m.gospa_mean, "m"});
   out.push_back({p.run_id, config, scenario, seed, "gospa_p95", m.gospa_p95, "m"});
   out.push_back({p.run_id, config, scenario, seed, "gospa_rms", m.gospa_rms, "m"});
+  out.push_back({p.run_id, config, scenario, seed, "gospa_localization", m.gospa_localization, "m2"});
+  out.push_back({p.run_id, config, scenario, seed, "gospa_missed", m.gospa_missed, "m2"});
+  out.push_back({p.run_id, config, scenario, seed, "gospa_false", m.gospa_false, "m2"});
+  out.push_back({p.run_id, config, scenario, seed, "card_err_mean", m.card_err_mean, "tracks"});
   out.push_back({p.run_id, config, scenario, seed, "tgospa_raw", m.tgospa_raw_m, "m"});
   out.push_back({p.run_id, config, scenario, seed, "tgospa_smooth", m.tgospa_smooth_m, "m"});
   out.push_back({p.run_id, config, scenario, seed, "lifetime_ratio", m.lifetime_ratio, "ratio"});
@@ -207,6 +220,7 @@ std::vector<MetricRow> runSweep(
         NisCollector nis;
         std::map<std::uint64_t, std::vector<pmbm::TrajectoryPoint>>
             pmbm_smoothed_trajectories;
+        const auto t_cell0 = std::chrono::steady_clock::now();
         if (config.tracker_kind == TrackerKind::Mht) {
           MhtTracker::Config cfg =
               config.mht_config ? config.mht_config() : MhtTracker::Config{};
@@ -268,9 +282,79 @@ std::vector<MetricRow> runSweep(
           MhtTracker::Config carrier;
           carrier.probability_of_detection = cfg.probability_of_detection;
           carrier.clutter_density = cfg.clutter_intensity;
-          auto det = detectionModelFor(desc, carrier, /*use_clutter_map=*/false);
+          auto det = detectionModelFor(desc, carrier, config.use_clutter_map);
           pmbm::PmbmTracker tracker(*est, cfg, std::move(birth));
           if (det) tracker.setSensorDetectionModel(det);
+
+          // Task 4: build a DeclaredSensorActivity from the scenario's
+          // per-sensor detection table and wire it into the PMBM tracker.
+          // The shared_ptr is kept alive until after the synchronous
+          // runBenchPmbm call below (the tracker holds only a raw pointer).
+          // Declared per-sensor cadence constants (decision §9a); tunable —
+          // see spec roadmap §13.1 adaptive provider.
+          constexpr double kArpaDutyCycleSec     = 2.5;   // typical radar rotation period
+          constexpr double kEoIrDutyCycleSec     = 1.0;   // EO/IR frame period
+          constexpr double kLidarDutyCycleSec    = 0.1;   // lidar scan period
+          constexpr double kAisReportIntervalSec = 10.0;  // AIS/cooperative broadcast interval
+          std::shared_ptr<DeclaredSensorActivity> activity;
+          if (config.use_sensor_activity_model && !desc.detection_table.empty()) {
+            std::vector<DeclaredSensorActivity::ChannelProfile> profiles;
+            for (const auto& e : desc.detection_table) {
+              DeclaredSensorActivity::ChannelProfile prof;
+              prof.sensor = e.sensor;
+              switch (e.sensor) {
+                case SensorKind::ArpaTtm:
+                case SensorKind::EoIr:
+                case SensorKind::Lidar:
+                  prof.kind            = ChannelKind::Surveillance;
+                  prof.max_range_m     = e.params.max_range_m;
+                  prof.sector_center_rad = e.params.sector_center_rad;
+                  prof.sector_width_rad  = e.params.sector_width_rad;
+                  prof.p_D             = e.params.probability_of_detection;
+                  prof.duty_cycle_sec  =
+                      (e.sensor == SensorKind::ArpaTtm) ? kArpaDutyCycleSec :
+                      (e.sensor == SensorKind::EoIr)    ? kEoIrDutyCycleSec :
+                                                           kLidarDutyCycleSec;
+                  break;
+                case SensorKind::Ais:
+                case SensorKind::Cooperative:
+                  prof.kind                      = ChannelKind::Cooperative;
+                  prof.expected_report_interval_sec = kAisReportIntervalSec;
+                  break;
+                default:
+                  continue;  // skip Unknown, OwnShip, ArpaTll
+              }
+              profiles.push_back(prof);
+            }
+            activity = std::make_shared<DeclaredSensorActivity>(std::move(profiles));
+            tracker.setSensorActivity(activity.get());
+          }
+
+          // Task 6: build and wire CoastlineModel when the config and
+          // scenario both opt in. The shared_ptr is kept alive until after
+          // the synchronous runBenchPmbm call below (tracker holds a raw
+          // pointer). Only wired when the GeoJSON file exists (replay
+          // fixture absent → skip gracefully). The datum is fixed for the
+          // whole bench run (PhilosScenarioRun::generate() pre-processes
+          // all own-ship history via feedOwnshipHistory, so no recentering
+          // occurs during replay), so no datum-sink registration is needed.
+          std::shared_ptr<CoastlineModel> land;
+          if (config.use_land_model &&
+              !desc.coastline_geojson_path.empty() &&
+              scen.datum.has_value()) {
+            std::ifstream probe(desc.coastline_geojson_path);
+            if (probe.good()) {
+              try {
+                auto geom = loadCoastlineGeoJson(desc.coastline_geojson_path,
+                                                 CoastlinePriorParams{});
+                land = std::make_shared<CoastlineModel>(std::move(geom),
+                                                        *scen.datum);
+                tracker.setLandModel(land.get());
+              } catch (const std::exception&) {
+                // GeoJSON parse failure — proceed without land model
+              }
+            }
+          }
 
           // Same item-9 bias-estimator wiring as the MHT path:
           // per-cycle pair extraction (AIS-anchored position pairs +
@@ -335,6 +419,9 @@ std::vector<MetricRow> runSweep(
         // the (possibly empty) smoothed trajectories — empty est
         // produces a genuine cardinality penalty rather than the
         // default-0 sentinel from the scalar overload.
+        const auto t_cell1 = std::chrono::steady_clock::now();
+        const double wall_seconds =
+            std::chrono::duration<double>(t_cell1 - t_cell0).count();
         const auto m = (config.tracker_kind == TrackerKind::Pmbm)
             ? computeMetrics(result, params.metrics,
                              pmbm_smoothed_trajectories)
@@ -342,7 +429,7 @@ std::vector<MetricRow> runSweep(
         const auto c =
             computeConsistency(nis, result, params.metrics.assoc_gate_m);
         emit(rows, params, config.label, desc.label,
-             static_cast<std::uint64_t>(seed), m, c);
+             static_cast<std::uint64_t>(seed), m, c, wall_seconds);
       }
     }
   }

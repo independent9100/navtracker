@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <map>
+#include <set>
 #include <vector>
 
 #include <memory>
@@ -12,6 +13,9 @@
 #include "ports/IEstimator.hpp"
 #include "ports/ISensorBiasProvider.hpp"
 #include "ports/ISensorDetectionModel.hpp"
+#include "ports/ILandModel.hpp"
+#include "ports/ISensorActivity.hpp"
+#include "ports/IStaleSignalSink.hpp"
 #include "ports/ITrackSink.hpp"
 
 // Poisson Multi-Bernoulli Mixture (PMBM) tracker. Sibling to MhtTracker,
@@ -180,6 +184,25 @@ class PmbmTracker {
     // (each sensor contributes its own birth-PHD).
     std::map<navtracker::SensorKind, double> lambda_birth_per_sensor;
 
+    // Clutter-invariant birth existence (Task 1, 2026-06-24). When > 0,
+    // the adaptive-birth path derives λ_birth from the per-measurement
+    // λ_C so the new-target existence is exactly r_new = this value,
+    // independent of the sensor/scenario clutter density:
+    //   λ_birth = (r*/(1−r*))·λ_C  ⇒  r_new = λ_birth/(λ_birth+λ_C) = r*.
+    // Fixes the philos over-confident-birth bug: a fixed *absolute*
+    // λ_birth gives r_new ≈ 0.79 (radar) / ≈1.0 (AIS) on philos because
+    // λ_C there is 2.7e-6 / 1e-9, not the 1e-4 the scalar was tuned for.
+    //
+    // Must be in (0, 1); values outside this range (0 or >= 1) fall back
+    // to the lambda_birth / lambda_birth_per_sensor path (finite, predictable).
+    // Values >= 1 would produce zero or negative denominator (→ Inf/NaN);
+    // the guard in buildAdaptiveBirthCandidates enforces the contract.
+    // Only effective when adaptive_birth = true.
+    //
+    // 0 = legacy (use lambda_birth / lambda_birth_per_sensor). Typical
+    // 0.1–0.3 so real targets ramp via posterior over later detections.
+    double birth_existence_target = 0.0;
+
     // Adaptive K-best per parent (MATLAB MTT-master convention).
     // When ON, each parent's K is derived from its weight share:
     //   K_p = max(1, ceil(max_global_hypotheses · w_p))
@@ -235,6 +258,28 @@ class PmbmTracker {
     // default so unit-test math stays interpretable; on in the PMBM
     // bench config.
     bool source_aware_misdetection = false;
+
+    // Per-vessel identity for the source-aware misdetection gate (2a).
+    // AIS broadcasts all share source_id="ais", so the channel-keyed gate
+    // cannot distinguish individual vessels: vessel A's broadcast causes
+    // vessel B to be misdetected. When source_aware_identity=true AND a
+    // SourceTouch entry has a vessel_id, the gate uses vessel_id instead
+    // of source_id for that touch — so only a scan measurement with the
+    // same vessel_id (hints.mmsi) counts as coverage. Channel fallback
+    // applies when vessel_id is absent (bit-identical to legacy).
+    // Off by default = bit-identical to source_aware_misdetection only.
+    // DO NOT change AIS source_id="ais" — MHT's miss-dedup keys on it.
+    bool source_aware_identity = false;
+
+    // Per-scan dedup of compute_miss_pD (2b). Textbook: one detection
+    // opportunity per distinct (sensor, model, source_id) channel per
+    // scan, not one per return. With dedup_miss_pd=true, N returns from
+    // one radar sweep count as ONE opportunity: effective miss-P_D =
+    // 1−(1−P_D) rather than 1−(1−P_D)^N. Off by default = legacy
+    // per-measurement product (bit-identical to Phase 8/9 baseline).
+    // Requires a detection model to have any effect; falls back to the
+    // Config::probability_of_detection scalar when no model is set.
+    bool dedup_miss_pd = false;
 
     // Within-hypothesis Bernoulli merging. Generalised from
     // MhtTracker::mergeBranches (cross-tree Bhattacharyya merge): after
@@ -313,6 +358,33 @@ class PmbmTracker {
     // ghosts decay below r_min and prune. ≤ 0 disables. Default 0
     // for parity with prior behaviour; the bench config sets ~60 s.
     double idle_halflife_sec = 0.0;
+
+    // Task 4: when true AND sensor_activity is wired, existence moves only
+    // on a genuine per-duty-cycle surveillance miss; idle_halflife and the
+    // per-blip miss path are bypassed (spec §4, §12). Default false ->
+    // today's behaviour, bit-identical.
+    bool use_sensor_activity = false;
+    // Task 4 (spec §4 case 2): a cooperative-only track is retired only
+    // after this many seconds with no own-identity report (0 = never by
+    // this rule). Never a per-sweep existence penalty.
+    double cooperative_stale_timeout_sec = 0.0;
+
+    // Task A (land clutter prior): when true AND a land model is wired via
+    // setLandModel(), scale the adaptive-birth intensity by
+    //   (1 − clutterPrior(birth_pos))
+    // so births near or on land are soft-suppressed. When the prior exceeds
+    // land_birth_hard_gate (inland plateau) the birth is dropped entirely
+    // (rho_target = 0). The hard gate fires only well inside land — the
+    // ramp shape of a well-built prior ensures it never reaches the gate
+    // threshold at the waterline, protecting anchored near-shore vessels.
+    // Default false → bit-identical to today's behaviour.
+    bool use_land_model = false;
+    // χ clutter-prior threshold for a hard inland gate. When
+    // clutterPrior(birth_pos) > land_birth_hard_gate, the birth candidate
+    // is dropped entirely (rho_target set to 0). Must be in (0, 1].
+    // 0.95 means "only fire the hard gate when the prior is very confidently
+    // inland, never at the waterline". Ignored when use_land_model = false.
+    double land_birth_hard_gate = 0.95;
 
     // Per-track-hypothesis structural path (Phase 9). When true,
     // `PmbmDensity::tracks` + `tracked_mbm` are populated alongside
@@ -484,6 +556,12 @@ class PmbmTracker {
   // hypothesis until the next predict.
   void setTrackSink(ITrackSink* sink) { track_sink_ = sink; }
 
+  // Task 6: optional cooperative stale-signal sink. When non-null, fires
+  // onTrackStale(id, now) once per scan per track whose cooperative own-
+  // identity report is overdue (spec §9c: "we lost comms"). MUST NOT be
+  // wired to anything that reduces existence — pure notification only.
+  void setStaleSignalSink(IStaleSignalSink* s) { stale_sink_ = s; }
+
   // Per-sensor detection model. When set, the cost matrix, new-target
   // birth weight, and misdetection recursion use the per-(sensor,
   // model, source_id) (P_D, λ_C) and per-coverage missDetectionProb
@@ -496,6 +574,18 @@ class PmbmTracker {
   void setSensorDetectionModel(std::shared_ptr<ISensorDetectionModel> m) {
     detection_model_ = std::move(m);
   }
+
+  // Task 4: optional sensor-activity port. When null (default) the tracker
+  // behaves exactly as before Task 4 (bit-identical). When set and
+  // cfg_.use_sensor_activity == true, the misdetection step consults the
+  // port to distinguish genuine surveillance misses from idle intervals.
+  void setSensorActivity(const ISensorActivity* a) { sensor_activity_ = a; }
+
+  // Task A: optional land/coastline clutter prior. When null (default) or
+  // cfg_.use_land_model == false, behaviour is bit-identical to today's.
+  // When set and use_land_model = true, the adaptive-birth intensity is
+  // scaled by (1 − clutterPrior(birth_pos)) for each candidate.
+  void setLandModel(const ILandModel* m) { land_model_ = m; }
 
   // Next Bernoulli id that will be minted (introspection / tests).
   BernoulliId nextBernoulliId() const noexcept { return next_bernoulli_id_; }
@@ -621,6 +711,14 @@ class PmbmTracker {
   std::map<std::pair<int, int>, BernoulliId> scan_birth_id_cache_;
   const ISensorBiasProvider* bias_provider_{nullptr};
   std::shared_ptr<ISensorDetectionModel> detection_model_;
+  const ISensorActivity* sensor_activity_{nullptr};
+  const ILandModel* land_model_{nullptr};
+  // Task 5: per-Bernoulli "last activity check" timestamp for the sensor-
+  // activity path. Keyed by BernoulliId; absent = use b.birth_time as the
+  // window start.  Updated to current_time_ each time a surveillance miss
+  // fires, so only ONE miss per duty_cycle is charged regardless of scan rate.
+  // Cleaned up alongside contribution_history_ when Bernoullis are pruned.
+  std::map<BernoulliId, Timestamp> last_activity_check_;
   // Per-Bernoulli-id rolling source-touch history. Populated from the
   // dominant child after each scan; the same shape as
   // MhtTracker::contribution_history_. Folded into each emitted Track's
@@ -640,6 +738,65 @@ class PmbmTracker {
   // transitions on each processBatch.
   ITrackSink* track_sink_{nullptr};
   std::map<std::uint64_t, TrackStatus> prev_emitted_statuses_;
+  // Task 6: optional cooperative stale-signal sink.
+  IStaleSignalSink* stale_sink_{nullptr};
+  // Task 6: set of Bernoulli ids whose cooperative own-identity report was
+  // overdue in the current scan (populated by enumerateChildren, cleared at
+  // the start of each processBatch, read by refreshAggregatedTracks to set
+  // TrackStatus::Coasting and by processBatch to fire onTrackStale).
+  mutable std::set<BernoulliId> cooperative_overdue_ids_;
+  // Task 6: last time a cooperative source's measurement was DETECTED for
+  // each Bernoulli. Used as the "last own-identity report time" for the
+  // cooperative-only retirement timeout. Falls back to b.birth_time when
+  // absent (freshly born / never detected by a cooperative source).
+  // Cleaned up alongside contribution_history_ when Bernoullis are pruned.
+  std::map<BernoulliId, Timestamp> last_cooperative_touch_;
+  // Task 5 Step-4 fix: per-scan staging maps for hypothesis-consistent
+  // surveillance-miss / cooperative-touch windows. enumerateChildren runs
+  // once PER PARENT global hypothesis; the same BernoulliId appears across
+  // many parents. Mutating last_activity_check_ / last_cooperative_touch_
+  // mid-enumeration makes a later parent read a window a sibling parent
+  // just advanced, so the result depends on parent order. Instead every
+  // parent READS the persistent map as a read-only snapshot for the whole
+  // scan, and WRITES the resolved-this-scan time into these staging maps
+  // (max-merged so order-independent). processBatch merges the staging
+  // maps into the persistent maps ONCE, after all parents are enumerated.
+  // Both stay empty (inert, bit-identical) when use_sensor_activity is off.
+  std::map<BernoulliId, Timestamp> staged_activity_check_;
+  std::map<BernoulliId, Timestamp> staged_cooperative_touch_;
+  // Stage a resolved-this-scan window time, keeping the latest (max) value
+  // so the result is independent of which parent/assignment wrote first.
+  void stageActivityCheck(BernoulliId id, Timestamp t);
+  void stageCooperativeTouch(BernoulliId id, Timestamp t);
+  // Returns the birth-intensity scale in [0, 1] for a birth at ENU position
+  // `mean.head<2>()`, or a negative value meaning "hard-drop this birth":
+  //   1.0   — no land model wired or use_land_model=false (bit-identical)
+  //   [0,1) — soft suppression: scale lambda_birth by this factor
+  //   < 0   — inland hard gate: set lambda_birth to 0 (no Bernoulli)
+  double landBirthScale(const Eigen::VectorXd& mean) const {
+    if (!cfg_.use_land_model || land_model_ == nullptr || mean.size() < 2)
+      return 1.0;
+    const double c = land_model_->clutterPrior(mean.head<2>());
+    if (c > cfg_.land_birth_hard_gate) return -1.0;  // hard-drop
+    return 1.0 - c;                                   // soft scale
+  }
+
+  // Returns true when a measurement from sensor `s` should update the
+  // cooperative-touch timer. When an activity provider is wired and has a
+  // profile for `s`, the profile's ChannelKind decides. Falls back to the
+  // legacy `s == SensorKind::Cooperative` check when no provider is wired
+  // or the provider has no profile for `s` — bit-identical to legacy in
+  // both cases.
+  bool isCooperativeSource(SensorKind s) const {
+    if (sensor_activity_) {
+      const auto k = sensor_activity_->channelKindFor(s);
+      if (k.has_value()) return *k == ChannelKind::Cooperative;
+    }
+    return s == SensorKind::Cooperative;
+  }
+  // Apply the staging maps to the persistent maps (called once per scan,
+  // after every parent has been enumerated). No-op when both are empty.
+  void mergeStagedActivityMaps();
   // Phase 4(D). Snapshot trajectories from the prior scan's dominant
   // hypothesis, keyed by Bernoulli id. Updated at end of each
   // processBatch alongside prev_emitted_statuses_. Two purposes:

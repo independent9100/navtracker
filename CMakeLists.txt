@@ -12,11 +12,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Eigen3 REQUIRED)
 find_package(GTest REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 option(NAVTRACKER_BUILD_FOXGLOVE "Build the Foxglove/MCAP debug recorder adapter" ON)
 if(NAVTRACKER_BUILD_FOXGLOVE)
   find_package(mcap REQUIRED)
-  find_package(nlohmann_json REQUIRED)
 endif()
 
 enable_testing()
@@ -65,6 +65,7 @@ add_library(navtracker_core
   core/pipeline/Tracker.cpp
   core/pipeline/MhtTracker.cpp
   core/pmbm/PmbmTracker.cpp
+  core/land/CoastlineGeometry.cpp
   core/scenario/Builders.cpp
   core/scenario/Ospa.cpp
   core/scenario/Gospa.cpp
@@ -76,6 +77,7 @@ add_library(navtracker_core
   core/scenario/Metrics.cpp
   core/scenario/TruthResample.cpp
   core/output/TrackOutput.cpp
+  core/sensor_activity/DeclaredSensorActivity.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
@@ -97,9 +99,16 @@ add_library(navtracker_replay
   adapters/replay/AisCsvReplayAdapter.cpp
   adapters/replay/OwnshipCsvReader.cpp
   adapters/replay/AutoferryJsonReplay.cpp
+  adapters/replay/RadarTruthCsvReader.cpp
 )
 target_include_directories(navtracker_replay PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_replay PUBLIC navtracker_core Eigen3::Eigen)
+
+add_library(navtracker_land
+  adapters/land/GeoJsonCoastline.cpp
+)
+target_include_directories(navtracker_land PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(navtracker_land PUBLIC navtracker_core Eigen3::Eigen PRIVATE nlohmann_json::nlohmann_json)
 
 add_library(navtracker_benchmark
   core/benchmark/Placeholder.hpp  # header-only at this stage
@@ -116,7 +125,7 @@ add_library(navtracker_benchmark
 )
 set_target_properties(navtracker_benchmark PROPERTIES LINKER_LANGUAGE CXX)
 target_include_directories(navtracker_benchmark PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(navtracker_benchmark PUBLIC navtracker_core Eigen3::Eigen)
+target_link_libraries(navtracker_benchmark PUBLIC navtracker_core navtracker_land Eigen3::Eigen)
 
 add_library(navtracker_sim
   sim/TruthTrajectory.cpp
@@ -199,11 +208,16 @@ add_executable(navtracker_tests
   tests/pipeline/test_review_fixes.cpp
   tests/pipeline/test_jpda_contributing_sources.cpp
   tests/pipeline/test_bias_correction_orthogonality.cpp
+  tests/land/test_coastline_geometry.cpp
+  tests/land/test_coastline_model.cpp
+  tests/land/test_geojson_coastline.cpp
   tests/pmbm/test_pmbm_types.cpp
   tests/pmbm/test_pmbm_tracker_predict.cpp
   tests/pmbm/test_pmbm_tracker_update.cpp
   tests/pmbm/test_pmbm_scenario.cpp
   tests/pmbm/test_pmbm_phase8.cpp
+  tests/pmbm/test_pmbm_sensor_activity.cpp
+  tests/pmbm/test_pmbm_land_model.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
   tests/adapters/own_ship/test_own_ship_provider.cpp
@@ -275,6 +289,7 @@ add_executable(navtracker_tests
   tests/output/test_track_output.cpp
   tests/replay/test_haxr_ospa.cpp
   tests/replay/test_philos_ospa.cpp
+  tests/replay/test_radar_truth_loader.cpp
   tests/replay/test_autoferry_json_replay.cpp
   tests/estimation/test_noise_models.cpp
   tests/tracking/test_sensor_detection_models.cpp
@@ -296,12 +311,15 @@ add_executable(navtracker_tests
   tests/benchmark/test_render_markdown.cpp
   tests/benchmark/test_compare.cpp
   tests/benchmark/test_bench_determinism.cpp
+  tests/sensor_activity/test_declared_sensor_activity.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
     navtracker_core navtracker_nmea navtracker_sim navtracker_replay navtracker_benchmark
-    navtracker_benchmark_adapters
+    navtracker_benchmark_adapters navtracker_land
     GTest::gtest_main Eigen3::Eigen)
+target_compile_definitions(navtracker_tests PRIVATE
+    NAVTRACKER_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 if(NAVTRACKER_BUILD_FOXGLOVE)
   target_sources(navtracker_tests PRIVATE

@@ -122,6 +122,15 @@
 - **"datum"** — the origin point of the ENU local tangent plane.
 - **"hexagonal architecture"** — ports-and-adapters pattern;
   the core has no I/O knowledge.
+- **"clutter prior"** — a spatial prior `c ∈ [0,1]` that estimates
+  how likely a position is to produce false sensor returns (shore /
+  structure clutter) rather than real vessel detections. Chapter 25.
+- **"shoreline ramp"** — the smooth function `c(d) = clamp((W_off−d)/(W_off+W_in), 0, 1)`
+  of signed distance `d` to the nearest shore edge. Rises from 0 (open water)
+  to 1 (well inland) across a configurable margin band. Chapter 25.
+- **"land mask"** — colloquial name for the coastline clutter prior when viewed
+  as a binary yes/no surface; in navtracker the mask is always a continuous ramp,
+  not a hard binary. The inland plateau (c ≈ 1) is the "masked" region. Chapter 25.
 - **"sensor pose"** — the ENU position (and optionally
   orientation) of the sensor at the moment of measurement.
 - **"sticky modes"** — IMM transition matrix with high diagonal
@@ -134,6 +143,25 @@
   track from an unassociated measurement.
 - **"score"** — log-likelihood-ratio accumulated over a track's
   history; used for confirm/delete and as the MHT objective.
+- **"duty cycle"** — the period of one complete sensor sweep or
+  rotation (e.g. 2.5 s for a radar that rotates 24 times per
+  minute). One duty cycle = one opportunity to see any target
+  inside coverage. See §24.
+- **"cooperative-announce source"** — a sensor kind where the
+  target sends its own reports on its own schedule (AIS, fleet
+  link). Silence is weak evidence; reports are strong. Contrasted
+  with surveillance sources. See §24.
+- **"surveillance sensor"** — a sensor kind that actively searches
+  an area on a known duty cycle (radar, EO/IR, lidar). Silence
+  over covered ground is strong, symmetric evidence. See §24.
+- **"coverage / visibility channel"** — the ISensorActivity port
+  that tells the tracker which sensor had a real chance to observe
+  a track during a given time window. Enables per-duty-cycle miss
+  charging instead of per-blip. See §24.
+- **"comms-loss signal"** — a flag raised when a cooperative
+  source's own-identity report is overdue. Tells the operator
+  contact was lost; does NOT lower the track's existence
+  probability. See §24.
 
 ---
 

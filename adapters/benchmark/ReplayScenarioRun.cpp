@@ -14,6 +14,7 @@
 #include "adapters/replay/HaxrTruthLoader.hpp"
 #include "adapters/replay/OwnshipCsvReader.hpp"
 #include "adapters/replay/PlotCsvReplayAdapter.hpp"
+#include "adapters/replay/RadarTruthCsvReader.hpp"
 #include "core/scenario/Truth.hpp"
 #include "core/scenario/TruthResample.hpp"
 #include "core/types/Measurement.hpp"
@@ -32,6 +33,8 @@ constexpr const char* kPhilosAisCsv =
     "tests/fixtures/philos/out/ais_ferry_near/ais.csv";
 constexpr const char* kPhilosPlotsCsv =
     "tests/fixtures/philos/out/ais_ferry_near/radar_plots.csv";
+constexpr const char* kPhilosRadarTruthCsv =
+    "tests/fixtures/philos/out/ais_ferry_near/radar_truth.csv";
 
 // HAXR kattwyk_08 fixture paths. Mirrors tests/replay/test_haxr_ospa.cpp.
 constexpr const char* kHaxrPlotsCsv =
@@ -64,8 +67,17 @@ TruthSample aisMeasurementToTruth(const Measurement& m) {
 
 class PhilosScenarioRun : public ScenarioRun {
  public:
+  enum class TruthSource { AisOnly, RadarOnly, Union };
+
+  explicit PhilosScenarioRun(TruthSource truth_source = TruthSource::AisOnly)
+      : truth_source_(truth_source) {}
+
   ScenarioDescriptor descriptor() const override {
-    ScenarioDescriptor d{"philos", /*is_multi_seed=*/false,
+    const std::string label =
+        (truth_source_ == TruthSource::RadarOnly)
+            ? "philos_radartruth"
+            : (truth_source_ == TruthSource::Union ? "philos_union" : "philos");
+    ScenarioDescriptor d{label, /*is_multi_seed=*/false,
                          /*seed_count=*/1};
     // Per-sensor detection table, calibrated against interpolated
     // AIS-as-truth on the ais_ferry_near fixture (30 m gate):
@@ -89,14 +101,25 @@ class PhilosScenarioRun : public ScenarioRun {
         {SensorKind::Ais, MeasurementModel::Position2D,
          DetectionParams{0.05, 1e-9}},
     };
+    // Philos: Boston Harbor coastline GeoJSON for land-prior wiring.
+    // Sweep checks existence before loading; missing file → no land model.
+    d.coastline_geojson_path = "tests/fixtures/philos/boston.geojson";
     return d;
   }
 
   Scenario generate(std::uint64_t /*seed*/) override {
-    if (!fileExists(kPhilosOwnshipCsv) || !fileExists(kPhilosAisCsv) ||
-        !fileExists(kPhilosPlotsCsv)) {
+    const bool need_ais = (truth_source_ == TruthSource::AisOnly ||
+                           truth_source_ == TruthSource::Union);
+    if (!fileExists(kPhilosOwnshipCsv) || !fileExists(kPhilosPlotsCsv)) {
       return {};  // fixtures absent — caller skips
     }
+    if (need_ais && !fileExists(kPhilosAisCsv)) return {};
+    if ((truth_source_ == TruthSource::RadarOnly ||
+         truth_source_ == TruthSource::Union) &&
+        !fileExists(kPhilosRadarTruthCsv)) {
+      return {};
+    }
+
     // Prime an OwnShipProvider from the full ownship history so plot/AIS
     // adapters can look up pose at-or-before any time.
     const auto poses = navtracker::replay::loadOwnshipCsv(kPhilosOwnshipCsv);
@@ -104,38 +127,66 @@ class PhilosScenarioRun : public ScenarioRun {
     OwnShipProvider provider(/*history_size=*/poses.size() + 1);
     navtracker::replay::feedOwnshipHistory(provider, poses);
 
-    // AIS as both a measurement source and the truth track.
-    const auto ais = navtracker::replay::loadAisCsv(
-        kPhilosAisCsv, provider.datum(), "ais");
     // Radar plots in body frame (Philos is a moving platform).
     const auto radar = navtracker::replay::loadPlotCsvBodyFrame(
         kPhilosPlotsCsv, provider, SensorKind::ArpaTtm, "philos_radar");
 
     Scenario s;
-    s.measurements.reserve(radar.size() + ais.size());
+
+    // Build measurement set — AIS always included (provides vessel IDs / AIS
+    // tracks) regardless of truth source, since AIS measurements themselves
+    // are not the same as AIS truth.
+    if (fileExists(kPhilosAisCsv)) {
+      const auto ais = navtracker::replay::loadAisCsv(
+          kPhilosAisCsv, provider.datum(), "ais");
+      s.measurements.reserve(radar.size() + ais.size());
+      s.measurements.insert(s.measurements.end(), ais.begin(), ais.end());
+
+      if (truth_source_ == TruthSource::AisOnly ||
+          truth_source_ == TruthSource::Union) {
+        // AIS as truth.
+        s.truth.reserve(ais.size());
+        for (const auto& m : ais) s.truth.push_back(aisMeasurementToTruth(m));
+      }
+    } else {
+      s.measurements.reserve(radar.size());
+    }
     s.measurements.insert(s.measurements.end(), radar.begin(), radar.end());
-    s.measurements.insert(s.measurements.end(), ais.begin(), ais.end());
     std::sort(s.measurements.begin(), s.measurements.end(),
               [](const Measurement& a, const Measurement& b) {
                 return a.time < b.time;
               });
 
-    s.truth.reserve(ais.size());
-    for (const auto& m : ais) s.truth.push_back(aisMeasurementToTruth(m));
+    // Build truth set according to truth_source_.
+    if (truth_source_ == TruthSource::RadarOnly ||
+        truth_source_ == TruthSource::Union) {
+      // Load independent radar-derived truth (kills the AIS measurement/truth
+      // leak and provides a fuller truth for non-AIS-transmitting vessels).
+      auto radar_truth = navtracker::replay::loadRadarTruthCsv(
+          kPhilosRadarTruthCsv, provider);
+      s.truth.insert(s.truth.end(), radar_truth.begin(), radar_truth.end());
+    }
+
     std::sort(s.truth.begin(), s.truth.end(),
               [](const TruthSample& a, const TruthSample& b) {
                 return a.time < b.time;
               });
-    // AIS-as-truth is asynchronous per-vessel messages with no scan
-    // structure: resample onto a shared 1 Hz evaluation clock so
-    // BenchRunner's exact-time bucketing sees honest multi-target
-    // steps instead of 1-truth fragments (see TruthResample.hpp).
-    // 30 s max gap comfortably bridges the fixture's 8–12 s AIS
-    // report intervals without bridging real dropouts.
+    // Resample onto a shared 1 Hz evaluation clock so BenchRunner's
+    // exact-time bucketing sees honest multi-target steps.
+    // 30 s max gap comfortably bridges report intervals without bridging
+    // real dropouts (AIS: 8–12 s; radar_truth: sub-second).
     s.truth = resampleTruthToClock(s.truth, /*period_s=*/1.0,
                                    /*max_gap_s=*/30.0);
+    // Expose the ENU datum so Sweep can construct datum-aware components
+    // (e.g. CoastlineModel) without re-parsing the own-ship history.
+    // The datum is fixed for the whole bench run (feedOwnshipHistory
+    // processes all history before any tracking, so no recentering occurs).
+    s.datum = provider.datum();
     return s;
   }
+
+ private:
+  TruthSource truth_source_{TruthSource::AisOnly};
 };
 
 class HaxrScenarioRun : public ScenarioRun {
@@ -307,8 +358,15 @@ class AutoferryScenarioRun : public ScenarioRun {
 
 std::vector<std::unique_ptr<ScenarioRun>> defaultReplayScenarios() {
   std::vector<std::unique_ptr<ScenarioRun>> out;
-  out.reserve(2);
-  out.push_back(std::make_unique<PhilosScenarioRun>());
+  out.reserve(3);
+  out.push_back(std::make_unique<PhilosScenarioRun>(
+      PhilosScenarioRun::TruthSource::AisOnly));
+  // philos_radartruth: independent radar-derived truth — kills the AIS
+  // measurement/truth leak and provides a fuller truth that includes
+  // non-AIS-transmitting vessels. Compare with philos to see how much
+  // of PMBM's "phantom" charge is real targets missing from the AIS set.
+  out.push_back(std::make_unique<PhilosScenarioRun>(
+      PhilosScenarioRun::TruthSource::RadarOnly));
   out.push_back(std::make_unique<HaxrScenarioRun>());
   return out;
 }

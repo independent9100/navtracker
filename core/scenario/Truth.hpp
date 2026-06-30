@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include <Eigen/Core>
 
+#include "core/geo/Datum.hpp"
 #include "core/types/Ids.hpp"
 #include "core/types/Measurement.hpp"
 #include "core/types/Timestamp.hpp"
@@ -21,6 +23,12 @@ struct TruthSample {
 struct Scenario {
   std::vector<Measurement> measurements;
   std::vector<TruthSample> truth;
+  // ENU datum used when projecting measurements from geodetic to ENU.
+  // Set by replay scenarios (e.g. PhilosScenarioRun) so that downstream
+  // bench wiring (e.g. CoastlineModel) can query the same frame.
+  // Empty for synthetic scenarios whose measurements are generated
+  // directly in ENU without a geodetic origin.
+  std::optional<geo::Datum> datum;
 };
 
 // Snapshot of a single track at a particular processing step.

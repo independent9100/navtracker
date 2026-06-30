@@ -6,6 +6,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <tuple>
 #include <utility>
 
 #include <Eigen/Dense>
@@ -379,6 +380,22 @@ PmbmTracker::buildNewTargetCandidates(
       cand.covariance = Eigen::MatrixXd::Zero(0, 0);
     }
 
+    // Task A: scale rho_target by the land clutter prior at the birth
+    // position (cand.mean, moment-matched from the PPP posterior above).
+    // When cand.mean is empty (size<2) landBirthScale returns 1.0 → no-op,
+    // which is correct because rho_target is already 0 in that case.
+    {
+      const double land_scale = landBirthScale(cand.mean);
+      if (land_scale < 0.0) {
+        cand.rho_target = 0.0;                      // inland hard gate
+        cand.rho_total = lambda_z;
+      } else if (land_scale < 1.0) {
+        cand.rho_target *= land_scale;              // soft suppression
+        cand.rho_total = cand.rho_target + lambda_z;
+      }
+      // land_scale == 1.0 → no change (bit-identical when no land model)
+    }
+
     out.push_back(std::move(cand));
   }
 
@@ -452,12 +469,34 @@ PmbmTracker::buildAdaptiveBirthCandidates(
     // Per-sensor λ_birth lookup (Phase 9 review Finding 6B): mirror the
     // ISensorDetectionModel per-(sensor, source) λ_C plumbing. Empty
     // map → scalar fallback (bit-identical to legacy).
+    // Task 1 (2026-06-24): when birth_existence_target > 0, derive
+    // λ_birth from λ_C so r_new = target exactly, independent of λ_C.
+    //   λ_birth = (r*/(1−r*))·λ_C  ⇒  r_new = λ_birth/(λ_birth+λ_C) = r*.
+    // This is clutter-invariant: autoferry λ_C=1e-4, philos λ_C=2.7e-6,
+    // AIS λ_C=1e-9 all yield r_new = target without manual per-sensor
+    // tuning. Legacy path unchanged when target = 0.
     double lambda_birth = cfg_.lambda_birth;
-    if (!cfg_.lambda_birth_per_sensor.empty()) {
+    if (cfg_.birth_existence_target > 0.0 && cfg_.birth_existence_target < 1.0) {
+      // Clutter-invariant: choose λ_birth so r_new == target for this z.
+      // Guard: r must be in (0, 1); values >= 1.0 would divide by zero
+      // or go negative. Fall through to the lambda_birth_per_sensor /
+      // scalar path instead (finite, predictable).
+      const double r = cfg_.birth_existence_target;
+      lambda_birth = (r / (1.0 - r)) * lambda_z;
+    } else if (!cfg_.lambda_birth_per_sensor.empty()) {
       auto it = cfg_.lambda_birth_per_sensor.find(z.sensor);
       if (it != cfg_.lambda_birth_per_sensor.end()) {
         lambda_birth = it->second;
       }
+    }
+    // Task A: scale the birth intensity by the land clutter prior at the
+    // birth position (cand.mean is already set from estimator.initiate(z)
+    // above). Hard-drop when the prior exceeds cfg_.land_birth_hard_gate.
+    const double land_scale = landBirthScale(cand.mean);
+    if (land_scale < 0.0) {
+      lambda_birth = 0.0;          // inland hard gate → no birth
+    } else {
+      lambda_birth *= land_scale;  // soft suppression: (1 − c) · lambda_birth
     }
     cand.rho_target = lambda_birth;
     cand.rho_total = lambda_birth + lambda_z;
@@ -478,14 +517,28 @@ void PmbmTracker::enumerateChildren(
   const int n = static_cast<int>(parent.bernoullis.size());
   const int m = static_cast<int>(scan.size());
 
-  // Source-aware misdetection: collect this scan's source_ids once.
-  // Bernoullis whose contribution-history sources are entirely absent
-  // from this set get a no-op misdetection (state and r unchanged) —
-  // see Config::source_aware_misdetection.
+  // Source-aware misdetection: collect this scan's source_ids, vessel_ids
+  // (mmsi), and platform_ids once per scan.  Bernoullis whose
+  // contribution-history identity is entirely absent from this set get a
+  // no-op misdetection (state and r unchanged) — see
+  // Config::source_aware_misdetection and ::source_aware_identity.
   std::set<std::string> scan_sources;
+  std::set<std::uint32_t> scan_vessels;   // mmsi-keyed identity
+  std::set<std::uint64_t> scan_platforms; // platform_id-keyed identity
   if (cfg_.source_aware_misdetection) {
-    for (const auto& z : scan) scan_sources.insert(z.source_id);
+    for (const auto& z : scan) {
+      scan_sources.insert(z.source_id);
+      if (cfg_.source_aware_identity && z.hints.mmsi.has_value())
+        scan_vessels.insert(*z.hints.mmsi);
+      if (cfg_.source_aware_identity && z.hints.platform_id.has_value())
+        scan_platforms.insert(*z.hints.platform_id);
+    }
   }
+  // Unified identity gate: a touch is "covered" in this scan if it shares
+  // EITHER mmsi (vessel_id) OR platform_id with a scan measurement.
+  // When any identity key is known for a touch, the source_id channel
+  // fallback is suppressed (continue) — prevents "broadcast-channel"
+  // false observability between vessels that share only a source_id.
   auto should_misdetect = [&](BernoulliId id) {
     if (!cfg_.source_aware_misdetection) return true;
     auto it = contribution_history_.find(id);
@@ -493,7 +546,18 @@ void PmbmTracker::enumerateChildren(
       return true;  // no prior history; treat as observable
     }
     for (const auto& touch : it->second) {
-      if (scan_sources.count(touch.source_id)) return true;
+      if (cfg_.source_aware_identity) {
+        if (touch.vessel_id.has_value()) {
+          if (scan_vessels.count(*touch.vessel_id)) return true;   // matched by mmsi
+        }
+        if (touch.platform_id.has_value()) {
+          if (scan_platforms.count(*touch.platform_id)) return true;  // matched by platform_id
+        }
+        if (touch.vessel_id.has_value() || touch.platform_id.has_value()) {
+          continue;  // identity known but absent from scan → no coverage
+        }
+      }
+      if (scan_sources.count(touch.source_id)) return true;  // channel fallback
     }
     return false;
   };
@@ -536,31 +600,33 @@ void PmbmTracker::enumerateChildren(
   // 0 (the detection model returns 0 when the Bernoulli is outside
   // the sensor's max_range / sector). Config fallback when no model.
   //
-  // NOTE — review 2026-06-23 Finding 1: this loop SHOULD dedup by
-  // (sensor, model, source_id) — counting one radar's 50 returns as
-  // 50 separate misdetections drives effective P_D toward 1.0
-  // regardless of the configured value. The math is wrong.
-  //
-  // STATUS: dedup NOT applied (commit 0cf1159 + 2 follow-up probes
-  // showed the fix breaks philos by +92 % gospa). The system was
-  // using the over-aggressive misdetection penalty as an indirect
-  // cardinality control. With the correct penalty, philos
-  // Bernoullis don't decay → phantom bloat → cardinality wrong.
-  // Re-landing the dedup requires first tuning a legitimate
-  // cardinality control (tighter birth gate, higher r_min, lower
-  // output_existence_floor) — multi-knob exercise, parked.
+  // With cfg_.dedup_miss_pd = true: dedup by (sensor, model, source_id)
+  // so N returns from one radar sweep count as ONE detection opportunity
+  // (textbook "one sweep = one detection opportunity" model). Off by
+  // default (legacy per-measurement product, bit-identical to Phase 8/9
+  // baseline). See Config::dedup_miss_pd.
   auto compute_miss_pD = [&](const Bernoulli& b) {
     if (!detection_model_) return cfg_.probability_of_detection;
     if (b.mean.size() < 2) return cfg_.probability_of_detection;
     const Eigen::Vector2d b_xy = b.mean.head<2>();
     double survive = 1.0;
     bool any_coverage = false;
-    for (const auto& z : scan) {
-      const double pD_s = detection_model_->missDetectionProbability(
-          z.sensor, z.model, b_xy, z.sensor_position_enu, z.source_id);
-      if (pD_s > 0.0) {
-        any_coverage = true;
-        survive *= (1.0 - pD_s);
+    if (cfg_.dedup_miss_pd) {
+      // Textbook: one detection opportunity per distinct sensor channel
+      // that surveyed this scan, NOT one per return.
+      std::set<std::tuple<SensorKind, MeasurementModel, std::string>> seen;
+      for (const auto& z : scan) {
+        auto key = std::make_tuple(z.sensor, z.model, z.source_id);
+        if (!seen.insert(key).second) continue;  // already counted this channel
+        const double pD_s = detection_model_->missDetectionProbability(
+            z.sensor, z.model, b_xy, z.sensor_position_enu, z.source_id);
+        if (pD_s > 0.0) { any_coverage = true; survive *= (1.0 - pD_s); }
+      }
+    } else {
+      for (const auto& z : scan) {  // legacy per-measurement (buggy) path
+        const double pD_s = detection_model_->missDetectionProbability(
+            z.sensor, z.model, b_xy, z.sensor_position_enu, z.source_id);
+        if (pD_s > 0.0) { any_coverage = true; survive *= (1.0 - pD_s); }
       }
     }
     return any_coverage ? (1.0 - survive) : 0.0;
@@ -587,6 +653,65 @@ void PmbmTracker::enumerateChildren(
         child.bernoullis.push_back(std::move(updated));
         continue;
       }
+      // Task 5: honest per-duty-cycle coverage model (spec §4).
+      // When wired, replace compute_miss_pD/idle_decay_for with a single
+      // evaluate() call — one miss charged only when the surveillance sensor
+      // completed a full sweep over this track's predicted position.
+      if (cfg_.use_sensor_activity && sensor_activity_ != nullptr) {
+        auto ait = last_activity_check_.find(b.id);
+        const Timestamp last_check =
+            (ait != last_activity_check_.end()) ? ait->second : b.birth_time;
+        const MissOpportunity opp = sensor_activity_->evaluate(
+            b.mean.head<2>(), /*mmsi*/std::nullopt, /*platform_id*/std::nullopt,
+            last_check, current_time_);
+        if (!opp.surveillance_miss) {
+          // No surveillance opportunity (sensor mid-sweep, out of coverage,
+          // or cooperative-only channel). Existence UNCHANGED by miss math.
+          if (opp.cooperative_overdue) {
+            // Task 6: cooperative own-identity report is overdue.
+            // NEVER touch existence here (spec §9c: comms loss ≠ vessel sank).
+            // Check cooperative-only timeout retirement: last known report is
+            // b.birth_time (or last_cooperative_touch_ if detected before).
+            auto tit = last_cooperative_touch_.find(b.id);
+            const double last_report_sec =
+                (tit != last_cooperative_touch_.end())
+                    ? tit->second.seconds()
+                    : b.birth_time.seconds();
+            if (cfg_.cooperative_stale_timeout_sec > 0.0 &&
+                current_time_.seconds() - last_report_sec >
+                    cfg_.cooperative_stale_timeout_sec) {
+              // Cooperative-only retirement: force existence to 0 so
+              // pruneAndNormalise removes this Bernoulli. onTrackDeleted
+              // fires via the lifecycle sink on the next scan. We do NOT
+              // fire the stale signal here (retirement supersedes staleness).
+              updated.existence_probability = 0.0;
+            } else {
+              // Still within timeout: mark stale but leave existence.
+              cooperative_overdue_ids_.insert(b.id);
+            }
+          }
+          appendTrajectoryPoint(updated, cfg_.trajectory_window_scans,
+                                current_time_, b.mean, b.covariance);
+          child.bernoullis.push_back(std::move(updated));
+          continue;
+        }
+        // One completed sweep with no return: charge exactly one miss.
+        // Deferred write: stage (not mutate) the window so every parent
+        // sees the same pre-scan snapshot. Charging a miss resolves
+        // observability up to current_time_, so the window advances there.
+        stageActivityCheck(b.id, current_time_);
+        const double r = b.existence_probability;
+        const double pD = opp.p_D;
+        const double miss_norm = 1.0 - r * pD;
+        updated.existence_probability =
+            (miss_norm > 0.0) ? ((1.0 - pD) * r) / miss_norm : 0.0;
+        child.log_weight += std::log(std::max(miss_norm, 1e-300));
+        appendTrajectoryPoint(updated, cfg_.trajectory_window_scans,
+                              current_time_, b.mean, b.covariance);
+        child.bernoullis.push_back(std::move(updated));
+        continue;
+      }
+      // Legacy path (use_sensor_activity == false): unchanged, bit-identical.
       const double r = b.existence_probability;
       const double pD = compute_miss_pD(b);
       if (pD <= 0.0) {  // out of any sensor's coverage; no penalty
@@ -712,6 +837,25 @@ void PmbmTracker::enumerateChildren(
         appendTrajectoryPoint(det, cfg_.trajectory_window_scans,
                               scan[l].time, b.mean, b.covariance);
         child.bernoullis.push_back(std::move(det));
+        // Task 6 / channel-kind fix: a detection from ANY sensor declared as
+        // ChannelKind::Cooperative in the activity profile resets the
+        // cooperative-only retirement timer. This includes SensorKind::Ais
+        // (cooperative-announce: silence is weak evidence keyed on identity)
+        // when the provider declares AIS as Cooperative. Falls back to the
+        // legacy `== SensorKind::Cooperative` check when no profile is wired,
+        // preserving bit-identical behaviour.
+        // Deferred write (staged): keeps the retirement-timeout read snapshot
+        // hypothesis-consistent across parents.
+        if (isCooperativeSource(scan[l].sensor))
+          stageCooperativeTouch(b.id, scan[l].time);
+        // Task 5 Step-4 fix (defect #1): a detection resolves observability
+        // up to scan[l].time, so it ADVANCES the surveillance-miss window.
+        // Without this, the first dropout after a normal tracking run sees
+        // dt = now - birth_time (or last miss) and wrongly charges a full
+        // miss even though only one short scan interval elapsed since the
+        // detection. Staged (deferred) + gated so it is inert in legacy mode.
+        if (cfg_.use_sensor_activity && sensor_activity_ != nullptr)
+          stageActivityCheck(b.id, scan[l].time);
         // Full per-Bernoulli detection contribution to log-weight:
         // log(r · p_D · ℓ).  P_D is the assigned measurement's
         // per-(sensor, source) P_D under the detection model.
@@ -735,6 +879,56 @@ void PmbmTracker::enumerateChildren(
           child.bernoullis.push_back(std::move(miss));
           continue;
         }
+        // Task 5: honest per-duty-cycle coverage model (spec §4).
+        if (cfg_.use_sensor_activity && sensor_activity_ != nullptr) {
+          auto ait = last_activity_check_.find(b.id);
+          const Timestamp last_check =
+              (ait != last_activity_check_.end()) ? ait->second : b.birth_time;
+          const MissOpportunity opp = sensor_activity_->evaluate(
+              b.mean.head<2>(), /*mmsi*/std::nullopt,
+              /*platform_id*/std::nullopt, last_check, current_time_);
+          if (!opp.surveillance_miss) {
+            // No surveillance opportunity (mid-sweep, out of coverage,
+            // or cooperative-only channel). Existence UNCHANGED by miss math.
+            if (opp.cooperative_overdue) {
+              // Task 6: cooperative own-identity report is overdue.
+              // NEVER touch existence (spec §9c). Check timeout retirement.
+              auto tit = last_cooperative_touch_.find(b.id);
+              const double last_report_sec =
+                  (tit != last_cooperative_touch_.end())
+                      ? tit->second.seconds()
+                      : b.birth_time.seconds();
+              if (cfg_.cooperative_stale_timeout_sec > 0.0 &&
+                  current_time_.seconds() - last_report_sec >
+                      cfg_.cooperative_stale_timeout_sec) {
+                // Retire: force existence to 0 → pruned by r_min.
+                miss.existence_probability = 0.0;
+              } else {
+                cooperative_overdue_ids_.insert(b.id);
+              }
+            }
+            appendTrajectoryPoint(miss, cfg_.trajectory_window_scans,
+                                  current_time_, b.mean, b.covariance);
+            child.bernoullis.push_back(std::move(miss));
+            continue;
+          }
+          // One completed sweep with no return: charge exactly one miss.
+          // Deferred write: stage (not mutate) the window so every parent
+          // reads the same pre-scan snapshot (hypothesis-consistent).
+          stageActivityCheck(b.id, current_time_);
+          const double r = b.existence_probability;
+          const double pD = opp.p_D;
+          const double miss_norm = 1.0 - r * pD;
+          miss.existence_probability =
+              (miss_norm > 0.0) ? ((1.0 - pD) * r) / miss_norm : 0.0;
+          // Misdetection contribution: log(1 − r · p_D).
+          child.log_weight += std::log(std::max(miss_norm, 1e-300));
+          appendTrajectoryPoint(miss, cfg_.trajectory_window_scans,
+                                current_time_, b.mean, b.covariance);
+          child.bernoullis.push_back(std::move(miss));
+          continue;
+        }
+        // Legacy path (use_sensor_activity == false): unchanged, bit-identical.
         const double r = b.existence_probability;
         const double pD = compute_miss_pD(b);
         if (pD <= 0.0) {  // out of any sensor's coverage; no penalty
@@ -900,7 +1094,33 @@ void PmbmTracker::pruneAndNormalise() {
   }
 }
 
+void PmbmTracker::stageActivityCheck(BernoulliId id, Timestamp t) {
+  auto [it, inserted] = staged_activity_check_.insert({id, t});
+  if (!inserted && t.seconds() > it->second.seconds()) it->second = t;
+}
+
+void PmbmTracker::stageCooperativeTouch(BernoulliId id, Timestamp t) {
+  auto [it, inserted] = staged_cooperative_touch_.insert({id, t});
+  if (!inserted && t.seconds() > it->second.seconds()) it->second = t;
+}
+
+void PmbmTracker::mergeStagedActivityMaps() {
+  // Deferred write: advance the persistent windows to this scan's resolved
+  // times. Applied once, after all parents are enumerated, so the read
+  // snapshot was identical for every parent (hypothesis-order-independent).
+  for (const auto& [id, t] : staged_activity_check_) last_activity_check_[id] = t;
+  for (const auto& [id, t] : staged_cooperative_touch_)
+    last_cooperative_touch_[id] = t;
+}
+
 void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
+  // Task 6: reset per-scan stale set. enumerateChildren will populate it.
+  cooperative_overdue_ids_.clear();
+  // Task 5 Step-4 fix: reset the per-scan staging maps. enumerateChildren
+  // reads the persistent maps as a frozen snapshot and writes resolved
+  // window times here; merged into the persistent maps after all parents.
+  staged_activity_check_.clear();
+  staged_cooperative_touch_.clear();
   // Apply per-sensor registration bias correction (item 9) + Schmidt-KF
   // R-inflation before any predict / update. Null provider =
   // bit-identical to legacy.
@@ -946,6 +1166,9 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
       }
       density_.mbm = std::move(children);
     }
+    // Task 5 Step-4 fix: apply the deferred window writes once, after every
+    // parent has been enumerated against the frozen pre-scan snapshot.
+    mergeStagedActivityMaps();
     // Phase 8 iter 4: empty-scan branch must also run the
     // within-hypothesis Bernoulli merge and fire lifecycle events.
     // Previously the early-return on line ~850 skipped both, so a
@@ -958,6 +1181,16 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
       }
     }
     pruneAndNormalise();
+    aggregated_tracks_dirty_ = true;
+    // Task 6: fire stale signals for cooperative-overdue tracks.
+    if (stale_sink_ != nullptr && !cooperative_overdue_ids_.empty()) {
+      const auto& ts = tracks();  // triggers refreshAggregatedTracks (Coasting)
+      for (const auto& t : ts) {
+        if (cooperative_overdue_ids_.count(t.id.value)) {
+          stale_sink_->onTrackStale(t.id, current_time_);
+        }
+      }
+    }
     if (track_sink_ != nullptr) {
       firePmbmLifecycleEvents(current_time_);
     }
@@ -1151,6 +1384,12 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
 
   density_.mbm = std::move(children);
 
+  // Task 5 Step-4 fix: apply the deferred window writes once, after every
+  // parent has been enumerated against the frozen pre-scan snapshot. This is
+  // what makes the surveillance-miss / cooperative-touch windows
+  // hypothesis-order-independent.
+  mergeStagedActivityMaps();
+
   // Within-hypothesis Bernoulli merge: fold near-duplicate Bernoullis
   // (Bhattacharyya position-block distance < threshold) into a single
   // Bernoulli keeping the older id.
@@ -1207,6 +1446,8 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
       Track::SourceTouch touch;
       touch.sensor = best->sensor;
       touch.source_id = best->source_id;
+      touch.vessel_id = best->hints.mmsi;        // per-vessel identity via mmsi
+      touch.platform_id = best->hints.platform_id;  // per-vessel identity via platform_id
       touch.time = best->time;
       fillSourceTouchEnu(touch, *best);
       touch.sensor_position_enu = best->sensor_position_enu;
@@ -1235,9 +1476,30 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
       if (alive.count(it->first) == 0) it = contribution_history_.erase(it);
       else ++it;
     }
+    // Task 5: prune last_activity_check_ alongside contribution_history_.
+    for (auto it = last_activity_check_.begin();
+         it != last_activity_check_.end();) {
+      if (alive.count(it->first) == 0) it = last_activity_check_.erase(it);
+      else ++it;
+    }
+    // Task 6: prune last_cooperative_touch_ alongside the other per-Bernoulli maps.
+    for (auto it = last_cooperative_touch_.begin();
+         it != last_cooperative_touch_.end();) {
+      if (alive.count(it->first) == 0) it = last_cooperative_touch_.erase(it);
+      else ++it;
+    }
   }
 
   aggregated_tracks_dirty_ = true;
+  // Task 6: fire stale signals for cooperative-overdue tracks.
+  if (stale_sink_ != nullptr && !cooperative_overdue_ids_.empty()) {
+    const auto& ts = tracks();  // triggers refreshAggregatedTracks (Coasting)
+    for (const auto& t : ts) {
+      if (cooperative_overdue_ids_.count(t.id.value)) {
+        stale_sink_->onTrackStale(t.id, current_time_);
+      }
+    }
+  }
   // Phase 4(B) push-based lifecycle events. Diffs against the prior-
   // scan emitted set. No-op when no sink is wired.
   if (track_sink_ != nullptr && !scan.empty()) {
@@ -1582,6 +1844,11 @@ void PmbmTracker::refreshAggregatedTracks() const {
     t.existence_probability = std::min(a.mass, 1.0);
     t.status = (a.mass >= cfg_.confirm_threshold) ? TrackStatus::Confirmed
                                                    : TrackStatus::Tentative;
+    // Task 6: cooperative own-identity overdue → override with Coasting.
+    // Existence is NOT reduced (spec §9c: "comms loss ≠ vessel sank").
+    if (cooperative_overdue_ids_.count(id)) {
+      t.status = TrackStatus::Coasting;
+    }
     t.state = a.mean_acc / a.mass;
     // Moment-matched covariance: E[P + μμ'] − mean·mean'
     t.covariance = (a.cov_acc / a.mass) - (t.state * t.state.transpose());

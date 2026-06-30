@@ -94,3 +94,69 @@ TEST(Gospa, MatchedPairPlusExtraEstimate) {
                                     Eigen::Vector2d(500.0, 0.0)};
   EXPECT_NEAR(gospaGreedy(truth, est, 10.0), std::sqrt(59.0), 1e-12);
 }
+
+// ---------------------------------------------------------------------------
+// GospaComponents decomposition tests
+// ---------------------------------------------------------------------------
+// truth = {(0,0),(100,0)}, est = {(3,0),(500,500)}, c=20, p=2, α=2
+//   Optimal assignment: (0,0)↔(3,0) d=3 (matched), (100,0) missed,
+//   (500,500) false.
+//   localization = 3² = 9
+//   missed       = c²/α = 400/2 = 200  (1 missed truth)
+//   false_       = c²/α = 400/2 = 200  (1 false est)
+//   total        = 9+200+200 = 409 → GOSPA = √409
+//   n_missed=1, n_false=1
+TEST(GospaComponents, DecomposesCorrectly) {
+  using navtracker::gospaComponents;
+  std::vector<Eigen::Vector2d> truth{Eigen::Vector2d(0.0, 0.0),
+                                     Eigen::Vector2d(100.0, 0.0)};
+  std::vector<Eigen::Vector2d> est{Eigen::Vector2d(3.0, 0.0),
+                                   Eigen::Vector2d(500.0, 500.0)};
+  const auto g = gospaComponents(truth, est, /*cutoff=*/20.0, /*p=*/2.0,
+                                 /*alpha=*/2.0);
+  EXPECT_NEAR(g.localization, 9.0, 1e-9);
+  EXPECT_NEAR(g.missed, 200.0, 1e-9);
+  EXPECT_NEAR(g.false_, 200.0, 1e-9);
+  EXPECT_EQ(g.n_missed, 1);
+  EXPECT_EQ(g.n_false, 1);
+  // total must equal sum of components
+  EXPECT_NEAR(g.total, 409.0, 1e-9);
+  // scalar gospaGreedy is consistent: returns pow(total,1/p) = √409
+  EXPECT_NEAR(gospaGreedy(truth, est, 20.0), std::sqrt(409.0), 1e-9);
+}
+
+// Both empty: all components zero.
+TEST(GospaComponents, BothEmpty) {
+  using navtracker::gospaComponents;
+  const auto g = gospaComponents({}, {}, 20.0);
+  EXPECT_DOUBLE_EQ(g.total, 0.0);
+  EXPECT_DOUBLE_EQ(g.localization, 0.0);
+  EXPECT_DOUBLE_EQ(g.missed, 0.0);
+  EXPECT_DOUBLE_EQ(g.false_, 0.0);
+  EXPECT_EQ(g.n_missed, 0);
+  EXPECT_EQ(g.n_false, 0);
+}
+
+// Single truth, no est: pure missed cost.
+TEST(GospaComponents, SingleMiss) {
+  using navtracker::gospaComponents;
+  const auto g = gospaComponents({Eigen::Vector2d(0.0, 0.0)}, {}, 10.0);
+  // c²/α = 100/2 = 50; total=50; localization=0; false_=0
+  EXPECT_NEAR(g.missed, 50.0, 1e-9);
+  EXPECT_DOUBLE_EQ(g.localization, 0.0);
+  EXPECT_DOUBLE_EQ(g.false_, 0.0);
+  EXPECT_EQ(g.n_missed, 1);
+  EXPECT_EQ(g.n_false, 0);
+  EXPECT_NEAR(g.total, 50.0, 1e-9);
+}
+
+// Single est, no truth: pure false cost.
+TEST(GospaComponents, SingleFalse) {
+  using navtracker::gospaComponents;
+  const auto g = gospaComponents({}, {Eigen::Vector2d(0.0, 0.0)}, 10.0);
+  EXPECT_NEAR(g.false_, 50.0, 1e-9);
+  EXPECT_DOUBLE_EQ(g.localization, 0.0);
+  EXPECT_DOUBLE_EQ(g.missed, 0.0);
+  EXPECT_EQ(g.n_missed, 0);
+  EXPECT_EQ(g.n_false, 1);
+}
