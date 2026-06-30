@@ -45,3 +45,14 @@ TEST(CoastlineGeometry, EmptyGeometryIsZero) {
   EXPECT_TRUE(g.empty());
   EXPECT_NEAR(g.priorAtGeodetic(42.37, -71.05), 0.0, 1e-9);
 }
+TEST(CoastlineGeometry, PointInsideHoleIsWater) {
+  LandPolygon p;
+  p.outer = { {-71.06,42.36}, {-71.04,42.36}, {-71.04,42.38}, {-71.06,42.38}, {-71.06,42.36} };
+  p.holes = { { {-71.055,42.365}, {-71.045,42.365}, {-71.045,42.375}, {-71.055,42.375}, {-71.055,42.365} } };
+  CoastlinePriorParams pr; pr.inland_halfwidth_m = 50.0; pr.offshore_halfwidth_m = 50.0;
+  CoastlineGeometry g({p}, pr);
+  // Point at hole center (~500 m from hole walls): should be water (inside hole = water).
+  EXPECT_NEAR(g.priorAtGeodetic(42.370, -71.050), 0.0, 1e-6);
+  // Point in land ring between outer and hole (~80 m from outer west edge, ~310 m from hole west edge): should be land.
+  EXPECT_NEAR(g.priorAtGeodetic(42.370, -71.0590), 1.0, 1e-6);
+}

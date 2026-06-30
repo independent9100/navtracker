@@ -43,6 +43,7 @@ double segDistM(double lon, double lat, const Eigen::Vector2d& a,
 double minEdgeDistM(double lon, double lat, const std::vector<Eigen::Vector2d>& ring) {
   double best = std::numeric_limits<double>::infinity();
   if (ring.size() < 2) return best;
+  // Requires the ring to be closed (ring.back() == ring.front()), as GeoJSON mandates.
   for (std::size_t i = 0; i + 1 < ring.size(); ++i) {
     best = std::min(best, segDistM(lon, lat, ring[i], ring[i + 1]));
   }
