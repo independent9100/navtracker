@@ -203,6 +203,7 @@ add_executable(navtracker_tests
   tests/pipeline/test_jpda_contributing_sources.cpp
   tests/pipeline/test_bias_correction_orthogonality.cpp
   tests/land/test_coastline_geometry.cpp
+  tests/land/test_coastline_model.cpp
   tests/pmbm/test_pmbm_types.cpp
   tests/pmbm/test_pmbm_tracker_predict.cpp
   tests/pmbm/test_pmbm_tracker_update.cpp
