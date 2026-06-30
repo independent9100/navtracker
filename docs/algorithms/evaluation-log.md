@@ -4848,7 +4848,10 @@ temporal miss modeling — recorded as the next candidate.
   AIS-heavy scenes, the timer should key on the *channel kind* (from the
   activity profile), not the SensorKind. Deferred — would not change the
   philos verdict because radar phantoms (cause #2) dominate.
-- PMBM adaptive-birth non-determinism (pre-existing, tests #314/#770) adds
-  run-to-run noise to these single-seed numbers; both A/B arms share it.
-  The autoferry/philos gaps here are far larger than that noise, so the
-  qualitative conclusions hold.
+- CORRECTION (2026-06-30): the long-suspected "PMBM adaptive-birth
+  non-determinism" was a FALSE ALARM. Tests #314/#770 were byte-comparing the
+  `wall_seconds` wall-clock timing metric (which legitimately varies run-to-run);
+  every tracker accuracy/cardinality metric is bit-identical across runs
+  (instrumented + verified, commit e804470). The tracker is deterministic and
+  the CLAUDE.md invariant was never violated — so these single-seed A/B numbers
+  are REPRODUCIBLE, not noisy. The autoferry/philos gaps are real signal.
