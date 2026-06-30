@@ -122,6 +122,15 @@
 - **"datum"** — the origin point of the ENU local tangent plane.
 - **"hexagonal architecture"** — ports-and-adapters pattern;
   the core has no I/O knowledge.
+- **"clutter prior"** — a spatial prior `c ∈ [0,1]` that estimates
+  how likely a position is to produce false sensor returns (shore /
+  structure clutter) rather than real vessel detections. Chapter 25.
+- **"shoreline ramp"** — the smooth function `c(d) = clamp((W_off−d)/(W_off+W_in), 0, 1)`
+  of signed distance `d` to the nearest shore edge. Rises from 0 (open water)
+  to 1 (well inland) across a configurable margin band. Chapter 25.
+- **"land mask"** — colloquial name for the coastline clutter prior when viewed
+  as a binary yes/no surface; in navtracker the mask is always a continuous ramp,
+  not a hard binary. The inland plateau (c ≈ 1) is the "masked" region. Chapter 25.
 - **"sensor pose"** — the ENU position (and optionally
   orientation) of the sensor at the moment of measurement.
 - **"sticky modes"** — IMM transition matrix with high diagonal

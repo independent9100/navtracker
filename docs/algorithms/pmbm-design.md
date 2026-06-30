@@ -749,6 +749,157 @@ used for low-p_D coastal workloads (philos-class).
 
 ---
 
+## 10. Land / Coastline Clutter Prior
+
+> Plain-language introduction: [learning §25 — Suppressing tracks on land: the coastline clutter prior](../learning/25-land-clutter-prior.md).
+
+### 10.1 Math
+
+**The spatial clutter prior.** At every new-target birth position `p` (ENU metres), the tracker
+queries `c = ILandModel::clutterPrior(enu_xy) ∈ [0, 1]`. The concrete implementation
+(`CoastlineGeometry`) computes a *signed-distance shoreline ramp*:
+
+Let `d` be the signed distance from `p` (projected to geodetic) to the nearest shore edge of the
+consumer-supplied land polygons (`d < 0` inland, `d > 0` offshore). Then:
+
+```
+c(d) = clamp( (W_off − d) / (W_off + W_in), 0, 1 )
+```
+
+where `W_in` = inland half-width (default 50 m) and `W_off` = offshore half-width (default 50 m).
+Consequently:
+
+- `c = 1.0` for `d ≤ −W_in` — well inside land (the plateau / hard-gate region).
+- `c ≈ 0.5` at `d = 0` — exactly at the waterline (when `W_in = W_off`).
+- `c = 0.0` for `d ≥ +W_off` — open water (no suppression).
+
+Positions outside the loaded polygon coverage return `c = 0.0` (no suppression — unknown is
+treated as open water).
+
+**Birth suppression rule** (applied in both `buildAdaptiveBirthCandidates` and
+`buildNewTargetCandidates`):
+
+```
+const double land_scale = landBirthScale(cand.mean);
+if (land_scale < 0)             // c > land_birth_hard_gate (default 0.95) → inland hard gate
+    lambda_birth = 0.0;         // birth candidate dropped entirely
+else
+    lambda_birth *= land_scale; // soft suppression: lambda_birth *= (1 − c)
+// rho_target = lambda_birth; r_new = rho_target / rho_total
+```
+
+**Why this must act on birth intensity, not λ_C.** The obvious route — raising clutter intensity
+λ_C near shore — is silently defeated by Task 1's `birth_existence_target`. In adaptive-birth
+mode the code sets `λ_birth = (r*/(1−r*)) · λ_C(z)`, so:
+
+```
+r_new = λ_birth / (λ_birth + λ_C(z))
+      = (r*/(1−r*)) · λ_C(z) / ( (r*/(1−r*)) · λ_C(z) + λ_C(z) )
+      = r*       [λ_C(z) cancels]
+```
+
+`r_new` is pinned to the configured target `r*` and is independent of `λ_C`. Raising `λ_C` just
+scales `λ_birth` proportionally, leaving `r_new` unchanged. The land prior must therefore scale
+`λ_birth` (i.e. `rho_target`) directly.
+
+**ENU → geodetic query.** `clutterPrior` accepts ENU metres; the adapter converts to geodetic via
+`datum.toGeodetic(enu_xy)` and evaluates the stored polygons. Geometry is stored in its native
+geodetic frame (WGS84 lat/lon degrees) and is never reprojected to ENU.
+
+### 10.2 Assumptions
+
+1. **Consumer-supplied coastline.** The application provides GeoJSON (WGS84, Polygon /
+   MultiPolygon features) covering a reasonable radius around own-ship. The tracker does not fetch
+   or discover coastline data itself (hexagonal boundary: I/O lives in the adapter, not the core).
+
+2. **Soft band absorbs waterline imprecision.** Coastline GeoJSON is typically administrative- or
+   survey-grade, not tide-corrected. The `W_in`/`W_off` margin band (~50 m default) accommodates
+   this: positions that fall on the wrong side of the coarse waterline get soft suppression
+   (c ≈ 0.5), not hard rejection.
+
+3. **Datum recenters are observed.** When `OwnShipProvider` recenters the datum, the
+   `CoastlineModel` receives `IDatumChangeSink::onDatumRecentered(old, new)` and swaps the query
+   datum. Because geometry is stored in geodetic coordinates, no polygon reprojection occurs.
+   Out-of-coverage positions (new area not yet in the loaded GeoJSON) return `c = 0.0` — no
+   suppression, never invented land — providing graceful stale-until-fresh degradation.
+
+4. **Async coastline swaps at deterministic stream points.** Fresh GeoJSON arrives asynchronously
+   from a consumer task. The swap (`CoastlineModel::setCoastline(...)`) must be applied at a
+   deterministic, timestamped point in the measurement stream — never from a wall-clock callback
+   mid-scan. This preserves CLAUDE.md invariant 4 (same input ordering → identical output).
+
+5. **Real targets inside the hard-gate region are rare and accepted.** The hard gate fires only at
+   `c > 0.95`, which requires `d < −W_in + ε` — the inland plateau, not the waterline. A vessel
+   moored against a pier finer than the polygon resolution might be hard-gated at birth; this is an
+   accepted residual risk bounded by keeping the gate strictly inland-only (design spec §9a).
+
+### 10.3 Rationale
+
+**Philos over-count is a spatial problem.** The Boston inner-harbor (philos) replay had card_err
++107.9, traceable to 185 fixed, stationary radar returns at shore positions that no AIS vessel ever
+occupies. A pre-check (2026-06-29) found that 86% of all philos radar plots fall on land (69%) or
+within 50 m of shore (17%), vs 13.8% open water. The Task 4 coverage/visibility channel cannot
+remove these: at philos radar p_D = 0.07 a missed sweep barely moves existence (`r⁺ ≈ 0.93·r`),
+and persistent shore returns are re-detected every antenna rotation. The over-count is spatial —
+the only lever is spatial.
+
+**Suppress births, not λ_C.** As shown in §10.1 the algebra, with `birth_existence_target` active
+`r_new` is independent of λ_C. Births must be attacked by scaling the birth intensity directly.
+
+**Geodetic storage for trivial recenter.** The ENU datum auto-recenters as own-ship moves. Storing
+polygons in geodetic lat/lon makes recenter trivial: swap one datum pointer, no geometry
+recomputation. Stale-until-fresh behaviour (out-of-coverage → 0) follows for free.
+
+**Inland-only hard gate protects anchored near-shore vessels.** The shoreline ramp reaches c = 1.0
+only well inland (`d ≤ −W_in`). The hard gate (c > 0.95) therefore never fires at the waterline.
+Vessels moored at the waterline sit in the mid-ramp (c ≈ 0.5) and can still accumulate posterior
+evidence over repeated detections and confirm a track. A "re-detected every scan → override gate"
+rule is deliberately not used: shore returns are also re-detected every scan.
+
+### 10.4 Ways to improve / what to test next
+
+**Measured results (2026-06-30; see [evaluation-log.md](evaluation-log.md) §"Task A — PMBM
+land/coastline clutter-prior").**
+
+| config | gospa | card_err | gospa_false |
+|---|---|---|---|
+| birthtarget (Task 1; wrong-math brake) | **48.5** | −7.8 | 390 |
+| coverage (honest, no land) | 153.6 | +107.9 | 23750 |
+| **coverage + land** | **73.1** | **+6.9** | **3550** |
+| adapt | 82.6 | +17.5 | 5150 |
+| bundle | 112.0 | +46.3 | 11420 |
+| MHT canonical (historical) | ~69.4 | — | — |
+
+The land model works decisively: card_err collapses from +107.9 to +6.9 (~94% gone), gospa_false
+from 23750 to 3550 (−85%), gospa from 153.6 to 73.1 (−52%). `coverage+land` beats `adapt` and
+`bundle` and is near MHT — the first honest, no-crutch PMBM config competitive on philos.
+
+Autoferry guard: `coverage+land` is byte-identical to `coverage` on all four autoferry scenes —
+the land model is correctly inert where no coastline fixture exists. No regression.
+
+`birthtarget + land` is byte-identical to `birthtarget` (48.5 / −7.8 / 390): the wrong-math
+miss-pD already over-suppresses the on-land phantoms, so the land mask is redundant on top of it.
+The land model is the *honest substitute* for the wrong-math crutch, not an addition.
+
+**Remaining gap and next steps.** The dishonest `birthtarget` (gospa 48.5) still edges
+`coverage+land` (73.1) because its over-aggressive wrong-math also kills the residual *water /
+near-shore* clutter that the land mask does not cover (gospa_false 390 vs 3550). Closing this gap
+requires spatial work on the water side:
+
+1. **Tighter offshore margin / near-shore handling.** Reduce `W_off` or add a graduated near-shore
+   zone (e.g. 0 < d < 100 m) with moderate soft suppression to damp waterline-adjacent clutter.
+2. **Finer / higher-resolution charts.** Administrative GeoJSON has ~30–100 m waterline error.
+   Survey-grade or nautical-chart polygons would push the soft-band needs toward zero.
+3. **Online clutter-field learning.** Couple with the existing `ClutterMapDetectionModel` (Task 3):
+   learn the spatial clutter density from observed false tracks and feed it into the birth prior.
+   Complements the static coastline — catches water-side clutter the land mask cannot reach.
+4. **Coverage-occlusion (Task 4 coupling, §9).** Land between the sensor and the track should
+   suppress the surveillance miss penalty for the occluded sector, not just births. A
+   land-occlusion query at miss-detection time would further close the near-shore gap and couple
+   this module with the coverage/visibility channel.
+
+---
+
 ## 8. References
 
 Same as [sota-roadmap.md §4](sota-roadmap.md#4-trajectory-pmbm-as-a-third-idataassociator).
