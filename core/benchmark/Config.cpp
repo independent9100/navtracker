@@ -694,11 +694,13 @@ std::vector<Config> defaultConfigs() {
   //
   // SCOPE (Gate-1, 17 synthetic scenarios measured): best-in-class for
   // shore/coastal clutter and ≈ MHT on clean geometry, but it REGRESSES on
-  // dense UNIFORM clutter (gospa 16.7 vs MHT 12.4, lifetime 0.64 vs 0.93) —
-  // the land prior brakes only shore clutter, so correct-math is unbraked
-  // against uniform clutter. This is the RECOMMENDED config for coastal /
-  // near-shore deployments, NOT a universal default; the general-purpose PMBM
-  // default remains imm_cv_ct_pmbm_adapt.
+  // dense UNIFORM clutter (gospa 16.7 vs MHT 12.4, lifetime 0.64 vs 0.93). The
+  // land prior simply does not address uniform clutter; the regression is a mix
+  // of this config's flags (an isolation flipping only dedup_miss_pd shows the
+  // miss-math's own dense_clutter effect is modest — see eval-log Gate-1
+  // CORRECTION). This is the RECOMMENDED config for coastal / near-shore
+  // deployments, NOT a universal default; the general-purpose PMBM default
+  // remains imm_cv_ct_pmbm_adapt.
   {
     Config c;
     c.label = "imm_cv_ct_pmbm_bundle_land";

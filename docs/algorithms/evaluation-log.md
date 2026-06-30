@@ -5081,6 +5081,52 @@ Land cuts bundle's philos gospa 112→59.5 (−47%), card_err +46→−3, false 
 - **non_cooperative:** bundle_land == adapt (16.94), both beat MHT (18.59) on gospa (all low lifetime — bearing-only).
 - **dense_clutter — REGRESSES:** gospa **16.72 vs MHT 12.42 / adapt 13.61**; lifetime **0.639 vs 0.925 / 0.823**; card_err −0.52 (drops real targets).
 
-**Why dense_clutter regresses.** It is uniform-Poisson clutter with NO coastline → land is inert (bundle_land == bundle), so correct-math's removed phantom brake has no replacement and real targets are dropped. **The land prior brakes only *shore* clutter, not uniform clutter.**
+**Why dense_clutter regresses — CORRECTED (see correction block below).** The
+bundle_land vs adapt comparison above is CONFOUNDED: those two configs differ in
+FOUR flags (dedup_miss_pd, source_aware_identity, birth_existence_target,
+min_new_bernoulli_existence), so the dense_clutter regression cannot be
+attributed to the miss-math from this table. The original claim here ("correct
+math removed the brake → real targets are dropped") was wrong on the mechanism.
 
-**Gate-1 verdict.** `bundle_land` is **workload-specific, not a universal default**: best-in-class for coastal/shore-clutter operation (its design purpose) and tied-with-MHT on clean data, but it **regresses on uniform clutter** because the land prior doesn't brake that. Recommendation: promote it as the **recommended config for coastal / near-shore deployments**, NOT as the general default PMBM (the safer general-purpose PMBM remains `adapt`, which has no dense_clutter regression). Consistent with the standing theme: no single config dominates; selection is per-workload. The real-data confidence question (Gate 2: error bars on single-seed replays) is still open and is what would harden the "best for coastal" claim.
+**Gate-1 verdict (unchanged, observation-level).** `bundle_land` is
+**workload-specific, not a universal default**: best-in-class for coastal/
+shore-clutter operation and ≈ MHT on clean geometry, but on `dense_clutter`
+(uniform-Poisson, no coastline → land inert) it measures gospa 16.72 vs MHT
+12.42 / adapt 13.61, lifetime 0.639. Recommendation stands: recommended config
+for **coastal / near-shore** deployments, NOT the general default PMBM (which
+remains `adapt`). The real-data confidence question (Gate 2: error bars on
+single-seed replays) is still open.
+
+### CORRECTION (isolated experiment — flip ONLY `dedup_miss_pd` on adapt)
+
+The Gate-1 attribution above was confounded. An isolation (adapt vs adapt with
+only `dedup_miss_pd` flipped, everything else identical, 10 seeds) gives the
+true miss-math effect:
+
+| scenario | broken (non-dedup) | correct (dedup) |
+|---|---|---|
+| crossing (clean) | gospa 10.18, false 3.5, life 0.999 | 10.20, false 4.0, life 1.000 — identical |
+| dense_clutter | gospa 13.61, false 38, life 0.823 | gospa 14.94, false 93.5, life **0.874** |
+| shore_clutter_open (P_D≈0.9, no land) | gospa 73.82, card +26.71 | 73.94, card +26.80 — identical |
+
+Corrected conclusions:
+1. **The isolated miss-math effect on dense_clutter is modest** (gospa +1.3,
+   false 38→93.5) and lifetime *IMPROVES* (0.823→0.874) — correct math does NOT
+   drop real targets here; it admits more uniform clutter (more false mass).
+   `bundle_land`'s larger dense_clutter regression (16.72 / life 0.639) is mostly
+   its OTHER flags, not the miss-math.
+2. **The broken math does NOT suppress shore clutter in general.** On synthetic
+   shore (high P_D, fixed) broken == correct, both over-count +26.7. There is no
+   "broken math accidentally fixes shore clutter."
+3. **The broken math acts ONLY in the miss branch** (`compute_miss_pD`,
+   PmbmTracker.cpp:608–633: legacy path multiplies (1−pD) over every return →
+   oversized miss penalty). So it only bites tracks that are frequently MISSED.
+   That regime is set by the detection rate: high rate (synthetic shore 0.9) →
+   rarely missed → broken==correct; low rate (philos radar ~0.07) or transient
+   sources (uniform clutter) → missed most scans → broken's oversized penalty
+   dominates. The synthetic-shore identical result is the direct proof.
+4. So the broken math suppresses ONE property — low detection-persistence —
+   which philos shore (low P_D) and uniform clutter both have, but high-P_D
+   synthetic shore does not. The land prior is the orthogonal, persistence-
+   agnostic spatial brake (kills on-land births at any P_D). They overlap only
+   on philos shore.
