@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "core/bias/SensorBiasEstimator.hpp"
+#include "core/land/CoastlineGeometry.hpp"
 #include "core/scenario/Truth.hpp"
 #include "ports/ISensorDetectionModel.hpp"
 
@@ -78,6 +80,16 @@ class ScenarioRun {
   // before. Called once per (config × scenario × seed) cell, just
   // after the estimator is constructed.
   virtual void seedSensorBiasEstimator(SensorBiasEstimator& /*est*/) const {}
+
+  // Optional in-memory coastline for synthetic scenarios. Default = none, so
+  // every existing scenario is untouched. When present AND config.use_land_model
+  // AND Scenario.datum is set, Sweep builds a CoastlineModel from this geometry
+  // (in preference to coastline_geojson_path) so the synthetic land mask that
+  // seeds the shore clutter also drives the land model. Real-data replay
+  // scenarios leave this null and keep using coastline_geojson_path.
+  virtual std::optional<CoastlineGeometry> syntheticCoastline() const {
+    return std::nullopt;
+  }
 };
 
 }  // namespace benchmark

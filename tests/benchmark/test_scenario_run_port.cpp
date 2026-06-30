@@ -35,3 +35,34 @@ TEST(ScenarioRunPort, DescriptorAndGenerateRoundtrip) {
   EXPECT_EQ(a.truth[0].truth_id, 1u);
   EXPECT_EQ(b.truth[0].truth_id, 2u);
 }
+
+#include <optional>
+#include "core/land/CoastlineGeometry.hpp"
+using navtracker::CoastlineGeometry;
+using navtracker::CoastlinePriorParams;
+using navtracker::LandPolygon;
+
+TEST(ScenarioRunPort, SyntheticCoastlineDefaultsToNone) {
+  FakeScenarioRun run;
+  EXPECT_FALSE(run.syntheticCoastline().has_value());
+}
+
+namespace {
+class CoastlineScenarioRun : public ScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override { return {"coast", false, 1}; }
+  Scenario generate(std::uint64_t) override { return {}; }
+  std::optional<CoastlineGeometry> syntheticCoastline() const override {
+    LandPolygon poly;
+    poly.outer = {{-71.0, 42.0}, {-70.0, 42.0}, {-70.0, 43.0}, {-71.0, 43.0}};
+    return CoastlineGeometry({poly}, CoastlinePriorParams{});
+  }
+};
+}  // namespace
+
+TEST(ScenarioRunPort, SyntheticCoastlineOverrideReturnsGeometry) {
+  CoastlineScenarioRun run;
+  const auto geom = run.syntheticCoastline();
+  ASSERT_TRUE(geom.has_value());
+  EXPECT_FALSE(geom->empty());
+}

@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <fstream>
+#include <optional>
 
 // Sweep — drives the (config x scenario x seed) matrix, runs BenchRunner,
 // computes metrics, emits long-format rows.
@@ -330,28 +331,33 @@ std::vector<MetricRow> runSweep(
             tracker.setSensorActivity(activity.get());
           }
 
-          // Task 6: build and wire CoastlineModel when the config and
-          // scenario both opt in. The shared_ptr is kept alive until after
-          // the synchronous runBenchPmbm call below (tracker holds a raw
-          // pointer). Only wired when the GeoJSON file exists (replay
-          // fixture absent → skip gracefully). The datum is fixed for the
-          // whole bench run (PhilosScenarioRun::generate() pre-processes
-          // all own-ship history via feedOwnshipHistory, so no recentering
-          // occurs during replay), so no datum-sink registration is needed.
+          // Task 6 (land) + Task E (synthetic): build and wire a CoastlineModel
+          // when the config opts in. Prefer an in-memory synthetic coastline
+          // from the ScenarioRun (synthetic shore-clutter scenarios); otherwise
+          // fall back to a GeoJSON fixture path (real-data replays). The
+          // shared_ptr outlives the synchronous runBenchPmbm call below (the
+          // tracker holds only a raw pointer). The datum is fixed for the whole
+          // run, so no datum-sink registration is needed.
           std::shared_ptr<CoastlineModel> land;
-          if (config.use_land_model &&
-              !desc.coastline_geojson_path.empty() &&
-              scen.datum.has_value()) {
-            std::ifstream probe(desc.coastline_geojson_path);
-            if (probe.good()) {
-              try {
-                auto geom = loadCoastlineGeoJson(desc.coastline_geojson_path,
-                                                 CoastlinePriorParams{});
-                land = std::make_shared<CoastlineModel>(std::move(geom),
-                                                        *scen.datum);
-                tracker.setLandModel(land.get());
-              } catch (const std::exception&) {
-                // GeoJSON parse failure — proceed without land model
+          if (config.use_land_model && scen.datum.has_value()) {
+            std::optional<CoastlineGeometry> synth =
+                scenario_ptr->syntheticCoastline();
+            if (synth.has_value()) {
+              land = std::make_shared<CoastlineModel>(std::move(*synth),
+                                                      *scen.datum);
+              tracker.setLandModel(land.get());
+            } else if (!desc.coastline_geojson_path.empty()) {
+              std::ifstream probe(desc.coastline_geojson_path);
+              if (probe.good()) {
+                try {
+                  auto geom = loadCoastlineGeoJson(desc.coastline_geojson_path,
+                                                   CoastlinePriorParams{});
+                  land = std::make_shared<CoastlineModel>(std::move(geom),
+                                                          *scen.datum);
+                  tracker.setLandModel(land.get());
+                } catch (const std::exception&) {
+                  // GeoJSON parse failure — proceed without land model
+                }
               }
             }
           }
