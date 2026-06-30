@@ -163,4 +163,46 @@ Scenario buildBearingOnlyMovingSensorScenario(
     std::uint32_t seed = 0,
     std::uint64_t truth_id = 1);
 
+// N constant-velocity targets on parallel lanes, all sharing `velocity`.
+// Lane i (i = 0..n_targets-1) is offset from `start` by i*lane_spacing_m along
+// the unit vector perpendicular to `velocity` (rotated +90 deg: (-vy, vx)/|v|).
+// Truth ids are 1..n_targets, emitted in lane order each scan. `velocity` must
+// be non-zero. Stresses track resolution / merge as spacing shrinks.
+Scenario buildParallelLaneScenario(
+    int n_targets,
+    double lane_spacing_m,
+    const Eigen::Vector2d& start,
+    const Eigen::Vector2d& velocity,
+    const std::vector<double>& sample_times_seconds,
+    double pos_noise_std_m,
+    std::uint32_t seed = 0);
+
+// Two CV targets that both pass through `crossing_point` at the mid-time of
+// `sample_times_seconds`, subtending `crossing_angle_deg`. Target A heads +x
+// at `speed_mps`; target B heads at `crossing_angle_deg` from +x at the same
+// speed. Truth emitted in (A, B) order each scan (ids 1, 2). Sweep the angle
+// externally (e.g. 30/60/90) to probe angle-dependent association.
+Scenario buildCrossingAngleScenario(
+    double crossing_angle_deg,
+    double speed_mps,
+    const Eigen::Vector2d& crossing_point,
+    const std::vector<double>& sample_times_seconds,
+    double pos_noise_std_m,
+    std::uint32_t seed = 0);
+
+// `n_targets` CV targets in a single lane along +x at `speed_mps`, spaced by
+// `gap_m` (member i starts at x = -i*gap_m, y = 0), plus one faster overtaker
+// at `overtaker_speed_mps` starting behind the convoy on a parallel track
+// 25 m to the side. Truth emitted convoy-first (ids 1..n_targets) then the
+// overtaker (id n_targets+1) each scan. Stresses in-line association +
+// overtaking.
+Scenario buildConvoyScenario(
+    int n_targets,
+    double gap_m,
+    double speed_mps,
+    double overtaker_speed_mps,
+    const std::vector<double>& sample_times_seconds,
+    double pos_noise_std_m,
+    std::uint32_t seed = 0);
+
 }  // namespace navtracker

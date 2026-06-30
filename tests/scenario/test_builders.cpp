@@ -104,3 +104,60 @@ TEST(Builders, ManeuveringTargetHasStraightThenTurnThenStraight) {
   EXPECT_NEAR(s.truth[5].position.y(),  0.0, 1e-9);
   EXPECT_GT(std::abs(s.truth[10].velocity.y()), 1e-3);
 }
+
+#include <cmath>
+using navtracker::buildConvoyScenario;
+using navtracker::buildCrossingAngleScenario;
+using navtracker::buildParallelLaneScenario;
+
+TEST(Builders, ParallelLaneEmitsNTargetsPerScanSpacedPerpendicular) {
+  const std::vector<double> times{1.0, 2.0};
+  const Scenario s = buildParallelLaneScenario(
+      /*n_targets=*/4, /*lane_spacing_m=*/50.0,
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),  // heading +x
+      times, /*pos_noise_std_m=*/0.0, /*seed=*/1);
+  ASSERT_EQ(s.truth.size(), 8u);          // 4 targets x 2 scans
+  ASSERT_EQ(s.measurements.size(), 8u);
+  // Lanes offset perpendicular to +x velocity => along +y, spacing 50 m.
+  EXPECT_DOUBLE_EQ(s.truth[0].position.y(), 0.0);
+  EXPECT_DOUBLE_EQ(s.truth[1].position.y(), 50.0);
+  EXPECT_DOUBLE_EQ(s.truth[3].position.y(), 150.0);
+  EXPECT_EQ(s.truth[0].truth_id, 1u);
+  EXPECT_EQ(s.truth[3].truth_id, 4u);
+}
+
+TEST(Builders, CrossingAngleVelocitiesSubtendRequestedAngle) {
+  const std::vector<double> times{1.0, 2.0, 3.0};
+  const Scenario s = buildCrossingAngleScenario(
+      /*crossing_angle_deg=*/60.0, /*speed_mps=*/20.0,
+      Eigen::Vector2d(0.0, 0.0), times, /*pos_noise_std_m=*/0.0, /*seed=*/1);
+  ASSERT_EQ(s.truth.size(), 6u);          // 2 targets x 3 scans
+  const Eigen::Vector2d va = s.truth[0].velocity;
+  const Eigen::Vector2d vb = s.truth[1].velocity;
+  const double ang = std::atan2(va.x() * vb.y() - va.y() * vb.x(),
+                                va.dot(vb));
+  EXPECT_NEAR(std::abs(ang) * 180.0 / M_PI, 60.0, 1e-6);
+  EXPECT_NEAR(va.norm(), 20.0, 1e-9);
+  EXPECT_NEAR(vb.norm(), 20.0, 1e-9);
+}
+
+TEST(Builders, ConvoyEmitsConvoyPlusOvertaker) {
+  const std::vector<double> times{1.0};
+  const Scenario s = buildConvoyScenario(
+      /*n_targets=*/3, /*gap_m=*/80.0, /*speed_mps=*/5.0,
+      /*overtaker_speed_mps=*/15.0, times, /*pos_noise_std_m=*/0.0, /*seed=*/1);
+  ASSERT_EQ(s.truth.size(), 4u);          // 3 convoy + 1 overtaker
+  EXPECT_EQ(s.truth[3].truth_id, 4u);     // overtaker emitted last
+  EXPECT_GT(s.truth[3].velocity.x(), s.truth[0].velocity.x());  // faster
+}
+
+TEST(Builders, GeometryBuildersDeterministicForSameSeed) {
+  const std::vector<double> times{1.0, 2.0};
+  const Scenario a = buildConvoyScenario(2, 80.0, 5.0, 15.0, times, 4.0, 9);
+  const Scenario b = buildConvoyScenario(2, 80.0, 5.0, 15.0, times, 4.0, 9);
+  ASSERT_EQ(a.measurements.size(), b.measurements.size());
+  for (std::size_t i = 0; i < a.measurements.size(); ++i) {
+    EXPECT_DOUBLE_EQ(a.measurements[i].value(0), b.measurements[i].value(0));
+    EXPECT_DOUBLE_EQ(a.measurements[i].value(1), b.measurements[i].value(1));
+  }
+}

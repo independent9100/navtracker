@@ -9,6 +9,8 @@
 namespace navtracker {
 namespace {
 
+constexpr double kPi = 3.14159265358979323846;
+
 Measurement makeMeasurement(const Eigen::Vector2d& noisy_pos,
                             double t_seconds,
                             double std_m) {
@@ -466,6 +468,90 @@ Scenario buildSpeedChangeScenario(const Eigen::Vector2d& start,
     const Eigen::Vector2d noisy(pos.x() + noise(rng),
                                 pos.y() + noise(rng));
     s.measurements.push_back(makeMeasurement(noisy, t, pos_noise_std_m));
+  }
+  return s;
+}
+
+Scenario buildParallelLaneScenario(int n_targets, double lane_spacing_m,
+                                   const Eigen::Vector2d& start,
+                                   const Eigen::Vector2d& velocity,
+                                   const std::vector<double>& times,
+                                   double pos_noise_std_m, std::uint32_t seed) {
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> noise(0.0, pos_noise_std_m);
+  const Eigen::Vector2d dir = velocity.normalized();
+  const Eigen::Vector2d perp(-dir.y(), dir.x());
+  Scenario s;
+  for (double t : times) {
+    for (int i = 0; i < n_targets; ++i) {
+      const Eigen::Vector2d lane_start =
+          start + perp * (static_cast<double>(i) * lane_spacing_m);
+      const Eigen::Vector2d truth_pos = lane_start + velocity * t;
+      s.truth.push_back(
+          makeTruth(truth_pos, velocity, t, static_cast<std::uint64_t>(i + 1)));
+      const Eigen::Vector2d noisy(truth_pos.x() + noise(rng),
+                                  truth_pos.y() + noise(rng));
+      s.measurements.push_back(makeMeasurement(noisy, t, pos_noise_std_m));
+    }
+  }
+  return s;
+}
+
+Scenario buildCrossingAngleScenario(double crossing_angle_deg, double speed_mps,
+                                    const Eigen::Vector2d& crossing_point,
+                                    const std::vector<double>& times,
+                                    double pos_noise_std_m, std::uint32_t seed) {
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> noise(0.0, pos_noise_std_m);
+  const double th = crossing_angle_deg * kPi / 180.0;
+  const Eigen::Vector2d vel_a(speed_mps, 0.0);
+  const Eigen::Vector2d vel_b(speed_mps * std::cos(th), speed_mps * std::sin(th));
+  const double t_mid =
+      times.empty() ? 0.0 : 0.5 * (times.front() + times.back());
+  const Eigen::Vector2d start_a = crossing_point - vel_a * t_mid;
+  const Eigen::Vector2d start_b = crossing_point - vel_b * t_mid;
+  Scenario s;
+  for (double t : times) {
+    const Eigen::Vector2d ta = start_a + vel_a * t;
+    const Eigen::Vector2d tb = start_b + vel_b * t;
+    s.truth.push_back(makeTruth(ta, vel_a, t, 1));
+    s.truth.push_back(makeTruth(tb, vel_b, t, 2));
+    const Eigen::Vector2d na(ta.x() + noise(rng), ta.y() + noise(rng));
+    const Eigen::Vector2d nb(tb.x() + noise(rng), tb.y() + noise(rng));
+    s.measurements.push_back(makeMeasurement(na, t, pos_noise_std_m));
+    s.measurements.push_back(makeMeasurement(nb, t, pos_noise_std_m));
+  }
+  return s;
+}
+
+Scenario buildConvoyScenario(int n_targets, double gap_m, double speed_mps,
+                             double overtaker_speed_mps,
+                             const std::vector<double>& times,
+                             double pos_noise_std_m, std::uint32_t seed) {
+  constexpr double kOvertakerLateralOffsetM = 25.0;
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> noise(0.0, pos_noise_std_m);
+  const Eigen::Vector2d vel(speed_mps, 0.0);
+  const Eigen::Vector2d vel_ot(overtaker_speed_mps, 0.0);
+  const Eigen::Vector2d ot_start(
+      -static_cast<double>(n_targets) * gap_m - 100.0, kOvertakerLateralOffsetM);
+  Scenario s;
+  for (double t : times) {
+    for (int i = 0; i < n_targets; ++i) {
+      const Eigen::Vector2d start_i(-static_cast<double>(i) * gap_m, 0.0);
+      const Eigen::Vector2d truth_pos = start_i + vel * t;
+      s.truth.push_back(
+          makeTruth(truth_pos, vel, t, static_cast<std::uint64_t>(i + 1)));
+      const Eigen::Vector2d noisy(truth_pos.x() + noise(rng),
+                                  truth_pos.y() + noise(rng));
+      s.measurements.push_back(makeMeasurement(noisy, t, pos_noise_std_m));
+    }
+    const Eigen::Vector2d ot_pos = ot_start + vel_ot * t;
+    s.truth.push_back(makeTruth(ot_pos, vel_ot, t,
+                                static_cast<std::uint64_t>(n_targets + 1)));
+    const Eigen::Vector2d ot_noisy(ot_pos.x() + noise(rng),
+                                   ot_pos.y() + noise(rng));
+    s.measurements.push_back(makeMeasurement(ot_noisy, t, pos_noise_std_m));
   }
   return s;
 }
