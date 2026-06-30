@@ -262,3 +262,52 @@ Land between the radar and the target should reduce the miss-detection penalty i
 the coverage model (the radar cannot see what the land is blocking). This extends
 the spatial reasoning from births to the surveillance miss step. Deferred to a
 future coupling of this module with the coverage/visibility channel.
+
+---
+
+## 8. Validated on synthetic perfect truth
+
+Everything in sections 1–7 was first tested on the **philos** dataset: real Boston harbor
+radar, real vessel traffic. That test showed the land model works. But real data has two
+problems.
+
+First, ground truth comes from AIS transponders. AIS has errors: dropout, timing noise,
+and occasional wrong positions. So when we measure "cardinality error," that number is
+partly noise in the truth, not just noise in the tracker.
+
+Second, the philos data has vessels moored at the waterline. We could not be certain
+whether a near-waterline detection was a real anchored vessel or a shore return. We
+assumed the inland-only hard gate protects anchored vessels (c ≈ 0.5 at the waterline,
+so the birth is weakened but not blocked), but we could not prove it cleanly.
+
+We built a **synthetic bench** to settle both questions. It works like this:
+
+1. We write a simple fictional shoreline in ENU — a straight seawall with one pier
+   protruding into the water. We place 30 false-return points deep inside the land
+   (well into the hard-gate region, c > 0.95).
+2. Each radar scan, those 30 points emit a fake radar blip with probability 0.9. Same
+   positions every scan. No truth track. If the tracker creates a track here, it is a
+   phantom.
+3. In a separate scenario we place one **real** slow vessel only 10 m offshore
+   (c ≈ 0.4, soft-suppression zone), alongside the same shore clutter. This vessel must
+   survive as a confirmed track.
+4. We run the bench twice: once with `use_land_model = false` (land model off), once
+   with `use_land_model = true`. The difference in cardinality error is the land model's
+   effect measured against perfect truth.
+
+Because we created the shore clutter ourselves, we know exactly which measurements are
+false and which are real. There is no AIS error. There is no anchored-ship ambiguity.
+
+The same `CoastlineGeometry` object that places the 30 shore-clutter points is also
+handed to the tracker as the land model. One shoreline, used twice — so the geometry is
+consistent by construction. The tracker's inland query and the clutter generator are
+never out of step.
+
+**Why this matters.** The real-data test showed the land model improves GOSPA by 80
+points. The synthetic bench confirms *why*: the cardinality error on the shore-clutter
+scenarios drops to near zero when the land model is on, and the near-shore real vessel
+survives. The two results together are stronger than either alone.
+
+For the technical details of the bench — the geometry generators, the injector math, and
+what to test next — see
+[`docs/algorithms/synthetic-clutter-bench.md`](../algorithms/synthetic-clutter-bench.md).
