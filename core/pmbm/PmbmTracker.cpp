@@ -380,6 +380,22 @@ PmbmTracker::buildNewTargetCandidates(
       cand.covariance = Eigen::MatrixXd::Zero(0, 0);
     }
 
+    // Task A: scale rho_target by the land clutter prior at the birth
+    // position (cand.mean, moment-matched from the PPP posterior above).
+    // When cand.mean is empty (size<2) landBirthScale returns 1.0 → no-op,
+    // which is correct because rho_target is already 0 in that case.
+    {
+      const double land_scale = landBirthScale(cand.mean);
+      if (land_scale < 0.0) {
+        cand.rho_target = 0.0;                      // inland hard gate
+        cand.rho_total = lambda_z;
+      } else if (land_scale < 1.0) {
+        cand.rho_target *= land_scale;              // soft suppression
+        cand.rho_total = cand.rho_target + lambda_z;
+      }
+      // land_scale == 1.0 → no change (bit-identical when no land model)
+    }
+
     out.push_back(std::move(cand));
   }
 
@@ -472,6 +488,15 @@ PmbmTracker::buildAdaptiveBirthCandidates(
       if (it != cfg_.lambda_birth_per_sensor.end()) {
         lambda_birth = it->second;
       }
+    }
+    // Task A: scale the birth intensity by the land clutter prior at the
+    // birth position (cand.mean is already set from estimator.initiate(z)
+    // above). Hard-drop when the prior exceeds cfg_.land_birth_hard_gate.
+    const double land_scale = landBirthScale(cand.mean);
+    if (land_scale < 0.0) {
+      lambda_birth = 0.0;          // inland hard gate → no birth
+    } else {
+      lambda_birth *= land_scale;  // soft suppression: (1 − c) · lambda_birth
     }
     cand.rho_target = lambda_birth;
     cand.rho_total = lambda_birth + lambda_z;

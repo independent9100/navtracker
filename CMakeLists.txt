@@ -217,6 +217,7 @@ add_executable(navtracker_tests
   tests/pmbm/test_pmbm_scenario.cpp
   tests/pmbm/test_pmbm_phase8.cpp
   tests/pmbm/test_pmbm_sensor_activity.cpp
+  tests/pmbm/test_pmbm_land_model.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
   tests/adapters/own_ship/test_own_ship_provider.cpp

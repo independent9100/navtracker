@@ -13,6 +13,7 @@
 #include "ports/IEstimator.hpp"
 #include "ports/ISensorBiasProvider.hpp"
 #include "ports/ISensorDetectionModel.hpp"
+#include "ports/ILandModel.hpp"
 #include "ports/ISensorActivity.hpp"
 #include "ports/IStaleSignalSink.hpp"
 #include "ports/ITrackSink.hpp"
@@ -368,6 +369,23 @@ class PmbmTracker {
     // this rule). Never a per-sweep existence penalty.
     double cooperative_stale_timeout_sec = 0.0;
 
+    // Task A (land clutter prior): when true AND a land model is wired via
+    // setLandModel(), scale the adaptive-birth intensity by
+    //   (1 − clutterPrior(birth_pos))
+    // so births near or on land are soft-suppressed. When the prior exceeds
+    // land_birth_hard_gate (inland plateau) the birth is dropped entirely
+    // (rho_target = 0). The hard gate fires only well inside land — the
+    // ramp shape of a well-built prior ensures it never reaches the gate
+    // threshold at the waterline, protecting anchored near-shore vessels.
+    // Default false → bit-identical to today's behaviour.
+    bool use_land_model = false;
+    // χ clutter-prior threshold for a hard inland gate. When
+    // clutterPrior(birth_pos) > land_birth_hard_gate, the birth candidate
+    // is dropped entirely (rho_target set to 0). Must be in (0, 1].
+    // 0.95 means "only fire the hard gate when the prior is very confidently
+    // inland, never at the waterline". Ignored when use_land_model = false.
+    double land_birth_hard_gate = 0.95;
+
     // Per-track-hypothesis structural path (Phase 9). When true,
     // `PmbmDensity::tracks` + `tracked_mbm` are populated alongside
     // the legacy flat `mbm` view. Phase 9 milestone S1 ships the
@@ -563,6 +581,12 @@ class PmbmTracker {
   // port to distinguish genuine surveillance misses from idle intervals.
   void setSensorActivity(const ISensorActivity* a) { sensor_activity_ = a; }
 
+  // Task A: optional land/coastline clutter prior. When null (default) or
+  // cfg_.use_land_model == false, behaviour is bit-identical to today's.
+  // When set and use_land_model = true, the adaptive-birth intensity is
+  // scaled by (1 − clutterPrior(birth_pos)) for each candidate.
+  void setLandModel(const ILandModel* m) { land_model_ = m; }
+
   // Next Bernoulli id that will be minted (introspection / tests).
   BernoulliId nextBernoulliId() const noexcept { return next_bernoulli_id_; }
 
@@ -688,6 +712,7 @@ class PmbmTracker {
   const ISensorBiasProvider* bias_provider_{nullptr};
   std::shared_ptr<ISensorDetectionModel> detection_model_;
   const ISensorActivity* sensor_activity_{nullptr};
+  const ILandModel* land_model_{nullptr};
   // Task 5: per-Bernoulli "last activity check" timestamp for the sensor-
   // activity path. Keyed by BernoulliId; absent = use b.birth_time as the
   // window start.  Updated to current_time_ each time a surveillance miss
@@ -743,6 +768,19 @@ class PmbmTracker {
   // so the result is independent of which parent/assignment wrote first.
   void stageActivityCheck(BernoulliId id, Timestamp t);
   void stageCooperativeTouch(BernoulliId id, Timestamp t);
+  // Returns the birth-intensity scale in [0, 1] for a birth at ENU position
+  // `mean.head<2>()`, or a negative value meaning "hard-drop this birth":
+  //   1.0   — no land model wired or use_land_model=false (bit-identical)
+  //   [0,1) — soft suppression: scale lambda_birth by this factor
+  //   < 0   — inland hard gate: set lambda_birth to 0 (no Bernoulli)
+  double landBirthScale(const Eigen::VectorXd& mean) const {
+    if (!cfg_.use_land_model || land_model_ == nullptr || mean.size() < 2)
+      return 1.0;
+    const double c = land_model_->clutterPrior(mean.head<2>());
+    if (c > cfg_.land_birth_hard_gate) return -1.0;  // hard-drop
+    return 1.0 - c;                                   // soft scale
+  }
+
   // Returns true when a measurement from sensor `s` should update the
   // cooperative-touch timer. When an activity provider is wired and has a
   // profile for `s`, the profile's ChannelKind decides. Falls back to the
