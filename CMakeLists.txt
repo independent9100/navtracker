@@ -65,6 +65,7 @@ add_library(navtracker_core
   core/pipeline/Tracker.cpp
   core/pipeline/MhtTracker.cpp
   core/pmbm/PmbmTracker.cpp
+  core/land/CoastlineGeometry.cpp
   core/scenario/Builders.cpp
   core/scenario/Ospa.cpp
   core/scenario/Gospa.cpp
@@ -201,6 +202,7 @@ add_executable(navtracker_tests
   tests/pipeline/test_review_fixes.cpp
   tests/pipeline/test_jpda_contributing_sources.cpp
   tests/pipeline/test_bias_correction_orthogonality.cpp
+  tests/land/test_coastline_geometry.cpp
   tests/pmbm/test_pmbm_types.cpp
   tests/pmbm/test_pmbm_tracker_predict.cpp
   tests/pmbm/test_pmbm_tracker_update.cpp
