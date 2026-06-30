@@ -28,8 +28,11 @@ void addPolygon(const nlohmann::json& poly_coords,
   LandPolygon p;
   p.outer = parseRing(poly_coords[0]);
   if (p.outer.size() < 3) return;
-  for (std::size_t i = 1; i < poly_coords.size(); ++i)
-    p.holes.push_back(parseRing(poly_coords[i]));
+  for (std::size_t i = 1; i < poly_coords.size(); ++i) {
+    auto hole = parseRing(poly_coords[i]);
+    if (hole.size() >= 3)
+      p.holes.push_back(std::move(hole));
+  }
   out.push_back(std::move(p));
 }
 
@@ -40,8 +43,9 @@ CoastlineGeometry parseCoastlineGeoJson(const std::string& json_text,
   const auto j = nlohmann::json::parse(json_text);
   std::vector<LandPolygon> polys;
 
-  const auto& feats =
-      j.contains("features") ? j["features"] : nlohmann::json::array();
+  static const nlohmann::json kEmptyArray = nlohmann::json::array();
+  const nlohmann::json& feats =
+      j.contains("features") ? j["features"] : kEmptyArray;
   for (const auto& feat : feats) {
     if (!feat.contains("geometry") || feat["geometry"].is_null()) continue;
     const auto& geom = feat["geometry"];

@@ -108,7 +108,7 @@ add_library(navtracker_land
   adapters/land/GeoJsonCoastline.cpp
 )
 target_include_directories(navtracker_land PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(navtracker_land PUBLIC navtracker_core Eigen3::Eigen nlohmann_json::nlohmann_json)
+target_link_libraries(navtracker_land PUBLIC navtracker_core Eigen3::Eigen PRIVATE nlohmann_json::nlohmann_json)
 
 add_library(navtracker_benchmark
   core/benchmark/Placeholder.hpp  # header-only at this stage
