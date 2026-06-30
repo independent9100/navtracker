@@ -677,6 +677,47 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // imm_cv_ct_pmbm_bundle + land clutter prior. The bundle runs the CORRECT
+  // misdetection math (dedup_miss_pd=true), which removes the wrong-math
+  // phantom brake and regresses philos to gospa 112 on its own. The land prior
+  // is the principled REPLACEMENT brake on the legacy (non-coverage) path —
+  // unlike imm_cv_ct_pmbm_coverage_land, where use_sensor_activity bypasses
+  // compute_miss_pD and dedup_miss_pd is inert, here dedup_miss_pd is live and
+  // land does the spatial suppression. MEASURED 2026-06-30 (single-seed):
+  // philos gospa 112.0→59.5, card_err +46.3→−2.95, gospa_false 11420→1580 —
+  // the best HONEST (correct-math, no wrong-math crutch, no coverage) philos
+  // result, beating coverage_land (73.1) and MHT (69.4). Autoferry is
+  // byte-identical to bundle (no coastline fixture → land inert), so bundle's
+  // clean-data advantage is preserved. The philos win is conditional on a
+  // coastline being wired (else it falls back to bundle). See the evaluation
+  // log (2026-06-30, "bundle + land") and docs/algorithms/comparison-baselines.md.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_bundle_land";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_land_model = true;  // gate Sweep CoastlineModel wiring
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.adaptive_k_best = false;
+      cfg.birth_existence_target = 0.1;
+      cfg.source_aware_identity = true;
+      cfg.dedup_miss_pd = true;            // correct misdetection math (LIVE here)
+      cfg.min_new_bernoulli_existence = 0.1;
+      cfg.output_existence_floor = 0.1;
+      cfg.lambda_birth = 1e-5;             // ignored when birth_existence_target > 0
+      cfg.use_land_model = true;           // land prior = replacement brake
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Task 4 coverage model: honest per-duty-cycle surveillance miss +
   // cooperative stale signal, replacing idle_halflife + wrong-math
   // per-blip miss. Cadence/coverage declared in Sweep.cpp.

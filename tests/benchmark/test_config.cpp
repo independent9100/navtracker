@@ -13,7 +13,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   // 28: 27 standing + Task 6 (Step 6) imm_cv_ct_pmbm_coverage_land
   // (CoastlineModel land-prior wiring: suppresses adaptive-birth intensity
   // at land positions via Boston Harbor GeoJSON, philos only).
-  ASSERT_EQ(configs.size(), 28u);
+  ASSERT_EQ(configs.size(), 29u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   // Canonical wires the bias estimator unconditionally; the
@@ -25,7 +25,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 28u);
+  EXPECT_EQ(labels.size(), 29u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt_k3"), 1u);
   // Phase 9 probe siblings dropped 2026-06-23 (S4 fold-in):

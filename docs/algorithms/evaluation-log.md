@@ -5048,3 +5048,24 @@ recommended path by replacement**, not by fixing-and-enabling correct math —
 those two live in mutually-exclusive code paths, so "correct-math + land" cannot
 be combined in `coverage_land` as posed. Minor follow-up: `dedup_miss_pd` should
 carry a comment that it is inert under `use_sensor_activity`.
+
+## 2026-06-30 (Project E follow-up) — `bundle + land`: correct-math + land prior, no coverage → best HONEST philos result, beats MHT
+
+**Question.** `coverage_land` bypasses `dedup_miss_pd` (coverage owns the miss path), so it couldn't test "correct math + land." The legacy path CAN: `imm_cv_ct_pmbm_bundle` runs `dedup_miss_pd=true` (correct math) but regressed philos to gospa 112 because correct math removed the wrong-math phantom brake and nothing replaced it. Does the land prior serve as that replacement brake?
+
+**Method.** A/B `imm_cv_ct_pmbm_bundle` vs `bundle + use_land_model` (= new config `imm_cv_ct_pmbm_bundle_land`), philos (real) + all 10 autoferry scenarios. Single-seed.
+
+**Result — yes, decisively, on philos.**
+
+| config | philos gospa | card_err | gospa_false | life |
+|---|---:|---:|---:|---:|
+| imm_cv_ct_pmbm_bundle (correct math, no land) | 111.99 | +46.25 | 11420 | 0.030 |
+| **bundle_land (correct math + land)** | **59.49** | **−2.95** | **1580** | 0.030 |
+
+Land cuts bundle's philos gospa 112→59.5 (−47%), card_err +46→−3, false 11420→1580. Autoferry: **byte-identical to bundle** across all 10 scenarios (autoferry declares no coastline → land inert), so the correct-math clean-data advantage is fully preserved.
+
+**Significance.** 59.5 is the **best HONEST philos number to date** — correct misdetection math, principled spatial brake, NO wrong-math crutch, NO coverage machinery. It beats `coverage_land` (73.1), `adapt` (82.6), and — for the first time for an honest no-crutch config — **MHT (69.4)**. The only lower number, `birthtarget` (48.5), is dishonest (leans on the wrong-math brake). So among honest configs, `bundle_land` is now the philos leader.
+
+**Mechanism.** On the legacy (non-coverage) path `dedup_miss_pd` is live, so correct math removes the over-suppressing brake; the land prior then hard-gates the on-land phantoms at birth. This is the genuine "correct physics + principled brake" combination — the substitution that `birthtarget+land` couldn't show (there the wrong-math brake was still present, making land redundant; eval-log 2026-06-30 "birthtarget + land").
+
+**Shipped** as `imm_cv_ct_pmbm_bundle_land` (config count 28→29). **Caveats before any "make it default" decision:** (1) single-seed — no error bars on the 59.5 vs 69.4 margin (see 2026-06-30 "enough tests" discussion); (2) the philos win is **conditional on a coastline GeoJSON being wired** — without one, bundle_land falls back to bundle (which over-counts on coastal clutter, gospa 112); (3) not yet measured on the 17 synthetic scenarios. Default-promotion decision deferred.
