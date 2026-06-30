@@ -13,6 +13,10 @@ namespace {
 std::size_t hashRows(const std::vector<MetricRow>& rows) {
   std::ostringstream os;
   for (const auto& r : rows) {
+    // "wall_seconds" is a wall-clock performance measurement, not part of the
+    // tracker's deterministic output; it legitimately varies run-to-run and
+    // must be excluded from a byte-identical determinism check.
+    if (r.metric == "wall_seconds") continue;
     os << r.run_id << ',' << r.config << ',' << r.scenario << ','
        << r.seed << ',' << r.metric << ',' << r.value << ',' << r.unit << '\n';
   }
@@ -45,9 +49,10 @@ TEST(BenchDeterminism, RepeatedSweepProducesIdenticalRows) {
   EXPECT_EQ(hashRows(rows1), hashRows(rows2))
       << "Row contents differ — non-deterministic values.";
 
-  // If hash equality fails, print the first differing row for diagnosis.
+  // If hash equality fails, print the differing rows for diagnosis.
   if (hashRows(rows1) != hashRows(rows2)) {
     for (std::size_t i = 0; i < rows1.size(); ++i) {
+      if (rows1[i].metric == "wall_seconds") continue;
       if (rows1[i].value != rows2[i].value) {
         std::cerr << "First differing row at index " << i << ": "
                   << rows1[i].config << " " << rows1[i].scenario << " "

@@ -320,6 +320,9 @@ TEST(PmbmTrackerPhase8, PmbmAdaptiveBenchIsByteIdenticalAcrossRuns) {
     EXPECT_EQ(rows_a[i].scenario, rows_b[i].scenario);
     EXPECT_EQ(rows_a[i].seed, rows_b[i].seed);
     EXPECT_EQ(rows_a[i].metric, rows_b[i].metric);
+    // "wall_seconds" is a wall-clock performance measurement, not part of
+    // the tracker's deterministic output; it legitimately varies run-to-run.
+    if (rows_a[i].metric == "wall_seconds") continue;
     EXPECT_EQ(rows_a[i].value, rows_b[i].value);  // exact byte
   }
 }
