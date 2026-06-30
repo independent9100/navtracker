@@ -125,7 +125,7 @@ add_library(navtracker_benchmark
 )
 set_target_properties(navtracker_benchmark PROPERTIES LINKER_LANGUAGE CXX)
 target_include_directories(navtracker_benchmark PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(navtracker_benchmark PUBLIC navtracker_core Eigen3::Eigen)
+target_link_libraries(navtracker_benchmark PUBLIC navtracker_core navtracker_land Eigen3::Eigen)
 
 add_library(navtracker_sim
   sim/TruthTrajectory.cpp

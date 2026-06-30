@@ -101,6 +101,9 @@ class PhilosScenarioRun : public ScenarioRun {
         {SensorKind::Ais, MeasurementModel::Position2D,
          DetectionParams{0.05, 1e-9}},
     };
+    // Philos: Boston Harbor coastline GeoJSON for land-prior wiring.
+    // Sweep checks existence before loading; missing file → no land model.
+    d.coastline_geojson_path = "tests/fixtures/philos/boston.geojson";
     return d;
   }
 
@@ -174,6 +177,11 @@ class PhilosScenarioRun : public ScenarioRun {
     // real dropouts (AIS: 8–12 s; radar_truth: sub-second).
     s.truth = resampleTruthToClock(s.truth, /*period_s=*/1.0,
                                    /*max_gap_s=*/30.0);
+    // Expose the ENU datum so Sweep can construct datum-aware components
+    // (e.g. CoastlineModel) without re-parsing the own-ship history.
+    // The datum is fixed for the whole bench run (feedOwnshipHistory
+    // processes all history before any tracking, so no recentering occurs).
+    s.datum = provider.datum();
     return s;
   }
 

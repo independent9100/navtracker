@@ -1,6 +1,7 @@
 #include "core/benchmark/Sweep.hpp"
 
 #include <chrono>
+#include <fstream>
 
 // Sweep — drives the (config x scenario x seed) matrix, runs BenchRunner,
 // computes metrics, emits long-format rows.
@@ -33,10 +34,12 @@
 //     remain deterministic since each cell is independent.
 //   - Per-config Tracker construction parameters when they need to vary.
 
+#include "adapters/land/GeoJsonCoastline.hpp"
 #include "core/benchmark/BenchRunner.hpp"
 #include "core/benchmark/BenchSink.hpp"
 #include "core/benchmark/Consistency.hpp"
 #include "core/bias/SensorBiasPairExtractor.hpp"
+#include "core/land/CoastlineModel.hpp"
 #include "core/pipeline/Tracker.hpp"
 #include "core/sensor_activity/DeclaredSensorActivity.hpp"
 #include "core/tracking/ClutterMapDetectionModel.hpp"
@@ -325,6 +328,32 @@ std::vector<MetricRow> runSweep(
             }
             activity = std::make_shared<DeclaredSensorActivity>(std::move(profiles));
             tracker.setSensorActivity(activity.get());
+          }
+
+          // Task 6: build and wire CoastlineModel when the config and
+          // scenario both opt in. The shared_ptr is kept alive until after
+          // the synchronous runBenchPmbm call below (tracker holds a raw
+          // pointer). Only wired when the GeoJSON file exists (replay
+          // fixture absent → skip gracefully). The datum is fixed for the
+          // whole bench run (PhilosScenarioRun::generate() pre-processes
+          // all own-ship history via feedOwnshipHistory, so no recentering
+          // occurs during replay), so no datum-sink registration is needed.
+          std::shared_ptr<CoastlineModel> land;
+          if (config.use_land_model &&
+              !desc.coastline_geojson_path.empty() &&
+              scen.datum.has_value()) {
+            std::ifstream probe(desc.coastline_geojson_path);
+            if (probe.good()) {
+              try {
+                auto geom = loadCoastlineGeoJson(desc.coastline_geojson_path,
+                                                 CoastlinePriorParams{});
+                land = std::make_shared<CoastlineModel>(std::move(geom),
+                                                        *scen.datum);
+                tracker.setLandModel(land.get());
+              } catch (const std::exception&) {
+                // GeoJSON parse failure — proceed without land model
+              }
+            }
           }
 
           // Same item-9 bias-estimator wiring as the MHT path:

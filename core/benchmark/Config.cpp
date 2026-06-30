@@ -722,6 +722,43 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // Task 6 — land-prior wiring: same as imm_cv_ct_pmbm_coverage but
+  // CoastlineModel (Boston Harbor GeoJSON) suppresses adaptive-birth
+  // intensity at land positions. Wiring happens in Sweep.cpp when the
+  // scenario declares a coastline_geojson_path (philos only); autoferry
+  // and synthetic scenarios have no coastline fixture, so the land model
+  // is inert there — the run is bit-identical to imm_cv_ct_pmbm_coverage.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_coverage_land";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;  // unused for Pmbm
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_sensor_activity_model = true;  // coverage model (same as parent)
+    c.use_land_model = true;             // Task 6: wire CoastlineModel
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.adaptive_k_best = false;
+      cfg.birth_existence_target = 0.1;
+      cfg.source_aware_identity = true;
+      cfg.min_new_bernoulli_existence = 0.1;
+      cfg.output_existence_floor = 0.1;
+      cfg.lambda_birth = 1e-5;
+      cfg.use_sensor_activity = true;
+      cfg.idle_halflife_sec = 0.0;
+      cfg.dedup_miss_pd = false;
+      cfg.cooperative_stale_timeout_sec = 120.0;
+      cfg.use_land_model = true;   // activate land-prior birth gate
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Cl-3 Phase 9 — adaptive K with cap=3, shipped alongside K=1
   // imm_cv_ct_pmbm_adapt. Same-run 10-seed pinned baseline at
   // docs/baselines/pmbm_adapt_k3_phase9_20260623.csv.

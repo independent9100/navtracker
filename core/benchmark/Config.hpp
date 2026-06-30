@@ -89,6 +89,15 @@ struct Config {
   // tracker.setSensorActivity(). Only meaningful when tracker_kind == Pmbm
   // and the scenario declares a detection_table.
   bool use_sensor_activity_model{false};
+  // Task 6: build a CoastlineModel from the scenario's GeoJSON coastline
+  // fixture and wire it into the PMBM tracker via setLandModel(). When
+  // true, Sweep.cpp loads the GeoJSON (if the file exists), constructs
+  // CoastlineModel with the scenario's ENU datum, and calls
+  // tracker.setLandModel(). Only meaningful when tracker_kind == Pmbm,
+  // cfg.use_land_model == true, and the scenario declares a
+  // coastline_geojson_path. Scenarios without a coastline fixture silently
+  // skip wiring (land model stays null → bit-identical to no-land behaviour).
+  bool use_land_model{false};
 };
 
 // Returns the five baseline configurations in fixed order:
