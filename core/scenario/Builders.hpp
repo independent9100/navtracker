@@ -5,6 +5,9 @@
 
 #include <Eigen/Core>
 
+#include "core/geo/Datum.hpp"
+#include "core/geo/Wgs84.hpp"
+#include "core/land/CoastlineGeometry.hpp"
 #include "core/scenario/Truth.hpp"
 
 namespace navtracker {
@@ -202,6 +205,49 @@ Scenario buildConvoyScenario(
     double speed_mps,
     double overtaker_speed_mps,
     const std::vector<double>& sample_times_seconds,
+    double pos_noise_std_m,
+    std::uint32_t seed = 0);
+
+// A synthetic coastline plus the fixed shore-clutter positions derived from
+// it. The same object seeds the stationary returns (addShoreClutter) AND is
+// handed to the land model (ScenarioRun::syntheticCoastline) so an A/B of
+// use_land_model runs against one shoreline. Deterministic: no RNG.
+struct SyntheticShore {
+  CoastlineGeometry geometry;
+  geo::Datum datum;
+  std::vector<Eigen::Vector2d> clutter_enu_points;  // ENU, deep inland
+};
+
+// Build a simple synthetic shoreline about `datum_origin`: land occupies
+// y >= shore_y_m up to y = shore_y_m + land_depth_m, across x in
+// [-extent_m, extent_m], with one rectangular pier of width pier_width_m
+// protruding pier_length_m into the water at x = 0. The ENU outline is
+// converted to geodetic via the datum and stored as one LandPolygon (outer
+// ring, lon/lat). `n_clutter` stationary returns are placed deep inland
+// (y = shore_y_m + 0.5*land_depth_m, spread across x) — the hard-gate region.
+SyntheticShore buildSyntheticShore(
+    const geo::Geodetic& datum_origin,
+    double shore_y_m,
+    double extent_m,
+    double land_depth_m,
+    double pier_width_m,
+    double pier_length_m,
+    int n_clutter,
+    const CoastlinePriorParams& params = {});
+
+// Add stationary shore clutter to `base`. For each distinct scan timestamp in
+// base.measurements, each point in `clutter_enu_points` emits a Position2D
+// measurement (SensorKind::ArpaTtm, source_id "sim_shore") at its fixed ENU
+// position plus isotropic Gaussian noise, with probability `detection_prob`
+// (seeded Bernoulli). NO TruthSample is created for clutter. Sets base.datum
+// = datum and returns base with measurements re-sorted by time. The same
+// nominal positions recur every scan — the defining property versus the
+// uniform-Poisson buildClutterCrossingScenario.
+Scenario addShoreClutter(
+    Scenario base,
+    const geo::Datum& datum,
+    const std::vector<Eigen::Vector2d>& clutter_enu_points,
+    double detection_prob,
     double pos_noise_std_m,
     std::uint32_t seed = 0);
 

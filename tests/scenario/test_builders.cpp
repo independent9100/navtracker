@@ -161,3 +161,80 @@ TEST(Builders, GeometryBuildersDeterministicForSameSeed) {
     EXPECT_DOUBLE_EQ(a.measurements[i].value(1), b.measurements[i].value(1));
   }
 }
+
+#include "core/geo/Datum.hpp"
+#include "core/geo/Wgs84.hpp"
+#include "core/land/CoastlineModel.hpp"
+using navtracker::addShoreClutter;
+using navtracker::buildSyntheticShore;
+using navtracker::CoastlineModel;
+using navtracker::SyntheticShore;
+
+TEST(ShoreClutter, SyntheticShoreClutterPointsReadHardGatePrior) {
+  const SyntheticShore shore = buildSyntheticShore(
+      navtracker::geo::Geodetic{42.35, -71.05, 0.0},
+      /*shore_y_m=*/500.0, /*extent_m=*/1500.0, /*land_depth_m=*/400.0,
+      /*pier_width_m=*/40.0, /*pier_length_m=*/150.0, /*n_clutter=*/30);
+  ASSERT_EQ(shore.clutter_enu_points.size(), 30u);
+  const CoastlineModel model(shore.geometry, shore.datum);
+  // Every deep-inland clutter point sits in the hard-gate plateau (c ~ 1).
+  for (const auto& p : shore.clutter_enu_points) {
+    EXPECT_GE(model.clutterPrior(p), 0.95);
+  }
+  // A point far out to sea reads ~0 (open water).
+  EXPECT_NEAR(model.clutterPrior(Eigen::Vector2d(0.0, -500.0)), 0.0, 1e-9);
+}
+
+TEST(ShoreClutter, InjectorAddsFixedReturnsWithoutTruth) {
+  // Two-scan base scenario, one real target.
+  const std::vector<double> times{1.0, 2.0};
+  navtracker::Scenario base = navtracker::buildStraightLineScenario(
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0), times, 0.0, 1, 1);
+  const std::size_t base_truth = base.truth.size();
+  const std::size_t base_meas = base.measurements.size();
+  const SyntheticShore shore = buildSyntheticShore(
+      navtracker::geo::Geodetic{42.35, -71.05, 0.0}, 500.0, 1500.0, 400.0,
+      40.0, 150.0, /*n_clutter=*/5);
+  navtracker::Scenario s = addShoreClutter(
+      base, shore.datum, shore.clutter_enu_points,
+      /*detection_prob=*/1.0, /*pos_noise_std_m=*/0.0, /*seed=*/7);
+  // P_D = 1 => 5 clutter returns x 2 scans added; truth unchanged.
+  EXPECT_EQ(s.truth.size(), base_truth);
+  EXPECT_EQ(s.measurements.size(), base_meas + 10u);
+  EXPECT_TRUE(s.datum.has_value());
+  std::size_t shore_count = 0;
+  for (const auto& m : s.measurements) {
+    if (m.source_id == "sim_shore") {
+      ++shore_count;
+      EXPECT_EQ(m.sensor, navtracker::SensorKind::ArpaTtm);
+    }
+  }
+  EXPECT_EQ(shore_count, 10u);
+  // Measurements remain time-sorted after injection.
+  for (std::size_t i = 1; i < s.measurements.size(); ++i) {
+    EXPECT_LE(s.measurements[i - 1].time.seconds(),
+              s.measurements[i].time.seconds());
+  }
+}
+
+TEST(ShoreClutter, ClutterPositionsRepeatAcrossScans) {
+  const std::vector<double> times{1.0, 2.0, 3.0};
+  navtracker::Scenario base = navtracker::buildStraightLineScenario(
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0), times, 0.0, 1, 1);
+  const SyntheticShore shore = buildSyntheticShore(
+      navtracker::geo::Geodetic{42.35, -71.05, 0.0}, 500.0, 1500.0, 400.0,
+      40.0, 150.0, /*n_clutter=*/1);
+  navtracker::Scenario s = addShoreClutter(base, shore.datum,
+                                           shore.clutter_enu_points,
+                                           /*detection_prob=*/1.0,
+                                           /*pos_noise_std_m=*/0.0, /*seed=*/3);
+  // With zero noise, the single shore point lands at the same ENU position
+  // on every scan (fixed-position process, not redrawn).
+  std::vector<Eigen::Vector2d> shore_pos;
+  for (const auto& m : s.measurements)
+    if (m.source_id == "sim_shore") shore_pos.push_back(m.value.head<2>());
+  ASSERT_EQ(shore_pos.size(), 3u);
+  EXPECT_DOUBLE_EQ(shore_pos[0].x(), shore_pos[1].x());
+  EXPECT_DOUBLE_EQ(shore_pos[1].x(), shore_pos[2].x());
+  EXPECT_DOUBLE_EQ(shore_pos[0].y(), shore_pos[2].y());
+}

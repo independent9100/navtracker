@@ -70,6 +70,18 @@ Measurement makeBearingMeasurement(double noisy_b,
   return m;
 }
 
+Measurement makeShoreMeasurement(const Eigen::Vector2d& noisy_pos,
+                                 double t_seconds, double std_m) {
+  Measurement m;
+  m.time = Timestamp::fromSeconds(t_seconds);
+  m.sensor = SensorKind::ArpaTtm;  // radar-like fixed clutter
+  m.source_id = "sim_shore";
+  m.model = MeasurementModel::Position2D;
+  m.value = noisy_pos;
+  m.covariance = Eigen::Matrix2d::Identity() * (std_m * std_m + 1e-6);
+  return m;
+}
+
 }  // namespace
 
 Scenario buildStraightLineScenario(const Eigen::Vector2d& start,
@@ -554,6 +566,72 @@ Scenario buildConvoyScenario(int n_targets, double gap_m, double speed_mps,
     s.measurements.push_back(makeMeasurement(ot_noisy, t, pos_noise_std_m));
   }
   return s;
+}
+
+SyntheticShore buildSyntheticShore(const geo::Geodetic& datum_origin,
+                                   double shore_y_m, double extent_m,
+                                   double land_depth_m, double pier_width_m,
+                                   double pier_length_m, int n_clutter,
+                                   const CoastlinePriorParams& params) {
+  const geo::Datum datum(datum_origin);
+  const double S = shore_y_m;
+  const double T = shore_y_m + land_depth_m;
+  const double L = -extent_m, R = extent_m;
+  const double pw = 0.5 * pier_width_m;
+  const double pl = pier_length_m;
+  // ENU outer ring: land interior above the shoreline with a pier notch
+  // protruding into the water at x = 0.
+  const std::vector<Eigen::Vector2d> ring_enu = {
+      {L, S},      {-pw, S}, {-pw, S - pl}, {pw, S - pl},
+      {pw, S},     {R, S},   {R, T},        {L, T}};
+  LandPolygon poly;
+  poly.outer.reserve(ring_enu.size());
+  for (const auto& p : ring_enu) {
+    const geo::Geodetic g =
+        datum.toGeodetic(Eigen::Vector3d(p.x(), p.y(), 0.0));
+    poly.outer.emplace_back(g.lon_deg, g.lat_deg);
+  }
+  CoastlineGeometry geometry({poly}, params);
+  std::vector<Eigen::Vector2d> clutter;
+  clutter.reserve(static_cast<std::size_t>(std::max(0, n_clutter)));
+  const double y_inland = shore_y_m + 0.5 * land_depth_m;
+  const double x0 = -0.8 * extent_m, x1 = 0.8 * extent_m;
+  for (int i = 0; i < n_clutter; ++i) {
+    const double frac =
+        n_clutter <= 1 ? 0.5 : static_cast<double>(i) / (n_clutter - 1);
+    clutter.emplace_back(x0 + frac * (x1 - x0), y_inland);
+  }
+  return SyntheticShore{std::move(geometry), datum, std::move(clutter)};
+}
+
+Scenario addShoreClutter(Scenario base, const geo::Datum& datum,
+                         const std::vector<Eigen::Vector2d>& clutter_enu_points,
+                         double detection_prob, double pos_noise_std_m,
+                         std::uint32_t seed) {
+  // Distinct scan times in first-seen order (builders emit time-grouped).
+  std::vector<double> scan_times;
+  for (const auto& m : base.measurements) {
+    const double t = m.time.seconds();
+    if (scan_times.empty() || scan_times.back() != t) scan_times.push_back(t);
+  }
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> noise(0.0, pos_noise_std_m);
+  std::uniform_real_distribution<double> u(0.0, 1.0);
+  for (double t : scan_times) {
+    for (const auto& pt : clutter_enu_points) {
+      if (u(rng) < detection_prob) {
+        const Eigen::Vector2d noisy(pt.x() + noise(rng), pt.y() + noise(rng));
+        base.measurements.push_back(
+            makeShoreMeasurement(noisy, t, pos_noise_std_m));
+      }
+    }
+  }
+  std::stable_sort(base.measurements.begin(), base.measurements.end(),
+                   [](const Measurement& a, const Measurement& b) {
+                     return a.time.seconds() < b.time.seconds();
+                   });
+  base.datum = datum;
+  return base;
 }
 
 }  // namespace navtracker
