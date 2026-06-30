@@ -349,12 +349,16 @@ class ShoreClutterOpenScenarioRun : public ScenarioRun {
     return describe("shore_clutter_open", shoreClutterTable());
   }
   Scenario generate(std::uint64_t seed) override {
-    // Two real targets crossing in open water (y ~ 100, far from the shore at
-    // y = 500 => land prior ~ 0, no suppression) + stationary shore clutter.
+    // Two real targets crossing in open water + stationary shore clutter. The
+    // crossing point is at x = 400 so the vertical (north-bound) target runs up
+    // x = 400, well clear of the pier (x in [-20, 20]); both targets stay in
+    // open water (land prior c = 0): the along-shore target holds y = 100
+    // (400 m offshore), and the north-bound target peaks at y ≈ 392 (≈108 m
+    // offshore, beyond the 50 m soft band). No land suppression of either.
     const SyntheticShore shore = makeBenchShore();
     Scenario base = buildCrossingAngleScenario(
         /*crossing_angle_deg=*/90.0, /*speed_mps=*/15.0,
-        Eigen::Vector2d(0.0, 100.0), linearSeconds(1, 40),
+        Eigen::Vector2d(400.0, 100.0), linearSeconds(1, 40),
         /*pos_noise_std_m=*/8.0, static_cast<std::uint32_t>(seed));
     return addShoreClutter(std::move(base), shore.datum,
                            shore.clutter_enu_points, /*detection_prob=*/0.9,
