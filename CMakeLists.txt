@@ -12,11 +12,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Eigen3 REQUIRED)
 find_package(GTest REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 option(NAVTRACKER_BUILD_FOXGLOVE "Build the Foxglove/MCAP debug recorder adapter" ON)
 if(NAVTRACKER_BUILD_FOXGLOVE)
   find_package(mcap REQUIRED)
-  find_package(nlohmann_json REQUIRED)
 endif()
 
 enable_testing()
@@ -103,6 +103,12 @@ add_library(navtracker_replay
 )
 target_include_directories(navtracker_replay PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_replay PUBLIC navtracker_core Eigen3::Eigen)
+
+add_library(navtracker_land
+  adapters/land/GeoJsonCoastline.cpp
+)
+target_include_directories(navtracker_land PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(navtracker_land PUBLIC navtracker_core Eigen3::Eigen nlohmann_json::nlohmann_json)
 
 add_library(navtracker_benchmark
   core/benchmark/Placeholder.hpp  # header-only at this stage
@@ -204,6 +210,7 @@ add_executable(navtracker_tests
   tests/pipeline/test_bias_correction_orthogonality.cpp
   tests/land/test_coastline_geometry.cpp
   tests/land/test_coastline_model.cpp
+  tests/land/test_geojson_coastline.cpp
   tests/pmbm/test_pmbm_types.cpp
   tests/pmbm/test_pmbm_tracker_predict.cpp
   tests/pmbm/test_pmbm_tracker_update.cpp
@@ -308,8 +315,10 @@ add_executable(navtracker_tests
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
     navtracker_core navtracker_nmea navtracker_sim navtracker_replay navtracker_benchmark
-    navtracker_benchmark_adapters
+    navtracker_benchmark_adapters navtracker_land
     GTest::gtest_main Eigen3::Eigen)
+target_compile_definitions(navtracker_tests PRIVATE
+    NAVTRACKER_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 if(NAVTRACKER_BUILD_FOXGLOVE)
   target_sources(navtracker_tests PRIVATE
