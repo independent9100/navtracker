@@ -48,6 +48,14 @@ class ISensorActivity {
                                    std::optional<std::uint64_t> platform_id,
                                    Timestamp last_checked,
                                    Timestamp now) const = 0;
+
+  // Return the declared ChannelKind for the given sensor, or std::nullopt
+  // if no profile covers that sensor. Used by the tracker to generalise
+  // "is this measurement from a cooperative-announce source?" beyond the
+  // hardcoded SensorKind::Cooperative check — any sensor declared as
+  // ChannelKind::Cooperative in the profile (e.g. SensorKind::Ais) will
+  // update the cooperative-touch timer and trigger stale / retirement logic.
+  virtual std::optional<ChannelKind> channelKindFor(SensorKind sensor) const = 0;
 };
 
 }  // namespace navtracker

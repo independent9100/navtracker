@@ -21,6 +21,14 @@ bool inCoverage(const DeclaredSensorActivity::ChannelProfile& p,
 }
 }  // namespace
 
+std::optional<ChannelKind> DeclaredSensorActivity::channelKindFor(
+    SensorKind sensor) const {
+  for (const auto& p : profiles_) {
+    if (p.sensor == sensor) return p.kind;
+  }
+  return std::nullopt;
+}
+
 MissOpportunity DeclaredSensorActivity::evaluate(
     const Eigen::Vector2d& track_pos_enu,
     std::optional<std::uint32_t> /*mmsi*/,

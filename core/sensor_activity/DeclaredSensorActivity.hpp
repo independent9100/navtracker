@@ -34,6 +34,10 @@ class DeclaredSensorActivity : public ISensorActivity {
                            Timestamp last_checked,
                            Timestamp now) const override;
 
+  // Return the ChannelKind of the first profile whose sensor field matches,
+  // or std::nullopt when no profile covers that sensor.
+  std::optional<ChannelKind> channelKindFor(SensorKind sensor) const override;
+
  private:
   std::vector<ChannelProfile> profiles_;
 };

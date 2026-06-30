@@ -743,6 +743,19 @@ class PmbmTracker {
   // so the result is independent of which parent/assignment wrote first.
   void stageActivityCheck(BernoulliId id, Timestamp t);
   void stageCooperativeTouch(BernoulliId id, Timestamp t);
+  // Returns true when a measurement from sensor `s` should update the
+  // cooperative-touch timer. When an activity provider is wired and has a
+  // profile for `s`, the profile's ChannelKind decides. Falls back to the
+  // legacy `s == SensorKind::Cooperative` check when no provider is wired
+  // or the provider has no profile for `s` — bit-identical to legacy in
+  // both cases.
+  bool isCooperativeSource(SensorKind s) const {
+    if (sensor_activity_) {
+      const auto k = sensor_activity_->channelKindFor(s);
+      if (k.has_value()) return *k == ChannelKind::Cooperative;
+    }
+    return s == SensorKind::Cooperative;
+  }
   // Apply the staging maps to the persistent maps (called once per scan,
   // after every parent has been enumerated). No-op when both are empty.
   void mergeStagedActivityMaps();

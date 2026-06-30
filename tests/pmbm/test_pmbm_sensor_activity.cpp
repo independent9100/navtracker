@@ -838,3 +838,203 @@ TEST(PmbmStaleSignal, CooperativeOnlyRetiredOnlyByTimeout) {
   EXPECT_EQ(it42, ts.end())
       << "After timeout retirement, track 42 must not appear in tracks() output";
 }
+
+// ---------------------------------------------------------------------------
+// Task 6 / channel-kind fix: AIS treated as cooperative-announce source.
+//
+// Background: `stageCooperativeTouch` was previously gated on
+// `scan[l].sensor == SensorKind::Cooperative`. That means an AIS detection
+// (SensorKind::Ais) never updated last_cooperative_touch_, so the retirement
+// timer fell back to b.birth_time. A track seeded at t=0 and detected by
+// AIS at t=20 with cooperative_stale_timeout_sec=30 would be RETIRED at
+// t=31 (31-birth_time=31>30) even though the last AIS was only 11s ago.
+// The fix: isCooperativeSource() queries channelKindFor() from the activity
+// profile; SensorKind::Ais declared as ChannelKind::Cooperative now calls
+// stageCooperativeTouch → last_cooperative_touch_[id]=20 → retirement fires
+// correctly at t=52 (52-20=32>30), NOT at t=31 (31-20=11<30).
+// ---------------------------------------------------------------------------
+namespace {
+
+// Activity: AIS declared as Cooperative, own-identity interval 10 s.
+// No surveillance channel — pure cooperative-announce model.
+navtracker::DeclaredSensorActivity gAisCooperativeActivity() {
+  navtracker::DeclaredSensorActivity::ChannelProfile p;
+  p.kind = navtracker::ChannelKind::Cooperative;
+  p.sensor = navtracker::SensorKind::Ais;
+  p.expected_report_interval_sec = 10.0;
+  return navtracker::DeclaredSensorActivity{{p}};
+}
+
+// Config matching gCoopCfg() but with an explicit cooperative timeout.
+PmbmTracker::Config gAisCoopCfg() {
+  PmbmTracker::Config c;
+  c.probability_of_detection = 0.9;
+  c.clutter_intensity = 1e-6;
+  c.survival_probability = 1.0;
+  c.use_sensor_activity = true;
+  c.idle_halflife_sec = 0.0;
+  c.r_min = 1e-4;
+  c.weight_min = 1e-5;
+  c.hypothesis_weight_min = 1e-5;
+  c.cooperative_stale_timeout_sec = 30.0;
+  return c;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// (d) AIS declared as Cooperative: detection resets last_cooperative_touch_;
+//     stale fires when overdue; retirement fires at last_ais + timeout, not
+//     at birth + timeout.
+//
+// Timeline (key: birth=0, last_AIS=20, timeout=30):
+//   t=0  : Bernoulli seeded (birth_time=0, r=0.8)
+//   t=20 : AIS detection at the track position
+//            → last_activity_check_[42]=20
+//            → WITH FIX: last_cooperative_touch_[42]=20
+//   t=31 : empty scan; cooperative overdue (31-20=11 > interval=10)
+//            → WITH FIX: last_report_sec=20, 31-20=11 < timeout=30 → ALIVE; stale fires
+//            → WITHOUT FIX: last_report_sec=birth_time=0, 31-0=31 > timeout=30 → RETIRED; stale not fired
+//   t=52 : empty scan; WITH FIX: last_report_sec=20, 52-20=32 > timeout=30 → RETIRED
+//
+// RED: at t=31, stale_sink is empty (track retired without stale signal, wrong)
+//      AND/OR track is not present in tracks() (retired prematurely).
+// GREEN: at t=31, stale_sink fired AND track is still alive.
+//        At t=52, track is retired.
+// ---------------------------------------------------------------------------
+TEST(PmbmStaleSignal, AisAsCooperativeFlagsStaleAndRetires) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  auto activity = gAisCooperativeActivity();
+  RecordingStaleSink stale_sink;
+
+  PmbmTracker tracker(ekf, gAisCoopCfg());
+  tracker.setSensorActivity(&activity);
+  tracker.setStaleSignalSink(&stale_sink);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Seed Bernoulli id=42 at origin with r=0.8 and birth_time=0.
+  gSeedBernoulliId(tracker, navtracker::pmbm::BernoulliId{42}, 0.0, 0.0, 0.8);
+
+  // AIS detection at t=20 (well after birth so the birth_time vs
+  // last_AIS delta is large enough to discriminate RED from GREEN).
+  // processBatch auto-predicts to t_max=20 before the update.
+  {
+    Measurement ais_z;
+    ais_z.time = Timestamp::fromSeconds(20.0);
+    ais_z.sensor = navtracker::SensorKind::Ais;
+    ais_z.source_id = "ais";
+    ais_z.model = navtracker::MeasurementModel::Position2D;
+    ais_z.value = Eigen::Vector2d(0.0, 0.0);
+    ais_z.covariance = Eigen::Matrix2d::Identity();
+    ais_z.hints.mmsi = std::optional<std::uint32_t>{999U};
+    tracker.processBatch({ais_z});
+    // WITH FIX: isCooperativeSource(Ais)→true → stageCooperativeTouch(42, t=20).
+    // WITHOUT FIX: isCooperativeSource(Ais)→false → last_cooperative_touch_ not set.
+  }
+
+  // ---- Check at t=31: overdue (11s > interval=10), but NOT yet timed out. --
+  // WITH FIX: 31-last_coop_touch(20) = 11 < timeout(30) → ALIVE, stale fired.
+  // WITHOUT FIX: 31-birth_time(0) = 31 > timeout(30) → RETIRED, stale NOT fired.
+  tracker.predict(Timestamp::fromSeconds(31.0));
+  tracker.processBatch({});
+
+  EXPECT_FALSE(stale_sink.stale.empty())
+      << "AIS declared as Cooperative: stale signal must fire when AIS is "
+         "silent for 11s > interval=10s. "
+         "Before fix: stageCooperativeTouch not called for AIS → track retired "
+         "immediately at t=31 (31-birth_time=31>timeout=30) → stale not fired. "
+         "RED: stale_sink is empty; GREEN: stale_sink has the overdue track.";
+
+  {
+    const auto& ts = tracker.tracks();
+    const auto it = std::find_if(ts.begin(), ts.end(),
+                                 [](const navtracker::Track& t) {
+                                   return t.id.value == 42u;
+                                 });
+    EXPECT_NE(it, ts.end())
+        << "Track 42 must be alive at t=31: only 11s since last AIS (< 30s timeout). "
+           "Before fix: retirement fires at birth_time=0, 31-0=31>30 → retired. "
+           "RED: track absent from tracks(); GREEN: track present and Coasting.";
+    if (it != ts.end()) {
+      EXPECT_NEAR(it->existence_probability, it->existence_probability, 0.0)
+          << "sanity: existence is a valid double";
+      EXPECT_EQ(it->status, navtracker::TrackStatus::Coasting)
+          << "Overdue cooperative track must be Coasting";
+    }
+  }
+
+  // ---- Check at t=52: 32s since last AIS > timeout=30 → RETIRED. ----------
+  stale_sink.stale.clear();
+  tracker.predict(Timestamp::fromSeconds(52.0));
+  tracker.processBatch({});
+
+  bool alive_52 = false;
+  for (const auto& h : tracker.density().mbm) {
+    for (const auto& b : h.bernoullis) {
+      if (b.id == navtracker::pmbm::BernoulliId{42} &&
+          b.existence_probability > tracker.config().r_min) {
+        alive_52 = true;
+      }
+    }
+  }
+  EXPECT_FALSE(alive_52)
+      << "Track 42 must be retired at t=52: 32s since last AIS > 30s timeout. "
+         "(GREEN only — after fix, last_cooperative_touch_=20, 52-20=32>30.)";
+
+  const auto& ts2 = tracker.tracks();
+  const auto it52 = std::find_if(ts2.begin(), ts2.end(),
+                                  [](const navtracker::Track& t) {
+                                    return t.id.value == 42u;
+                                  });
+  EXPECT_EQ(it52, ts2.end())
+      << "After retirement, track 42 must not appear in tracks() output";
+}
+
+// ---------------------------------------------------------------------------
+// (e) Back-compat: with NO activity provider, SensorKind::Ais is NOT treated
+//     as a cooperative-announce source (isCooperativeSource falls back to the
+//     legacy `== SensorKind::Cooperative` check, which returns false for Ais).
+//
+// This test is always GREEN (no RED phase): it verifies that the
+// generalisation is profile-gated and does not change behaviour when
+// sensor_activity_ is nullptr.
+// ---------------------------------------------------------------------------
+TEST(PmbmStaleSignal, DeclaredKindOverridesSensorKindDefault) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  RecordingStaleSink stale_sink;
+
+  // No activity provider wired. Even with use_sensor_activity=true the
+  // sensor_activity_==nullptr guard in the tracker's sensor-activity path
+  // skips the cooperative_overdue logic entirely, so no stale signal fires.
+  PmbmTracker::Config cfg = gAisCoopCfg();
+  PmbmTracker tracker(ekf, cfg);
+  tracker.setSensorActivity(nullptr);  // explicitly null — no profile
+  tracker.setStaleSignalSink(&stale_sink);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Seed Bernoulli and simulate an AIS detection.
+  gSeedBernoulliId(tracker, navtracker::pmbm::BernoulliId{43}, 0.0, 0.0, 0.8);
+  {
+    Measurement ais_z;
+    ais_z.time = Timestamp::fromSeconds(5.0);
+    ais_z.sensor = navtracker::SensorKind::Ais;
+    ais_z.source_id = "ais";
+    ais_z.model = navtracker::MeasurementModel::Position2D;
+    ais_z.value = Eigen::Vector2d(0.0, 0.0);
+    ais_z.covariance = Eigen::Matrix2d::Identity();
+    ais_z.hints.mmsi = std::optional<std::uint32_t>{555U};
+    tracker.processBatch({ais_z});
+  }
+
+  // Advance well past interval and timeout — no activity provider so the
+  // cooperative path is never entered. Stale signal must NOT fire.
+  tracker.predict(Timestamp::fromSeconds(100.0));
+  tracker.processBatch({});
+
+  EXPECT_TRUE(stale_sink.stale.empty())
+      << "With no activity provider, AIS is NOT treated as cooperative "
+         "(isCooperativeSource falls back to == SensorKind::Cooperative which is false). "
+         "No stale signal should fire — the generalisation is profile-gated.";
+}

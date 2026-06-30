@@ -812,13 +812,16 @@ void PmbmTracker::enumerateChildren(
         appendTrajectoryPoint(det, cfg_.trajectory_window_scans,
                               scan[l].time, b.mean, b.covariance);
         child.bernoullis.push_back(std::move(det));
-        // Task 6: only a Cooperative detection resets the cooperative-only
-        // retirement timer.  Radar/EO-IR/AIS detections must NOT reset it,
-        // otherwise a vessel that goes silent on its cooperative link but
-        // stays on radar would never be retired by cooperative_stale_timeout_sec.
-        // Deferred write (staged): keep the retirement-timeout read snapshot
+        // Task 6 / channel-kind fix: a detection from ANY sensor declared as
+        // ChannelKind::Cooperative in the activity profile resets the
+        // cooperative-only retirement timer. This includes SensorKind::Ais
+        // (cooperative-announce: silence is weak evidence keyed on identity)
+        // when the provider declares AIS as Cooperative. Falls back to the
+        // legacy `== SensorKind::Cooperative` check when no profile is wired,
+        // preserving bit-identical behaviour.
+        // Deferred write (staged): keeps the retirement-timeout read snapshot
         // hypothesis-consistent across parents.
-        if (scan[l].sensor == navtracker::SensorKind::Cooperative)
+        if (isCooperativeSource(scan[l].sensor))
           stageCooperativeTouch(b.id, scan[l].time);
         // Task 5 Step-4 fix (defect #1): a detection resolves observability
         // up to scan[l].time, so it ADVANCES the surveillance-miss window.
