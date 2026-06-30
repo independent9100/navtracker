@@ -4855,3 +4855,57 @@ temporal miss modeling — recorded as the next candidate.
   (instrumented + verified, commit e804470). The tracker is deterministic and
   the CLAUDE.md invariant was never violated — so these single-seed A/B numbers
   are REPRODUCIBLE, not noisy. The autoferry/philos gaps are real signal.
+
+---
+
+## Task A — PMBM land/coastline clutter-prior: measured 2026-06-30
+
+**What shipped (code).** Nullable `ILandModel::clutterPrior(enu)→double` port; pure
+`CoastlineGeometry` (signed-distance shoreline ramp: ≈0.5 at waterline, plateau 1.0
+only well inland, 0 offshore); `CoastlineModel` (`ILandModel`+`IDatumChangeSink` — datum
+recenter swaps the query datum, geometry stays geodetic); GeoJSON adapter (nlohmann,
+already a dep; new `navtracker_land` lib). PMBM birth suppression scales the adaptive-birth
+intensity `lambda_birth`/`rho_target` by `(1−c)` and inland-hard-drops (`c>0.95`), in both
+candidate builders — acting on birth intensity NOT λ_C (Task 1's `birth_existence_target`
+decouples r_new from λ_C). All behind `use_land_model` (default off, bit-identical). Coastline
+fixture: `tests/fixtures/philos/boston.geojson` (City-of-Boston polygons; 86% of philos radar
+plots fall on/near its land — see the 2026-06-29 pre-check).
+
+**Philos A/B (single-seed; `docs/baselines/2026-06-30_philos_land_ab.csv`):**
+
+| config | gospa | card_err | gospa_false |
+|---|---|---|---|
+| birthtarget (Task 1; wrong-math brake) | 48.5 | −7.8 | 390 |
+| coverage (honest, no land) | 153.6 | +107.9 | 23750 |
+| **coverage + land** | **73.1** | **+6.9** | **3550** |
+| adapt | 82.6 | +17.5 | 5150 |
+| bundle | 112.0 | +46.3 | 11420 |
+| (MHT canonical, historical) | ~69.4 | — | — |
+
+**The land model works decisively.** Added to the honest coverage stack it collapses the
+over-count: card_err **+107.9 → +6.9** (~94% gone), gospa_false **23750 → 3550** (−85%),
+gospa **153.6 → 73.1** (−52%). coverage+land now beats adapt and bundle and is near MHT
+(69.4) — the first **honest, no-crutch** PMBM config that is competitive on philos. This is
+direct end-to-end confirmation of the 2026-06-29 spatial-clutter diagnosis.
+
+**Autoferry guard (`docs/baselines/2026-06-30_autoferry_land_guard.csv`):** coverage+land is
+**byte-identical** to coverage on all four autoferry scenes (gospa 11.327 / 15.279 / 4.976 /
+3.115) — the land model is correctly inert where no coastline fixture exists. No regression.
+
+**Experiment — birthtarget + land (`docs/baselines/2026-06-30_philos_birthtarget_land.csv`):**
+**byte-identical to birthtarget** (48.5 / −7.8 / 390). The land model has zero effect on top of
+birthtarget. Interpretation: birthtarget's wrong-math `compute_miss_pD` already kills the on-land
+phantoms (it over-suppresses → card_err −7.8), so suppressing those births earlier via the land
+mask is redundant; birthtarget's residual 390 false-mass is NOT on land. **The land model is the
+*honest substitute* for the wrong-math miss, not an addition on top of it.** (Experimental config
+reverted; finding kept here.)
+
+**Decision.** The land model is **validated and adopted** as `imm_cv_ct_pmbm_coverage_land`
+(opt-in). It is the recommended **honest / no-crutch** philos-class config: it removes the
+spatial clutter at its source, beats adapt/bundle, and approaches MHT — without the wrong-math
+miss or `idle_halflife`. Caveat: the dishonest birthtarget (48.5) still edges coverage+land
+(73.1) on single-seed philos gospa, because its over-aggressive wrong-math also kills the
+residual *water/near-shore* clutter (gospa_false 390 vs 3550) that the land mask does not cover.
+Closing that last gap is a tuning/next-step item (tighter offshore margin, or coverage-side
+near-shore handling), not a defect in the land model. Determinism holds (tracker is deterministic;
+2026-06-30 wall_seconds correction); these single-seed numbers are reproducible.
