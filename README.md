@@ -275,6 +275,25 @@ the change via OSPA — that's how the deferred alternatives (UKF, IMM,
 particle filter, JPDA, MHT, MMSI-hint locking, OOSM retrodiction, …) become
 *evaluable* rather than just hypothesized.
 
+## Known limitations
+
+- **Land-clutter prior has a near-shore no-birth zone (opt-in `…_coverage_land`
+  config).** The optional land/coastline clutter prior suppresses new-target
+  births near the shore to kill stationary radar shore-clutter (it collapses the
+  philos Boston-Harbor over-count: `card_err +108 → +7`). A measured consequence:
+  because the phantom-birth gate equals the birth target in that config, the
+  entire offshore soft band — within `offshore_halfwidth_m` (50 m) of shore, and
+  around piers — is a **no-birth zone**: a genuine vessel that *starts* within
+  50 m of shore will not initiate a track under this config. Vessels outside the
+  band, and tracks already confirmed before approaching shore, are unaffected
+  (the prior gates *births*, not maintenance). This is an accepted trade — the
+  prior is opt-in and near-land operation is rare, and lowering the gate to fix it
+  throws away ~⅓ of the shore-clutter win on real data. Full rationale,
+  measurements, and the open principled fix (sensor-aware suppression, which
+  needs camera/AIS coverage): **ADR 0001**
+  (`docs/adr/0001-land-clutter-prior-offshore-no-birth-zone.md`) and
+  `docs/algorithms/synthetic-clutter-bench.md`.
+
 ## Build
 
 ```bash
