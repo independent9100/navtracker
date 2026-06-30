@@ -691,6 +691,14 @@ std::vector<Config> defaultConfigs() {
   // clean-data advantage is preserved. The philos win is conditional on a
   // coastline being wired (else it falls back to bundle). See the evaluation
   // log (2026-06-30, "bundle + land") and docs/algorithms/comparison-baselines.md.
+  //
+  // SCOPE (Gate-1, 17 synthetic scenarios measured): best-in-class for
+  // shore/coastal clutter and ≈ MHT on clean geometry, but it REGRESSES on
+  // dense UNIFORM clutter (gospa 16.7 vs MHT 12.4, lifetime 0.64 vs 0.93) —
+  // the land prior brakes only shore clutter, so correct-math is unbraked
+  // against uniform clutter. This is the RECOMMENDED config for coastal /
+  // near-shore deployments, NOT a universal default; the general-purpose PMBM
+  // default remains imm_cv_ct_pmbm_adapt.
   {
     Config c;
     c.label = "imm_cv_ct_pmbm_bundle_land";

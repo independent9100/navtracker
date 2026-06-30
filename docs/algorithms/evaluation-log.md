@@ -5069,3 +5069,18 @@ Land cuts bundle's philos gospa 112→59.5 (−47%), card_err +46→−3, false 
 **Mechanism.** On the legacy (non-coverage) path `dedup_miss_pd` is live, so correct math removes the over-suppressing brake; the land prior then hard-gates the on-land phantoms at birth. This is the genuine "correct physics + principled brake" combination — the substitution that `birthtarget+land` couldn't show (there the wrong-math brake was still present, making land redundant; eval-log 2026-06-30 "birthtarget + land").
 
 **Shipped** as `imm_cv_ct_pmbm_bundle_land` (config count 28→29). **Caveats before any "make it default" decision:** (1) single-seed — no error bars on the 59.5 vs 69.4 margin (see 2026-06-30 "enough tests" discussion); (2) the philos win is **conditional on a coastline GeoJSON being wired** — without one, bundle_land falls back to bundle (which over-counts on coastal clutter, gospa 112); (3) not yet measured on the 17 synthetic scenarios. Default-promotion decision deferred.
+
+## 2026-06-30 (Project E follow-up) — Gate 1: `bundle_land` across all 17 synthetic scenarios → workload-specific, NOT a universal default
+
+**Method.** `imm_cv_ct_mht` (canonical) vs `imm_cv_ct_pmbm_adapt` (PMBM baseline) vs `imm_cv_ct_pmbm_bundle_land`, all 17 `defaultSimScenarios()`, 10 seeds.
+
+**Result (gospa_mean / lifetime_ratio).**
+- **Shore clutter (purpose) — dominates:** shore_clutter_open 9.90 / nearshore 6.95 vs adapt 73.8/73.5, MHT 76.3/75.8; card_err ~0 vs +27/+29.
+- **parallel_lanes_dense — best:** 14.33 vs adapt 14.70, MHT 17.74.
+- **Clean geometry (crossing/overtaking/head_on/convoy/crossing_30-90/clock_skew/speed_change/crossing_dropout):** bundle_land ≈ MHT, marginally behind adapt (~1–2% gospa; life 0.975 vs adapt ~0.999). No regression vs canonical.
+- **non_cooperative:** bundle_land == adapt (16.94), both beat MHT (18.59) on gospa (all low lifetime — bearing-only).
+- **dense_clutter — REGRESSES:** gospa **16.72 vs MHT 12.42 / adapt 13.61**; lifetime **0.639 vs 0.925 / 0.823**; card_err −0.52 (drops real targets).
+
+**Why dense_clutter regresses.** It is uniform-Poisson clutter with NO coastline → land is inert (bundle_land == bundle), so correct-math's removed phantom brake has no replacement and real targets are dropped. **The land prior brakes only *shore* clutter, not uniform clutter.**
+
+**Gate-1 verdict.** `bundle_land` is **workload-specific, not a universal default**: best-in-class for coastal/shore-clutter operation (its design purpose) and tied-with-MHT on clean data, but it **regresses on uniform clutter** because the land prior doesn't brake that. Recommendation: promote it as the **recommended config for coastal / near-shore deployments**, NOT as the general default PMBM (the safer general-purpose PMBM remains `adapt`, which has no dense_clutter regression). Consistent with the standing theme: no single config dominates; selection is per-workload. The real-data confidence question (Gate 2: error bars on single-seed replays) is still open and is what would harden the "best for coastal" claim.
