@@ -5005,3 +5005,46 @@ quantified its boundary: under `coverage_land` (gate == target) the soft offshor
 no-birth zone, so vessels within `offshore_halfwidth_m` (50 m) of shore — or near the pier — do
 not initiate. Reviving them by lowering the gate trades away the philos real-data win, so it is
 not done. Philos itself is unaffected (its real ships sit far enough offshore that c≈0).
+
+## 2026-06-30 (Project E follow-up) — Correct-math (`dedup_miss_pd`) + land A/B: the flag is INERT in `coverage_land` (coverage model owns the miss path)
+
+**Question.** Does the land prior finally let us run the *correct* misdetection
+math (`dedup_miss_pd=true`) on philos without the regression that turning it on
+caused historically (gospa 112–119)? I.e. has the "wrong miss-P_D was the
+load-bearing brake" situation been resolved?
+
+**Method.** A/B `imm_cv_ct_pmbm_coverage_land` with `dedup_miss_pd` OFF (shipped)
+vs a copy with `dedup_miss_pd=true`, both with the land model, on philos (real)
+and all 10 autoferry scenarios.
+
+**Result — byte-identical, every scenario.**
+
+| scenario | metric | dedup OFF | dedup ON |
+|---|---|---:|---:|
+| philos | gospa / card_err / false | 73.06 / +6.90 / 3550 | **73.06 / +6.90 / 3550** |
+| autoferry_scenario2 | gospa / card | 11.33 / +0.15 | **11.33 / +0.15** |
+| autoferry_scenario17 | gospa / card | 18.40 / −0.98 | **18.40 / −0.98** |
+| (all 10 AF scenarios) | every metric | — | **identical to OFF** |
+
+**Why (confirmed in code).** `coverage_land` sets `use_sensor_activity=true`.
+In `PmbmTracker.cpp` the miss-detection update branches on that flag: when on
+(line ~660) the existence update goes through `sensor_activity_->evaluate(...)`
+(surveillance-miss logic with the channel's p_D) and **never calls
+`compute_miss_pD`** — which is the only place `dedup_miss_pd` is read (line ~614).
+The legacy `compute_miss_pD` path (line ~714) runs *only* when
+`use_sensor_activity==false`. So under the coverage model the dedup flag is dead
+code.
+
+**Takeaway (answers the "broken math" question).** In the recommended honest
+PMBM config the broken-vs-correct miss-P_D distinction is **moot**: the coverage /
+sensor-activity model has *replaced* that entire mechanism. `coverage_land`'s
+philos win (gospa 73, card_err +6.9) rests on the coverage miss-handling + the
+land prior, **not** on the legacy wrong-math crutch — and not on the corrected
+math either; that code path simply isn't exercised. The "wrong miss-P_D is the
+load-bearing brake" finding (2026-06-24) applies to the *legacy-path* configs
+(no sensor-activity, e.g. `bundle`), where enabling `dedup_miss_pd` still
+regresses philos. There it remains quarantined. Net: the crutch is **out of the
+recommended path by replacement**, not by fixing-and-enabling correct math —
+those two live in mutually-exclusive code paths, so "correct-math + land" cannot
+be combined in `coverage_land` as posed. Minor follow-up: `dedup_miss_pd` should
+carry a comment that it is inert under `use_sensor_activity`.

@@ -279,6 +279,12 @@ class PmbmTracker {
     // per-measurement product (bit-identical to Phase 8/9 baseline).
     // Requires a detection model to have any effect; falls back to the
     // Config::probability_of_detection scalar when no model is set.
+    // INERT when use_sensor_activity=true: the surveillance-miss branch
+    // computes the miss update via ISensorActivity and never calls
+    // compute_miss_pD, so this flag is dead code under the coverage model
+    // (measured 2026-06-30: dedup ON vs OFF byte-identical on philos + all
+    // autoferry scenarios with imm_cv_ct_pmbm_coverage_land). It only
+    // affects legacy-path configs (use_sensor_activity=false).
     bool dedup_miss_pd = false;
 
     // Within-hypothesis Bernoulli merging. Generalised from
