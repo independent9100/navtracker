@@ -4909,3 +4909,91 @@ residual *water/near-shore* clutter (gospa_false 390 vs 3550) that the land mask
 Closing that last gap is a tuning/next-step item (tighter offshore margin, or coverage-side
 near-shore handling), not a defect in the land model. Determinism holds (tracker is deterministic;
 2026-06-30 wall_seconds correction); these single-seed numbers are reproducible.
+
+## 2026-06-30 (Project E, synthetic shore-clutter bench) — [Cl-2][Cl-3] Geometry breadth (5 new scenarios, PMBM vs MHT) + shore-clutter A/B (land ON/OFF on perfect-truth synthetic data); nearshore real-target failure exposes birth-gate/land-scale interaction bug
+
+**Premise.** Project E adds 7 synthetic scenarios to `defaultSimScenarios()`: geometry breadth
+(`parallel_lanes_dense`, `crossing_30/60/90`, `convoy_overtake`) and shore clutter
+(`shore_clutter_open`, `shore_clutter_nearshore`). The shore scenarios inject 30 stationary
+clutter points in-land with P_D=0.9, plus a real target or two in open water / 10m offshore.
+The synthetic coastline (Boston-style polygon at shore_y=500m, offshore_halfwidth=50m,
+inland_halfwidth=50m) is built in-memory; no fixture file is needed.
+
+**Method.** `runSweep` over 5 seeds. Configs: `imm_cv_ct_mht` (Cl-2 reference),
+`imm_cv_ct_pmbm_coverage` (PMBM, land OFF), `imm_cv_ct_pmbm_coverage_land` (PMBM, land ON).
+All means are over seeds 0–4.
+
+### Geometry breadth: PMBM vs MHT (5 new scenarios)
+
+| Scenario | Config | gospa_mean | card_err | lifetime_ratio | id_switches |
+|---|---|---:|---:|---:|---:|
+| parallel_lanes_dense | MHT | 17.70 | −0.43 | 0.883 | 3.4 |
+| parallel_lanes_dense | PMBM | **14.20** | −0.10 | **0.975** | **0** |
+| crossing_30 | MHT | 10.79 | −0.095 | 0.948 | 1.6 |
+| crossing_30 | PMBM | **10.00** | −0.050 | **0.975** | 1.2 |
+| crossing_60 | MHT | 9.96 | −0.055 | 0.973 | 1.2 |
+| crossing_60 | PMBM | 10.04 | −0.055 | 0.973 | **0.8** |
+| crossing_90 | MHT | 9.91 | −0.055 | 0.973 | 0.4 |
+| crossing_90 | PMBM | 9.91 | −0.055 | 0.973 | 0.4 |
+| convoy_overtake | MHT | 9.25 | −0.063 | 0.983 | 0.3 |
+| convoy_overtake | PMBM | **9.16** | −0.067 | 0.983 | **0** |
+
+**Verdict.** No regression on any geometry scenario. PMBM wins clearly on `parallel_lanes_dense`
+(GOSPA −20%, id_switches 3.4→0, lifetime 0.883→0.975 — the close-spacing target-merge failure
+mode of MHT is exactly what PMBM's multi-Bernoulli formulation avoids). On low-angle crossings
+(30°) PMBM recovers more cleanly (lower GOSPA, no id-switch inflation). On 60°/90°/convoy the
+two are equivalent within noise. The breadth does not surface any new PMBM regression.
+
+### Shore-clutter A/B: land model ON vs OFF (perfect-truth synthetic data)
+
+| Scenario | Config | gospa_mean | gospa_false | card_err | lifetime_ratio |
+|---|---|---:|---:|---:|---:|
+| shore_clutter_open | MHT (reference) | 76.35 | 5803 | +28.96 | 0.975 |
+| shore_clutter_open | PMBM land OFF | 76.40 | 5811 | +29.00 | 0.975 |
+| shore_clutter_open | **PMBM land ON** | **9.69** | **1** | **−0.05** | **0.975** |
+| shore_clutter_nearshore | MHT (reference) | 75.87 | 5803 | +28.99 | 0.975 |
+| shore_clutter_nearshore | PMBM land OFF | 75.93 | 5810 | +29.025 | 0.975 |
+| shore_clutter_nearshore | **PMBM land ON** | 14.14 | **0** | **−1.00** | **0** |
+
+**Open scenario verdict (PASS).** Land ON is decisive: card_err collapses from +29 to −0.05
+(all 30 inland clutter tracks eliminated), gospa_false 5811→1 (one residual in one seed), GOSPA
+76.4→9.7. Real targets (two crossing vessels at y=100m, >400m from shore) survive with
+lifetime_ratio=0.975. Both card-reduction assertions pass.
+
+**Nearshore scenario: PARTIAL FAIL — birth-gate/land-scale interaction bug.**
+
+Card reduction passes (card_err +29→−1, gospa_false 5810→0 — the clutter is eliminated).
+However `lifetime_ratio = 0` across all 5 seeds: the real target at y=490m (10m offshore) is
+NEVER tracked with land ON.
+
+Root cause confirmed by code analysis:
+- At y=490m (10m offshore, shore at y=500m), the coastline prior is
+  c = (W_off − d) / (W_off + W_in) = (50 − 10) / 100 = **0.40**.
+- land_scale = 1 − c = **0.60**.
+- Config has `birth_existence_target = 0.1`, so adaptive birth sets
+  `lambda_birth = (r / (1−r)) · lambda_z = 0.111 · lambda_z`.
+- After land scale: `lambda_birth' = 0.60 · 0.111 · lambda_z`.
+- Effective existence: r_new = lambda_birth' / (lambda_birth' + lambda_z)
+  = (0.1 · 0.6) / (0.1 · 0.6 + 0.9) = **0.0625**.
+- `min_new_bernoulli_existence = 0.1`. Since 0.0625 < 0.1, the phantom-birth gate
+  silently drops the birth candidate — no Bernoulli is created for the real target.
+
+The gate threshold is exactly equal to `birth_existence_target`, so **any land suppression
+(c > 0) causes the birth to fall below the gate**. The geometry scenario at y=490 has c=0.4
+and land_scale=0.6, which is a 40% reduction — just large enough to trigger the failure.
+
+Fix direction: lower `min_new_bernoulli_existence` (e.g. to 0.05), OR apply the land scale only
+after the gate check (so the gate uses the pre-scale existence). Alternatively, lower
+`offshore_halfwidth_m` so c drops to ~0 at 10m offshore (e.g. `offshore_halfwidth_m = 8`).
+
+**Test status.** `SyntheticClutterAB.LandModelRemovesShoreOverCountKeepsRealTargets` is committed
+FAILING on the nearshore `lifetime_ratio > 0.5` assertion. The land model's clutter-suppression
+mechanism works (all card + gospa_false assertions pass); the failure is the
+birth-gate/land-scale interaction that silences real nearshore targets. Do not paper over —
+the assertion stays in as a regression guard for the fix.
+
+**Takeaway.** The land-clutter prior is confirmed on perfect-truth synthetic data for the open
+scenario. It is not yet safe for targets within `offshore_halfwidth_m` of the shore when
+`birth_existence_target == min_new_bernoulli_existence`. Philos (2026-06-30) was not affected
+because the real ships in that dataset are far enough from the shore that c << 0.1 at their
+positions.
