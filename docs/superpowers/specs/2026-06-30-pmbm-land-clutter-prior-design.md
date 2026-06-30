@@ -85,13 +85,26 @@ if (c > cfg_.land_birth_hard_gate)   skip this birth candidate entirely;
 else                                 r_new *= (1.0 - c);
 ```
 
-- **Soft** (`r_new *= 1−c`): the shoreline band, where real moored/berthed
-  vessels live, is suppressed but a genuinely persistent target can still earn
-  a track.
-- **Hard gate** (`c > threshold` → no birth): decisively removes births sitting
-  *on* land/structures (a pure soft term leaves a birth-mass sliver that can
-  ramp a phantom over a long replay). Default threshold conservative
-  (only "definitely land").
+- **Soft** (`r_new *= 1−c`): suppression scales with the prior. The protection
+  for real near-shore targets comes from the **shape of the prior** (§6): it is
+  a *signed ramp centred on the shoreline* — ≈0.5 at the waterline, rising to a
+  plateau of 1.0 only **well inside land**. So a vessel anchored right at the
+  shore sits in the mid-ramp (`c≈0.5`, `r_new` merely halved) and, if
+  persistently detected, can still confirm a track.
+- **Hard gate** (`c > threshold` → no birth, threshold e.g. 0.95): because `c`
+  only reaches the plateau **well inland**, the hard gate fires *only* for
+  points clearly on land/structures (buildings, pier interiors) — never at the
+  waterline. This decisively removes the on-land phantoms (a pure soft term
+  leaves a birth-mass sliver that ramps a phantom over a long replay) while
+  **never hard-killing a water position**.
+
+**Anti-circularity / anchored-ship safety (refined 2026-06-30):** the hard gate
+is deliberately *inland-only* (via the ramp shape), so we never hard-refuse a
+birth where a real anchored/moored non-AIS vessel could physically be (on
+water, at the waterline). The waterline strip is soft-only. We do NOT use a
+"re-detected every scan ⇒ override the gate" rule — shore returns are *also*
+re-detected every scan, so that would reopen the very philos hole we are
+closing.
 
 Applied **only** when a land model is wired AND adaptive birth is producing
 candidates; with no land model, the birth path is bit-identical to today.
@@ -149,10 +162,16 @@ coastline and apply it at a scan boundary tied to a timestamp.
 
 ## 6. Behind the port (implementation detail, not interface)
 
-- **Continuous prior from polygons.** `clutterPrior(geo)` is a soft function of
-  signed distance to the nearest shore edge: inside land → ~1.0; within a
-  **configurable margin band** offshore → smooth 1→0 falloff; beyond → 0.0. The
-  margin avoids a hard water-edge that would kill shoreline moored boats.
+- **Continuous prior from polygons — a signed ramp centred on the shoreline.**
+  Let `d` be the signed distance to the nearest shore edge: `d < 0` inside land
+  (|d| = how far inland), `d > 0` offshore. Then
+  `c(d) = clamp( (W_off − d) / (W_off + W_in), 0, 1 )`, i.e.:
+  `c = 1.0` for `d ≤ −W_in` (well inland → plateau, the hard-gate region);
+  a smooth `1→0` ramp across the band `[−W_in, +W_off]` (so `c ≈ 0.5` at the
+  waterline `d=0` when `W_in≈W_off`); `c = 0.0` for `d ≥ +W_off` (open water).
+  `W_in` (inland half-width) and `W_off` (offshore half-width) are configurable;
+  the ramp is what protects anchored/near-shore real targets (§3) and absorbs
+  the coarse, administrative-grade waterline imprecision of the GeoJSON.
 - **Hot path.** `clutterPrior` is called per birth candidate per scan.
   Rasterize the GeoJSON into a local grid (clutter-prior field) once per
   coastline snapshot for O(1) lookup; rebuild only when `setCoastline` swaps in
@@ -186,11 +205,14 @@ behaviour, bit-identical.
 
 **Math.** Birth existence with a spatial clutter prior `c = clutterPrior(p) ∈
 [0,1]`: `r_new⁺ = r_new · (1 − c)` for `c ≤ gate`, and the candidate is dropped
-(no birth) for `c > gate`. `c` is a soft function of signed distance `d` to the
-nearest shore edge: `c = 1` for `d ≤ 0` (on land), `c = 1 − d/margin` for
-`0 < d < margin`, `c = 0` for `d ≥ margin`. Positions outside coastline
-coverage → `c = 0`. Acts on birth existence, NOT on λ_C (which is decoupled
-from `r_new` by `birth_existence_target`).
+(no birth) for `c > gate` (gate e.g. 0.95). `c` is a *signed ramp centred on the
+shoreline*: with `d` = signed distance to nearest shore edge (`d<0` inland),
+`c(d) = clamp((W_off − d)/(W_off + W_in), 0, 1)` → `c=1` for `d ≤ −W_in` (well
+inland), smooth `1→0` across `[−W_in, +W_off]` (`c≈0.5` at the waterline),
+`c=0` for `d ≥ +W_off`. Because `c` reaches the gate threshold only on the
+inland plateau, the hard gate fires inland-only and never at the waterline.
+Positions outside coastline coverage → `c = 0`. Acts on birth existence, NOT on
+λ_C (which is decoupled from `r_new` by `birth_existence_target`).
 
 **Assumptions.** (1) The consumer supplies coastline GeoJSON covering a
 reasonable radius around own-ship, in WGS84 lat/lon. (2) The coastline is
@@ -220,9 +242,13 @@ for benchmark areas.
 
 ## 9. Decisions (settled 2026-06-30)
 
-- **(a) Birth suppression = SOFT + HARD GATE.** `r_new *= (1 − clutterPrior)`,
-  and drop the candidate if `clutterPrior > land_birth_hard_gate` (conservative
-  default). Soft for the shoreline band, hard for definite land. See §3.
+- **(a) Birth suppression = SOFT + INLAND-ONLY HARD GATE.** `r_new *= (1 −
+  clutterPrior)` always; drop the candidate if `clutterPrior >
+  land_birth_hard_gate` (e.g. 0.95). The prior is a signed ramp centred on the
+  shoreline (≈0.5 at the waterline, plateau 1.0 only well inland, §6), so the
+  hard gate fires **inland-only** — never at a water position where a real
+  anchored/moored vessel could be. Refined 2026-06-30 after the "is it clutter
+  or anchored ships?" review. See §3.
 - **(b) First-cut scope = BIRTHS ONLY.** The proven philos lever. Coverage-
   occlusion and on-land plausibility gating are deferred to the roadmap (§10).
 - **(c) Port contract = continuous `clutterPrior(enu) → double`** computed by
@@ -297,4 +323,15 @@ real-coastline sourcing tooling.
 - **Grid resolution vs shoreline detail.** Too coarse → suppresses near-shore
   real boats; too fine → memory/time. Make cell size configurable; default
   ~25 m (matches the clutter-cluster scale found in the pre-check).
+- **"Clutter vs anchored non-AIS ship" ambiguity.** A persistent stationary
+  no-AIS return can be a fixed structure, an anchored vessel, or sea clutter;
+  the data cannot separate them per-return. Evidence it is mostly structures:
+  69% of philos returns are physically *on* land (a ship cannot be), only 17%
+  are in-water within 50 m. Mitigation (decision §9a): the hard gate is
+  inland-only and the waterline is soft (ramp `c≈0.5`), so an anchored vessel at
+  the shore is merely down-weighted and can still confirm — we never hard-kill a
+  water position. Residual risk: a non-AIS vessel moored *against* the shore,
+  inside the coarse polygon past `W_in`, could be hard-gated; accepted as small
+  and bounded, revisit with finer charts / target classification if it bites.
+  For the benchmark it is moot (truth is AIS-only → both score as over-count).
 ```
