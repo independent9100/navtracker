@@ -8,6 +8,7 @@
 
 #include <Eigen/Core>
 
+#include "core/geo/Wgs84.hpp"
 #include "core/scenario/Builders.hpp"
 #include "core/scenario/Truth.hpp"
 #include "sim/SkewInjector.hpp"
@@ -47,6 +48,25 @@ std::vector<SensorDetectionEntry> denseClutterTable() {
 std::vector<SensorDetectionEntry> bearingOnlyTable() {
   return {{SensorKind::EoIr, MeasurementModel::Bearing2D,
            DetectionParams{0.95, 1e-2}}};
+}
+
+// Shore-clutter scenarios: AIS-cooperative targets + radar-like (ArpaTtm)
+// stationary shore returns. λ_C for the radar channel reflects ~30 fixed
+// returns over the ~2.7e6 m² scene (30/2.7e6 ≈ 1.1e-5 m⁻², declared 1e-5).
+std::vector<SensorDetectionEntry> shoreClutterTable() {
+  return {{SensorKind::Ais, MeasurementModel::Position2D,
+           DetectionParams{0.95, 1e-6}},
+          {SensorKind::ArpaTtm, MeasurementModel::Position2D,
+           DetectionParams{0.95, 1e-5}}};
+}
+
+// Fixed synthetic shoreline shared by every shore-clutter scenario. Pure /
+// deterministic, so generate() and syntheticCoastline() agree.
+SyntheticShore makeBenchShore() {
+  return buildSyntheticShore(navtracker::geo::Geodetic{42.35, -71.05, 0.0},
+                             /*shore_y_m=*/500.0, /*extent_m=*/1500.0,
+                             /*land_depth_m=*/400.0, /*pier_width_m=*/40.0,
+                             /*pier_length_m=*/150.0, /*n_clutter=*/30);
 }
 
 ScenarioDescriptor describe(const char* label,
@@ -274,11 +294,107 @@ class NonCooperativeScenarioRun : public ScenarioRun {
   }
 };
 
+class ParallelLanesDenseScenarioRun : public ScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return describe("parallel_lanes_dense", cleanAisTable());
+  }
+  Scenario generate(std::uint64_t seed) override {
+    // 4 lanes, 40 m apart, all heading +x at 10 m/s. Tight spacing stresses
+    // track resolution / merge.
+    return buildParallelLaneScenario(
+        /*n_targets=*/4, /*lane_spacing_m=*/40.0, Eigen::Vector2d(-400.0, 0.0),
+        Eigen::Vector2d(10.0, 0.0), linearSeconds(1, 40),
+        /*pos_noise_std_m=*/8.0, static_cast<std::uint32_t>(seed));
+  }
+};
+
+class CrossingAngleScenarioRun : public ScenarioRun {
+ public:
+  CrossingAngleScenarioRun(const char* label, double angle_deg)
+      : label_(label), angle_deg_(angle_deg) {}
+  ScenarioDescriptor descriptor() const override {
+    return describe(label_, cleanAisTable());
+  }
+  Scenario generate(std::uint64_t seed) override {
+    return buildCrossingAngleScenario(angle_deg_, /*speed_mps=*/20.0,
+                                      Eigen::Vector2d(0.0, 0.0),
+                                      linearSeconds(1, 40),
+                                      /*pos_noise_std_m=*/8.0,
+                                      static_cast<std::uint32_t>(seed));
+  }
+
+ private:
+  const char* label_;
+  double angle_deg_;
+};
+
+class ConvoyOvertakeScenarioRun : public ScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return describe("convoy_overtake", cleanAisTable());
+  }
+  Scenario generate(std::uint64_t seed) override {
+    // 3 in-line targets 80 m apart at 5 m/s, plus a 15 m/s overtaker.
+    return buildConvoyScenario(/*n_targets=*/3, /*gap_m=*/80.0,
+                               /*speed_mps=*/5.0, /*overtaker_speed_mps=*/15.0,
+                               linearSeconds(1, 60), /*pos_noise_std_m=*/5.0,
+                               static_cast<std::uint32_t>(seed));
+  }
+};
+
+class ShoreClutterOpenScenarioRun : public ScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return describe("shore_clutter_open", shoreClutterTable());
+  }
+  Scenario generate(std::uint64_t seed) override {
+    // Two real targets crossing in open water (y ~ 100, far from the shore at
+    // y = 500 => land prior ~ 0, no suppression) + stationary shore clutter.
+    const SyntheticShore shore = makeBenchShore();
+    Scenario base = buildCrossingAngleScenario(
+        /*crossing_angle_deg=*/90.0, /*speed_mps=*/15.0,
+        Eigen::Vector2d(0.0, 100.0), linearSeconds(1, 40),
+        /*pos_noise_std_m=*/8.0, static_cast<std::uint32_t>(seed));
+    return addShoreClutter(std::move(base), shore.datum,
+                           shore.clutter_enu_points, /*detection_prob=*/0.9,
+                           /*pos_noise_std_m=*/8.0,
+                           static_cast<std::uint32_t>(seed));
+  }
+  std::optional<CoastlineGeometry> syntheticCoastline() const override {
+    return makeBenchShore().geometry;
+  }
+};
+
+class ShoreClutterNearShoreScenarioRun : public ScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return describe("shore_clutter_nearshore", shoreClutterTable());
+  }
+  Scenario generate(std::uint64_t seed) override {
+    // One slow AIS target 10 m offshore (y = 490, shore at y = 500 => land
+    // prior c ≈ 0.4 => soft birth suppression, must NOT be deleted) +
+    // stationary shore clutter. The "anchored ship near shore" validator.
+    const SyntheticShore shore = makeBenchShore();
+    Scenario base = buildStraightLineScenario(
+        Eigen::Vector2d(-60.0, 490.0), Eigen::Vector2d(3.0, 0.0),
+        linearSeconds(1, 40), /*pos_noise_std_m=*/8.0,
+        static_cast<std::uint32_t>(seed), /*truth_id=*/1);
+    return addShoreClutter(std::move(base), shore.datum,
+                           shore.clutter_enu_points, /*detection_prob=*/0.9,
+                           /*pos_noise_std_m=*/8.0,
+                           static_cast<std::uint32_t>(seed));
+  }
+  std::optional<CoastlineGeometry> syntheticCoastline() const override {
+    return makeBenchShore().geometry;
+  }
+};
+
 }  // namespace
 
 std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   std::vector<std::unique_ptr<ScenarioRun>> out;
-  out.reserve(10);
+  out.reserve(17);
   out.push_back(std::make_unique<CrossingScenarioRun>());
   out.push_back(std::make_unique<OvertakingScenarioRun>());
   out.push_back(std::make_unique<HeadOnScenarioRun>());
@@ -289,6 +405,13 @@ std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   out.push_back(std::make_unique<NonCooperativeScenarioRun>());
   out.push_back(std::make_unique<DenseClutterScenarioRun>());
   out.push_back(std::make_unique<CrossingDropoutScenarioRun>());
+  out.push_back(std::make_unique<ParallelLanesDenseScenarioRun>());
+  out.push_back(std::make_unique<CrossingAngleScenarioRun>("crossing_30", 30.0));
+  out.push_back(std::make_unique<CrossingAngleScenarioRun>("crossing_60", 60.0));
+  out.push_back(std::make_unique<CrossingAngleScenarioRun>("crossing_90", 90.0));
+  out.push_back(std::make_unique<ConvoyOvertakeScenarioRun>());
+  out.push_back(std::make_unique<ShoreClutterOpenScenarioRun>());
+  out.push_back(std::make_unique<ShoreClutterNearShoreScenarioRun>());
   return out;
 }
 

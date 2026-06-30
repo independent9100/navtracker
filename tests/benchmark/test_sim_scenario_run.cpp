@@ -9,7 +9,7 @@ using namespace navtracker::benchmark;
 
 TEST(SimScenarioRun, ProducesExpectedDefaultScenarios) {
   const auto scenarios = defaultSimScenarios();
-  ASSERT_EQ(scenarios.size(), 10u);
+  ASSERT_EQ(scenarios.size(), 17u);
   std::set<std::string> labels;
   for (const auto& s : scenarios) labels.insert(s->descriptor().label);
   EXPECT_EQ(labels.count("crossing"), 1u);
@@ -22,6 +22,13 @@ TEST(SimScenarioRun, ProducesExpectedDefaultScenarios) {
   EXPECT_EQ(labels.count("non_cooperative"), 1u);
   EXPECT_EQ(labels.count("dense_clutter"), 1u);
   EXPECT_EQ(labels.count("crossing_dropout"), 1u);
+  EXPECT_EQ(labels.count("parallel_lanes_dense"), 1u);
+  EXPECT_EQ(labels.count("crossing_30"), 1u);
+  EXPECT_EQ(labels.count("crossing_60"), 1u);
+  EXPECT_EQ(labels.count("crossing_90"), 1u);
+  EXPECT_EQ(labels.count("convoy_overtake"), 1u);
+  EXPECT_EQ(labels.count("shore_clutter_open"), 1u);
+  EXPECT_EQ(labels.count("shore_clutter_nearshore"), 1u);
 }
 
 TEST(SimScenarioRun, GenerateIsDeterministicForSameSeed) {
@@ -58,6 +65,25 @@ TEST(SimScenarioRun, AllScenariosDeclareDetectionTables) {
   }
 }
 
+TEST(SimScenarioRun, ShoreClutterScenariosExposeCoastlineAndDatum) {
+  const auto scenarios = navtracker::benchmark::defaultSimScenarios();
+  int checked = 0;
+  for (const auto& s : scenarios) {
+    const std::string label = s->descriptor().label;
+    if (label != "shore_clutter_open" && label != "shore_clutter_nearshore")
+      continue;
+    ++checked;
+    EXPECT_TRUE(s->syntheticCoastline().has_value()) << label;
+    const auto scen = s->generate(0);
+    EXPECT_TRUE(scen.datum.has_value()) << label;
+    bool has_shore = false;
+    for (const auto& m : scen.measurements)
+      if (m.source_id == "sim_shore") has_shore = true;
+    EXPECT_TRUE(has_shore) << label;
+  }
+  EXPECT_EQ(checked, 2);
+}
+
 TEST(SimScenarioRun, ClutterFreeScenariosDeclareFloorDensity) {
   const auto scenarios = navtracker::benchmark::defaultSimScenarios();
   for (const auto& s : scenarios) {
@@ -70,6 +96,9 @@ TEST(SimScenarioRun, ClutterFreeScenariosDeclareFloorDensity) {
       ASSERT_EQ(d.detection_table.size(), 1u);
       EXPECT_EQ(d.detection_table[0].model,
                 navtracker::MeasurementModel::Bearing2D);
+    } else if (d.label == "shore_clutter_open" ||
+               d.label == "shore_clutter_nearshore") {
+      ASSERT_EQ(d.detection_table.size(), 2u) << d.label;
     } else {
       ASSERT_EQ(d.detection_table.size(), 1u) << d.label;
       EXPECT_DOUBLE_EQ(d.detection_table[0].params.clutter_intensity, 1e-6)
