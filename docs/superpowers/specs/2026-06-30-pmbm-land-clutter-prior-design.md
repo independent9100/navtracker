@@ -277,14 +277,20 @@ real-coastline sourcing tooling.
 
 ## 11. Risks / open dependencies
 
-- **Coastline GeoJSON for philos.** Validating A on the *real* philos replay
-  requires a coastline polygon for the Boston inner-harbor area (≈42.371,
-  −71.054). The consumer-supplied model is the deployment path; for the bench
-  we must source or hand-author a coarse polygon. **Do NOT derive the land mask
-  from the clutter clusters themselves — that is circular.** If real GeoJSON is
-  unavailable, primary validation shifts to **Task E** (synthetic controlled-
-  clutter bench, perfect truth: we place clutter on a known land mask), with
-  philos as a secondary real-data check once GeoJSON is obtained.
+- **Coastline GeoJSON for philos — RESOLVED 2026-06-30.** A real GeoJSON was
+  obtained: `boston.geojson` ("City of Boston Boundary (Water Included)", 18
+  Polygon features, CRS84 lon/lat, bbox lon −71.19..−70.87 / lat 42.23..42.40).
+  Validated empirically: land points (downtown, Charlestown Navy Yard) test
+  inside; water points (own-ship, mid-harbor, far vessel) test outside; and
+  **86.2% of philos radar plots fall on-land (69.2%) or within 50 m of shore
+  (17.0%)**, vs 13.8% open-water — i.e. the mask catches exactly the clutter we
+  suppress at birth, leaving open-water (real-vessel) births alone. Piers are
+  resolved. So A is validated on the **real** philos replay (A → E order kept).
+  Move the file into `tests/fixtures/philos/`. NOTE: despite its name it behaves
+  as a land mask for our points; the soft margin band covers the
+  administrative-boundary (non-survey-grade) waterline imprecision. We did NOT
+  derive the mask from the clutter (would be circular) — it is independent
+  municipal data.
 - **GeoJSON dependency.** If a JSON lib is needed, add via Conan and note it
   (CLAUDE.md). Prefer a minimal parser for the Polygon subset to avoid a heavy
   dependency.
