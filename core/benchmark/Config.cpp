@@ -743,6 +743,18 @@ std::vector<Config> defaultConfigs() {
       cfg.adaptive_k_best = false;
       cfg.birth_existence_target = 0.1;
       cfg.source_aware_identity = true;
+      // Equal to birth_existence_target on purpose. Known consequence (the
+      // (E) shore_clutter_nearshore validator measured it): the land soft-ramp
+      // (r_new *= 1−c) and this phantom-birth floor are independent
+      // multiplicative gates, so when floor == target ANY soft suppression
+      // (c>0) drops r_new below the floor — the entire offshore soft band
+      // (offshore_halfwidth_m, 50 m) becomes a no-birth zone, and a real
+      // vessel within 50 m of shore will not initiate under this config.
+      // We accept this: near-land operation is rare, and the alternative
+      // (lowering the floor to 0.05 to revive near-shore births) re-admits
+      // philos near-shore WATER clutter and regresses the real-data win
+      // gospa 73.1→100.0, card_err +6.9→+36.2, gospa_false 3550→9000 — so
+      // the 0.1 floor is retained. See docs/algorithms/synthetic-clutter-bench.md.
       cfg.min_new_bernoulli_existence = 0.1;
       cfg.output_existence_floor = 0.1;
       cfg.lambda_birth = 1e-5;

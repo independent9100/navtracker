@@ -173,9 +173,10 @@ and for the live land query), with no I/O and no file-system dependency.
 
 4. **Shore clutter is deep-inland (hard-gate plateau).** Clutter points are placed at
    `y = shore_y_m + 0.5 · land_depth_m`, putting them squarely in the ramp's `c = 1.0`
-   region (well past the hard-gate threshold of 0.95). A near-waterline clutter band is
-   covered by the `shore_clutter_nearshore` scenario, which places a **real** target at
-   `y = shore_y_m − 10 m` (10 m offshore) with `c ≈ 0.4` — the soft-ramp region.
+   region (well past the hard-gate threshold of 0.95). The `shore_clutter_nearshore`
+   scenario additionally places a **real** vessel 60 m offshore (just beyond the soft band;
+   see §4 "offshore no-birth zone" for why it is not at the waterline) to verify the land
+   model does not collaterally suppress legitimate traffic adjacent to the clutter.
 
 5. **No RCS or multipath modelling.** Shore-clutter returns are a fixed-position point
    process, not a physics-based sensor simulation. The injected returns are statistically
@@ -232,9 +233,10 @@ The philos dataset (`boston.geojson`) has three limitations as a bench fixture:
   positions. We cannot sweep crossing angle, lane spacing, or convoy gap.
 
 A synthetic shoreline with perfect truth resolves all three: we know exactly which
-returns are shore clutter (we placed them), we place one real vessel 10 m offshore
+returns are shore clutter (we placed them), we place a real vessel near the shore
 deliberately (the `shore_clutter_nearshore` scenario), and we control every geometric
-parameter.
+parameter. This control is what let the bench *quantify* the soft-band boundary the
+philos data could only hint at — see §4.
 
 ### 3.4 Reuse of existing metrics and configs
 
@@ -261,12 +263,27 @@ Current shore clutter is injected as `Position2D` (ENU x/y). Real radar produces
 projecting via the radar adapter would stress the full measurement-to-ENU pipeline and
 expose any heading-covariance artefact near the waterline.
 
-**Near-shore real-target offshore-distance sweep.**
-The `shore_clutter_nearshore` scenario places a real target at exactly 10 m offshore.
-A parametric sweep of offshore distance from −50 m (inland, hard-gate should fire) to
-+150 m (open water, no suppression) would map the soft-ramp survival boundary:
-at what offshore distance does the real target's lifetime drop below an acceptable ratio?
-This would characterise the `W_off` / `W_in` sensitivity without philos ambiguity.
+**Offshore no-birth zone (MEASURED — a boundary, and an open problem).**
+The near-shore validator first placed the real target 10 m offshore (`c ≈ 0.4`); under
+`imm_cv_ct_pmbm_coverage_land` it was **never tracked** (lifetime 0). Root cause: the
+land soft-ramp (`r_new *= 1 − c`) and the phantom-birth gate
+(`min_new_bernoulli_existence`) are independent multiplicative gates, and in that config
+both equal `birth_existence_target` (0.1). So *any* soft suppression (`c > 0`) drops
+`r_new` below the gate — the entire soft band (`offshore_halfwidth_m` = 50 m, plus the
+pier surround) is a **no-birth zone**: a vessel within 50 m of shore does not initiate.
+
+The obvious fix — decouple the gate below the target (0.1 → 0.05) — revives the synthetic
+near-shore target but **regresses the philos real-data win** (gospa 73.1 → 100.0,
+card_err +6.9 → +36.2, gospa_false 3550 → 9000): the lower gate re-admits philos
+near-shore *water* clutter that only the higher gate killed. The 0.1 gate is therefore
+kept, and the validator target moved to 60 m offshore (`c = 0`, clear of the pier) to test
+the operative guarantee — *no collateral suppression of legitimate traffic outside the
+band*. The <50 m no-birth zone is an accepted limitation for this deployment (near-land
+operation is rare). A principled fix that protects genuine near-shore vessels *without*
+re-admitting water clutter — e.g. applying the gate to the pre-suppression existence, or a
+persistence-based birth that lets a re-detected real target ramp past the gate — remains
+open. A full offshore-distance sweep (−50 m inland to +150 m open water) would map the
+exact `W_off`/`W_in` survival boundary.
 
 **Multi-pier harbour geometry.**
 The current shoreline has one pier. A multi-pier geometry (e.g. two parallel piers
