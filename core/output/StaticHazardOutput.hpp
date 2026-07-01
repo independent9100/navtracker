@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <string>
 
 #include "core/geo/Wgs84.hpp"
@@ -20,7 +21,7 @@ struct StaticHazardOutput {
   double position_uncertainty_m{0.0};
   ObstacleCategory category{ObstacleCategory::Unknown};
   WaterLevel water_level{WaterLevel::Unknown};
-  double depth_m{0.0};
+  double depth_m{std::numeric_limits<double>::quiet_NaN()};  // VALSOU: NaN = unknown
   bool lit{false};
   AtoNRealism aton{AtoNRealism::NotAtoN};
   bool is_charted{true};

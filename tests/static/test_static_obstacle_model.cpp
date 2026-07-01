@@ -9,7 +9,6 @@
 #include "core/static/StaticObstacleModel.hpp"
 #include "core/types/StaticObstacle.hpp"
 
-using navtracker::AtoNRealism;
 using navtracker::ObstacleCategory;
 using navtracker::StaticObstacle;
 using navtracker::StaticObstacleModel;
