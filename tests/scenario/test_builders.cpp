@@ -298,6 +298,33 @@ TEST(Builders, AddFixedClutterIsDeterministic) {
 #include <set>
 using navtracker::addAnchoredBoats;
 
+using navtracker::addUniformClutter;
+
+TEST(Builders, AddUniformClutterAddsTransientReturnsNoTruth) {
+  Scenario base = buildStraightLineScenario(
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),
+      {1.0, 2.0, 3.0, 4.0, 5.0}, 1.0, 7, 1);
+  const std::size_t base_truth = base.truth.size();
+  const geo::Datum datum(geo::Geodetic{42.35, -71.05, 0.0});
+
+  Scenario s = addUniformClutter(base, datum, Eigen::Vector2d(-100.0, -100.0),
+                                 Eigen::Vector2d(100.0, 100.0),
+                                 /*n_per_scan=*/4, /*seed=*/11);
+
+  EXPECT_EQ(s.truth.size(), base_truth);  // NO truth
+  int clut = 0;
+  for (const auto& m : s.measurements)
+    if (m.source_id == "sim_clutter") {
+      ++clut;
+      EXPECT_EQ(m.sensor, SensorKind::ArpaTtm);
+      EXPECT_GE(m.value.x(), -100.0);
+      EXPECT_LE(m.value.x(), 100.0);
+      EXPECT_GE(m.value.y(), -100.0);
+      EXPECT_LE(m.value.y(), 100.0);
+    }
+  EXPECT_EQ(clut, 4 * 5);  // 4 per scan x 5 scans
+}
+
 TEST(Builders, AddAnchoredBoatsAddsZeroVelocityTruthAndRadarReturns) {
   Scenario base = buildStraightLineScenario(
       Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),

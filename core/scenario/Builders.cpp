@@ -687,4 +687,24 @@ Scenario addAnchoredBoats(Scenario base, const geo::Datum& datum,
   return base;
 }
 
+Scenario addUniformClutter(Scenario base, const geo::Datum& datum,
+                           const Eigen::Vector2d& box_min,
+                           const Eigen::Vector2d& box_max, int n_per_scan,
+                           std::uint32_t seed) {
+  const std::vector<double> scan_times = distinctScanTimes(base);
+  std::mt19937 rng(seed);
+  std::uniform_real_distribution<double> ux(box_min.x(), box_max.x());
+  std::uniform_real_distribution<double> uy(box_min.y(), box_max.y());
+  for (double t : scan_times) {
+    for (int i = 0; i < n_per_scan; ++i) {
+      const Eigen::Vector2d fp(ux(rng), uy(rng));
+      base.measurements.push_back(
+          makeArpaPositionMeasurement(fp, t, /*std_m=*/1.0, "sim_clutter"));
+    }
+  }
+  sortMeasurementsByTime(base);
+  base.datum = datum;
+  return base;
+}
+
 }  // namespace navtracker

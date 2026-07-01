@@ -261,6 +261,15 @@ Scenario addAnchoredBoats(
     std::uint64_t truth_id_start, double detection_prob, double pos_noise_std_m,
     std::uint32_t seed = 0);
 
+// Add `n_per_scan` uniform-random false alarms per scan to `base`, drawn in
+// the ENU box [box_min, box_max], tagged ArpaTtm / "sim_clutter". Positions
+// are re-drawn every scan (transient — the defining contrast with the fixed
+// recurring returns of addFixedClutter). NO TruthSample. Sets base.datum;
+// returns re-sorted by time.
+Scenario addUniformClutter(
+    Scenario base, const geo::Datum& datum, const Eigen::Vector2d& box_min,
+    const Eigen::Vector2d& box_max, int n_per_scan, std::uint32_t seed = 0);
+
 // Add stationary shore clutter to `base`. For each distinct scan timestamp in
 // base.measurements, each point in `clutter_enu_points` emits a Position2D
 // measurement (SensorKind::ArpaTtm, source_id "sim_shore") at its fixed ENU
