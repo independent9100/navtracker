@@ -297,3 +297,80 @@ observed false tracks. A future experiment would run the shore-clutter bench wit
 the static coastline prior AND the learned clutter map active, to measure how much the
 learned map adds to the static prior (or whether the static prior alone is sufficient at
 the soft-ramp boundary).
+
+---
+
+## 5. harbor_complete_truth (honest yardstick)
+
+### 5.1 Four return classes and expected verdicts
+
+The `harbor_complete_truth` scenario mixes four kinds of radar-like returns in a
+single harbour approach:
+
+| Class | Source tag | Truth id(s) | Expected verdict |
+|---|---|---|---|
+| **Movers** | `sim_arpa` / AIS | 1, 2 | **Track** — confirmed, id-stable for full 40-scan run |
+| **Anchored boats** | `sim_anchored` / AIS | 3, 4, 5 (zero velocity) | **Keep** — zero-velocity truth; tracker must not drop them as static clutter |
+| **Pier** | `sim_pier` | none | **Suppress** — fixed returns from a solid structure; no truth, so every phantom track is a false alarm |
+| **Uniform clutter** | `sim_clutter` | none | **Ignore** — transient random false alarms; no truth, each tracked return counts as over-count |
+
+### 5.2 Chart-free rationale
+
+The scenario declares **no coastline** (`syntheticCoastline()` returns
+`std::nullopt`). This is deliberate: this scenario measures whether today's
+tracker WITHOUT any static-occupancy layer would over-count on a pier and clutter
+source. The honest yardstick is a controlled "before" reference. The chart
+(static-occupancy layer) is the "after" whose improvement the Milestone-2 A/B will
+measure.
+
+Running with a chart would pre-suppress the pier births and make the baseline look
+artificially better. The fair comparison requires the same chart state across "before"
+and "after": both runs see the pier returns; the "after" run additionally has the layer
+active.
+
+### 5.3 Closed truth set
+
+Truth is a closed set of exactly 5 × 40 = 200 truth samples:
+
+- **Ids 1–2**: two movers at ~5 m/s (constant velocity, different headings).
+- **Ids 3–5**: three anchored boats at fixed ENU positions, zero velocity.
+
+Pier returns (`sim_pier`) and uniform clutter (`sim_clutter`) carry **no** `TruthSample`.
+GOSPA and cardinality metrics therefore count every phantom track from the pier or
+clutter as a pure false alarm.
+
+### 5.4 Geometry
+
+| Element | ENU (x, y) m | Details |
+|---|---|---|
+| Own-ship datum | 59.0°N, 10.5°E | Fictitious harbour approach datum |
+| Mover A (id 1) | start (−400, 0), heading +x | 5 m/s eastbound |
+| Mover B (id 2) | start (0, −400), heading +y | 5 m/s northbound |
+| Anchored boat 3 | (100, 50) | stationary |
+| Anchored boat 4 | (−100, 80) | stationary |
+| Anchored boat 5 | (50, 120) | stationary |
+| Pier | cluster near (0, 200) | fixed returns, ~1 per scan per point |
+| Uniform clutter | bounding box of scene | transient, redrawn each scan |
+
+Scenario runs 40 scans at 1 Hz (t = 1 … 40 s). Five seeds are averaged for each metric.
+
+### 5.5 Promotion gate
+
+**This scenario — not philos GOSPA — is the promotion gate for the live
+static-occupancy layer.**
+
+The philos replay has imperfect AIS-derived truth, MMSI drop-outs, and ambiguous
+near-shore vessels. It cannot tell us whether the occupancy layer correctly preserves
+anchored boats vs suppresses a pier. The `harbor_complete_truth` scenario has perfect
+synthetic truth and an explicit pier with no truth assigned, so a change in
+`card_err_mean` and `gospa_false` is unambiguous evidence of improvement (or
+regression).
+
+The Milestone-2 A/B gate is:
+- `gospa_false` must decrease (fewer phantom pier/clutter tracks) after the occupancy
+  layer is active.
+- `lifetime_ratio` must not decrease (anchored boats must not be dropped by the layer).
+- `card_err_mean` must decrease (net over-count must fall).
+
+Meeting all three on `harbor_complete_truth` is required for promotion. A philos win
+is a secondary cross-check, not the gate.

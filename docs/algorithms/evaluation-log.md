@@ -8,6 +8,52 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-02 — harbor_complete_truth Milestone-1 baseline under imm_cv_ct_pmbm
+
+**Purpose.** Capture the "before" numbers on the `harbor_complete_truth` honest
+yardstick (see `docs/algorithms/synthetic-clutter-bench.md §5`). This is the
+baseline the live static-occupancy layer (Milestone 2) must beat. Run with 5 seeds;
+config `imm_cv_ct_pmbm` (no coastline, no static-occupancy layer active).
+
+**Measured numbers (5-seed mean, test `HarborCompleteTruthBaseline.TodaysPmbmMetrics`):**
+
+| Metric | Value |
+|---|---:|
+| card_err_mean | **+13.32** |
+| gospa_mean | 53.02 |
+| gospa_false | **2705.5** |
+| gospa_missed | 41.5 |
+| lifetime_ratio | **0.92** |
+
+**Interpretation against expected verdicts:**
+
+- `card_err_mean = +13.32` — today's PMBM over-counts by 13 phantom tracks per
+  scan on average. With 5 truth targets, +13 phantom tracks is a severe over-count.
+  The pier (fixed returns, no truth) and uniform clutter (transient, no truth) are
+  the sources; without a suppression layer every persistent pier return accumulates
+  enough evidence to birth a Bernoulli.
+
+- `gospa_false = 2705.5` — the vast majority of GOSPA penalty comes from false tracks.
+  This confirms the pier/clutter phantom-track hypothesis: a single pier point
+  confirmed over 40 scans contributes far more false-track GOSPA than a momentary
+  clutter miss.
+
+- `gospa_missed = 41.5` — small but non-zero misses. Some truth-matched scans (most
+  likely from the anchored boats, whose zero-velocity makes them look like clutter)
+  are not picked up by an active track on every seed.
+
+- `lifetime_ratio = 0.92` — anchored boats (ids 3–5, zero velocity) AND movers
+  (ids 1–2) are currently tracked for 92 % of their lifetime. The tracker finds real
+  targets well even in this cluttered scene. The occupancy layer must maintain this
+  (not drop boats while suppressing the pier).
+
+**Takeaway.** Today's PMBM cannot distinguish pier returns from vessel targets —
+card_err +13.32 and gospa_false 2705.5 confirm that. The high lifetime_ratio (0.92)
+is the value to protect. The Milestone-2 A/B must show: gospa_false ↓, card_err_mean
+↓, lifetime_ratio ≥ 0.92. This entry is the binding "before" reference.
+
+---
+
 ## 2026-06-22 (Phase 8, multi-agent review fixes + iter 4 verification correction) — [Cl-3 PMBM Phase 8] 6 bug fixes + 5 tests + arch + perf: head_on -6.4 % GOSPA / -5.5 % T-GOSPA, +5 anchored T-GOSPA -4..-8 %, 0 unit-test regressions; iter 4 corrects overstated claims and strengthens R3
 
 **Premise.** Phase 7 (Adaptive Birth) was followed by a 7-agent
