@@ -309,8 +309,8 @@ single harbour approach:
 
 | Class | Source tag | Truth id(s) | Expected verdict |
 |---|---|---|---|
-| **Movers** | `sim_arpa` / AIS | 1, 2 | **Track** — confirmed, id-stable for full 40-scan run |
-| **Anchored boats** | `sim_anchored` / AIS | 3, 4, 5 (zero velocity) | **Keep** — zero-velocity truth; tracker must not drop them as static clutter |
+| **Movers** | `sim` / **AIS** (cooperative) | 1, 2 | **Track** — confirmed, id-stable for full 40-scan run |
+| **Anchored boats** | `sim_anchored` / **ArpaTtm (non-AIS)** | 3, 4, 5 (zero velocity) | **Keep** — zero-velocity radar-only truth; tracker must not drop them as static clutter. Non-AIS is the whole point: these are the returns philos's AIS-only truth would wrongly score as false. |
 | **Pier** | `sim_pier` | none | **Suppress** — fixed returns from a solid structure; no truth, so every phantom track is a false alarm |
 | **Uniform clutter** | `sim_clutter` | none | **Ignore** — transient random false alarms; no truth, each tracked return counts as over-count |
 
@@ -332,7 +332,7 @@ active.
 
 Truth is a closed set of exactly 5 × 40 = 200 truth samples:
 
-- **Ids 1–2**: two movers at ~5 m/s (constant velocity, different headings).
+- **Ids 1–2**: two movers at 20 m/s (constant velocity, opposing east/west tracks held 300 m apart in y).
 - **Ids 3–5**: three anchored boats at fixed ENU positions, zero velocity.
 
 Pier returns (`sim_pier`) and uniform clutter (`sim_clutter`) carry **no** `TruthSample`.
@@ -343,16 +343,22 @@ clutter as a pure false alarm.
 
 | Element | ENU (x, y) m | Details |
 |---|---|---|
-| Own-ship datum | 59.0°N, 10.5°E | Fictitious harbour approach datum |
-| Mover A (id 1) | start (−400, 0), heading +x | 5 m/s eastbound |
-| Mover B (id 2) | start (0, −400), heading +y | 5 m/s northbound |
-| Anchored boat 3 | (100, 50) | stationary |
-| Anchored boat 4 | (−100, 80) | stationary |
-| Anchored boat 5 | (50, 120) | stationary |
-| Pier | cluster near (0, 200) | fixed returns, ~1 per scan per point |
-| Uniform clutter | bounding box of scene | transient, redrawn each scan |
+| Own-ship datum | 42.35°N, −71.05°E | Boston-approach bench frame (shared with the shore-clutter scenarios) |
+| Mover A (id 1) | start (−500, −150), vel (20, 0) | 20 m/s eastbound, holds y = −150 |
+| Mover B (id 2) | start (500, 150), vel (−20, 0) | 20 m/s **westbound**, holds y = +150 |
+| Anchored boat 3 | (100, 300) | stationary (zero velocity), radar-only |
+| Anchored boat 4 | (250, 320) | stationary, radar-only |
+| Anchored boat 5 | (−50, 330) | stationary, radar-only |
+| Pier | 120 m line at y = −350, x ∈ [−60, 60] (13 points, 10 m apart) | fixed **extended** structure, ~1 return/scan/point (p_d 0.9) |
+| Uniform clutter | box (−600, −450) … (600, 450) | transient, 5 returns/scan redrawn each scan |
 
 Scenario runs 40 scans at 1 Hz (t = 1 … 40 s). Five seeds are averaged for each metric.
+
+Placement rationale (for the future extent+persistence discriminator): the three
+boats are ≥ ~150 m apart (each a distinct **compact** occupancy region) and ≥ 150 m
+off the nearest mover track; the pier is a genuine **extended** 120 m line ~650 m
+from the boats. Pier and boats are *both persistent*, so **extent is the only axis
+that separates them** — exactly the distinction the Milestone-2 layer must exploit.
 
 ### 5.5 Promotion gate
 

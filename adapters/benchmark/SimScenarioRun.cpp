@@ -440,6 +440,12 @@ class HarborCompleteTruthScenarioRun : public ScenarioRun {
         Eigen::Vector2d(500.0, 150.0), Eigen::Vector2d(-20.0, 0.0), times,
         /*pos_noise_std_m=*/8.0, s32);
 
+    // addAnchoredBoats derives its scan grid from base's measurement
+    // timestamps. The AIS movers above emit unconditionally (no dropout), so
+    // all 40 scans are present and each boat gets truth on every scan. If the
+    // movers ever gain a dropout/detection probability, a fully-empty scan
+    // would drop from the grid and the boats would silently lose truth there —
+    // keep at least one always-detected target per scan if that changes.
     base = addAnchoredBoats(
         std::move(base), datum,
         {{100.0, 300.0}, {250.0, 320.0}, {-50.0, 330.0}},

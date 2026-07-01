@@ -323,6 +323,19 @@ TEST(Builders, AddUniformClutterAddsTransientReturnsNoTruth) {
       EXPECT_LE(m.value.y(), 100.0);
     }
   EXPECT_EQ(clut, 4 * 5);  // 4 per scan x 5 scans
+
+  // Transience: positions are re-drawn every scan (the defining contrast with
+  // the fixed recurring points of addFixedClutter). A frozen implementation
+  // would make the per-scan draws identical — assert they are not.
+  Eigen::Vector2d first_t1, first_t2;
+  bool have_t1 = false, have_t2 = false;
+  for (const auto& m : s.measurements) {
+    if (m.source_id != "sim_clutter") continue;
+    if (!have_t1 && m.time.seconds() == 1.0) { first_t1 = m.value; have_t1 = true; }
+    if (!have_t2 && m.time.seconds() == 2.0) { first_t2 = m.value; have_t2 = true; }
+  }
+  ASSERT_TRUE(have_t1 && have_t2);
+  EXPECT_NE(first_t1, first_t2);
 }
 
 TEST(Builders, AddAnchoredBoatsAddsZeroVelocityTruthAndRadarReturns) {
