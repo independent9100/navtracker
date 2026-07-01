@@ -17,6 +17,7 @@ struct StaticHazardOutput {
   geo::Geodetic position{};
   double keep_clear_radius_m{0.0};
   double footprint_radius_m{0.0};
+  double position_uncertainty_m{0.0};
   ObstacleCategory category{ObstacleCategory::Unknown};
   WaterLevel water_level{WaterLevel::Unknown};
   double depth_m{0.0};

@@ -20,6 +20,7 @@ StaticObstacle wreck() {
   o.position = Geodetic{42.351, -71.052, 0.0};
   o.footprint_radius_m = 20.0;
   o.keep_clear_radius_m = 120.0;
+  o.position_uncertainty_m = 5.0;
   o.category = ObstacleCategory::Wreck;
   o.water_level = WaterLevel::AlwaysSubmerged;
   o.depth_m = 3.5;
@@ -38,6 +39,7 @@ TEST(StaticHazardOutput, ConversionCopiesAttributes) {
   EXPECT_DOUBLE_EQ(o.position.lon_deg, -71.052);
   EXPECT_DOUBLE_EQ(o.keep_clear_radius_m, 120.0);
   EXPECT_DOUBLE_EQ(o.footprint_radius_m, 20.0);
+  EXPECT_DOUBLE_EQ(o.position_uncertainty_m, 5.0);
   EXPECT_EQ(o.category, ObstacleCategory::Wreck);
   EXPECT_EQ(o.water_level, WaterLevel::AlwaysSubmerged);
   EXPECT_DOUBLE_EQ(o.depth_m, 3.5);
