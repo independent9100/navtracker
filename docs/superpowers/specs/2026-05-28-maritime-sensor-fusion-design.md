@@ -28,6 +28,12 @@ The defining problem is **multi-target tracking (MTT) with data association**: d
 - COLREGS / collision-avoidance *decision-making* (we expose CPA/TCPA; deciding maneuvers is downstream).
 - Sensor hardware drivers / transport (adapters consume already-decoded messages or log records).
 - UI / visualization (we expose a track API; rendering is a separate consumer).
+- **Emitting fixed infrastructure (piers, breakwaters, shoreline) as vessel
+  tracks.** The point-target vessel tracker owns *vessels* (including static
+  ones — anchored/moored/drifting); fixed environment is handled by a separate
+  static-obstacle branch and is *not* a vessel track. The derived CPA/TCPA
+  therefore covers own-ship × vessel-track only, not collision against
+  infrastructure. See §14.10 and ADR 0002.
 
 ## 3. Key Decisions (with rationale)
 
@@ -434,3 +440,89 @@ same threading work as §14.1.
 heavy use (which it now is for bearing-only). Stacks cleanly with §14.2
 (sensor offsets) and §14.5 (close-range precision sensors where heading
 error at short range is small but not zero).
+
+### 14.10 Static objects: track vessels, map the environment
+
+**Decision of record: ADR 0002.** This section is the design sketch; the
+scope decision and its rationale live in the ADR.
+
+**The insight (measured, 2026-07-01).** The chronic PMBM over-count on the
+philos replay — the phantom tracks the land prior fights — is **fixed
+infrastructure**, not real boats. Checked against the *raw* radar (which is
+raw plots from an offline intensity-threshold + DBSCAN chain, **not** ARPA
+tracks): all returns are near-field (≤ ~976 m), only 1 of 23 AIS vessels is in
+radar range, and the ~1,940 non-AIS returns are persistent, extended, fixed
+structure (`n_cells` up to 6181; piers/breakwaters). A motion test found zero
+coherent non-AIS *moving* boats. So philos is a **clutter-rejection /
+false-positive** test, and the "clutter" is static environment.
+
+**The scope rule: vessel-vs-environment, not moving-vs-stationary.**
+- **Static-but-real vessels** (anchored/moored/drifting) are **in scope** as
+  tracks. They are hazards, may get underway, and are already representable (the
+  output contract's *"Confirmed stationary; direction undefined"* state; CV CPA
+  reduces correctly for v=0). "Static" is a track attribute, never a delete
+  reason.
+- **Fixed infrastructure** is **out of scope as vessel tracks** — extended,
+  velocity-less, chart-known; a point-target CV filter and center-to-center CPA
+  are structurally wrong for it (feeding it to the point tracker *is* the
+  over-count).
+
+**Why it lives here (not downstream).** navtracker is the fusion hub — it holds
+every sensor, the chart, own-ship pose, and the confirmed dynamic tracks. For an
+**uncharted** static obstacle (a pillar on no chart) nothing downstream has more
+information. So static-obstacle handling is a **separate branch inside
+navtracker**, not another system.
+
+**Architecture.** A distinct estimator (occupancy / evidential grid + chart
+priors), *not* the same PMBM asked to do double duty:
+
+```
+ sensors + own-ship + chart ─┬─▶ vessel MTT (PMBM/MHT) ──▶ vessel tracks ─┐
+                             │        ▲    │ 1−r labels                    ├─▶ world model ─▶ CPA / hazards
+                             └─▶ static-obstacle branch ──▶ static hazards ┘
+                                  (occupancy + chart prior)  ▲ birth prior ┘
+```
+
+Cross-feed both ways: vessel tracks label returns already explained by a
+confident target (weight `1 − r`) so the static branch does not double-count
+them; the static-occupancy estimate is a **vessel-birth prior** that suppresses
+phantom tracks. This is the honest generalization of today's land prior (a
+*chart-based* static prior) + clutter map (a crude *live* static-occupancy
+estimator).
+
+**Interfaces.**
+- Keep `CoastlineGeometry` / `ILandModel` for **land** (a birth-suppression
+  region).
+- Add a separate **`StaticObstacle`** input for discrete charted hazards
+  (point / small polygon + keep-clear radius + type/depth/lit/real-or-virtual
+  AtoN attributes) — *not* folded into the coastline (folding creates tiny
+  no-birth zones around each obstacle that suppress passing vessels, and loses
+  attributes). **Schema-align it to the ENC / S-101 hazard ontology** (`CATOBS`,
+  `WATLEV`, `VALSOU`/depth, `EXPSOU`, lit, real/synthetic/virtual-AtoN flag,
+  positional-uncertainty buffer radius) so ENCs and AIS AtoN (Message 21) ingest
+  directly. See ADR 0002 "Prior art & validation."
+- A **static-hazard output** layer, combined with vessel tracks for the
+  operator picture and the collision layer.
+
+**Staging.**
+1. *Cheap:* `StaticObstacle` chart input as birth prior + hazard output; wire
+   PMBM to feed the clutter-map primitive (dominant-hypothesis `1 − r` labeling,
+   the parked design) and **emit it as a static-occupancy hazard**, not a hidden
+   λ_C tweak.
+2. *Later:* a full Bayesian/evidential occupancy grid; a **stationary IMM mode**
+   (low-PSD / zero-velocity pseudo-measurement) so moored tracks stay tight and
+   CPA gets a clean stationary-hazard flag; **sensor/chart-aware near-shore
+   birth** (ADR 0001 A3) to reliably initiate near-shore static *vessels*.
+
+**Unlocks.** A clean vessel picture *and* static-obstacle awareness (incl.
+uncharted) from one system; collapses the land prior + clutter map + philos
+over-count into one coherent capability; closes the anchored-vessel safety gap
+(a moored vessel near shore that today can be suppressed — ADR 0001).
+
+**Cost.** Stage 1 is modest (chart input + reframe the existing clutter-map
+primitive). Stage 2 (occupancy grid, stationary mode) is a substantial new
+subsystem — a roadmap item, not a quick add.
+
+**Dependency.** The sensor/chart-aware near-shore discriminator needs EO/IR or
+AIS coverage near shore (ADR 0001 A3). Extended-object handling for large single
+static returns overlaps §14.3 (EOT) and should reuse it rather than duplicate.

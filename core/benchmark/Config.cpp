@@ -582,6 +582,61 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // imm_cv_ct_pmbm_adapt + the land clutter prior, and NOTHING else. The
+  // general-purpose PMBM default for deployments that may transit near a
+  // coastline. It adds ONLY the spatial land-birth prior on top of adapt, so
+  // it is byte-identical to imm_cv_ct_pmbm_adapt on every scenario WITHOUT a
+  // coastline (uniform open-sea clutter, autoferry, clean geometry) and only
+  // diverges where a coastline is wired, crushing persistent shore-clutter
+  // over-count there. Safe-by-construction: the land model is inert without a
+  // coastline, so this config cannot regress any non-shore scenario.
+  //
+  // Rationale (root-cause deep-dive 2026-07-01; 10-seed synthetic + philos):
+  // imm_cv_ct_pmbm_bundle_land's regression on open-sea UNIFORM clutter was
+  // isolated to a SINGLE knob — birth_existence_target=0.1 — which pins every
+  // birth (real or clutter) to r_new=0.1 regardless of λ_C. On higher-λ_C
+  // open-sea clutter that LOWERS a real re-acquisition's birth existence to
+  // the emit floor, so one miss kills it and the track fragments
+  // (dense_clutter lifetime 0.823→0.590 from that knob ALONE). Dropping it
+  // restores open-sea lifetime to adapt's 0.823 AND repairs bundle_land's
+  // catastrophic philos lifetime (0.030→0.369), while the land model alone
+  // delivers the FULL shore win (shore_clutter_open card_err 0.000, gospa
+  // 9.77 == bundle_land) and the best HONEST philos gospa measured (63.1,
+  // card_err +3.95 — beating MHT 69.4 and adapt 82.6).
+  //
+  // dedup_miss_pd is deliberately LEFT OFF here. The dedup ("correct") miss
+  // math helps open-sea (dense_clutter lifetime 0.823→0.874) but EXPLODES
+  // philos over-count (card_err +17.5→+48 even with the land model, +112
+  // without), because on low-P_D philos the legacy per-return miss penalty is
+  // the load-bearing brake on phantom existence. A universal config must keep
+  // the legacy math. See eval-log 2026-07-01.
+  //
+  // Residual gap: open-sea lifetime 0.823 still trails MHT 0.925 — a
+  // STRUCTURAL K=1 (GNN, winner-take-all per scan) limit, not a knob; closing
+  // it needs a PDA-style soft detected-branch update (tracked follow-up).
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_land";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_land_model = true;  // gate Sweep CoastlineModel wiring
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.adaptive_k_best = false;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.lambda_birth = 1e-5;
+      cfg.min_new_bernoulli_existence = 0.05;  // == adapt; NO birth brake
+      cfg.use_land_model = true;               // spatial birth prior (only add)
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Task 1 probe: clutter-invariant birth existence. Same as
   // imm_cv_ct_pmbm_adapt but r_new is pinned to a target instead of a
   // fixed absolute λ_birth — fixes the philos over-confident-birth bug.

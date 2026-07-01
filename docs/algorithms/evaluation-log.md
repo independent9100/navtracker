@@ -5130,3 +5130,119 @@ Corrected conclusions:
    synthetic shore does not. The land prior is the orthogonal, persistence-
    agnostic spatial brake (kills on-land births at any P_D). They overlap only
    on philos shore.
+
+## 2026-07-01 — Root cause of open-sea missed targets → general coastal config `imm_cv_ct_pmbm_land`
+
+**Question (user):** `imm_cv_ct_pmbm_bundle_land` wins on shore/philos but DROPS
+real targets in open-sea UNIFORM clutter (`dense_clutter` lifetime 0.639 vs MHT
+0.925), which disqualifies it as a single all-conditions config. Why are targets
+missed in open-sea noise, and can one config hold targets everywhere?
+
+**Method:** single-knob isolation off `adapt` on `dense_clutter` (10 seeds) +
+code-path mechanism read + a fix sweep incl. philos. The diagnostic test was
+temporary (removed); numbers reproduce via the ablations below.
+
+### Isolation — which of bundle's 4 knobs drops targets (`dense_clutter`, 10 seeds)
+
+| config (single knob off adapt) | gospa | g_missed | lifetime | card_err |
+|---|---|---|---|---|
+| MHT (ref) | 12.42 | 34.5 | 0.925 | +0.07 |
+| adapt | 13.61 | 76.5 | 0.823 | −0.19 |
+| adapt + `birth_existence_target=0.1` | 15.73 | **170.5** | **0.590** | −0.745 |
+| adapt + `source_aware_identity` | 13.61 | 76.5 | 0.823 | −0.19  (byte-identical → inert) |
+| adapt + `min_new_bernoulli_existence=0.1` | 13.61 | 76.5 | 0.823 | −0.19  (byte-identical → inert) |
+| adapt + `dedup_miss_pd` | 14.94 | 66.0 | **0.874** | +0.14 |
+| bundle (all 4) | 16.72 | 171.5 | 0.639 | −0.52 |
+
+**Root cause = `birth_existence_target=0.1`, ALONE** (0.823→0.590; worse than
+the full bundle). It sets r_new ≡ 0.1 for EVERY birth via
+λ_birth=(r*/(1−r*))·λ_z, independent of λ_C (PmbmTracker.cpp:478-485). Open-sea
+uniform clutter has a higher λ_C than philos, so adapt would naturally birth a
+real re-acquisition at r≈0.231; the pin LOWERS it to the emit floor
+(`output_existence_floor` 0.1) with zero headroom, so one miss crushes it below
+floor and the track fragments (birth→miss→re-birth churn). It is re-ACQUISITION
+starvation, compounded by the K=1 GNN hard-commit repeatedly handing the real
+target's measurement to a gate-closer clutter return. The other two non-dedup
+knobs are provably INERT here (no identity signal in the scene; the 0.1 gate
+never bites r_new pinned at 0.1). Mechanism cross-checked by a 5-agent read of
+the birth / misdetection / assignment / metric paths.
+
+### Fix sweep — land model alone, NO birth brake (10-seed synthetic + single-seed philos)
+
+| scenario (metric) | MHT | adapt | bundle_land | **adapt+land (NEW)** | adapt+dedup+land |
+|---|---|---|---|---|---|
+| dense_clutter lifetime | 0.925 | 0.823 | 0.639 | **0.823** | 0.874 |
+| dense_clutter gospa | 12.42 | 13.61 | 16.72 | **13.61** | 14.94 |
+| shore_open card_err | +28.9 | +26.7 | −0.05 | **0.000** | 0.000 |
+| shore_open gospa | 76.3 | 73.8 | 9.90 | **9.77** | 9.77 |
+| shore_near card_err | +28.9 | +26.7 | −0.025 | **0.000** | 0.000 |
+| philos gospa | 69.4 | 82.6 | 59.5 | **63.1** | 113.2 |
+| philos card_err | +8.1 | +17.5 | −2.95 | **+3.95** | +48.1 |
+| philos lifetime | 0.313 | 0.369 | **0.030** | **0.369** | 0.387 |
+| crossing lifetime | 0.975 | 0.999 | 0.975 | **0.999** | 1.000 |
+
+Conclusions:
+1. **The shore win is 100% the land model, not `birth_existence_target`.**
+   `adapt+land` matches/beats bundle_land on shore (card 0.000, gospa 9.77)
+   WITHOUT the birth brake.
+2. **`adapt+land` is the general coastal config.** It restores open-sea
+   lifetime to adapt's 0.823 (fixing bundle_land's 0.639), repairs bundle_land's
+   catastrophic philos lifetime (0.030→0.369), and posts the best HONEST philos
+   gospa measured (63.1; card +3.95 — beats MHT 69.4 and adapt 82.6). SAFE BY
+   CONSTRUCTION: land is inert without a coastline → byte-identical to adapt on
+   every non-shore scenario (uniform clutter, autoferry, clean geometry).
+3. **`dedup_miss_pd` is a philos landmine — do NOT ship it universally.** The
+   dedup ("correct") miss math helps open-sea (0.823→0.874) but EXPLODES philos
+   over-count (card +17.5→+48 WITH land, +112 without): on low-P_D philos the
+   legacy per-return miss penalty is the load-bearing brake on phantom
+   existence. bundle_land only "survived" dedup because birth_existence_target +
+   land clamped the phantoms — at the cost of the 0.030 lifetime. A universal
+   config keeps the legacy miss math.
+4. **Residual, structural (NOT a knob):** open-sea lifetime 0.823 still trails
+   MHT 0.925. That gap is present in plain adapt and is the K=1 GNN
+   winner-take-all per-scan commitment (`adaptive_k_best` off, K=1): a clutter
+   return inside the gate pulls the target's state off; MHT's N-scan deferral
+   survives. Closing it needs a PDA-style soft detected-branch update, not a
+   config value (raising K in the flat rep regresses anchored scenarios — see
+   the adaptive_k_best notes above). Tracked follow-up.
+
+**Shipped:** `imm_cv_ct_pmbm_land` (adapt + land prior only). Recommended as the
+general coastal/all-conditions PMBM config, superseding `imm_cv_ct_pmbm_bundle_land`
+(retained as an ablation documenting the birth-brake failure mode). The clutter
+map is NOT part of the fix: it only addresses persistent SPATIAL clutter (which
+the land prior already covers when a coastline exists) and does nothing for
+open-sea uniform noise; it is also inert under PMBM as wired (observe() never
+called). Parked.
+
+## 2026-07-01 — philos radar reality: the over-count is static infrastructure (raw-radar check)
+
+Investigated the philos PMBM over-count against the RAW radar (not the AIS-only
+truth), by dumping the plots through the real loader (body-frame → ENU →
+geodetic) and analysing in Python. Findings:
+
+- **Provenance:** `radar_plots.csv` is RAW PLOTS from a custom offline chain
+  (`extract_radar.py`: intensity threshold ≥64 → range-gate 15–2000 m → DBSCAN
+  cluster of the `radar_pcd` point clouds → one plot per cluster). NOT ARPA
+  tracks — no track id/course/speed; ~10 plots/sweep.
+- **Near-field, barely overlaps the targets:** all 1,962 returns are ≤ 976 m
+  from own-ship (the 2000 m gate never binds — returns fade on their own).
+  **Only 1 of the 23 AIS truth vessels is within radar range** (mmsi 367074170,
+  77 m; 19 returns on it, closest 2 m). The other 22 are 1.2–15.8 km away.
+- **The rest is static structure:** the ~1,940 non-AIS returns form a full ring
+  of persistent, extended, fixed returns (`n_cells` up to 6181; straight-line
+  features). Persistence: 288 of 545 clutter cells recur in ≥3 sweeps over 20 s.
+- **Motion test:** greedy tracklet linking flagged 58 "coherent" tracks, but ALL
+  at 12–86 m/s (impossible for boats) — artifacts of the linker chaining returns
+  *along* fixed piers. A tightened detector (1–12 m/s, coherent, time-monotonic,
+  ≥8 pts / ≥8 s) found **0** non-AIS moving boats.
+
+Implications: (1) philos is a **clutter-rejection / false-positive** test — a
+realistic and valuable one — not a radar+AIS fusion test (radar and 22/23
+targets do not overlap). Read its over-count as clutter-rejection, not fusion
+quality. (2) The over-count we suppress is (to the limit this 20 s clip can
+show) real **fixed infrastructure**, not real boats being deleted — caveat: a
+sub-1 m/s moored/drifting boat is indistinguishable from a structure in 20 s.
+(3) This motivated the vessel-vs-environment scope decision — see **ADR 0002**
+(track static vessels; handle fixed infrastructure in a separate static-obstacle
+branch) and design spec §14.10. Diagnostic scripts were scratch-only (not
+committed); `tests/replay/test_philos_dump.cpp` was a temporary dumper.
