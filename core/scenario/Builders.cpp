@@ -89,6 +89,10 @@ Measurement makeShoreMeasurement(const Eigen::Vector2d& noisy_pos,
   return makeArpaPositionMeasurement(noisy_pos, t_seconds, std_m, "sim_shore");
 }
 
+// Precondition: measurements in s are time-grouped (the same timestamp appears
+// consecutively). Builders emit grouped; addFixedClutter/addAnchoredBoats/
+// addUniformClutter sort before returning. On ungrouped input this back-compare
+// dedup would emit a time more than once, causing duplicate injections.
 std::vector<double> distinctScanTimes(const Scenario& s) {
   std::vector<double> scan_times;
   for (const auto& m : s.measurements) {
