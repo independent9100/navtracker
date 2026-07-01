@@ -60,6 +60,17 @@ std::vector<SensorDetectionEntry> shoreClutterTable() {
            DetectionParams{0.95, 1e-5}}};
 }
 
+// Uncharted pier: a 120 m line of fixed radar scatterers (13 points, 10 m
+// apart) at y = -350, x in [-60, 60]. Deliberately NOT a charted obstacle and
+// NOT in the truth set — the extended persistent structure the live
+// static-occupancy layer must learn to suppress.
+std::vector<Eigen::Vector2d> pierPoints() {
+  std::vector<Eigen::Vector2d> pts;
+  for (int i = 0; i <= 12; ++i)
+    pts.emplace_back(-60.0 + 10.0 * static_cast<double>(i), -350.0);
+  return pts;
+}
+
 // Fixed synthetic shoreline shared by every shore-clutter scenario. Pure /
 // deterministic, so generate() and syntheticCoastline() agree.
 SyntheticShore makeBenchShore() {
@@ -407,11 +418,52 @@ class ShoreClutterNearShoreScenarioRun : public ScenarioRun {
   }
 };
 
+class HarborCompleteTruthScenarioRun : public ScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return describe("harbor_complete_truth", shoreClutterTable());
+  }
+  Scenario generate(std::uint64_t seed) override {
+    // Honest yardstick: complete, controlled truth. Two moving vessels
+    // (AIS, ids 1-2) + three anchored non-AIS boats (zero velocity, ids 3-5,
+    // the KEEP set) + one uncharted pier (extended fixed radar structure, NO
+    // truth, the SUPPRESS set) + uniform sea clutter (transient, NO truth,
+    // the IGNORE set). Chart-free on purpose (no syntheticCoastline) so the
+    // pier is an *uncharted* open-water structure. See
+    // docs/superpowers/specs/2026-07-01-honest-static-occupancy-stage1b-design.md.
+    const auto times = linearSeconds(1, 40);
+    const geo::Datum datum(navtracker::geo::Geodetic{42.35, -71.05, 0.0});
+    const auto s32 = static_cast<std::uint32_t>(seed);
+
+    Scenario base = buildCrossingTargetsScenario(
+        Eigen::Vector2d(-500.0, -150.0), Eigen::Vector2d(20.0, 0.0),
+        Eigen::Vector2d(500.0, 150.0), Eigen::Vector2d(-20.0, 0.0), times,
+        /*pos_noise_std_m=*/8.0, s32);
+
+    base = addAnchoredBoats(
+        std::move(base), datum,
+        {{100.0, 300.0}, {250.0, 320.0}, {-50.0, 330.0}},
+        /*truth_id_start=*/3, /*detection_prob=*/0.95, /*pos_noise_std_m=*/5.0,
+        s32);
+
+    base = addFixedClutter(std::move(base), datum, pierPoints(), "sim_pier",
+                           /*detection_prob=*/0.9, /*pos_noise_std_m=*/4.0,
+                           s32 + 7u);
+
+    base = addUniformClutter(std::move(base), datum,
+                             Eigen::Vector2d(-600.0, -450.0),
+                             Eigen::Vector2d(600.0, 450.0),
+                             /*n_per_scan=*/5, s32 + 12345u);
+    return base;
+  }
+  // No syntheticCoastline(): chart-free by design.
+};
+
 }  // namespace
 
 std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   std::vector<std::unique_ptr<ScenarioRun>> out;
-  out.reserve(17);
+  out.reserve(18);
   out.push_back(std::make_unique<CrossingScenarioRun>());
   out.push_back(std::make_unique<OvertakingScenarioRun>());
   out.push_back(std::make_unique<HeadOnScenarioRun>());
@@ -429,6 +481,7 @@ std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   out.push_back(std::make_unique<ConvoyOvertakeScenarioRun>());
   out.push_back(std::make_unique<ShoreClutterOpenScenarioRun>());
   out.push_back(std::make_unique<ShoreClutterNearShoreScenarioRun>());
+  out.push_back(std::make_unique<HarborCompleteTruthScenarioRun>());
   return out;
 }
 
