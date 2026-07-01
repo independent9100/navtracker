@@ -77,6 +77,7 @@ add_library(navtracker_core
   core/scenario/Metrics.cpp
   core/scenario/TruthResample.cpp
   core/output/TrackOutput.cpp
+  core/output/StaticHazardOutput.cpp
   core/sensor_activity/DeclaredSensorActivity.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
@@ -289,6 +290,7 @@ add_executable(navtracker_tests
   tests/own_ship/test_uere_estimator.cpp
   tests/own_ship/test_own_ship_velocity_estimator.cpp
   tests/output/test_track_output.cpp
+  tests/output/test_static_hazard_output.cpp
   tests/replay/test_haxr_ospa.cpp
   tests/replay/test_philos_ospa.cpp
   tests/replay/test_radar_truth_loader.cpp
