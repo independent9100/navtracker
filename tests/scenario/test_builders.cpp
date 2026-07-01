@@ -238,3 +238,59 @@ TEST(ShoreClutter, ClutterPositionsRepeatAcrossScans) {
   EXPECT_DOUBLE_EQ(shore_pos[1].x(), shore_pos[2].x());
   EXPECT_DOUBLE_EQ(shore_pos[0].y(), shore_pos[2].y());
 }
+
+// ---- addFixedClutter tests --------------------------------------------------
+
+using navtracker::addFixedClutter;
+using navtracker::MeasurementModel;
+using navtracker::SensorKind;
+namespace geo = navtracker::geo;
+
+TEST(Builders, AddFixedClutterAddsRecurringReturnsNoTruth) {
+  // Base: a single moving target over 5 scans (times 1..5), truth id 1.
+  Scenario base = buildStraightLineScenario(
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),
+      {1.0, 2.0, 3.0, 4.0, 5.0}, /*pos_noise_std_m=*/1.0, /*seed=*/7,
+      /*truth_id=*/1);
+  const std::size_t base_meas = base.measurements.size();
+  const std::size_t base_truth = base.truth.size();
+
+  const geo::Datum datum(geo::Geodetic{42.35, -71.05, 0.0});
+  const std::vector<Eigen::Vector2d> pts = {{100.0, 0.0}, {110.0, 0.0}};
+  Scenario s = addFixedClutter(base, datum, pts, "sim_pier",
+                               /*detection_prob=*/1.0, /*pos_noise_std_m=*/2.0,
+                               /*seed=*/3);
+
+  // detection_prob = 1.0 -> exactly 2 fixed returns per scan x 5 scans.
+  EXPECT_EQ(s.measurements.size(), base_meas + 2u * 5u);
+  EXPECT_EQ(s.truth.size(), base_truth);  // NO truth added
+  EXPECT_TRUE(s.datum.has_value());
+  int pier = 0;
+  for (const auto& m : s.measurements) {
+    if (m.source_id == "sim_pier") {
+      ++pier;
+      EXPECT_EQ(m.sensor, SensorKind::ArpaTtm);
+      EXPECT_EQ(m.model, MeasurementModel::Position2D);
+    }
+  }
+  EXPECT_EQ(pier, 10);
+  // measurements sorted by time
+  for (std::size_t i = 1; i < s.measurements.size(); ++i)
+    EXPECT_LE(s.measurements[i - 1].time.seconds(),
+              s.measurements[i].time.seconds());
+}
+
+TEST(Builders, AddFixedClutterIsDeterministic) {
+  Scenario base = buildStraightLineScenario(
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),
+      {1.0, 2.0, 3.0}, 1.0, 7, 1);
+  const geo::Datum datum(geo::Geodetic{42.35, -71.05, 0.0});
+  const std::vector<Eigen::Vector2d> pts = {{100.0, 0.0}};
+  Scenario a = addFixedClutter(base, datum, pts, "sim_pier", 0.7, 2.0, 5);
+  Scenario b = addFixedClutter(base, datum, pts, "sim_pier", 0.7, 2.0, 5);
+  ASSERT_EQ(a.measurements.size(), b.measurements.size());
+  for (std::size_t i = 0; i < a.measurements.size(); ++i) {
+    EXPECT_EQ(a.measurements[i].value, b.measurements[i].value);
+    EXPECT_EQ(a.measurements[i].source_id, b.measurements[i].source_id);
+  }
+}

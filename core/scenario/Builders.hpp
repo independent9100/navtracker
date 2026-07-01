@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include <Eigen/Core>
@@ -234,6 +235,18 @@ SyntheticShore buildSyntheticShore(
     double pier_length_m,
     int n_clutter,
     const CoastlinePriorParams& params = {});
+
+// Add fixed, recurring returns at `points` (ENU) to `base`, tagged
+// SensorKind::ArpaTtm / `source_id`. For each distinct scan timestamp in
+// base.measurements, each point emits a Position2D measurement at its fixed
+// position plus isotropic Gaussian noise, with probability `detection_prob`
+// (seeded Bernoulli). NO TruthSample is created — these are environment /
+// structure, not vessels. Sets base.datum = datum; returns re-sorted by time.
+// addShoreClutter is a thin wrapper over this with source_id "sim_shore".
+Scenario addFixedClutter(
+    Scenario base, const geo::Datum& datum,
+    const std::vector<Eigen::Vector2d>& points, const std::string& source_id,
+    double detection_prob, double pos_noise_std_m, std::uint32_t seed = 0);
 
 // Add stationary shore clutter to `base`. For each distinct scan timestamp in
 // base.measurements, each point in `clutter_enu_points` emits a Position2D

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <random>
+#include <string>
 
 #include "core/types/Ids.hpp"
 
@@ -70,16 +71,38 @@ Measurement makeBearingMeasurement(double noisy_b,
   return m;
 }
 
-Measurement makeShoreMeasurement(const Eigen::Vector2d& noisy_pos,
-                                 double t_seconds, double std_m) {
+Measurement makeArpaPositionMeasurement(const Eigen::Vector2d& noisy_pos,
+                                        double t_seconds, double std_m,
+                                        const std::string& source_id) {
   Measurement m;
   m.time = Timestamp::fromSeconds(t_seconds);
-  m.sensor = SensorKind::ArpaTtm;  // radar-like fixed clutter
-  m.source_id = "sim_shore";
+  m.sensor = SensorKind::ArpaTtm;
+  m.source_id = source_id;
   m.model = MeasurementModel::Position2D;
   m.value = noisy_pos;
   m.covariance = Eigen::Matrix2d::Identity() * (std_m * std_m + 1e-6);
   return m;
+}
+
+Measurement makeShoreMeasurement(const Eigen::Vector2d& noisy_pos,
+                                 double t_seconds, double std_m) {
+  return makeArpaPositionMeasurement(noisy_pos, t_seconds, std_m, "sim_shore");
+}
+
+std::vector<double> distinctScanTimes(const Scenario& s) {
+  std::vector<double> scan_times;
+  for (const auto& m : s.measurements) {
+    const double t = m.time.seconds();
+    if (scan_times.empty() || scan_times.back() != t) scan_times.push_back(t);
+  }
+  return scan_times;
+}
+
+void sortMeasurementsByTime(Scenario& s) {
+  std::stable_sort(s.measurements.begin(), s.measurements.end(),
+                   [](const Measurement& a, const Measurement& b) {
+                     return a.time.seconds() < b.time.seconds();
+                   });
 }
 
 }  // namespace
@@ -604,34 +627,34 @@ SyntheticShore buildSyntheticShore(const geo::Geodetic& datum_origin,
   return SyntheticShore{std::move(geometry), datum, std::move(clutter)};
 }
 
-Scenario addShoreClutter(Scenario base, const geo::Datum& datum,
-                         const std::vector<Eigen::Vector2d>& clutter_enu_points,
-                         double detection_prob, double pos_noise_std_m,
-                         std::uint32_t seed) {
-  // Distinct scan times in first-seen order (builders emit time-grouped).
-  std::vector<double> scan_times;
-  for (const auto& m : base.measurements) {
-    const double t = m.time.seconds();
-    if (scan_times.empty() || scan_times.back() != t) scan_times.push_back(t);
-  }
+Scenario addFixedClutter(Scenario base, const geo::Datum& datum,
+                         const std::vector<Eigen::Vector2d>& points,
+                         const std::string& source_id, double detection_prob,
+                         double pos_noise_std_m, std::uint32_t seed) {
+  const std::vector<double> scan_times = distinctScanTimes(base);
   std::mt19937 rng(seed);
   std::normal_distribution<double> noise(0.0, pos_noise_std_m);
   std::uniform_real_distribution<double> u(0.0, 1.0);
   for (double t : scan_times) {
-    for (const auto& pt : clutter_enu_points) {
+    for (const auto& pt : points) {
       if (u(rng) < detection_prob) {
         const Eigen::Vector2d noisy(pt.x() + noise(rng), pt.y() + noise(rng));
         base.measurements.push_back(
-            makeShoreMeasurement(noisy, t, pos_noise_std_m));
+            makeArpaPositionMeasurement(noisy, t, pos_noise_std_m, source_id));
       }
     }
   }
-  std::stable_sort(base.measurements.begin(), base.measurements.end(),
-                   [](const Measurement& a, const Measurement& b) {
-                     return a.time.seconds() < b.time.seconds();
-                   });
+  sortMeasurementsByTime(base);
   base.datum = datum;
   return base;
+}
+
+Scenario addShoreClutter(Scenario base, const geo::Datum& datum,
+                         const std::vector<Eigen::Vector2d>& clutter_enu_points,
+                         double detection_prob, double pos_noise_std_m,
+                         std::uint32_t seed) {
+  return addFixedClutter(std::move(base), datum, clutter_enu_points, "sim_shore",
+                         detection_prob, pos_noise_std_m, seed);
 }
 
 }  // namespace navtracker
