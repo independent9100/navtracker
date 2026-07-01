@@ -380,20 +380,21 @@ PmbmTracker::buildNewTargetCandidates(
       cand.covariance = Eigen::MatrixXd::Zero(0, 0);
     }
 
-    // Task A: scale rho_target by the land clutter prior at the birth
-    // position (cand.mean, moment-matched from the PPP posterior above).
-    // When cand.mean is empty (size<2) landBirthScale returns 1.0 → no-op,
-    // which is correct because rho_target is already 0 in that case.
+    // Task A + Stage 1 static-obstacle: scale rho_target by the combined
+    // birth-prior at the birth position (cand.mean, moment-matched from the
+    // PPP posterior above). When cand.mean is empty (size<2) birthScale
+    // returns 1.0 → no-op, which is correct because rho_target is already
+    // 0 in that case.
     {
-      const double land_scale = landBirthScale(cand.mean);
-      if (land_scale < 0.0) {
-        cand.rho_target = 0.0;                      // inland hard gate
+      const double birth_scale = birthScale(cand.mean);
+      if (birth_scale < 0.0) {
+        cand.rho_target = 0.0;                       // hard gate
         cand.rho_total = lambda_z;
-      } else if (land_scale < 1.0) {
-        cand.rho_target *= land_scale;              // soft suppression
+      } else if (birth_scale < 1.0) {
+        cand.rho_target *= birth_scale;              // soft suppression
         cand.rho_total = cand.rho_target + lambda_z;
       }
-      // land_scale == 1.0 → no change (bit-identical when no land model)
+      // birth_scale == 1.0 → no change (bit-identical when no models wired)
     }
 
     out.push_back(std::move(cand));
@@ -489,14 +490,15 @@ PmbmTracker::buildAdaptiveBirthCandidates(
         lambda_birth = it->second;
       }
     }
-    // Task A: scale the birth intensity by the land clutter prior at the
-    // birth position (cand.mean is already set from estimator.initiate(z)
-    // above). Hard-drop when the prior exceeds cfg_.land_birth_hard_gate.
-    const double land_scale = landBirthScale(cand.mean);
-    if (land_scale < 0.0) {
-      lambda_birth = 0.0;          // inland hard gate → no birth
+    // Task A + Stage 1 static-obstacle: scale the birth intensity by the
+    // combined birth-prior at the birth position (cand.mean is already set
+    // from estimator.initiate(z) above). Hard-drop when either prior exceeds
+    // its hard gate.
+    const double birth_scale = birthScale(cand.mean);
+    if (birth_scale < 0.0) {
+      lambda_birth = 0.0;           // hard gate → no birth
     } else {
-      lambda_birth *= land_scale;  // soft suppression: (1 − c) · lambda_birth
+      lambda_birth *= birth_scale;  // soft suppression
     }
     cand.rho_target = lambda_birth;
     cand.rho_total = lambda_birth + lambda_z;

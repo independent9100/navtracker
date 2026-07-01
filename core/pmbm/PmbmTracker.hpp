@@ -15,6 +15,7 @@
 #include "ports/ISensorDetectionModel.hpp"
 #include "ports/ILandModel.hpp"
 #include "ports/ISensorActivity.hpp"
+#include "ports/IStaticObstacleModel.hpp"
 #include "ports/IStaleSignalSink.hpp"
 #include "ports/ITrackSink.hpp"
 
@@ -392,6 +393,19 @@ class PmbmTracker {
     // inland, never at the waterline". Ignored when use_land_model = false.
     double land_birth_hard_gate = 0.95;
 
+    // Stage 1 static-obstacle branch (ADR 0002): when true AND a static-
+    // obstacle model is wired via setStaticObstacleModel(), the adaptive-
+    // birth intensity is additionally scaled by (1 − birthSuppression(pos)),
+    // and births inside an obstacle's hard footprint (suppression >
+    // static_obstacle_hard_gate) are dropped. Combines multiplicatively with
+    // the land model. Default false → bit-identical to today's behaviour.
+    bool use_static_obstacle_model = false;
+    // Hard-gate threshold for the static-obstacle prior; symmetric with
+    // land_birth_hard_gate. Only the footprint interior (suppression = 1.0)
+    // exceeds the default 0.95, so the keep-clear buffer stays soft-only.
+    // Must be in (0, 1]. Ignored when use_static_obstacle_model = false.
+    double static_obstacle_hard_gate = 0.95;
+
     // Per-track-hypothesis structural path (Phase 9). When true,
     // `PmbmDensity::tracks` + `tracked_mbm` are populated alongside
     // the legacy flat `mbm` view. Phase 9 milestone S1 ships the
@@ -593,6 +607,12 @@ class PmbmTracker {
   // scaled by (1 − clutterPrior(birth_pos)) for each candidate.
   void setLandModel(const ILandModel* m) { land_model_ = m; }
 
+  // Stage 1 (ADR 0002): optional charted static-obstacle prior. Null (default)
+  // or use_static_obstacle_model == false → bit-identical to today's.
+  void setStaticObstacleModel(const IStaticObstacleModel* m) {
+    obstacle_model_ = m;
+  }
+
   // Next Bernoulli id that will be minted (introspection / tests).
   BernoulliId nextBernoulliId() const noexcept { return next_bernoulli_id_; }
 
@@ -719,6 +739,7 @@ class PmbmTracker {
   std::shared_ptr<ISensorDetectionModel> detection_model_;
   const ISensorActivity* sensor_activity_{nullptr};
   const ILandModel* land_model_{nullptr};
+  const IStaticObstacleModel* obstacle_model_{nullptr};
   // Task 5: per-Bernoulli "last activity check" timestamp for the sensor-
   // activity path. Keyed by BernoulliId; absent = use b.birth_time as the
   // window start.  Updated to current_time_ each time a surveillance miss
@@ -775,16 +796,23 @@ class PmbmTracker {
   void stageActivityCheck(BernoulliId id, Timestamp t);
   void stageCooperativeTouch(BernoulliId id, Timestamp t);
   // Returns the birth-intensity scale in [0, 1] for a birth at ENU position
-  // `mean.head<2>()`, or a negative value meaning "hard-drop this birth":
-  //   1.0   — no land model wired or use_land_model=false (bit-identical)
-  //   [0,1) — soft suppression: scale lambda_birth by this factor
-  //   < 0   — inland hard gate: set lambda_birth to 0 (no Bernoulli)
-  double landBirthScale(const Eigen::VectorXd& mean) const {
-    if (!cfg_.use_land_model || land_model_ == nullptr || mean.size() < 2)
-      return 1.0;
-    const double c = land_model_->clutterPrior(mean.head<2>());
-    if (c > cfg_.land_birth_hard_gate) return -1.0;  // hard-drop
-    return 1.0 - c;                                   // soft scale
+  // `mean.head<2>()`, or a negative value meaning "hard-drop this birth".
+  // Combines the land prior and the static-obstacle prior multiplicatively:
+  //   scale = (1 − c_land) · (1 − c_static)
+  // and hard-drops when EITHER prior exceeds its own hard gate. With no models
+  // wired both priors are 0 → scale 1.0 (bit-identical to pre-Stage-1).
+  double birthScale(const Eigen::VectorXd& mean) const {
+    if (mean.size() < 2) return 1.0;
+    double c_land = 0.0;
+    if (cfg_.use_land_model && land_model_ != nullptr)
+      c_land = land_model_->clutterPrior(mean.head<2>());
+    double c_static = 0.0;
+    if (cfg_.use_static_obstacle_model && obstacle_model_ != nullptr)
+      c_static = obstacle_model_->birthSuppression(mean.head<2>());
+    if (c_land > cfg_.land_birth_hard_gate ||
+        c_static > cfg_.static_obstacle_hard_gate)
+      return -1.0;  // hard-drop
+    return (1.0 - c_land) * (1.0 - c_static);
   }
 
   // Returns true when a measurement from sensor `s` should update the
