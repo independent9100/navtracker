@@ -1492,6 +1492,75 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
     }
   }
 
+  // Stage 1b: feed the detection model the per-scan outcome, labeled from the
+  // dominant post-prune hypothesis — a return claimed by a Bernoulli carries
+  // clutter weight 1 − r (its existence), an unclaimed return carries 1.0.
+  // Mirrors MhtTracker's producer (MhtTracker.cpp:732-811). Runs AFTER
+  // pruneAndNormalise and the cost matrix, so it affects only the NEXT scan's
+  // λ_C (no within-scan feedback → deterministic). Gated by feed_clutter_map
+  // (default off → never called → bit-identical; Fixed models ignore observe()).
+  if (cfg_.feed_clutter_map && detection_model_ != nullptr &&
+      !density_.mbm.empty() && !scan.empty()) {
+    const auto& dom = *std::max_element(
+        density_.mbm.begin(), density_.mbm.end(),
+        [](const GlobalHypothesis& a, const GlobalHypothesis& b) {
+          return a.weight < b.weight;
+        });
+    std::vector<double> claim_r(scan.size(), -1.0);  // < 0 = unclaimed
+    for (const auto& b : dom.bernoullis) {
+      double best_d = std::numeric_limits<double>::infinity();
+      int best_j = -1;
+      for (std::size_t j = 0; j < scan.size(); ++j) {
+        if (!(scan[j].time == b.last_update)) continue;  // detected only
+        const Eigen::Vector2d z_xy = (scan[j].value.size() >= 2)
+            ? Eigen::Vector2d(scan[j].value(0), scan[j].value(1))
+            : scan[j].sensor_position_enu;
+        const double d = (z_xy - b.mean.head<2>()).squaredNorm();
+        if (d < best_d) { best_d = d; best_j = static_cast<int>(j); }
+      }
+      if (best_j >= 0)
+        claim_r[best_j] = std::max(claim_r[best_j], b.existence_probability);
+    }
+    using Key = std::tuple<SensorKind, MeasurementModel>;
+    std::map<Key, ISensorDetectionModel::ScanObservation> by_sensor;
+    for (std::size_t j = 0; j < scan.size(); ++j) {
+      const Key k{scan[j].sensor, scan[j].model};
+      auto it = by_sensor.find(k);
+      if (it == by_sensor.end()) {
+        ISensorDetectionModel::ScanObservation obs;
+        obs.sensor = scan[j].sensor;
+        obs.model = scan[j].model;
+        obs.num_unassociated = 0;
+        obs.time = scan.front().time;
+        it = by_sensor.emplace(k, std::move(obs)).first;
+      }
+      const bool claimed = claim_r[j] >= 0.0;
+      const double weight =
+          claimed ? std::clamp(1.0 - claim_r[j], 0.0, 1.0) : 1.0;
+      if (canInitiateTrack(scan[j].model) && scan[j].value.size() >= 2) {
+        it->second.positions.emplace_back(scan[j].value(0), scan[j].value(1));
+        if (weight > 0.0) {
+          it->second.clutter_positions.emplace_back(scan[j].value(0),
+                                                    scan[j].value(1));
+          it->second.clutter_position_weights.push_back(weight);
+        }
+      }
+      if (scan[j].model == MeasurementModel::Bearing2D &&
+          scan[j].value.size() >= 1) {
+        it->second.bearings.push_back(scan[j].value(0));
+        if (weight > 0.0) {
+          it->second.clutter_bearings.push_back(scan[j].value(0));
+          it->second.clutter_bearing_weights.push_back(weight);
+        }
+      }
+      if (!claimed) ++it->second.num_unassociated;
+    }
+    std::vector<ISensorDetectionModel::ScanObservation> bundle;
+    bundle.reserve(by_sensor.size());
+    for (auto& kv : by_sensor) bundle.push_back(std::move(kv.second));
+    detection_model_->observe(bundle);
+  }
+
   aggregated_tracks_dirty_ = true;
   // Task 6: fire stale signals for cooperative-overdue tracks.
   if (stale_sink_ != nullptr && !cooperative_overdue_ids_.empty()) {

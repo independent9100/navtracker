@@ -506,6 +506,16 @@ class PmbmTracker {
     // every gated clutter return births a near-zero-r phantom.
     // Conservative default 0; bench config sets ~0.05.
     double min_new_bernoulli_existence = 0.0;
+
+    // Stage 1b: when true, after each scan PMBM feeds detection_model_->observe()
+    // the per-scan outcome labeled from the dominant post-prune hypothesis
+    // (clutter weight 1 − r per claimed return, 1.0 if unclaimed), mirroring
+    // MhtTracker. This makes a wrapped ClutterMapSensorDetectionModel adapt
+    // under PMBM (it is inert otherwise). observe() runs post-prune, so it only
+    // affects the NEXT scan's λ_C — determinism preserved. Default false →
+    // observe() never called → bit-identical (a Fixed model ignores observe()
+    // anyway). See docs/adr/0002 Stage 1b.
+    bool feed_clutter_map = false;
   };
 
   // Birth intensity callback. Called once per predict() (after the
