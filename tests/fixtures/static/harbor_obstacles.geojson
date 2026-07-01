@@ -1,0 +1,27 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [-71.0520, 42.3510] },
+      "properties": {
+        "category": "wreck",
+        "watlev": "submerged",
+        "depth_m": 3.5,
+        "lit": true,
+        "aton": "real",
+        "footprint_radius_m": 20.0,
+        "keep_clear_radius_m": 120.0,
+        "position_uncertainty_m": 5.0,
+        "source_id": "ENC:wreck-1"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [-71.0500, 42.3500] },
+      "properties": {
+        "category": "pile"
+      }
+    }
+  ]
+}

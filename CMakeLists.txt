@@ -108,6 +108,7 @@ target_link_libraries(navtracker_replay PUBLIC navtracker_core Eigen3::Eigen)
 
 add_library(navtracker_land
   adapters/land/GeoJsonCoastline.cpp
+  adapters/static/GeoJsonStaticObstacles.cpp
 )
 target_include_directories(navtracker_land PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_land PUBLIC navtracker_core Eigen3::Eigen PRIVATE nlohmann_json::nlohmann_json)
@@ -236,6 +237,7 @@ add_executable(navtracker_tests
   tests/adapters/arpa/test_arpa_adapter.cpp
   tests/adapters/eoir/test_eoir_adapter.cpp
   tests/adapters/test_end_to_end.cpp
+  tests/adapters/static/test_geojson_static_obstacles.cpp
   tests/scenario/test_builders.cpp
   tests/scenario/test_ospa.cpp
   tests/scenario/test_gospa.cpp
