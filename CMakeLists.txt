@@ -51,6 +51,7 @@ add_library(navtracker_core
   core/collision/Cpa.cpp
   core/collision/CpaOwnShip.cpp
   core/collision/CpaEvaluator.cpp
+  core/collision/StaticHazardEvaluator.cpp
   core/association/Gating.cpp
   core/association/GnnAssociator.cpp
   core/association/JointEvents.cpp
@@ -187,6 +188,7 @@ add_executable(navtracker_tests
   tests/collision/test_cpa_uncertainty.cpp
   tests/collision/test_cpa_synthesize_own_ship.cpp
   tests/collision/test_cpa_evaluator.cpp
+  tests/collision/test_static_hazard_evaluator.cpp
   tests/association/test_gating.cpp
   tests/association/test_gnn_associator.cpp
   tests/association/test_joint_events.cpp
