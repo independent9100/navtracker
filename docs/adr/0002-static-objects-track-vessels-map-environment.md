@@ -186,12 +186,16 @@ carry.
 
 ## Staging
 
-1. **Cheap, now:** the `StaticObstacle` chart input as a vessel-birth prior +
-   hazard output; reframe the clutter-map primitive into an explicit
+1. **Stage 1a — SHIPPED 2026-07-01:** the `StaticObstacle` chart input as a
+   vessel-birth prior + hazard output. Reference plan:
+   `docs/superpowers/plans/2026-07-01-static-obstacle-stage1.md`.
+   Commits: `f6b1c92, 8e632ae, cfc5379/b563e19, 5be51ee, c5a46b8/e12984a,
+   7a0effe/3a3fbd7`.
+   **Stage 1b — OPEN:** reframe the clutter-map primitive into an explicit
    "persistent-unclaimed-return → static-occupancy" layer, wired into PMBM
    properly (the parked "PMBM feeds the clutter map via dominant-hypothesis
    `1 − r` labeling" design) and **output as a hazard**, not a hidden λ_C tweak.
-2. **Later:** a proper Bayesian / evidential occupancy grid for full
+2. **Stage 2 — OPEN:** a proper Bayesian / evidential occupancy grid for full
    uncharted-static mapping; the stationary IMM mode; sensor-aware near-shore
    birth.
 
@@ -216,7 +220,7 @@ detection of *uncharted* statics + active cross-feed).
   art (verified against the full text):** Herrmann, García-Fernández, Brekke &
   Eide, "A Scalable Hybrid Track-Before-Detect Tracking System: Application to
   Coastal Maritime Radar Surveillance" (arXiv:2508.16169, 22 Aug 2025; for IEEE
-  J. Oceanic Eng.) — real X-band coastal radar (Trondheim Fjord). It runs a
+  J. Oceanic Eng.; local copy: `docs/references/2508.16169v1-herrmann-2025-hybrid-tbd-coastal-radar.pdf`) — real X-band coastal radar (Trondheim Fjord). It runs a
   conventional PMBM point tracker on **DBSCAN**-clustered high-threshold
   detections, removes land with a **separate precomputed median land mask**
   (offline, thresholded, morphologically dilated — a static-map layer applied

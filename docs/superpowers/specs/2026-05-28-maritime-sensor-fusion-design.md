@@ -490,6 +490,17 @@ phantom tracks. This is the honest generalization of today's land prior (a
 *chart-based* static prior) + clutter map (a crude *live* static-occupancy
 estimator).
 
+**Caveat — we move (the shore-station shortcut does not port).** Herrmann et
+al. 2025 (arXiv:2508.16169), the closest published system, remove land with a
+*precomputed median mask in a fixed geographic frame* — cheap, and correct
+**only because their radar is a stationary shore station**. navtracker rides
+own-ship, so any data-derived static layer must accumulate in a **world / geo
+frame via own-ship pose**, not the radar body frame (a body-frame mask would
+smear as the platform moves). This is exactly why the stage-2 static estimate is
+a geo-referenced occupancy grid, not a borrowed body-frame mask. It also means
+the *chart* prior (`StaticObstacle` / coastline, already geo-referenced) is the
+right thing to lead Stage 1 with.
+
 **Interfaces.**
 - Keep `CoastlineGeometry` / `ILandModel` for **land** (a birth-suppression
   region).
@@ -505,14 +516,17 @@ estimator).
   operator picture and the collision layer.
 
 **Staging.**
-1. *Cheap:* `StaticObstacle` chart input as birth prior + hazard output; wire
-   PMBM to feed the clutter-map primitive (dominant-hypothesis `1 − r` labeling,
-   the parked design) and **emit it as a static-occupancy hazard**, not a hidden
-   λ_C tweak.
-2. *Later:* a full Bayesian/evidential occupancy grid; a **stationary IMM mode**
-   (low-PSD / zero-velocity pseudo-measurement) so moored tracks stay tight and
-   CPA gets a clean stationary-hazard flag; **sensor/chart-aware near-shore
-   birth** (ADR 0001 A3) to reliably initiate near-shore static *vessels*.
+1. **Stage 1a — SHIPPED 2026-07-01** (`StaticObstacle` chart input as birth
+   prior + hazard output; see plan
+   `docs/superpowers/plans/2026-07-01-static-obstacle-stage1.md` and ADR 0002).
+   **Stage 1b — OPEN:** wire PMBM to feed the clutter-map primitive
+   (dominant-hypothesis `1 − r` labeling, the parked design) and **emit it as a
+   static-occupancy hazard**, not a hidden λ_C tweak.
+2. **Stage 2 — OPEN:** a full Bayesian/evidential occupancy grid; a **stationary
+   IMM mode** (low-PSD / zero-velocity pseudo-measurement) so moored tracks stay
+   tight and CPA gets a clean stationary-hazard flag; **sensor/chart-aware
+   near-shore birth** (ADR 0001 A3) to reliably initiate near-shore static
+   *vessels*.
 
 **Unlocks.** A clean vessel picture *and* static-obstacle awareness (incl.
 uncharted) from one system; collapses the land prior + clutter map + philos

@@ -1177,6 +1177,109 @@ def fig_ospa_vs_gospa():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 26 static obstacles
+# ──────────────────────────────────────────────────────────────────────────────
+
+def fig_static_obstacle_zones():
+    """Hard footprint core + soft keep-clear ring + passing vessel + suppressed phantom."""
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    cx, cy = 0.0, 0.0   # obstacle centre
+    r_hard = 1.5         # footprint core radius
+    r_soft = 4.0         # keep-clear ring outer radius
+
+    # Soft keep-clear ring (amber, between r_hard and r_soft)
+    ring_amber = plt.Circle((cx, cy), r_soft, color="#e8a030", alpha=0.22, zorder=1)
+    ax.add_patch(ring_amber)
+    ring_amber_edge = plt.Circle((cx, cy), r_soft, fill=False, edgecolor="#e8a030",
+                                  linewidth=2.0, linestyle="--", zorder=2)
+    ax.add_patch(ring_amber_edge)
+
+    # Hard footprint disc (red)
+    disc_red = plt.Circle((cx, cy), r_hard, color="#aa3333", alpha=0.45, zorder=3)
+    ax.add_patch(disc_red)
+    disc_red_edge = plt.Circle((cx, cy), r_hard, fill=False, edgecolor="#aa3333",
+                                linewidth=2.0, zorder=4)
+    ax.add_patch(disc_red_edge)
+
+    # Suppressed phantom at obstacle centre
+    ax.plot(cx, cy, marker="x", markersize=18, color="#aa3333", markeredgewidth=3.5,
+            zorder=6)
+    ax.text(cx + 0.15, cy - 0.45, "suppressed\n(birth hard-gated)", fontsize=10,
+            color="#aa3333", ha="left", va="top", zorder=7)
+
+    # Green vessel track passing through the ring (left to right)
+    track_y = 2.9          # inside soft ring, outside hard core
+    track_xs = np.linspace(-6.5, 6.5, 300)
+
+    # Colour track: green inside soft ring, light blue outside
+    inside_ring = np.abs(np.sqrt((track_xs - cx) ** 2 + (track_y - cy) ** 2) - 0) <= r_soft
+    # Split into inside-ring and outside-ring segments
+    for segment_inside in [True, False]:
+        mask = inside_ring if segment_inside else ~inside_ring
+        # find contiguous blocks
+        indices = np.where(mask)[0]
+        if len(indices) == 0:
+            continue
+        color = "#2d8659" if segment_inside else "#85bbdb"
+        lw = 2.5
+        # plot in one go (gaps will appear naturally)
+        xs_seg = track_xs.copy()
+        xs_seg[~mask] = np.nan
+        ax.plot(xs_seg, np.full_like(xs_seg, track_y), color=color, linewidth=lw,
+                zorder=5)
+
+    # Arrow showing direction of travel
+    ax.annotate("", xy=(4.5, track_y), xytext=(2.0, track_y),
+                arrowprops=dict(arrowstyle="->", color="#2d8659", lw=2.0), zorder=5)
+
+    # Label "still tracked" above the track, inside the ring
+    ax.text(0.0, track_y + 0.35, "still tracked\n(soft suppression only)",
+            fontsize=10, color="#2d8659", ha="center", va="bottom", zorder=7)
+
+    # Radius annotations
+    ax.annotate("", xy=(r_hard, cy), xytext=(cx, cy),
+                arrowprops=dict(arrowstyle="-", color="#aa3333", lw=1.5,
+                                linestyle="dotted"), zorder=2)
+    ax.text(r_hard / 2, -0.3, r"$R_\mathrm{hard}$", fontsize=10, color="#aa3333",
+            ha="center", va="top")
+
+    ax.annotate("", xy=(r_soft, cy), xytext=(r_hard, cy),
+                arrowprops=dict(arrowstyle="-", color="#e8a030", lw=1.5,
+                                linestyle="dotted"), zorder=2)
+    ax.text((r_hard + r_soft) / 2, -0.3, r"$R_\mathrm{soft}$", fontsize=10,
+            color="#9a7010", ha="center", va="top")
+
+    # Zone labels
+    ax.text(cx, cy + r_hard * 0.45, "footprint\ncore", fontsize=9,
+            color="#6b1010", ha="center", va="center", fontweight="bold")
+    ax.text(cx, r_soft - 0.55, "keep-clear\nbuffer", fontsize=9,
+            color="#9a7010", ha="center", va="center")
+    ax.text(5.5, -4.5, "clear\nwater", fontsize=9, color="#1f3a5f",
+            ha="center", va="center")
+
+    ax.set_xlim(-7, 7)
+    ax.set_ylim(-6, 6)
+    ax.set_aspect("equal")
+    ax.set_xlabel("East (m)")
+    ax.set_ylabel("North (m)")
+    ax.set_title("Static-obstacle zones: birth suppression + keep-clear ring")
+    ax.grid(True, linestyle=":", alpha=0.35)
+
+    # Legend
+    legend_handles = [
+        mpatches.Patch(color="#aa3333", alpha=0.5, label=f"Hard core (R_hard): birth dropped"),
+        mpatches.Patch(color="#e8a030", alpha=0.35, label=f"Keep-clear buffer: birth weakened"),
+        Line2D([0], [0], color="#2d8659", linewidth=2.5, label="Vessel track (still tracked)"),
+        Line2D([0], [0], color="#aa3333", linewidth=0, marker="x", markersize=10,
+               markeredgewidth=2.5, label="Phantom (suppressed inside core)"),
+    ]
+    ax.legend(handles=legend_handles, loc="lower left", fontsize=9, framealpha=0.92)
+
+    save(fig, "26-static-obstacle-zones.png")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 def main():
     print("Generating figures into", HERE)
@@ -1205,6 +1308,7 @@ def main():
     fig_ospa_vs_gospa()
     fig_sensor_bias_convergence()
     fig_seeing_the_tracker()
+    fig_static_obstacle_zones()
     print("done.")
 
 

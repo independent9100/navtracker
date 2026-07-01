@@ -131,6 +131,25 @@
 - **"land mask"** — colloquial name for the coastline clutter prior when viewed
   as a binary yes/no surface; in navtracker the mask is always a continuous ramp,
   not a hard binary. The inland plateau (c ≈ 1) is the "masked" region. Chapter 25.
+- **"static obstacle"** — a discrete charted hazard in navigable water: a rock,
+  wreck, pile, platform, or AtoN. Distinguished from the coastline (a large region)
+  and from a stopped vessel (which is still tracked). Stored as `StaticObstacle`
+  (WGS84 position + radii + attributes). Chapter 26.
+- **"footprint (obstacle)"** — the physical extent of a charted obstacle, given
+  as a radius in metres (`footprint_radius_m`). The hard no-birth core is
+  `R_hard = footprint_radius_m + position_uncertainty_m`. Births inside `R_hard`
+  are hard-gated (dropped). Chapter 26.
+- **"keep-clear radius"** — the operator-defined safety margin around a charted
+  obstacle (`keep_clear_radius_m`). Births between `R_hard` and `R_soft =
+  max(keep_clear_radius_m, R_hard)` are soft-suppressed (weakened but not
+  dropped). The `StaticHazardEvaluator` fires a proximity alarm when own-ship
+  enters this radius. Chapter 26.
+- **"AtoN"** — Aid to Navigation. A buoy, beacon, or light tower placed to guide
+  vessels. AtoN types in navtracker: Real (physical object), Synthetic (virtual
+  radar/AIS overlay for a physical object), Virtual (an AIS-broadcast hazard
+  mark with no physical structure at that position). Encoded in `AtoNRealism`.
+  AIS Message 21 broadcasts AtoN positions as a first-class `StaticObstacle`
+  source. Chapter 26.
 - **"sensor pose"** — the ENU position (and optionally
   orientation) of the sensor at the moment of measurement.
 - **"sticky modes"** — IMM transition matrix with high diagonal

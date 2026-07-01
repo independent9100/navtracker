@@ -74,3 +74,83 @@ covariance_is_default   = false
 | **No velocity info** (2D state) | sog=0, cog=0, σ_sog=0, σ_cog=0; is_valid=false | "No velocity data available." |
 | **At datum** (track position = datum origin) | position_covariance_m2 unchanged (R = identity rotation) | Covariance magnitude is exact; no rotation error. |
 | **Distant track** (track < 30 km from datum) | Rotation < 0.5°; off-diagonal terms small relative to diagonals | Covariance is exact to within rounding. |
+
+---
+
+## StaticHazardOutput
+
+Canonical drain function: `toStaticHazardOutput(obs)` in `core/output/StaticHazardOutput.hpp`.
+This is a separate output type from `TrackOutput`. It represents a charted static
+hazard (rock, wreck, pile, platform, buoy, etc.) rather than a kinematic vessel track.
+
+### Position
+
+- **`position.lat_deg`, `position.lon_deg`**: WGS84 geodetic latitude/longitude,
+  degrees. The position is taken directly from the `StaticObstacle` chart record
+  and is not adjusted for the ENU datum.
+- **No NED covariance rotation.** `TrackOutput` rotates the position covariance
+  from the fusion datum's ENU frame into the target's local NED frame (a
+  kinematic necessity because the ENU frame shifts as own-ship moves). For a
+  charted obstacle, the position is a fixed geographic coordinate — it does not
+  move with the datum. No rotation is applied or needed; the positional accuracy
+  is encoded in `position_uncertainty_m` (see below).
+
+### Geometry fields
+
+- **`footprint_radius_m`**: physical extent of the object in metres. Together
+  with `position_uncertainty_m` this forms the hard no-birth core
+  `R_hard = footprint_radius_m + position_uncertainty_m` (see §14.10 of the
+  design spec and `docs/algorithms/static-obstacle-birth-prior.md`).
+- **`keep_clear_radius_m`**: the operationally required clearance margin in
+  metres. Must be ≥ `footprint_radius_m`. The `StaticHazardEvaluator` fires a
+  proximity alarm when own-ship enters this radius (see "Keep-clear alarm" below).
+- **`position_uncertainty_m`**: positional accuracy of the chart record in
+  metres. Absorbs survey error (analogous to `W_off` in the coastline model).
+  Added to the footprint when computing the hard core.
+
+### Attributes
+
+- **`category`** (`ObstacleCategory`): Rock, Wreck, Obstruction, Pile, Platform,
+  Buoy, Beacon, Other, Unknown. Aligned to the S-57/S-101 CATOBS ontology.
+- **`water_level`** (`WaterLevel`): AwashCoversUncovers, AlwaysSubmerged,
+  AlwaysAboveWater, Floating, Unknown. S-57 WATLEV.
+- **`depth_m`**: charted depth in metres (S-57 VALSOU). `NaN` when unknown.
+- **`lit`**: whether the hazard carries a navigational light.
+- **`aton`** (`AtoNRealism`): NotAtoN, Real, Synthetic, Virtual. A Virtual AtoN
+  is an AIS-broadcast hazard mark (AIS Message 21) with no physical structure at
+  that position.
+- **`source_id`**: provenance string (chart identifier or AtoN MMSI).
+
+### Hazard identity
+
+- **`hazard_id`**: a stable `uint64_t` identifier derived from the obstacle's
+  charted position and category via `staticHazardId(obs)`. The function rounds
+  lat/lon to approximately 1 m before hashing, so small floating-point jitter in
+  the chart record does not change the id between runs. The id is
+  **order-independent** (not a list index); re-ordering the obstacle list does
+  not change any hazard's id. This mirrors the stable `track_id` guarantee for
+  vessel tracks.
+- **`is_charted`**: `true` for Stage-1 charted obstacles (the current
+  implementation). Will be `false` for Stage-1b / Stage-2 live-detected
+  occupancy hazards that have no chart record.
+
+### Keep-clear alarm
+
+The `StaticHazardEvaluator` emits `IStaticHazardSink` events when own-ship
+enters or exits the keep-clear ring of a charted obstacle:
+
+- **Entered**: own-ship ENU distance to the obstacle centre falls below
+  `keep_clear_radius_m`.
+- **Updated**: emitted each cycle while inside (optional; `emit_updates = false`
+  by default).
+- **Exited**: own-ship ENU distance exceeds
+  `keep_clear_radius_m × exit_hysteresis` (default 1.1 — a 10% margin to
+  prevent flapping at the boundary).
+
+**This is a static range check, not a CPA.** CPA (Closest Point of Approach)
+extrapolates a vessel's current velocity to find its future closest approach.
+A charted obstacle has no velocity. The keep-clear alarm answers a different
+question: "is own-ship currently inside the required clearance zone?" That
+question has a direct geometric answer; no trajectory extrapolation is needed or
+appropriate. The vessel-track CPA (`CpaEvaluator`) remains the correct tool for
+dynamic hazard assessment against confirmed vessel tracks.

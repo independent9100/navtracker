@@ -5214,6 +5214,49 @@ the land prior already covers when a coastline exists) and does nothing for
 open-sea uniform noise; it is also inert under PMBM as wired (observe() never
 called). Parked.
 
+## 2026-07-01 — Static-obstacle Stage 1a shipped [Cl-3 side capability]
+
+**What shipped.** The charted-static-obstacle branch (Stage 1a per ADR 0002 and
+plan `docs/superpowers/plans/2026-07-01-static-obstacle-stage1.md`):
+
+- `StaticObstacle` type (S-57/S-101-aligned: CATOBS/WATLEV/VALSOU/depth/lit/
+  AtoN realism; geodetic position + footprint/keep-clear/uncertainty radii).
+- `StaticObstacleModel`: geodetic→ENU cache; `birthSuppression(enu_xy)` ramp
+  (`c = 1.0` inside `R_hard = footprint + uncertainty`; linear from `soft_max = 0.9`
+  to 0 across the keep-clear buffer; 0 beyond; max over all obstacles).
+- `IStaticObstacleModel` port + `PmbmTracker::setStaticObstacleModel`. The PMBM
+  `birthScale` now combines land and static-obstacle priors multiplicatively:
+  `scale = (1 − c_land) · (1 − c_static)`, with a hard-drop when either prior
+  exceeds its gate (default 0.95).
+- `StaticHazardOutput` + `staticHazardId` + `toStaticHazardOutput`.
+- `StaticHazardEvaluator`: keep-clear proximity alarm per (own-ship × obstacle)
+  with entry/exit hysteresis. NOT a CPA — a static range check; no velocity.
+- `GeoJsonStaticObstacle` adapter (GeoJSON → `StaticObstacle` list).
+- Config knob `use_static_obstacle_model` (default `false`); bench sweep config.
+- Integration test: vessel transits through the keep-clear buffer and is still
+  tracked; phantom birth at the obstacle centre is suppressed.
+
+**Safe-by-construction guarantee.** With `use_static_obstacle_model = false`
+(the default) or no model wired, `c_static = 0` and `birthScale` reduces to
+`(1 − c_land)` — the output is **bit-identical** to the pre-Stage-1 baseline
+on every existing scenario. Enabling the obstacle model with an empty obstacle
+list is also bit-identical.
+
+**Soft/hard gate design.** The hard gate fires only in the footprint interior
+(`c = 1.0 > 0.95`), not in the keep-clear buffer (`c ≤ 0.9 < 0.95`). This is
+the **anchored-vessel protection**: a real vessel passing through the keep-clear
+ring can birth and confirm through the soft ramp; only a return that is
+physically inside the structure is hard-dropped.
+
+**No A/B benchmark measurement yet.** There is no measured GOSPA / OSPA
+improvement to report. None of the current test fixtures (AutoFerry, philos)
+contains charted static hazards — the birth-prior effect is therefore not yet
+exercised end-to-end on real data. The correct next step is a fixture with known
+charted obstacles (rocks/buoys at known positions), confirmed vessel tracks that
+pass close, and a before/after GOSPA comparison. Do NOT interpret the absence
+of a measured delta as "no improvement" — the improvement is structural (phantom
+track suppression near charted hazards) but has not been measured yet.
+
 ## 2026-07-01 — philos radar reality: the over-count is static infrastructure (raw-radar check)
 
 Investigated the philos PMBM over-count against the RAW radar (not the AIS-only
