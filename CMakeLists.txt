@@ -322,6 +322,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_compare.cpp
   tests/benchmark/test_bench_determinism.cpp
   tests/benchmark/test_synthetic_clutter_ab.cpp
+  tests/benchmark/test_philos_cluttermap_ab.cpp
   tests/sensor_activity/test_declared_sensor_activity.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})

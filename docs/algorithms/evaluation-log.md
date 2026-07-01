@@ -5214,6 +5214,45 @@ the land prior already covers when a coastline exists) and does nothing for
 open-sea uniform noise; it is also inert under PMBM as wired (observe() never
 called). Parked.
 
+## 2026-07-01 — Stage 1b spike: PMBM clutter-map feed measured (philos win, dense-clutter regression)
+
+Wired PMBM to feed `detection_model_->observe()` after each scan (new
+`PmbmTracker::Config::feed_clutter_map`, default off → bit-identical; commit
+2457951 + review nits b9e5231), mirroring MhtTracker's producer — labels each
+return with `1 − r` from the dominant post-prune hypothesis. This makes a wrapped
+`ClutterMapSensorDetectionModel` finally adapt under PMBM (it was inert — PMBM
+never called `observe()`). A/B harness: `tests/benchmark/test_philos_cluttermap_ab.cpp`.
+Baseline A = `imm_cv_ct_pmbm_land`; B = A + `use_clutter_map` + `feed_clutter_map`.
+
+Results (A → B):
+- **philos (WIN):** card_err_mean +3.95 → **−3.2**; gospa_false 2440 → **1030**
+  (−58%); gospa_mean 63.1 → **51.9** (−18%); gospa_p95 86 → 62; id_switches
+  0.087 → 0; gospa_missed 1650 → 1670 (flat); lifetime_ratio 0.369 → 0.364
+  (flat). **New best-honest philos** — beats MHT (69.4) and land-only (63.1),
+  no wrong-math crutch. Mild over-suppression (card_err overshoots to −3.2, a
+  slight under-count).
+- **crossing_90 / parallel_lanes_dense / shore_clutter_nearshore:**
+  **byte-identical** — the clutter map is inert (no persistent *unclaimed*
+  structure to learn; near-shore clutter is already handled by the land model).
+- **dense_clutter (REGRESSION):** lifetime_ratio 0.90 → **0.26**; gospa_missed
+  39 → **296**; gospa_mean 12.2 → 18.0 (+48%). gospa_false 34 → 5 (fewer false,
+  but at catastrophic cost). On *uniform* clutter, a low-r real target's returns
+  get labeled `1 − r` ≈ high → feed the map → λ_C rises *at the target* → its
+  births/updates are suppressed → r drops further → death spiral.
+
+**Conclusion.** The mechanism is spatially selective: it correctly suppresses
+clutter that is spatially *separate* from real targets (philos: fixed structures
+vs vessels) but harms clutter *co-located* with targets (uniform `dense_clutter`).
+So the raw clutter-map feed is **opt-in coastal, NOT universal** — same shape as
+the land/bundle configs. **The honest Stage 1b layer must add a
+persistence/confidence gate** (suppress only cells consistently occupied over
+many scans AND spatially concentrated); uniform clutter never crosses that bar,
+so the gate should keep the philos win without the dense-clutter loss. This is
+also strong empirical validation that a live static-occupancy layer — not charts
+(see the coverage entry below) — is the right lever for the philos over-count.
+Next: build the honest geodetic occupancy layer with the persistence gate
+(Stage 1b-ii) and re-measure that dense_clutter is clean.
+
 ## 2026-07-01 — Charts vs philos: chart-driven suppression is a partial lever (measured)
 
 Parsed NOAA S-57 ENC cells for Boston Harbor (US5BOSCC/CD) were provided in
