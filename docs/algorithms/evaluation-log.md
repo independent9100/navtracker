@@ -5214,6 +5214,50 @@ the land prior already covers when a coastline exists) and does nothing for
 open-sea uniform noise; it is also inert under PMBM as wired (observe() never
 called). Parked.
 
+## 2026-07-01 — Charts vs philos: chart-driven suppression is a partial lever (measured)
+
+Parsed NOAA S-57 ENC cells for Boston Harbor (US5BOSCC/CD) were provided in
+`charts/` (2,635 surface-breaking obstacles + 379 land features; export
+`charts/export_obstacles.py`, analysis `charts/ANALYSIS.md`). Measured how much
+of the philos persistent radar structure the chart actually explains, to decide
+whether charts can fix the philos PMBM over-count. Script + map:
+`charts/philos_chart_coverage.{py,png}`.
+
+Method: projected radar plots from all 7 philos scenarios (21,647 plots) to world
+coordinates (loader convention `world_bearing = heading + az_body`; registration
+verified — mean radar-vs-chart offset only **~10 m**). Kept persistent
+fixed-structure cells (seen across ≥2 passes or spanning a whole replay, >75 m
+from any AIS vessel) = **1,727 "expected obstacle" cells**. Matched against the
+chart geometries (densified to ~8 m point clouds).
+
+Findings:
+- **Coverage (obstacles ∪ shoreline):** only **36.5% of cells / 28.3% of returns**
+  within 50 m of a charted feature (44.5% / 35.2% at 75 m). Discrete obstacles
+  alone 34.5% @50m; shoreline alone 28.2%.
+- **The strongest clusters — the actual over-count drivers — are the LEAST
+  charted.** Top-100 by return count: 13% within 50 m; median distance to any
+  chart feature **232 m**. Top-50: 10%, median 281 m.
+- **Not anchored vessels either:** 0% of the top-100 strong clusters fall inside a
+  charted anchorage/mooring/berth area (`ACHARE`/`ACHBRT`/`BERTHS`/`SMCFAC`/
+  `HRBFAC`); only 5.2% of all expected cells. 13–25% sit in fairways; they cluster
+  near the own-ship lane (median 180 m) → most consistent with near-field /
+  own-ship-lane clutter and fairway traffic, NOT chartable static objects.
+- **Chart extraction is complete:** audited all 61 ENC layers via GDAL; every
+  fixed-structure / underwater-hazard / aid class is already exported. The only
+  unextracted content is bathymetry (`DEPCNT`/`DEPARE`/`SOUNDG`/`DRGARE`) —
+  grounding context, not radar clutter — and area layers (anchorages, tested
+  above; fairways/restricted). Nothing more to squeeze for the clutter problem.
+
+Conclusion: **the charts are a real but PARTIAL lever (~⅓ of the persistent
+structure, the near-shore piers/seawalls/land edge). The dominant philos
+over-count drivers are mid-water/fairway/own-ship-lane clutter that no chart
+layer contains.** Hard empirical justification that the real philos lever is
+**live static-occupancy (Stage 1b / Stage 2)**, not the chart. The charts remain
+valuable as real `StaticObstacle`/coastline ground-truth for validating Stage 1a
+correctness and the future extended-structure work — just not as a philos
+over-count fix. The charted-suppression E2E measurement is therefore
+deprioritised (it would confirm this predictable partial result).
+
 ## 2026-07-01 — Static-obstacle Stage 1a shipped [Cl-3 side capability]
 
 **What shipped.** The charted-static-obstacle branch (Stage 1a per ADR 0002 and

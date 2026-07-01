@@ -1,0 +1,67 @@
+{
+  "cells": {
+    "US5BOSCC": "ENC_ROOT/US5BOSCC/US5BOSCC.000",
+    "US5BOSCD": "ENC_ROOT/US5BOSCD/US5BOSCD.000"
+  },
+  "radar_clutter": {
+    "total": 2635,
+    "dropped_non_surface": 312,
+    "by_surface_state": {
+      "always dry": 943,
+      "covers and uncovers": 540,
+      "assumed dry (no WATLEV)": 1142,
+      "floating": 8,
+      "awash": 2
+    },
+    "by_persistence": {
+      "fixed": 2524,
+      "floating": 111
+    }
+  },
+  "buckets": {
+    "fixed_surface": 2340,
+    "underwater_hazard": 483,
+    "aid_fixed": 14,
+    "aid_floating": 110,
+    "land": 379
+  },
+  "by_class": {
+    "aid_fixed/BCNLAT": 4,
+    "aid_fixed/BCNSPP": 10,
+    "aid_floating/BOYLAT": 67,
+    "aid_floating/BOYSPP": 43,
+    "fixed_surface/BRIDGE": 57,
+    "fixed_surface/BUISGL": 342,
+    "fixed_surface/CRANES": 2,
+    "fixed_surface/DAMCON": 2,
+    "fixed_surface/DRYDOC": 4,
+    "fixed_surface/DYKCON": 3,
+    "fixed_surface/FORSTC": 1,
+    "fixed_surface/GATCON": 12,
+    "fixed_surface/HULKES": 2,
+    "fixed_surface/LNDMRK": 27,
+    "fixed_surface/MORFAC": 21,
+    "fixed_surface/OBSTRN": 105,
+    "fixed_surface/OFSPLF": 8,
+    "fixed_surface/OILBAR": 1,
+    "fixed_surface/PILPNT": 185,
+    "fixed_surface/PONTON": 235,
+    "fixed_surface/PYLONS": 23,
+    "fixed_surface/SILTNK": 42,
+    "fixed_surface/SLCONS": 1268,
+    "land/COALNE": 100,
+    "land/LNDARE": 279,
+    "underwater_hazard/PIPSOL": 13,
+    "underwater_hazard/UWTROC": 427,
+    "underwater_hazard/WRECKS": 43
+  },
+  "files": {
+    "geojson/fixed_surface.geojson": 2340,
+    "geojson/underwater_hazard.geojson": 483,
+    "geojson/aid_fixed.geojson": 14,
+    "geojson/aid_floating.geojson": 110,
+    "geojson/land.geojson": 379,
+    "geojson/obstacles_all.geojson": 2947,
+    "geojson/radar_clutter.geojson": 2635
+  }
+}
