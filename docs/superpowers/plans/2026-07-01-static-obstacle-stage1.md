@@ -1175,10 +1175,14 @@ TEST(GeoJsonStaticObstacles, SkipsInvalidGeometry) {
   EXPECT_EQ(obs[0].category, ObstacleCategory::Rock);
 }
 
-// The on-disk fixture loads two obstacles.
+// The on-disk fixture loads two obstacles. Use NAVTRACKER_SOURCE_DIR (a
+// compile-time absolute path, defined on navtracker_tests) so the test is
+// working-directory-independent and passes under ctest — matching
+// tests/land/test_geojson_coastline.cpp.
 TEST(GeoJsonStaticObstacles, LoadsFixtureFromDisk) {
-  const std::vector<StaticObstacle> obs =
-      loadStaticObstaclesGeoJson("tests/fixtures/static/harbor_obstacles.geojson");
+  const std::vector<StaticObstacle> obs = loadStaticObstaclesGeoJson(
+      std::string(NAVTRACKER_SOURCE_DIR) +
+      "/tests/fixtures/static/harbor_obstacles.geojson");
   ASSERT_EQ(obs.size(), 2u);
 }
 
