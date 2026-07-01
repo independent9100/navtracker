@@ -8,7 +8,6 @@
 #include <map>
 #include <memory>
 #include <set>
-#include <string>
 #include <vector>
 
 #include "adapters/benchmark/SimScenarioRun.hpp"
@@ -50,7 +49,9 @@ TEST(HarborCompleteTruth, TruthIsClosedFiveTargets) {
 
 TEST(HarborCompleteTruth, PierAndClutterAddNoTruth) {
   const auto scenarios = defaultSimScenarios();
-  auto scen = findHarbor(scenarios)->generate(0);
+  ScenarioRun* h = findHarbor(scenarios);
+  ASSERT_NE(h, nullptr);
+  auto scen = h->generate(0);
   // 5 targets x 40 scans = 200 truth samples exactly.
   EXPECT_EQ(scen.truth.size(), 5u * 40u);
   bool has_pier = false, has_clutter = false, has_ais = false, has_anch = false;
@@ -76,8 +77,10 @@ TEST(HarborCompleteTruth, ChartFreeNoCoastline) {
 
 TEST(HarborCompleteTruth, DeterministicForSameSeed) {
   const auto scenarios = defaultSimScenarios();
-  auto a = findHarbor(scenarios)->generate(0);
-  auto b = findHarbor(scenarios)->generate(0);
+  ScenarioRun* h = findHarbor(scenarios);
+  ASSERT_NE(h, nullptr);
+  auto a = h->generate(0);
+  auto b = h->generate(0);
   ASSERT_EQ(a.measurements.size(), b.measurements.size());
   for (std::size_t i = 0; i < a.measurements.size(); ++i) {
     EXPECT_EQ(a.measurements[i].value, b.measurements[i].value);
