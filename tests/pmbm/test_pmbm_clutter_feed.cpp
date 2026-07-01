@@ -21,7 +21,7 @@ using navtracker::pmbm::PmbmTracker;
 namespace {
 // Records every observe() bundle; returns a fixed baseline for paramsFor.
 struct SpyDetectionModel : ISensorDetectionModel {
-  mutable int observe_calls = 0;
+  int observe_calls = 0;
   std::vector<std::vector<ISensorDetectionModel::ScanObservation>> bundles;
   DetectionParams paramsFor(SensorKind /*sensor*/,
                             MeasurementModel /*model*/) const override {
@@ -84,7 +84,7 @@ TEST(PmbmClutterFeed, FlagOnFeedsWeightedObservations) {
     t.predict(Timestamp::fromSeconds(k));
     t.processBatch({posMeas(100.0, 0.0, k)});
   }
-  EXPECT_GT(spy->observe_calls, 0);
+  EXPECT_GE(spy->observe_calls, 7);  // ~once per non-empty scan (8 scans)
   // In a late scan the target's Bernoulli should claim the return (weight < 1).
   bool saw_claimed = false;
   for (const auto& bundle : spy->bundles)

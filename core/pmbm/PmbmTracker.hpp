@@ -514,7 +514,8 @@ class PmbmTracker {
     // under PMBM (it is inert otherwise). observe() runs post-prune, so it only
     // affects the NEXT scan's λ_C — determinism preserved. Default false →
     // observe() never called → bit-identical (a Fixed model ignores observe()
-    // anyway). See docs/adr/0002 Stage 1b.
+    // anyway). See docs/algorithms/comparison-baselines.md (Static-obstacle
+    // Stage 1b row) + ADR 0002 Staging.
     bool feed_clutter_map = false;
   };
 
