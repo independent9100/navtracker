@@ -86,17 +86,20 @@ TEST(StaticObstaclePipeline, SuppressesPhantomKeepsRealVesselAndAlarms) {
   StaticObstacleModel m = obstacleModel();
   t.setStaticObstacleModel(&m);
 
-  // A real vessel crosses west→east at y=60 m (60 m from obstacle centre, in
-  // the 100 m soft buffer), 5 m/s, one scan per second.
+  // A real vessel TRANSITS the 100 m keep-clear buffer: west→east at y=60 m
+  // from x=-70 to x=+70 (closest approach 60 m to the obstacle centre — inside
+  // the 100 m soft buffer, outside the 15 m hard footprint), 10 m/s, one scan
+  // per second. It even BIRTHS inside the buffer (its birth is soft-suppressed)
+  // yet must still be tracked — the passing/anchored-vessel protection.
   double maxExistenceNearObstacle = 0.0;
   double maxExistenceOnVessel = 0.0;
-  for (int k = 0; k < 20; ++k) {
+  for (int k = 0; k < 15; ++k) {
     const double tt = static_cast<double>(k);
     t.predict(Timestamp::fromSeconds(tt));
-    const double vx = -200.0 + 5.0 * tt;  // vessel x at this scan
+    const double vx = -70.0 + 10.0 * tt;  // vessel x this scan (-70..+70, in buffer)
     std::vector<Measurement> scan;
-    scan.push_back(posMeas(5.0, 3.0, tt));      // clutter inside footprint
-    scan.push_back(posMeas(vx, 60.0, tt));      // the real vessel
+    scan.push_back(posMeas(5.0, 3.0, tt));      // clutter inside the hard footprint
+    scan.push_back(posMeas(vx, 60.0, tt));      // the real vessel, inside the buffer
     t.processBatch(scan);
 
     for (const auto& h : t.density().mbm) {

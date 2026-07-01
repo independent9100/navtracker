@@ -367,6 +367,9 @@ std::vector<MetricRow> runSweep(
           // Stage 1 static-obstacle model (ADR 0002), same lifetime/datum
           // rules as the land model above. Prefer in-memory synthetic
           // obstacles; else a GeoJSON fixture path. Null → bit-identical.
+          // The shared_ptr outlives the synchronous runBenchPmbm call below
+          // (the tracker holds only a raw pointer). The datum is fixed for the
+          // whole run, so no datum-sink registration is needed.
           std::shared_ptr<StaticObstacleModel> obstacles;
           if (config.use_static_obstacle_model && scen.datum.has_value()) {
             std::optional<std::vector<StaticObstacle>> synth =
