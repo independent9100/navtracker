@@ -661,4 +661,30 @@ Scenario addShoreClutter(Scenario base, const geo::Datum& datum,
                          detection_prob, pos_noise_std_m, seed);
 }
 
+Scenario addAnchoredBoats(Scenario base, const geo::Datum& datum,
+                          const std::vector<Eigen::Vector2d>& boat_positions,
+                          std::uint64_t truth_id_start, double detection_prob,
+                          double pos_noise_std_m, std::uint32_t seed) {
+  const std::vector<double> scan_times = distinctScanTimes(base);
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> noise(0.0, pos_noise_std_m);
+  std::uniform_real_distribution<double> u(0.0, 1.0);
+  for (double t : scan_times) {
+    for (std::size_t b = 0; b < boat_positions.size(); ++b) {
+      const Eigen::Vector2d& pos = boat_positions[b];
+      const std::uint64_t id = truth_id_start + static_cast<std::uint64_t>(b);
+      // Truth exists every scan regardless of detection (the boat is there).
+      base.truth.push_back(makeTruth(pos, Eigen::Vector2d::Zero(), t, id));
+      if (u(rng) < detection_prob) {
+        const Eigen::Vector2d noisy(pos.x() + noise(rng), pos.y() + noise(rng));
+        base.measurements.push_back(makeArpaPositionMeasurement(
+            noisy, t, pos_noise_std_m, "sim_anchored"));
+      }
+    }
+  }
+  sortMeasurementsByTime(base);
+  base.datum = datum;
+  return base;
+}
+
 }  // namespace navtracker

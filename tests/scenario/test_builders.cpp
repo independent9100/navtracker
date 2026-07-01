@@ -294,3 +294,46 @@ TEST(Builders, AddFixedClutterIsDeterministic) {
     EXPECT_EQ(a.measurements[i].source_id, b.measurements[i].source_id);
   }
 }
+
+#include <set>
+using navtracker::addAnchoredBoats;
+
+TEST(Builders, AddAnchoredBoatsAddsZeroVelocityTruthAndRadarReturns) {
+  Scenario base = buildStraightLineScenario(
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),
+      {1.0, 2.0, 3.0, 4.0}, /*pos_noise_std_m=*/1.0, /*seed=*/7,
+      /*truth_id=*/1);
+  const std::size_t base_truth = base.truth.size();  // 4 (one per scan)
+  const geo::Datum datum(geo::Geodetic{42.35, -71.05, 0.0});
+  const std::vector<Eigen::Vector2d> boats = {{100.0, 50.0}, {200.0, 60.0}};
+
+  Scenario s = addAnchoredBoats(base, datum, boats, /*truth_id_start=*/3,
+                                /*detection_prob=*/1.0, /*pos_noise_std_m=*/2.0,
+                                /*seed=*/9);
+
+  // 2 boats x 4 scans = 8 truth samples added, all zero velocity, ids {3,4}.
+  EXPECT_EQ(s.truth.size(), base_truth + 8u);
+  std::set<std::uint64_t> boat_ids;
+  int zero_vel = 0;
+  for (const auto& ts : s.truth) {
+    if (ts.truth_id >= 3) {
+      boat_ids.insert(ts.truth_id);
+      if (ts.velocity.norm() == 0.0) ++zero_vel;
+      // truth position is the nominal anchor (noise-free)
+      const bool at_b0 = (ts.position - Eigen::Vector2d(100.0, 50.0)).norm() == 0.0;
+      const bool at_b1 = (ts.position - Eigen::Vector2d(200.0, 60.0)).norm() == 0.0;
+      EXPECT_TRUE(at_b0 || at_b1);
+    }
+  }
+  EXPECT_EQ(boat_ids, (std::set<std::uint64_t>{3u, 4u}));
+  EXPECT_EQ(zero_vel, 8);
+
+  // detection_prob 1.0 -> 2 radar returns per scan x 4 = 8, tagged sim_anchored
+  int anchored = 0;
+  for (const auto& m : s.measurements)
+    if (m.source_id == "sim_anchored") {
+      ++anchored;
+      EXPECT_EQ(m.sensor, SensorKind::ArpaTtm);
+    }
+  EXPECT_EQ(anchored, 8);
+}

@@ -248,6 +248,19 @@ Scenario addFixedClutter(
     const std::vector<Eigen::Vector2d>& points, const std::string& source_id,
     double detection_prob, double pos_noise_std_m, std::uint32_t seed = 0);
 
+// Add `boat_positions.size()` stationary (anchored) vessels to `base`. Each
+// boat is a REAL target: a zero-velocity TruthSample is emitted for it every
+// scan (ids truth_id_start, +1, ...), AND — with probability detection_prob —
+// a radar-like ArpaTtm / "sim_anchored" Position2D return with isotropic
+// noise (a compact watch circle). Truth is emitted even on undetected scans
+// (the boat is present). These are the "keep, never suppress" set for the
+// live static-occupancy layer. Sets base.datum; returns re-sorted by time.
+Scenario addAnchoredBoats(
+    Scenario base, const geo::Datum& datum,
+    const std::vector<Eigen::Vector2d>& boat_positions,
+    std::uint64_t truth_id_start, double detection_prob, double pos_noise_std_m,
+    std::uint32_t seed = 0);
+
 // Add stationary shore clutter to `base`. For each distinct scan timestamp in
 // base.measurements, each point in `clutter_enu_points` emits a Position2D
 // measurement (SensorKind::ArpaTtm, source_id "sim_shore") at its fixed ENU
