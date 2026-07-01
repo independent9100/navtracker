@@ -10,10 +10,10 @@ using navtracker::benchmark::defaultConfigs;
 
 TEST(Config, DefaultConfigsHaveUniqueLabels) {
   const auto configs = defaultConfigs();
-  // 30: 29 standing + imm_cv_ct_pmbm_land (2026-07-01: adapt + land prior,
-  // no bundle knobs — the general-purpose coastal default; root-cause fix
-  // for the open-sea missed-target regression, see eval-log 2026-07-01).
-  ASSERT_EQ(configs.size(), 30u);
+  // 31: 30 standing + imm_cv_ct_pmbm_static (2026-07-01: land + static-obstacle
+  // birth prior (ADR 0002 Stage 1a); bit-identical to imm_cv_ct_pmbm_land when
+  // no obstacle fixture is wired).
+  ASSERT_EQ(configs.size(), 31u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   // Canonical wires the bias estimator unconditionally; the
@@ -25,9 +25,10 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 30u);
+  EXPECT_EQ(labels.size(), 31u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_land"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_pmbm_static"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt_k3"), 1u);
   // Phase 9 probe siblings dropped 2026-06-23 (S4 fold-in):
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt_k3_altgate"), 0u);

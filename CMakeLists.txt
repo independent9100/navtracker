@@ -252,6 +252,7 @@ add_executable(navtracker_tests
   tests/scenario/test_reorder_buffer_e2e.cpp
   tests/scenario/test_bearing_bias_convergence.cpp
   tests/integration/test_full_stack_pipeline.cpp
+  tests/integration/test_static_obstacle_pipeline.cpp
   tests/scenario/test_filter_comparison.cpp
   tests/scenario/test_cpa_scenario.cpp
   tests/scenario/test_jpda_comparison.cpp

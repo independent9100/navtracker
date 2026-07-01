@@ -36,11 +36,13 @@
 //   - Per-config Tracker construction parameters when they need to vary.
 
 #include "adapters/land/GeoJsonCoastline.hpp"
+#include "adapters/static/GeoJsonStaticObstacles.hpp"
 #include "core/benchmark/BenchRunner.hpp"
 #include "core/benchmark/BenchSink.hpp"
 #include "core/benchmark/Consistency.hpp"
 #include "core/bias/SensorBiasPairExtractor.hpp"
 #include "core/land/CoastlineModel.hpp"
+#include "core/static/StaticObstacleModel.hpp"
 #include "core/pipeline/Tracker.hpp"
 #include "core/sensor_activity/DeclaredSensorActivity.hpp"
 #include "core/tracking/ClutterMapDetectionModel.hpp"
@@ -357,6 +359,33 @@ std::vector<MetricRow> runSweep(
                   tracker.setLandModel(land.get());
                 } catch (const std::exception&) {
                   // GeoJSON parse failure — proceed without land model
+                }
+              }
+            }
+          }
+
+          // Stage 1 static-obstacle model (ADR 0002), same lifetime/datum
+          // rules as the land model above. Prefer in-memory synthetic
+          // obstacles; else a GeoJSON fixture path. Null → bit-identical.
+          std::shared_ptr<StaticObstacleModel> obstacles;
+          if (config.use_static_obstacle_model && scen.datum.has_value()) {
+            std::optional<std::vector<StaticObstacle>> synth =
+                scenario_ptr->syntheticObstacles();
+            if (synth.has_value()) {
+              obstacles = std::make_shared<StaticObstacleModel>(
+                  std::move(*synth), *scen.datum);
+              tracker.setStaticObstacleModel(obstacles.get());
+            } else if (!desc.static_obstacles_geojson_path.empty()) {
+              std::ifstream probe(desc.static_obstacles_geojson_path);
+              if (probe.good()) {
+                try {
+                  auto obs = loadStaticObstaclesGeoJson(
+                      desc.static_obstacles_geojson_path);
+                  obstacles = std::make_shared<StaticObstacleModel>(
+                      std::move(obs), *scen.datum);
+                  tracker.setStaticObstacleModel(obstacles.get());
+                } catch (const std::exception&) {
+                  // GeoJSON parse failure — proceed without obstacles.
                 }
               }
             }

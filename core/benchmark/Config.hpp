@@ -98,6 +98,13 @@ struct Config {
   // coastline_geojson_path. Scenarios without a coastline fixture silently
   // skip wiring (land model stays null → bit-identical to no-land behaviour).
   bool use_land_model{false};
+  // Stage 1 static-obstacle branch (ADR 0002): when true, Sweep builds a
+  // StaticObstacleModel from the scenario's synthetic obstacles (preferred)
+  // or its static_obstacles_geojson_path, and calls
+  // tracker.setStaticObstacleModel(). Only meaningful when tracker_kind ==
+  // Pmbm and the PMBM config sets use_static_obstacle_model. Scenarios with no
+  // obstacles silently skip wiring (model stays null → bit-identical).
+  bool use_static_obstacle_model{false};
 };
 
 // Returns the five baseline configurations in fixed order:

@@ -637,6 +637,37 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // Stage 1 static-obstacle branch (ADR 0002). Honest ablation of
+  // imm_cv_ct_pmbm_land with the static-obstacle birth prior added. With no
+  // obstacle fixture wired in the scenario this is bit-identical to
+  // imm_cv_ct_pmbm_land. When a StaticObstacleModel is present, Bernoulli
+  // births inside charted footprints are hard-gated and births in the
+  // keep-clear buffer are soft-scaled multiplicatively with the land prior.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_static";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_land_model = true;               // gate Sweep CoastlineModel wiring
+    c.use_static_obstacle_model = true;    // gate Sweep StaticObstacleModel wiring
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.adaptive_k_best = false;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.lambda_birth = 1e-5;
+      cfg.min_new_bernoulli_existence = 0.05;  // == adapt; NO birth brake
+      cfg.use_land_model = true;               // spatial birth prior (only add)
+      cfg.use_static_obstacle_model = true;    // charted obstacle birth prior
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Task 1 probe: clutter-invariant birth existence. Same as
   // imm_cv_ct_pmbm_adapt but r_new is pinned to a target instead of a
   // fixed absolute λ_birth — fixes the philos over-confident-birth bug.

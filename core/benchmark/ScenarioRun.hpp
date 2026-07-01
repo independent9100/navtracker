@@ -8,6 +8,7 @@
 #include "core/bias/SensorBiasEstimator.hpp"
 #include "core/land/CoastlineGeometry.hpp"
 #include "core/scenario/Truth.hpp"
+#include "core/types/StaticObstacle.hpp"
 #include "ports/ISensorDetectionModel.hpp"
 
 namespace navtracker {
@@ -62,6 +63,10 @@ struct ScenarioDescriptor {
   // Sweep.cpp checks this (+ file existence) before building a
   // CoastlineModel. Relative to the process cwd (project root).
   std::string coastline_geojson_path;
+  // Optional path to a GeoJSON file of charted static obstacles (ADR 0002
+  // Stage 1). Non-empty signals a chart fixture; Sweep checks this + file
+  // existence before building a StaticObstacleModel. Relative to the cwd.
+  std::string static_obstacles_geojson_path;
 };
 
 // Port: produces a Scenario (measurements + truth) for a given seed.
@@ -88,6 +93,15 @@ class ScenarioRun {
   // seeds the shore clutter also drives the land model. Real-data replay
   // scenarios leave this null and keep using coastline_geojson_path.
   virtual std::optional<CoastlineGeometry> syntheticCoastline() const {
+    return std::nullopt;
+  }
+
+  // Optional in-memory charted obstacles for synthetic scenarios. Default =
+  // none (every existing scenario untouched). When present AND
+  // config.use_static_obstacle_model AND Scenario.datum is set, Sweep builds a
+  // StaticObstacleModel from these (in preference to
+  // static_obstacles_geojson_path).
+  virtual std::optional<std::vector<StaticObstacle>> syntheticObstacles() const {
     return std::nullopt;
   }
 };
