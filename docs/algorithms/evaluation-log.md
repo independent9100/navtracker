@@ -8,6 +8,32 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-02 — R3 (static review): extent-is-interim gate scenarios + 1b-i baseline
+
+Static-branch review ticket R3. Added Dalhaug 2025 (arXiv:2502.18368) to
+`docs/references/` and marked extent as an **interim** discriminator in the Stage
+1b design + ADR 0002 (the literature discriminates by classification, not
+geometry). Added the two failure-direction gate scenarios and recorded their
+1b-i "before" numbers (imm_cv_ct_pmbm, 5 seeds) — NOT pass/fail gates under 1b-i:
+
+| Scenario | card_err | gospa_false | lifetime | 1b-ii target |
+|---|---:|---:|---:|---|
+| `harbor_large_anchored_ship` (real, extended) | 19.06 | 3846 | 0.978 | **KEEP** the ship |
+| `harbor_compact_dolphin` (fixed, compact) | 12.64 | 2561 | 0.974 | **SUPPRESS** the phantom |
+
+- `harbor_large_anchored_ship`: the real ship (truth id 6) is tracked at lifetime
+  0.978 under 1b-i, but its ~150 m hull spawns extra tracks (card_err 19 vs the
+  5-target harbor baseline 11.6). An **extent-only** 1b-ii discriminator would
+  wrongly SUPPRESS the extended hull → the ship LOST. That is the KEEP failure
+  direction 1b-ii's corroboration (chart/AIS/camera) must fix.
+- `harbor_compact_dolphin`: the compact fixed dolphin (no truth) adds ~1 phantom
+  track (card_err 12.6 vs 11.6). An extent discriminator KEEPS it (compact →
+  vessel-like) → the SUPPRESS failure direction.
+
+Both are deterministic + contract-tested (`test_harbor_gate_scenarios.cpp`). They
+are the "before" reference for the Stage-1b-ii classification work; not gated on
+under 1b-i.
+
 ## 2026-07-02 — R4 (static review): philos chart-coverage field-check committed
 
 Static-branch review ticket R4. The strongest quantitative evidence for the

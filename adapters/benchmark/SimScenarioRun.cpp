@@ -523,11 +523,65 @@ class HarborBoatNearPierScenarioRun : public HarborChartedPierScenarioRun {
   }
 };
 
+// R3 gate scenario (extent-is-interim failure direction #1). A large anchored
+// SHIP (~150 m hull) that is a REAL target — truth id 6 at the hull centre plus
+// an extended line of returns spanning ~150 m. An extent-only discriminator
+// (Stage 1b-i) would wrongly SUPPRESS it as "structure" (dangerous). This
+// scenario exists to record the 1b-i "before" numbers; it is NOT a pass/fail
+// gate for 1b-i. The KEEP requirement is enforced once 1b-ii's corroboration
+// discriminator (chart/AIS/camera) lands.
+class HarborLargeAnchoredShipScenarioRun : public HarborCompleteTruthScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return describe("harbor_large_anchored_ship", shoreClutterTable());
+  }
+  Scenario generate(std::uint64_t seed) override {
+    Scenario base = HarborCompleteTruthScenarioRun::generate(seed);
+    const geo::Datum datum(navtracker::geo::Geodetic{42.35, -71.05, 0.0});
+    const auto s32 = static_cast<std::uint32_t>(seed);
+    // Real ship: truth id 6 at the hull centre (open water, far from pier/boats).
+    base = addAnchoredBoats(std::move(base), datum, {{250.0, -100.0}},
+                            /*truth_id_start=*/6, /*detection_prob=*/0.95,
+                            /*pos_noise_std_m=*/5.0, s32 + 55u);
+    // Extended hull signature: a ~150 m line of returns through the centre, so
+    // the ship reads as a many-cell EXTENDED cluster (the extent trap).
+    std::vector<Eigen::Vector2d> hull;
+    for (double x = 175.0; x <= 325.0; x += 12.0)
+      hull.emplace_back(x, -100.0);
+    base = addFixedClutter(std::move(base), datum, hull, "sim_large_ship",
+                           /*detection_prob=*/0.9, /*pos_noise_std_m=*/4.0,
+                           s32 + 56u);
+    return base;
+  }
+};
+
+// R3 gate scenario (extent-is-interim failure direction #2). A single compact
+// fixed structure (dolphin / mooring pile) with NO truth — one persistent point
+// return. An extent-only discriminator keeps it (compact → "vessel-like"), so it
+// pollutes cardinality as a phantom track. SUPPRESS target for 1b-ii; recorded
+// here as the 1b-i "before".
+class HarborCompactDolphinScenarioRun : public HarborCompleteTruthScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return describe("harbor_compact_dolphin", shoreClutterTable());
+  }
+  Scenario generate(std::uint64_t seed) override {
+    Scenario base = HarborCompleteTruthScenarioRun::generate(seed);
+    const geo::Datum datum(navtracker::geo::Geodetic{42.35, -71.05, 0.0});
+    const auto s32 = static_cast<std::uint32_t>(seed);
+    // Compact fixed structure, single persistent point return, no truth.
+    base = addFixedClutter(std::move(base), datum, {{300.0, 200.0}},
+                           "sim_dolphin", /*detection_prob=*/0.9,
+                           /*pos_noise_std_m=*/3.0, s32 + 66u);
+    return base;
+  }
+};
+
 }  // namespace
 
 std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   std::vector<std::unique_ptr<ScenarioRun>> out;
-  out.reserve(20);
+  out.reserve(22);
   out.push_back(std::make_unique<CrossingScenarioRun>());
   out.push_back(std::make_unique<OvertakingScenarioRun>());
   out.push_back(std::make_unique<HeadOnScenarioRun>());
@@ -548,6 +602,8 @@ std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   out.push_back(std::make_unique<HarborCompleteTruthScenarioRun>());
   out.push_back(std::make_unique<HarborChartedPierScenarioRun>());
   out.push_back(std::make_unique<HarborBoatNearPierScenarioRun>());
+  out.push_back(std::make_unique<HarborLargeAnchoredShipScenarioRun>());
+  out.push_back(std::make_unique<HarborCompactDolphinScenarioRun>());
   return out;
 }
 
