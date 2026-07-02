@@ -53,9 +53,13 @@ c_static = max( c_1, c_2, …, c_N )
 ```
 
 Default `soft_max = 0.9`. The constraint `soft_max < static_obstacle_hard_gate`
-(default 0.95) is enforced by configuration: the outer keep-clear buffer is
-**always soft-only**. Only the hard footprint interior (`d ≤ R_hard`) can trigger
-the hard gate.
+(default 0.95) keeps the outer keep-clear buffer **always soft-only**; only the
+hard footprint interior (`d ≤ R_hard`) can trigger the hard gate. The
+`StaticObstacleModel` constructor caps `soft_max` at `0.9` (R7.1) as a defensive
+default for the default gate. Because the pure model cannot see the tracker's
+`static_obstacle_hard_gate`, this cap only guarantees the invariant for the
+default gate — a caller that lowers the gate below `0.9` must lower `soft_max`
+below its chosen gate too (composition-root responsibility; finding #7).
 
 ### 1.3 Combined birth scale
 
@@ -96,7 +100,49 @@ intensity `(1 − c_static) · λ_birth` accumulates evidence over several scans
 This is the *anchored-vessel protection*: suppress phantom tracks from a fixed
 structure, not real vessels passing close to it.
 
-### 1.5 Keep-clear proximity alarm
+### 1.5 Phantom-birth floor interaction (R1)
+
+The tracker applies a **phantom-birth floor** `min_new_bernoulli_existence`: a
+new-target candidate whose existence `r_new = ρ_target / ρ_total` is below the
+floor is not materialised (it is treated as clutter). Naively, soft suppression
+composes with this floor into an unintended **hard no-birth zone**: a birth whose
+*unsuppressed* existence clears the floor can be pushed below it by `(1 − c_static)`,
+so no vessel ever births in the keep-clear ring — the very cliff §1.4 avoids at
+the hard gate but reintroduced at the soft floor.
+
+**R1 fix.** The phantom-birth gate is checked against the *pre-suppression*
+existence, not the suppressed `r_new`. A birth whose gate existence clears the
+floor still materialises, carrying the small **suppressed** `r_new`; a genuine
+phantom (gate existence below the floor) and a hard-drop (`birthScale < 0`) are
+still rejected.
+
+**Scope — obstacle only, land kept (finding #3).** The relaxation applies **only
+where a static obstacle contributes** (`c_static > 0`), and there it relaxes the
+**obstacle factor only** — the land factor `(1 − c_land)` stays in the gate
+reference:
+
+```
+gate reference (obstacle overlap):  ρ_target · (1 − c_land)      [obstacle relaxed]
+gate reference (land only)       :  ρ_target · (1 − c_land)(1 − c_static)   [suppressed]
+```
+
+This preserves ADR 0001's deliberate near-shore no-birth zone: where **only** land
+suppresses, the floor still gates on the fully suppressed value; and even in the
+land×obstacle **overlap** the land factor keeps its full gating role, so a
+keep-clear ring drawn over a shore band does not strip the land zone. When no
+obstacle model is wired the reference equals the suppressed value → bit-identical
+to the pre-R1 baseline.
+
+**Boundary — the r_min prune (finding #1).** A materialised birth still carries
+its suppressed `r_new`. It accumulates on re-detection **only if** that `r_new`
+clears the Bernoulli prune floor `r_min` (default `1e-3`); a target driven below
+`r_min` by deep land×obstacle composition is pruned the same scan and is **not
+trackable from position alone**. This is by design: forcing persistence by
+flooring existence to `r_min` would seed phantom tracks in clutter (the exact
+over-count the shore-clutter work fights). The principled cure for that regime is
+sensor-aware suppression — EO/IR or AIS corroboration (ADR 0001 A3, §4 item 6).
+
+### 1.6 Keep-clear proximity alarm
 
 `StaticHazardEvaluator` performs a **static range check** — not a CPA
 calculation — each time `evaluate(own_ship_enu, datum, t)` is called:
@@ -139,7 +185,10 @@ the vessel MTT branch (see `CpaEvaluator`).
 4. **`soft_max < static_obstacle_hard_gate`.** The inequality `0.9 < 0.95`
    (default values) must hold. If this is violated by config, the outer
    buffer becomes a hard gate and a real vessel in the keep-clear ring would
-   be suppressed rather than softened.
+   be suppressed rather than softened. The constructor cap (`soft_max ≤ 0.9`)
+   enforces this for the **default** gate only; with a lowered gate the caller
+   must lower `soft_max` to match (finding #7 — the pure model cannot read the
+   tracker Config).
 
 5. **A real vessel gets repeated detections.** The soft ramp allows a real
    vessel passing through the keep-clear ring to accumulate enough existence
@@ -241,11 +290,14 @@ CPA-to-vessel math remains in `CpaEvaluator` for the dynamic track branch.
    an ENC adapter (IHO S-57 parser → `StaticObstacle` objects) and an AIS Message 21
    adapter (AtoN position reports → `StaticObstacle` with `aton = Virtual`).
 
-5. **A real fixture with charted obstacles.** There is no measured A/B benchmark
-   improvement yet. None of the current test fixtures (AutoFerry, philos) contains
-   charted static hazards, so the birth-prior effect is untested end-to-end on real
-   data. A fixture with known rocks/buoys, ground-truth vessel tracks, and an OSPA/
-   GOSPA before/after comparison is the right follow-up measurement.
+5. **A real fixture with charted obstacles.** The first *synthetic* A/B exists:
+   the `harbor_charted_pier` scenario (R5) charts a pier footprint + keep-clear
+   ring over a known clutter source and measures `card_err` 11.64 → 7.43 under
+   `imm_cv_ct_pmbm` (the first quantified Stage-1a benefit). No **real** fixture
+   yet: none of AutoFerry / philos carries charted static hazards, so the effect
+   is still untested end-to-end on real data. A fixture with known rocks/buoys,
+   ground-truth vessel tracks, and an OSPA/GOSPA before/after comparison is the
+   right follow-up measurement.
 
 6. **Sensor-aware near-shore birth discriminator (ADR 0001 A3).** EO/IR or AIS
    corroboration of a near-shore return that overlaps a charted obstacle can

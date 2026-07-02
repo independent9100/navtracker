@@ -114,10 +114,14 @@ std::vector<StaticObstacle> parseStaticObstaclesGeoJson(
       o.footprint_radius_m = numberOr(props, "footprint_radius_m", 0.0);
       o.keep_clear_radius_m = numberOr(props, "keep_clear_radius_m", 0.0);
       o.position_uncertainty_m = numberOr(props, "position_uncertainty_m", 0.0);
-      // Radii are geometric magnitudes — a negative value is malformed; skip.
-      if (o.footprint_radius_m < 0.0 || o.keep_clear_radius_m < 0.0 ||
-          o.position_uncertainty_m < 0.0)
-        continue;
+      // Radii are geometric magnitudes — a negative value is malformed. Finding
+      // #6: clamp the offending magnitude to 0 rather than dropping the whole
+      // charted hazard. Losing a safety-critical obstacle over one bad optional
+      // field is worse than zeroing that field; the position, category and any
+      // valid radii still map the hazard.
+      o.footprint_radius_m = std::max(0.0, o.footprint_radius_m);
+      o.keep_clear_radius_m = std::max(0.0, o.keep_clear_radius_m);
+      o.position_uncertainty_m = std::max(0.0, o.position_uncertainty_m);
       o.source_id = stringOr(props, "source_id");
       out.push_back(std::move(o));
     } catch (const nlohmann::json::exception&) {

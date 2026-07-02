@@ -140,6 +140,78 @@ TEST(PmbmBirthFloor, LandOnlySuppressionPreservesAdr0001NoBirthZone) {
   EXPECT_NEAR(maxExistence(t), 0.0, 1e-9);  // still a no-birth zone (ADR 0001)
 }
 
+// R1 finding #3: in the land×obstacle OVERLAP the floor must relax the OBSTACLE
+// suppression only — land keeps its ADR-0001 near-shore no-birth role. A spot
+// with heavy land (c=0.9, land-only r_new ≈ 0.011 < 0.05 floor) and a mild
+// obstacle (c=0.5) must NOT birth: the obstacle presence must not strip land's
+// gate. Pre-fix the gate used the FULLY unsuppressed r_new (0.1 > floor) and
+// wrongly birthed here, disabling the land zone wherever a keep-clear ring
+// overlaps the shore band.
+TEST(PmbmBirthFloor, ObstacleOverlapDoesNotStripLandZone) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+  PmbmTracker::Config c = cfg();  // floor 0.05, target 0.1
+  c.use_land_model = true;
+  c.use_static_obstacle_model = true;
+  PmbmTracker t(ekf, c);
+  FakeLand land(0.9);    // land-only r_new ≈ 0.011 < 0.05 floor → no-birth zone
+  FakeObstacle obs(0.5);  // mild obstacle present (overlap), soft
+  t.setLandModel(&land);
+  t.setStaticObstacleModel(&obs);
+
+  t.predict(Timestamp::fromSeconds(0));
+  t.processBatch({posMeas(100.0, 0.0, 0)});
+  EXPECT_NEAR(maxExistence(t), 0.0, 1e-9);  // land zone preserved in overlap
+}
+
+// R1 finding #3 counterpart: with MILD land (c=0.5, land-only r_new ≈ 0.053 >
+// 0.05 floor) the obstacle relaxation still lets a legitimate near-obstacle
+// birth through — the fix relaxes the obstacle, not land, so a vessel next to a
+// charted pier in clear-of-shore water still initiates.
+TEST(PmbmBirthFloor, ObstacleOverlapStillBirthsWhereLandIsMild) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+  PmbmTracker::Config c = cfg();
+  c.use_land_model = true;
+  c.use_static_obstacle_model = true;
+  PmbmTracker t(ekf, c);
+  FakeLand land(0.5);    // land-only r_new ≈ 0.053 > 0.05 floor → admits
+  FakeObstacle obs(0.9);  // heavy obstacle suppression, relaxed by the gate
+  t.setLandModel(&land);
+  t.setStaticObstacleModel(&obs);
+
+  t.predict(Timestamp::fromSeconds(0));
+  t.processBatch({posMeas(100.0, 0.0, 0)});
+  EXPECT_GT(maxExistence(t), 0.0);   // admitted (obstacle relaxed)
+  EXPECT_LT(maxExistence(t), 0.05);  // but materialised at the suppressed r_new
+}
+
+// R1 finding #1 (characterisation, NOT a bug): a birth admitted past the
+// phantom-birth gate still materialises at its SUPPRESSED r_new. When land×
+// obstacle composition drives that below r_min (1e-3) the r_min pruner removes
+// it the same scan — so a target this deep in a keep-clear ring over a shore
+// band is NOT trackable from position alone. This is by design: injecting r_min
+// existence to force persistence would seed phantom tracks in clutter (the exact
+// over-count the philos work fights). The real cure is sensor-aware suppression
+// (ADR 0001 A3: EO/IR/AIS corroboration). This test locks the boundary in.
+TEST(PmbmBirthFloor, DeepCompositionNotTrackablePositionOnly) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+  PmbmTracker::Config c = cfg();
+  c.min_new_bernoulli_existence = 0.0;  // no phantom gate → admission always
+  c.use_land_model = true;
+  c.use_static_obstacle_model = true;
+  PmbmTracker t(ekf, c);
+  FakeLand land(0.9);     // composed scale 0.1 * 0.05 = 0.005
+  FakeObstacle obs(0.95);  // soft (== hard gate, not >) → r_new ≈ 5.5e-4 < r_min
+  t.setLandModel(&land);
+  t.setStaticObstacleModel(&obs);
+
+  t.predict(Timestamp::fromSeconds(0));
+  t.processBatch({posMeas(100.0, 0.0, 0)});
+  EXPECT_NEAR(maxExistence(t), 0.0, 1e-9);  // pruned by r_min (A3 territory)
+}
+
 // R1 guard: with no models wired (default), the birth floor is unchanged — a
 // lone measurement births at the target existence (0.1), bit-identical to
 // pre-R1 behaviour.

@@ -119,22 +119,23 @@ TEST(GeoJsonStaticObstacles, OutOfRangeLongitudeSkipped) {
   EXPECT_EQ(parseStaticObstaclesGeoJson(lo).size(), 0u);
 }
 
-// R7.2: a negative radius (footprint / keep-clear / position-uncertainty) is
-// skipped — radii are geometric magnitudes and must be non-negative.
-TEST(GeoJsonStaticObstacles, NegativeRadiusSkipped) {
-  auto feat = [](const char* radius_key, double v) {
-    return std::string(R"({"type":"FeatureCollection","features":[
-      {"type":"Feature","geometry":{"type":"Point","coordinates":[-71.05,42.35]},
-       "properties":{")") + radius_key + "\":" + std::to_string(v) + "}}]}";
-  };
-  EXPECT_EQ(parseStaticObstaclesGeoJson(feat("footprint_radius_m", -5.0)).size(),
-            0u);
-  EXPECT_EQ(
-      parseStaticObstaclesGeoJson(feat("keep_clear_radius_m", -10.0)).size(),
-      0u);
-  EXPECT_EQ(
-      parseStaticObstaclesGeoJson(feat("position_uncertainty_m", -2.0)).size(),
-      0u);
+// R7.2 finding #6: a negative radius (footprint / keep-clear / position-
+// uncertainty) is CLAMPED to 0, not used to drop the whole obstacle. A charted
+// hazard is safety-critical data — losing it entirely over one malformed
+// optional field is worse than zeroing that field; the position + category (and
+// any valid radii) still map the hazard. Only the offending magnitude is reset.
+TEST(GeoJsonStaticObstacles, NegativeRadiusClampedObstacleKept) {
+  // Negative footprint clamps to 0; the valid keep-clear alarm ring survives.
+  const std::string json = R"({"type":"FeatureCollection","features":[
+     {"type":"Feature","geometry":{"type":"Point","coordinates":[-71.05,42.35]},
+      "properties":{"category":"wreck","footprint_radius_m":-5.0,
+      "keep_clear_radius_m":120.0,"position_uncertainty_m":-2.0}}]})";
+  const std::vector<StaticObstacle> obs = parseStaticObstaclesGeoJson(json);
+  ASSERT_EQ(obs.size(), 1u);  // hazard preserved, not dropped
+  EXPECT_EQ(obs[0].category, ObstacleCategory::Wreck);
+  EXPECT_DOUBLE_EQ(obs[0].footprint_radius_m, 0.0);      // clamped
+  EXPECT_DOUBLE_EQ(obs[0].position_uncertainty_m, 0.0);  // clamped
+  EXPECT_DOUBLE_EQ(obs[0].keep_clear_radius_m, 120.0);   // valid field intact
 }
 
 // R7.2: malformed JSON surfaces as std::runtime_error (documented), not a raw

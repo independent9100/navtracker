@@ -243,6 +243,12 @@ print(f"  all expected cells: median dist to own-ship track = {np.median(allo):.
 
 # ── anchorage / mooring AREA test (are the uncharted clusters anchored craft?) ─
 from osgeo import ogr
+# finding #4: this ENC dict (M_COVR coverage union + anchorage/mooring layers)
+# MUST be kept in lockstep with the cells listed in charts/export_obstacles.py.
+# The committed field-check numbers below are computed over exactly these cells;
+# if a cell (e.g. US5BOSDC) is added to export_obstacles.py and the GeoJSON
+# layers are regenerated, add it here too and re-run, or the coverage extent and
+# bridge count will not match the regenerated data.
 ENC={"US5BOSCC":f"{ROOT}/charts/ENC_ROOT/US5BOSCC/US5BOSCC.000",
      "US5BOSCD":f"{ROOT}/charts/ENC_ROOT/US5BOSCD/US5BOSCD.000"}
 MOOR=["ACHARE","ACHBRT","BERTHS","SMCFAC","HRBFAC","MORFAC","MARCUL"]
@@ -305,6 +311,12 @@ def densify_class(path, objclass):
                     f=k/steps; pts.append((a[0]+f*(b[0]-a[0]), a[1]+f*(b[1]-a[1])))
     return np.array([to_enu(p[1],p[0]) for p in pts]) if pts else np.empty((0,2))
 bridge_pts=densify_class(f"{ROOT}/charts/geojson/fixed_surface.geojson","BRIDGE")
+# finding #4: derive the BRIDGE feature count from the data so the legend can
+# never go stale against a regenerated fixed_surface.geojson (e.g. after a new
+# ENC cell is added to export_obstacles.py).
+_bridge_feat_count=sum(
+    1 for ft in json.load(open(f"{ROOT}/charts/geojson/fixed_surface.geojson"))["features"]
+    if ft["properties"].get("obj_class")=="BRIDGE")
 cov_u=ogr.Geometry(ogr.wkbMultiPolygon)
 for path in ENC.values():
     ds=ogr.Open(path); lyr=ds.GetLayerByName("M_COVR")
@@ -360,10 +372,14 @@ for j,ring in enumerate(moor_rings):
 # charted bridges (orange) + ENC coverage boundary (dotted)
 if len(bridge_pts):
     ax.scatter(bridge_pts[:,0],bridge_pts[:,1],s=7,c="#e8820c",marker="s",alpha=0.75,
-               label="charted bridges (57 features)",zorder=4.5)
+               label=f"charted bridges ({_bridge_feat_count} features)",zorder=4.5)
+# finding #4: this dotted box is an ILLUSTRATIVE coverage extent for the current
+# US5BOSCC/US5BOSCD pair — it is NOT derived from M_COVR (the quantitative
+# in_cov() test above uses the true cov_u union). Update the box, or replace it
+# with the cov_u outline, if the ENC cell set changes.
 _cov=[(42.30,-71.10),(42.375,-71.10),(42.375,-70.95),(42.30,-70.95),(42.30,-71.10)]
 _cr=np.array([to_enu(la,lo) for la,lo in _cov])
-ax.plot(_cr[:,0],_cr[:,1],color="#222",lw=1.6,ls=":",label="ENC coverage extent (lat<=42.375)",zorder=2.2)
+ax.plot(_cr[:,0],_cr[:,1],color="#222",lw=1.6,ls=":",label="ENC coverage extent (illustrative, lat<=42.375)",zorder=2.2)
 
 # charted obstacles
 if len(chart_fixed): ax.scatter(chart_fixed[:,0],chart_fixed[:,1],s=1.2,c="#1f3a5f",alpha=0.35,label=f"charted fixed obstacles ({len(chart_fixed)} pts)",zorder=2)

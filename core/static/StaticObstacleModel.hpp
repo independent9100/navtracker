@@ -36,10 +36,15 @@ class StaticObstacleModel : public IStaticObstacleModel, public IDatumChangeSink
   StaticObstacleModel(std::vector<StaticObstacle> obstacles, geo::Datum datum,
                       StaticObstacleParams params = {})
       : obstacles_(std::move(obstacles)), datum_(datum), params_(params) {
-    // R7.1: enforce the soft_max invariant at construction. birthSuppression
-    // approaches soft_max at the footprint edge; clamping it to 0.9 keeps the
-    // keep-clear buffer strictly below the tracker's 0.95 static_obstacle_hard_gate
-    // so the buffer stays soft-only (only the c=1.0 footprint interior hard-drops).
+    // R7.1: cap soft_max at construction so birthSuppression (which approaches
+    // soft_max at the footprint edge) stays strictly below the tracker's DEFAULT
+    // static_obstacle_hard_gate (0.95), keeping the keep-clear buffer soft-only
+    // (only the c=1.0 footprint interior hard-drops). Finding #7: this pure model
+    // cannot see the tracker's Config, so the 0.9 cap only guarantees the
+    // invariant for the default gate. A caller that lowers static_obstacle_hard_gate
+    // below 0.9 MUST lower soft_max below its chosen gate too — enforcing
+    // soft_max < static_obstacle_hard_gate is a composition-root responsibility
+    // (both values are visible only where the model meets the Config).
     params_.soft_max = std::min(params_.soft_max, 0.9);
     rebuildEnu();
   }

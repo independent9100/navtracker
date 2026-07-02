@@ -742,7 +742,14 @@ class PmbmTracker {
   // Merge near-duplicate Bernoullis within one global hypothesis by
   // Bhattacharyya distance on the position block (§3.5 of
   // docs/algorithms/pmbm-design.md, MhtTracker::mergeBranches analogue).
-  void mergeBernoulliDuplicates(GlobalHypothesis& h) const;
+  // `claims_current` is true only on the non-empty-scan path, where each
+  // Bernoulli's last_claimed_meas_index reflects THIS scan's association — the
+  // merge then refuses to fold two Bernoullis that each claimed a DIFFERENT
+  // measurement this scan (distinct real targets, not a split→rejoin duplicate;
+  // R2 finding #2). On the empty-scan path the indices are stale, so the guard
+  // is disabled.
+  void mergeBernoulliDuplicates(GlobalHypothesis& h,
+                                bool claims_current = false) const;
 
   void refreshAggregatedTracks() const;
 
@@ -847,6 +854,19 @@ class PmbmTracker {
     if (mean.size() < 2) return 0.0;
     if (cfg_.use_static_obstacle_model && obstacle_model_ != nullptr)
       return obstacle_model_->birthSuppression(mean.head<2>());
+    return 0.0;
+  }
+
+  // Land birth suppression alone at `mean` (0 if no land model). Symmetric to
+  // obstacleSuppressionAt. Used by the R1 floor (finding #3): where an obstacle
+  // contributes, the phantom-birth gate relaxes the OBSTACLE suppression only —
+  // the land factor (1 − c_land) is kept in the gate reference so ADR-0001's
+  // near-shore no-birth zone survives wherever a keep-clear ring overlaps the
+  // shore band, instead of being stripped by the obstacle's presence.
+  double landSuppressionAt(const Eigen::VectorXd& mean) const {
+    if (mean.size() < 2) return 0.0;
+    if (cfg_.use_land_model && land_model_ != nullptr)
+      return land_model_->clutterPrior(mean.head<2>());
     return 0.0;
   }
 

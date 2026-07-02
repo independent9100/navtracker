@@ -8,6 +8,48 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-02 — Static-review code-review findings (R1/R2/R7 seams)
+
+A high-effort code review of branch `static-branch-review-fixes` raised 10
+findings; verified each against the code before acting. Four were real
+correctness/safety bugs (fixed, TDD); the rest were latent/trade-off (documented
+the true contract). **A/B (imm_cv_ct_pmbm × all 11 pmbm variants × 22 sim
+scenarios, 5 seeds): 0 focus-cell changes vs pre-fix** — every PMBM fix is inert
+on default configs. Numbers only move on the `feed_clutter_map` path (default
+off) and where a static-obstacle model is wired with a land model (no sim/philos
+config does both).
+
+- **#3 (real):** the R1 phantom-birth-floor relaxation gated on the *fully*
+  unsuppressed intensity, stripping BOTH land and obstacle suppression in their
+  overlap → disabled ADR-0001's near-shore no-birth zone wherever a keep-clear
+  ring crosses the shore band. Fixed to relax the **obstacle factor only**, keep
+  `(1 − c_land)` (new `landSuppressionAt` helper). RED test
+  `ObstacleOverlapDoesNotStripLandZone` (birthed at 0.0055, should be 0) → green.
+- **#2 (real, feed-only):** `mergeBernoulliDuplicates` dropped one claim when two
+  state-close Bernoullis each claimed a *different* measurement in the same scan,
+  leaking that real return to the clutter map as full-weight clutter. RED test
+  `MergedSameScanReturnsStayCredited` reproduced the leak. Fix: refuse to merge
+  two distinct-claim Bernoullis — **but the first cut applied this merge-wide and
+  regressed every config** (measured +card_err / +gospa_false / +ospa, 306 focus
+  cells). Root cause: the leak only exists on the `feed_clutter_map` path, so the
+  merge change was scoped to `cfg_.feed_clutter_map`; re-A/B → 0 cells changed.
+- **#1 (overclaim, not a bug):** an admitted birth still materialises at its
+  suppressed `r_new`; deep land×obstacle composition can drive that below `r_min`
+  → pruned same scan, not trackable position-only. Documented the boundary +
+  characterization test `DeepCompositionNotTrackablePositionOnly`; did NOT floor
+  existence to `r_min` (would seed clutter phantoms — the over-count the shore
+  work fights). Sensor-aware ADR-0001-A3 is the real cure.
+- **#6 (safety):** a negative radius dropped the whole charted obstacle; changed
+  to clamp the field to 0 and keep the hazard (losing a charted hazard over one
+  bad optional field is the worse failure).
+- **#4/#5/#7/#8/#9/#10 (docs/contracts):** de-hardcoded the chart script's bridge
+  count + ENC-dict lockstep note (#4); documented the GeoJSON empty-on-corruption
+  caller contract (#5); `soft_max` cap is default-gate-only, a lower gate is a
+  wiring responsibility (#7); the hazard evaluator relies on stable obstacle
+  indexing (#8); `source_id` must be a stable feature id for `hazard_id`
+  stability (#9); updated the required algorithm doc `static-obstacle-birth-prior.md`
+  with the R1 floor interaction (#10).
+
 ## 2026-07-02 — R3 (static review): extent-is-interim gate scenarios + 1b-i baseline
 
 Static-branch review ticket R3. Added Dalhaug 2025 (arXiv:2502.18368) to

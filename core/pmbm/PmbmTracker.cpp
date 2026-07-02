@@ -388,6 +388,7 @@ PmbmTracker::buildNewTargetCandidates(
     // returns 1.0 → no-op, which is correct because rho_target is already
     // 0 in that case.
     // R1: capture the pre-suppression rho as the phantom-birth gate reference.
+    const double rho_target_presuppress = cand.rho_target;
     cand.rho_target_unsuppressed = cand.rho_target;
     cand.rho_total_unsuppressed = cand.rho_total;
     {
@@ -400,10 +401,17 @@ PmbmTracker::buildNewTargetCandidates(
       } else if (birth_scale < 1.0) {
         cand.rho_target *= birth_scale;              // soft suppression
         cand.rho_total = cand.rho_target + lambda_z;
-        // R1 scope: only a STATIC-OBSTACLE contribution relaxes the floor (gate
-        // on the pre-suppression existence, kept above). Land-only suppression
-        // keeps its ADR 0001 gating role → gate on the suppressed value.
-        if (obstacleSuppressionAt(cand.mean) <= 0.0) {
+        // R1 scope (finding #3): only a STATIC-OBSTACLE contribution relaxes the
+        // floor, and it relaxes the OBSTACLE factor only — the land factor
+        // (1 − c_land) stays in the gate reference so ADR-0001's near-shore
+        // no-birth zone survives in the overlap. Land-only suppression keeps its
+        // full gating role → gate on the suppressed value.
+        if (obstacleSuppressionAt(cand.mean) > 0.0) {
+          const double land_only =
+              rho_target_presuppress * (1.0 - landSuppressionAt(cand.mean));
+          cand.rho_target_unsuppressed = land_only;
+          cand.rho_total_unsuppressed = land_only + lambda_z;
+        } else {
           cand.rho_target_unsuppressed = cand.rho_target;
           cand.rho_total_unsuppressed = cand.rho_total;
         }
@@ -526,12 +534,17 @@ PmbmTracker::buildAdaptiveBirthCandidates(
       lambda_birth *= birth_scale;  // soft suppression (no-op when scale == 1)
       cand.rho_target = lambda_birth;
       cand.rho_total = lambda_birth + lambda_z;
-      // R1 scope: relax the floor (gate on the pre-suppression intensity) only
-      // where a STATIC OBSTACLE contributes. Land-only suppression keeps its
-      // ADR 0001 gating role, so gate on the suppressed value there.
+      // R1 scope (finding #3): where a STATIC OBSTACLE contributes, relax the
+      // floor by gating on the OBSTACLE-relaxed intensity — but keep the land
+      // factor (1 − c_land). Stripping land too (using the fully unsuppressed
+      // lambda_birth) would disable ADR-0001's near-shore no-birth zone wherever
+      // a keep-clear ring overlaps the shore band. Land-only suppression keeps
+      // its full ADR-0001 gating role, so gate on the suppressed value there.
       if (obstacleSuppressionAt(cand.mean) > 0.0) {
-        cand.rho_target_unsuppressed = lambda_birth_unsuppressed;
-        cand.rho_total_unsuppressed = lambda_birth_unsuppressed + lambda_z;
+        const double land_only =
+            lambda_birth_unsuppressed * (1.0 - landSuppressionAt(cand.mean));
+        cand.rho_target_unsuppressed = land_only;
+        cand.rho_total_unsuppressed = land_only + lambda_z;
       } else {
         cand.rho_target_unsuppressed = lambda_birth;
         cand.rho_total_unsuppressed = lambda_birth + lambda_z;
@@ -997,14 +1010,18 @@ void PmbmTracker::enumerateChildren(
       const auto& nt = nts[l];
       const double r_new =
           (nt.rho_total > 0.0) ? (nt.rho_target / nt.rho_total) : 0.0;
-      // R1 phantom-birth gate: check the UNSUPPRESSED existence, not the
-      // suppressed r_new. Soft geographic suppression (land × obstacle) must not
-      // compose with min_new_bernoulli_existence into a hard no-birth zone. A
-      // birth whose unsuppressed existence clears the floor still materialises —
-      // with the tiny SUPPRESSED r_new below, so it survives r_min (1e-3) and
-      // can accumulate on re-detection (anchored-vessel safety, ADR 0001 A2). A
-      // genuine phantom (unsuppressed below the floor) and a hard-drop
-      // (unsuppressed set to 0 by birthScale < 0) are still killed. Bit-identical
+      // R1 phantom-birth gate: check the UNSUPPRESSED existence (finding #3:
+      // obstacle relaxed, land kept), not the suppressed r_new. Soft geographic
+      // suppression must not compose with min_new_bernoulli_existence into a hard
+      // no-birth zone. A birth whose gate existence clears the floor still
+      // materialises with the SUPPRESSED r_new below. It then accumulates on
+      // re-detection PROVIDED that suppressed r_new clears r_min (1e-3); a target
+      // driven below r_min by deep land×obstacle composition is pruned the same
+      // scan and is NOT trackable from position alone — by design (finding #1).
+      // Forcing persistence by flooring existence to r_min would seed phantom
+      // tracks in clutter; the real cure for that regime is sensor-aware
+      // suppression (ADR 0001 A3). A genuine phantom (gate existence below the
+      // floor) and a hard-drop (birthScale < 0) are still killed. Bit-identical
       // when no model is wired (unsuppressed == suppressed). The measurement
       // still consumes ρ_total mass so the assignment stays balanced.
       const double r_new_gate =
@@ -1446,7 +1463,7 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
   // Bernoulli keeping the older id.
   if (cfg_.bhattacharyya_merge_threshold > 0.0) {
     for (auto& h : density_.mbm) {
-      mergeBernoulliDuplicates(h);
+      mergeBernoulliDuplicates(h, /*claims_current=*/true);
     }
   }
 
@@ -1679,7 +1696,8 @@ double bhattacharyyaState(const Eigen::VectorXd& mean_a,
 
 }  // namespace
 
-void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h) const {
+void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h,
+                                           bool claims_current) const {
   // Sort by id ascending so the survivor (kept) carries the older id.
   std::sort(h.bernoullis.begin(), h.bernoullis.end(),
             [](const Bernoulli& a, const Bernoulli& b) {
@@ -1694,6 +1712,24 @@ void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h) const {
           h.bernoullis[i].mean, h.bernoullis[i].covariance,
           h.bernoullis[j].mean, h.bernoullis[j].covariance);
       if (dB > cfg_.bhattacharyya_merge_threshold) continue;
+
+      // R2 finding #2: two Bernoullis that each claimed a DIFFERENT measurement
+      // in the current scan are distinct targets (a target yields one detection
+      // per scan), not a split→rejoin duplicate. Folding them drops one target's
+      // real return to the clutter map as full-weight clutter. Skip the merge so
+      // both returns stay credited. (Same claim, or one claim + one misdetection,
+      // still merges — those are genuine duplicates.) SCOPED to feed_clutter_map:
+      // this guard exists only to keep the clutter feed honest; changing the
+      // merge otherwise regresses tracking on every config (measured:
+      // +card_err / +gospa_false across all scenarios, 306 cells). With the feed
+      // off (the default) the merge is unchanged — bit-identical to pre-fix.
+      // Requires claims_current so the indices reflect this scan (non-empty path).
+      if (claims_current && cfg_.feed_clutter_map &&
+          h.bernoullis[i].last_claimed_meas_index >= 0 &&
+          h.bernoullis[j].last_claimed_meas_index >= 0 &&
+          h.bernoullis[i].last_claimed_meas_index !=
+              h.bernoullis[j].last_claimed_meas_index)
+        continue;
 
       // Merge j INTO i. r_merged = max(r_i, r_j) — the merge gate fires
       // only when (px, py, vx, vy) overlap closely, which in practice
@@ -1722,13 +1758,16 @@ void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h) const {
         a.covariance = std::move(new_cov);
       }
       a.existence_probability = r_m;
-      if (b.last_update.seconds() > a.last_update.seconds()) {
+      // R2: the survivor carries the claim consistent with the merged existence
+      // (r_m = max), and never drops a real claim in favour of none — so a
+      // detected Bernoulli folded into a missed survivor keeps crediting its
+      // real return in the clutter feed, at equal timestamps too (finding #2).
+      const bool take_b_claim =
+          (r_b > r_a) ||
+          (a.last_claimed_meas_index < 0 && b.last_claimed_meas_index >= 0);
+      if (take_b_claim) a.last_claimed_meas_index = b.last_claimed_meas_index;
+      if (b.last_update.seconds() > a.last_update.seconds())
         a.last_update = b.last_update;
-        // R2: the more-recently-updated duplicate carries the scan's claim, so
-        // a detected Bernoulli folded into a missed survivor keeps crediting
-        // its real return in the clutter feed.
-        a.last_claimed_meas_index = b.last_claimed_meas_index;
-      }
       dead[j] = true;
     }
   }

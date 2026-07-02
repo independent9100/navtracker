@@ -17,7 +17,14 @@ void StaticHazardEvaluator::evaluate(const Eigen::Vector2d& own_ship_enu,
     const double exit_r = obs.keep_clear_radius_m * cfg_.exit_hysteresis;
 
     // Hysteresis state is keyed by obstacle index so co-located obstacles
-    // (colliding hazard_id) keep independent enter/exit state (R7.3).
+    // (colliding hazard_id) keep independent enter/exit state (R7.3). Finding #8:
+    // this relies on the model's obstacles() being STABLE-INDEXED for the
+    // evaluator's lifetime — index i must always refer to the same physical
+    // obstacle. StaticObstacleModel satisfies this (its obstacle list is fixed at
+    // construction; a datum recenter rebuilds ENU positions, never the list). A
+    // model that inserts/removes/reorders obstacles at runtime would transfer one
+    // obstacle's inside-state to another via index reuse and must not be paired
+    // with this evaluator without clearing inside_.
     auto it = inside_.find(i);
     const bool was_inside = (it != inside_.end()) ? it->second : false;
     bool now_inside = was_inside;

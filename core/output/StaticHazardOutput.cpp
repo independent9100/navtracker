@@ -19,6 +19,15 @@ std::uint64_t staticHazardId(const StaticObstacle& obs) {
   // R7.3: when present, mix source_id so co-located ENC records (e.g. a wreck
   // and an obstruction at the same rounded position + category) get distinct
   // ids. Empty source_id leaves the id unchanged (backward-compatible).
+  //
+  // Finding #9 — stability contract: source_id MUST be a STABLE per-feature
+  // identifier (e.g. the ENC LNAM / record RCID), NOT a volatile string that
+  // changes format between exports. Given that, the id is both unique per
+  // physical obstacle AND stable across chart re-exports — strictly better than
+  // the position+category-only id it replaced, which collided for co-located
+  // records. If a producer cannot supply a stable source_id it should leave it
+  // empty (falls back to position+category, unchanged) rather than emit a
+  // volatile one, which would churn hazard ids on every re-load.
   for (unsigned char c : obs.source_id) mix(static_cast<std::uint64_t>(c));
   return h;
 }
