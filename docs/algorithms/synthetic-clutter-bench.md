@@ -339,6 +339,18 @@ Pier returns (`sim_pier`) and uniform clutter (`sim_clutter`) carry **no** `Trut
 GOSPA and cardinality metrics therefore count every phantom track from the pier or
 clutter as a pure false alarm.
 
+**Truth ordering invariant.** `BenchRunner::groupTruth` buckets truth into
+per-scan groups by opening a new group only when the timestamp changes, so it
+requires `Scenario::truth` sorted by non-decreasing time. `addAnchoredBoats`
+appends the boats' truth as a second time-run onto the movers' truth, so the
+additive builders re-sort truth (not just measurements) before returning.
+Contract test `HarborCompleteTruth.TruthIsTimeSortedIntoFortyCompleteGroups`
+asserts the generated truth sorts into exactly 40 complete `{1..5}` groups —
+`truth.size() == 200` alone does **not** catch fragmentation (the count is right,
+the grouping wrong). This is the same failure family as the 2026-06-10 autoferry
+truth-fragmentation bug; the first Milestone-1 baseline was measured before the
+fix and its numbers were invalid (see `evaluation-log.md`, 2026-07-02 correction).
+
 ### 5.4 Geometry
 
 | Element | ENU (x, y) m | Details |

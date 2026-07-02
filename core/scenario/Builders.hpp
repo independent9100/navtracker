@@ -241,8 +241,9 @@ SyntheticShore buildSyntheticShore(
 // base.measurements, each point emits a Position2D measurement at its fixed
 // position plus isotropic Gaussian noise, with probability `detection_prob`
 // (seeded Bernoulli). NO TruthSample is created — these are environment /
-// structure, not vessels. Sets base.datum = datum; returns re-sorted by time.
-// addShoreClutter is a thin wrapper over this with source_id "sim_shore".
+// structure, not vessels. Sets base.datum = datum; returns measurements and
+// truth re-sorted by time. addShoreClutter is a thin wrapper over this with
+// source_id "sim_shore".
 Scenario addFixedClutter(
     Scenario base, const geo::Datum& datum,
     const std::vector<Eigen::Vector2d>& points, const std::string& source_id,
@@ -254,7 +255,8 @@ Scenario addFixedClutter(
 // a radar-like ArpaTtm / "sim_anchored" Position2D return with isotropic
 // noise (a compact watch circle). Truth is emitted even on undetected scans
 // (the boat is present). These are the "keep, never suppress" set for the
-// live static-occupancy layer. Sets base.datum; returns re-sorted by time.
+// live static-occupancy layer. Sets base.datum; returns measurements and truth
+// re-sorted by time.
 Scenario addAnchoredBoats(
     Scenario base, const geo::Datum& datum,
     const std::vector<Eigen::Vector2d>& boat_positions,
@@ -265,7 +267,7 @@ Scenario addAnchoredBoats(
 // the ENU box [box_min, box_max], tagged ArpaTtm / "sim_clutter". Positions
 // are re-drawn every scan (transient — the defining contrast with the fixed
 // recurring returns of addFixedClutter). NO TruthSample. Sets base.datum;
-// returns re-sorted by time.
+// returns measurements and truth re-sorted by time.
 Scenario addUniformClutter(
     Scenario base, const geo::Datum& datum, const Eigen::Vector2d& box_min,
     const Eigen::Vector2d& box_max, int n_per_scan, std::uint32_t seed = 0);

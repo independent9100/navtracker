@@ -91,8 +91,9 @@ Measurement makeShoreMeasurement(const Eigen::Vector2d& noisy_pos,
 
 // Precondition: measurements in s are time-grouped (the same timestamp appears
 // consecutively). Builders emit grouped; addFixedClutter/addAnchoredBoats/
-// addUniformClutter sort before returning. On ungrouped input this back-compare
-// dedup would emit a time more than once, causing duplicate injections.
+// addUniformClutter sort (measurements AND truth) before returning. On
+// ungrouped input this back-compare dedup would emit a time more than once,
+// causing duplicate injections.
 std::vector<double> distinctScanTimes(const Scenario& s) {
   std::vector<double> scan_times;
   for (const auto& m : s.measurements) {
@@ -105,6 +106,20 @@ std::vector<double> distinctScanTimes(const Scenario& s) {
 void sortMeasurementsByTime(Scenario& s) {
   std::stable_sort(s.measurements.begin(), s.measurements.end(),
                    [](const Measurement& a, const Measurement& b) {
+                     return a.time.seconds() < b.time.seconds();
+                   });
+}
+
+// BenchRunner::groupTruth requires truth sorted by non-decreasing time — it
+// only opens a new bucket when the timestamp changes, so an out-of-order run
+// silently fragments into duplicate groups (a corrupt benchmark). Builders that
+// emit truth strictly per-tick stay sorted for free, but addAnchoredBoats
+// appends a whole second time-run onto pre-existing base truth. The additive
+// builders sort truth explicitly so the returned Scenario is uniformly time-
+// sorted in BOTH measurements and truth, regardless of composition order.
+void sortTruthByTime(Scenario& s) {
+  std::stable_sort(s.truth.begin(), s.truth.end(),
+                   [](const TruthSample& a, const TruthSample& b) {
                      return a.time.seconds() < b.time.seconds();
                    });
 }
@@ -649,6 +664,7 @@ Scenario addFixedClutter(Scenario base, const geo::Datum& datum,
     }
   }
   sortMeasurementsByTime(base);
+  sortTruthByTime(base);
   base.datum = datum;
   return base;
 }
@@ -683,6 +699,7 @@ Scenario addAnchoredBoats(Scenario base, const geo::Datum& datum,
     }
   }
   sortMeasurementsByTime(base);
+  sortTruthByTime(base);
   base.datum = datum;
   return base;
 }
@@ -703,6 +720,7 @@ Scenario addUniformClutter(Scenario base, const geo::Datum& datum,
     }
   }
   sortMeasurementsByTime(base);
+  sortTruthByTime(base);
   base.datum = datum;
   return base;
 }

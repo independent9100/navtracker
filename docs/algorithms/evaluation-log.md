@@ -8,49 +8,63 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
-## 2026-07-02 — harbor_complete_truth Milestone-1 baseline under imm_cv_ct_pmbm
+## 2026-07-02 (corrected) — harbor_complete_truth Milestone-1 baseline under imm_cv_ct_pmbm
 
 **Purpose.** Capture the "before" numbers on the `harbor_complete_truth` honest
 yardstick (see `docs/algorithms/synthetic-clutter-bench.md §5`). This is the
 baseline the live static-occupancy layer (Milestone 2) must beat. Run with 5 seeds;
 config `imm_cv_ct_pmbm` (no coastline, no static-occupancy layer active).
 
+**⚠️ Correction (2026-07-02).** The first version of this entry recorded
+`card_err +13.32 / gospa 53.02 / gospa_false 2705.5 / gospa_missed 41.5 /
+lifetime 0.92`. Those numbers were **invalid** — a truth-fragmentation bug (same
+family as the 2026-06-10 autoferry finding): `addAnchoredBoats` appended the
+anchored boats' truth as a second time-run onto the movers' truth without
+re-sorting, so `BenchRunner::groupTruth` (which buckets only on a timestamp
+change) split the run into **80 groups** (40 mover-only + 40 boat-only) instead
+of 40. The mover-only groups scored every correctly-tracked anchored boat as a
+false track; the boat-only groups replayed the already-exhausted measurement
+stream, snapshotting the final tracker state 40 more times. Fix: `addAnchoredBoats`
+(and the other additive builders) now sort truth as well as measurements, plus a
+contract test asserts truth is time-sorted into exactly 40 complete {1..5} groups.
+The corrected numbers below supersede the originals.
+
 **Measured numbers (5-seed mean, test `HarborCompleteTruthBaseline.TodaysPmbmMetrics`):**
 
 | Metric | Value |
 |---|---:|
-| card_err_mean | **+13.32** |
-| gospa_mean | 53.02 |
-| gospa_false | **2705.5** |
-| gospa_missed | 41.5 |
-| lifetime_ratio | **0.92** |
+| card_err_mean | **+11.64** |
+| gospa_mean | 50.63 |
+| gospa_false | **2362** |
+| gospa_missed | 34 |
+| lifetime_ratio | **0.974** |
 
 **Interpretation against expected verdicts:**
 
-- `card_err_mean = +13.32` — today's PMBM over-counts by 13 phantom tracks per
-  scan on average. With 5 truth targets, +13 phantom tracks is a severe over-count.
-  The pier (fixed returns, no truth) and uniform clutter (transient, no truth) are
-  the sources; without a suppression layer every persistent pier return accumulates
+- `card_err_mean = +11.64` — today's PMBM over-counts by ~12 phantom tracks per
+  scan on average. With 5 truth targets, this is a severe over-count. The pier
+  (fixed returns, no truth) and uniform clutter (transient, no truth) are the
+  sources; without a suppression layer every persistent pier return accumulates
   enough evidence to birth a Bernoulli.
 
-- `gospa_false = 2705.5` — the vast majority of GOSPA penalty comes from false tracks.
-  This confirms the pier/clutter phantom-track hypothesis: a single pier point
-  confirmed over 40 scans contributes far more false-track GOSPA than a momentary
-  clutter miss.
+- `gospa_false = 2362` — the vast majority of GOSPA penalty comes from false
+  tracks. This confirms the pier/clutter phantom-track hypothesis: a single pier
+  point confirmed over 40 scans contributes far more false-track GOSPA than a
+  momentary clutter miss.
 
-- `gospa_missed = 41.5` — small but non-zero misses. Some truth-matched scans (most
+- `gospa_missed = 34` — small but non-zero misses. Some truth-matched scans (most
   likely from the anchored boats, whose zero-velocity makes them look like clutter)
   are not picked up by an active track on every seed.
 
-- `lifetime_ratio = 0.92` — anchored boats (ids 3–5, zero velocity) AND movers
-  (ids 1–2) are currently tracked for 92 % of their lifetime. The tracker finds real
-  targets well even in this cluttered scene. The occupancy layer must maintain this
-  (not drop boats while suppressing the pier).
+- `lifetime_ratio = 0.974` — anchored boats (ids 3–5, zero velocity) AND movers
+  (ids 1–2) are currently tracked for ~97 % of their lifetime. The tracker finds
+  real targets very well even in this cluttered scene. The occupancy layer must
+  maintain this (not drop boats while suppressing the pier).
 
 **Takeaway.** Today's PMBM cannot distinguish pier returns from vessel targets —
-card_err +13.32 and gospa_false 2705.5 confirm that. The high lifetime_ratio (0.92)
+card_err +11.64 and gospa_false 2362 confirm that. The high lifetime_ratio (0.974)
 is the value to protect. The Milestone-2 A/B must show: gospa_false ↓, card_err_mean
-↓, lifetime_ratio ≥ 0.92. This entry is the binding "before" reference.
+↓, lifetime_ratio ≥ 0.974. This entry is the binding "before" reference.
 
 ---
 

@@ -68,6 +68,39 @@ TEST(HarborCompleteTruth, PierAndClutterAddNoTruth) {
   EXPECT_TRUE(scen.datum.has_value());
 }
 
+TEST(HarborCompleteTruth, TruthIsTimeSortedIntoFortyCompleteGroups) {
+  const auto scenarios = defaultSimScenarios();
+  ScenarioRun* h = findHarbor(scenarios);
+  ASSERT_NE(h, nullptr);
+  auto scen = h->generate(0);
+
+  // (a) Truth must be sorted by non-decreasing time. BenchRunner::groupTruth
+  //     opens a new bucket only when the timestamp changes, so out-of-order
+  //     truth silently fragments into duplicate groups and corrupts every
+  //     metric. size()==200 does NOT catch this — the count is right, the
+  //     grouping is wrong.
+  for (std::size_t i = 1; i < scen.truth.size(); ++i)
+    ASSERT_LE(scen.truth[i - 1].time.seconds(), scen.truth[i].time.seconds())
+        << "truth not time-sorted at index " << i;
+
+  // (b) Grouping truth exactly as BenchRunner does must yield 40 complete
+  //     ticks, each holding all five targets {1..5} — not 80 fragmented ones
+  //     (40 mover-only + 40 boat-only).
+  std::vector<double> group_times;
+  std::vector<std::set<std::uint64_t>> group_ids;
+  for (const auto& ts : scen.truth) {
+    const double t = ts.time.seconds();
+    if (group_times.empty() || group_times.back() != t) {
+      group_times.push_back(t);
+      group_ids.emplace_back();
+    }
+    group_ids.back().insert(ts.truth_id);
+  }
+  EXPECT_EQ(group_times.size(), 40u);
+  for (const auto& ids : group_ids)
+    EXPECT_EQ(ids, (std::set<std::uint64_t>{1u, 2u, 3u, 4u, 5u}));
+}
+
 TEST(HarborCompleteTruth, ChartFreeNoCoastline) {
   const auto scenarios = defaultSimScenarios();
   ScenarioRun* h = findHarbor(scenarios);

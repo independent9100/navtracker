@@ -376,4 +376,11 @@ TEST(Builders, AddAnchoredBoatsAddsZeroVelocityTruthAndRadarReturns) {
       EXPECT_EQ(m.sensor, SensorKind::ArpaTtm);
     }
   EXPECT_EQ(anchored, 8);
+
+  // Regression (truth-fragmentation): addAnchoredBoats appends a second
+  // time-run onto base.truth, so without an explicit sort the returned truth is
+  // out of order and BenchRunner::groupTruth would fragment it into duplicate
+  // groups. Truth must be sorted by non-decreasing time.
+  for (std::size_t i = 1; i < s.truth.size(); ++i)
+    EXPECT_LE(s.truth[i - 1].time.seconds(), s.truth[i].time.seconds());
 }
