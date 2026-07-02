@@ -834,6 +834,7 @@ void PmbmTracker::enumerateChildren(
         const int l = bernoulli_to_meas[i];
         Bernoulli det = updated[i][l];
         det.last_update = scan[l].time;
+        det.last_claimed_meas_index = l;  // R2: true assignment for the feed
         // Detection: x_pred = parent's state (post-predict, pre-update);
         //            x_filt = updated state.
         appendTrajectoryPoint(det, cfg_.trajectory_window_scans,
@@ -873,6 +874,7 @@ void PmbmTracker::enumerateChildren(
         // ghost Bernoullis whose target has stopped reporting do
         // eventually fall below r_min.
         Bernoulli miss = b;
+        miss.last_claimed_meas_index = -1;  // R2: claimed nothing this scan
         // Misdetection: no update at this scan → predicted == filtered.
         if (!should_misdetect(b.id)) {
           miss.existence_probability *= idle_decay_for(b);
@@ -1001,6 +1003,7 @@ void PmbmTracker::enumerateChildren(
       nb.imm_covariances = nt.imm_covariances;
       nb.imm_mode_probabilities = nt.imm_mode_probabilities;
       nb.last_update = scan[l].time;
+      nb.last_claimed_meas_index = l;  // R2: this measurement birthed it
       nb.birth_time = scan[l].time;
       // Birth: no prior → predicted = filtered (smoother G ≈ I at
       // first point, no effect).
@@ -1499,6 +1502,11 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
   // pruneAndNormalise and the cost matrix, so it affects only the NEXT scan's
   // λ_C (no within-scan feedback → deterministic). Gated by feed_clutter_map
   // (default off → never called → bit-identical; Fixed models ignore observe()).
+  // Asymmetry (R2 item 5): an empty scan is skipped, so the detection model does
+  // not decay its accumulated intensity on scans with no returns. Intentional
+  // for now — the learned occupancy is birth-channel-only and a no-return scan
+  // carries no positional evidence to feed; revisit if a duty-cycle decay knob
+  // is added.
   if (cfg_.feed_clutter_map && detection_model_ != nullptr &&
       !density_.mbm.empty() && !scan.empty()) {
     const auto& dom = *std::max_element(
@@ -1507,19 +1515,20 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
           return a.weight < b.weight;
         });
     std::vector<double> claim_r(scan.size(), -1.0);  // < 0 = unclaimed
+    // R2: credit each claimed return to the Bernoulli that actually claimed it
+    // under this hypothesis's association (index recorded in enumerateChildren),
+    // NOT a nearest-neighbour-at-timestamp reconstruction. NN collapsed two
+    // close Bernoullis onto one return and fed the other real return as
+    // full-weight clutter, driving the dense_clutter lifetime spiral (0.90 →
+    // 0.26; eval-log 2026-07-01). The recorded index already respects the
+    // (sensor, model) bundle — it IS the assigned measurement — so no separate
+    // sensor filter is needed, and it stays correct when a track born on one
+    // sensor is updated by another. Bearing-only returns never carry an index
+    // (they cannot initiate), so the old sensor_position_enu fallback is gone.
     for (const auto& b : dom.bernoullis) {
-      double best_d = std::numeric_limits<double>::infinity();
-      int best_j = -1;
-      for (std::size_t j = 0; j < scan.size(); ++j) {
-        if (!(scan[j].time == b.last_update)) continue;  // detected only
-        const Eigen::Vector2d z_xy = (scan[j].value.size() >= 2)
-            ? Eigen::Vector2d(scan[j].value(0), scan[j].value(1))
-            : scan[j].sensor_position_enu;
-        const double d = (z_xy - b.mean.head<2>()).squaredNorm();
-        if (d < best_d) { best_d = d; best_j = static_cast<int>(j); }
-      }
-      if (best_j >= 0)
-        claim_r[best_j] = std::max(claim_r[best_j], b.existence_probability);
+      const int j = b.last_claimed_meas_index;
+      if (j >= 0 && j < static_cast<int>(scan.size()))
+        claim_r[j] = std::max(claim_r[j], b.existence_probability);
     }
     using Key = std::tuple<SensorKind, MeasurementModel>;
     std::map<Key, ISensorDetectionModel::ScanObservation> by_sensor;
@@ -1669,6 +1678,10 @@ void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h) const {
       a.existence_probability = r_m;
       if (b.last_update.seconds() > a.last_update.seconds()) {
         a.last_update = b.last_update;
+        // R2: the more-recently-updated duplicate carries the scan's claim, so
+        // a detected Bernoulli folded into a missed survivor keeps crediting
+        // its real return in the clutter feed.
+        a.last_claimed_meas_index = b.last_claimed_meas_index;
       }
       dead[j] = true;
     }

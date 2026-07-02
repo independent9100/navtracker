@@ -190,6 +190,17 @@ struct Bernoulli {
   Timestamp birth_time{};
   std::vector<TrajectoryPoint> trajectory;
 
+  // Stage 1b clutter feed (R2). Index, into the scan just processed, of the
+  // measurement this Bernoulli claimed under the association that produced its
+  // hypothesis (−1 = misdetected / not set this scan). Written in
+  // enumerateChildren (detection and birth rows) and reset to −1 on
+  // misdetection; carried through a duplicate merge with the survivor's
+  // last_update. Consumed only by the feed_clutter_map labeling, so a real
+  // return is credited to the target that actually claimed it rather than a
+  // nearest-neighbour reconstruction. Transient: meaningful only for the scan
+  // just processed; not round-tripped through toTrack/fromTrack.
+  int last_claimed_meas_index{-1};
+
   // Convenience: a Bernoulli is "alive" if r is above the supplied
   // pruning threshold. Caller picks the threshold per the tracker's
   // configured ipda_delete_threshold equivalent. Phase 1 default

@@ -8,6 +8,51 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-02 — R2 (static review): clutter-feed labeling fixed; dense_clutter regression is NOT the labeling (measured)
+
+Static-branch review ticket R2
+(`docs/superpowers/plans/2026-07-02-static-branch-review-fixes.md`). Two competing
+claims were on the table for the Stage 1b clutter-feed dense_clutter regression:
+
+- **R2 ticket + north-star Stage 1b row:** the feed's nearest-neighbour-at-timestamp
+  reconstruction is the *root* of the regression (lifetime 0.90 → 0.26).
+- **eval-log 2026-07-01 (Stage 1b spike):** the regression is the `1 − r`
+  co-located death spiral on *uniform* clutter, needing a persistence /
+  spatial-concentration gate (Stage 1b-ii).
+
+**Measured A/B** (`imm_cv_ct_pmbm_land` vs `+use_clutter_map+feed_clutter_map`,
+`dense_clutter`, 5 seeds; test
+`PmbmClutterFeedR2.TrueAssignmentIsOrthogonalToDenseClutterSpiral`):
+
+| Config | lifetime_ratio |
+|---|---:|
+| base (no feed) | **0.9025** |
+| +feed, NN reconstruction (before R2) | 0.26 |
+| +feed, true-assignment labeling (after R2) | **0.26** |
+
+The labeling method is **orthogonal** — byte-identical 0.26 either way. This
+**disproves** the R2-ticket / north-star attribution and **confirms** the
+2026-07-01 diagnosis: the spiral is the `1 − r` weighting of a low-r target's OWN
+(correctly-claimed) returns on uniform clutter, not a mislabel of which Bernoulli
+claimed them. The real cure remains the Stage 1b-ii persistence + spatial gate
+(uniform clutter never crosses that bar).
+
+**What R2 shipped anyway (correctness, no bench delta).** PMBM's clutter feed now
+credits each return to the Bernoulli that actually claimed it under the dominant
+hypothesis's association (`Bernoulli::last_claimed_meas_index`, written in
+`enumerateChildren`, reset on misdetection, carried through duplicate merge with
+the survivor's `last_update`), replacing the nearest-neighbour-at-timestamp
+reconstruction that (a) could double-claim in close-pair geometry, (b) ignored the
+`(sensor, model)` bundle, and (c) fell back to the meaningless `sensor_position_enu`
+for bearing-only returns. Because an unassigned return births-and-claims a new
+Bernoulli anyway, and the NN-collapse pathology does not occur in the available
+synthetic scenarios, the change is a **no-op on every current bench** (the philos
+fixture is unavailable in this environment) — a latent-bug fix and a correctness
+prerequisite for Stage 1b-ii, not a metric mover. Guarded by the determinism +
+flag-semantics unit tests plus the characterization test above. `feed_clutter_map`
+stays default-off. Decision recorded: keep the correct labeling fix, correct the
+docs, defer the dense_clutter cure to Stage 1b-ii (option A, 2026-07-02).
+
 ## 2026-07-02 (corrected) — harbor_complete_truth Milestone-1 baseline under imm_cv_ct_pmbm
 
 **Purpose.** Capture the "before" numbers on the `harbor_complete_truth` honest

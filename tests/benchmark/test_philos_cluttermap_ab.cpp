@@ -50,6 +50,63 @@ std::vector<std::unique_ptr<ScenarioRun>> abScenarios() {
 }
 }  // namespace
 
+// R2 characterization (synthetic, no philos fixture needed).
+//
+// The plan doc + north-star hypothesised that the clutter-map feed's
+// nearest-neighbour-at-timestamp reconstruction was the ROOT of the
+// dense_clutter regression (lifetime 0.90 → 0.26). This A/B DISPROVES that: with
+// the true-assignment labeling fix in place, dense_clutter is still ~0.26 —
+// byte-for-byte the same as the buggy NN path. The regression is the `1 − r`
+// co-located death spiral on UNIFORM clutter (a low-r real target's own returns
+// raise λ_C at the target; eval-log 2026-07-01), which is orthogonal to WHICH
+// Bernoulli claims a return. The real cure is the Stage 1b-ii persistence /
+// spatial-concentration gate — uniform clutter never crosses that bar.
+//
+// This test locks in the finding: base healthy, feed still spirals. When Stage
+// 1b-ii lands and restores dense_clutter, THIS TEST SHOULD FAIL — update it then
+// to assert restoration (that failure is the reminder, not a regression).
+TEST(PmbmClutterFeedR2, TrueAssignmentIsOrthogonalToDenseClutterSpiral) {
+  const Config* base = nullptr;
+  const auto all = defaultConfigs();
+  for (const auto& c : all)
+    if (c.label == "imm_cv_ct_pmbm_land") base = &c;
+  ASSERT_NE(base, nullptr);
+
+  std::vector<Config> configs;
+  configs.push_back(*base);  // A: no feed
+  Config b = *base;          // B: + live clutter-map feed (true-assignment label)
+  b.label = "imm_cv_ct_pmbm_land_cluttermap";
+  b.use_clutter_map = true;
+  auto orig = base->pmbm_config;
+  ASSERT_TRUE(static_cast<bool>(orig));
+  b.pmbm_config = [orig]() {
+    auto c = orig();
+    c.feed_clutter_map = true;
+    return c;
+  };
+  configs.push_back(std::move(b));
+
+  std::vector<std::unique_ptr<ScenarioRun>> scen;
+  for (auto& s : defaultSimScenarios())
+    if (s->descriptor().label == "dense_clutter") scen.push_back(std::move(s));
+  ASSERT_EQ(scen.size(), 1u);
+
+  SweepParams params;
+  params.run_id = "pmbm_r2_dense_clutter_ab";
+  params.synthetic_seeds = 5;
+  const auto rows = runSweep(configs, scen, params);
+  ASSERT_FALSE(rows.empty());
+
+  const double a =
+      meanMetric(rows, "imm_cv_ct_pmbm_land", "dense_clutter", "lifetime_ratio");
+  const double bl = meanMetric(rows, "imm_cv_ct_pmbm_land_cluttermap",
+                               "dense_clutter", "lifetime_ratio");
+  std::cout << "R2 dense_clutter lifetime_ratio: base=" << a << "  +feed=" << bl
+            << "  (feed still spirals; cure = Stage 1b-ii persistence gate)\n";
+  EXPECT_GT(a, 0.80);   // baseline is healthy (no feed)
+  EXPECT_LT(bl, 0.50);  // feed still spirals — R2 labeling is orthogonal
+}
+
 TEST(PhilosClutterMapAB, ClutterFeedVsBaseline) {
   auto probe = philosOnly();
   ASSERT_EQ(probe.size(), 1u);

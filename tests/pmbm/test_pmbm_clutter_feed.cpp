@@ -94,6 +94,44 @@ TEST(PmbmClutterFeed, FlagOnFeedsWeightedObservations) {
   EXPECT_TRUE(saw_claimed);
 }
 
+// R2 behavioral guard: with two persistent targets, BOTH real returns are
+// credited to their own Bernoulli (weight 1 − r < 1) — neither is fed as
+// full-weight (1.0) clutter. Under the true-assignment labeling each detected
+// Bernoulli claims exactly its assigned measurement; the old NN reconstruction
+// could collapse two close Bernoullis onto one return and leak the other as
+// clutter. (Guard, not a RED discriminator: in this clean two-target geometry
+// NN and true-assignment agree — the collapse case cannot be isolated in a unit
+// test because an unclaimed return births-and-claims a new Bernoulli anyway.)
+TEST(PmbmClutterFeed, TwoTargetsBothReturnsClaimed) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+  PmbmTracker::Config c = cfg();
+  c.feed_clutter_map = true;
+  PmbmTracker t(ekf, c);
+  auto spy = std::make_shared<SpyDetectionModel>();
+  t.setSensorDetectionModel(spy);
+  // Two targets 25 m apart (far enough not to merge), both persistent.
+  for (int k = 0; k < 10; ++k) {
+    t.predict(Timestamp::fromSeconds(k));
+    t.processBatch({posMeas(100.0, 0.0, k), posMeas(100.0, 25.0, k)});
+  }
+  ASSERT_FALSE(spy->bundles.empty());
+  // Every return in this clean two-target scene is a detection or a birth, so
+  // each is credited to its own Bernoulli — none is ever fed as full-weight
+  // (1.0) clutter. (Once existence saturates to r≈1 the weight 1−r≈0 return is
+  // dropped from the feed entirely, which is why we scan all bundles, not just
+  // the last.)
+  int total_weights = 0, full_weight = 0;
+  for (const auto& bundle : spy->bundles)
+    for (const auto& obs : bundle)
+      for (double w : obs.clutter_position_weights) {
+        ++total_weights;
+        if (w >= 0.999) ++full_weight;
+      }
+  EXPECT_GT(total_weights, 0);  // the feed ran and fed weighted returns
+  EXPECT_EQ(full_weight, 0);    // no real return leaked as full-weight clutter
+}
+
 // Determinism: identical inputs → identical observe() call count and weights.
 TEST(PmbmClutterFeed, DeterministicFeed) {
   auto run = []() {
