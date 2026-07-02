@@ -204,8 +204,26 @@ GlobalAssignment solveGlobalHypothesis(
 
 }  // namespace
 
-void MhtTracker::processBatch(const std::vector<Measurement>& scan_in) {
-  if (scan_in.empty()) return;
+void MhtTracker::processBatch(const std::vector<Measurement>& scan_arg) {
+  if (scan_arg.empty()) return;
+  // Backlog #15: a batch is one scan at its EARLIEST instant, but the canonical
+  // fixed-rate consumer (collect everything since the last tick, hand it over)
+  // produces an unsorted batch. Order it by time here so the caller need not:
+  // otherwise scan.front().time is the wrong instant and, with the stale guard
+  // on, a front older than the high-water mark drops the whole batch. stable_sort
+  // keeps it deterministic; the is_sorted fast-path makes already-sorted input a
+  // true no-op (bit-identical — the common case and every existing test/bench).
+  std::vector<Measurement> scan_ordered;
+  const auto by_time = [](const Measurement& a, const Measurement& b) {
+    return a.time < b.time;
+  };
+  const bool need_sort =
+      !std::is_sorted(scan_arg.begin(), scan_arg.end(), by_time);
+  if (need_sort) {
+    scan_ordered = scan_arg;
+    std::stable_sort(scan_ordered.begin(), scan_ordered.end(), by_time);
+  }
+  const std::vector<Measurement>& scan_in = need_sort ? scan_ordered : scan_arg;
   const Timestamp t = scan_in.front().time;
   if (has_high_water_ && t < high_water_) {
     if (cfg_.reject_stale_measurements) {

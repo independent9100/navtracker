@@ -8,6 +8,20 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-02 — Backlog #15: processBatch orders the batch (ergonomics quick fix)
+
+Both `MhtTracker` and `PmbmTracker` `processBatch` now `stable_sort` the scan by
+time (behind an `is_sorted` fast-path), so the canonical fixed-rate consumer
+(dump everything since the last tick) need not pre-sort. **Observation: no bench
+delta** — real/scenario feeds are already time-sorted, so the sort is a no-op and
+the whole suite (889 tests) + the pmbm A/B stay bit-identical. The behavioural
+proof is `tests/pipeline/test_batch_ordering.cpp`: MHT was genuinely wrong on an
+unsorted batch (it used `scan.front().time` as the scan instant → different
+`last_update` and drifted state; RED before the fix, green after), while PMBM was
+already order-robust (predicts to `t_max`, set-wise association — the equivalence
+test passes pre-fix; its sort is defensive + pins the optional idle-decay knob's
+`front()` read). Side quest, not tagged to a claim. See backlog §15.
+
 ## 2026-07-02 — Static-review code-review findings (R1/R2/R7 seams)
 
 A high-effort code review of branch `static-branch-review-fixes` raised 10

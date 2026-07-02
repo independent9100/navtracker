@@ -209,6 +209,7 @@ add_executable(navtracker_tests
   tests/pipeline/test_mht_tracker.cpp
   tests/pipeline/test_mht_cross_merge.cpp
   tests/pipeline/test_mht_innovation_emit.cpp
+  tests/pipeline/test_batch_ordering.cpp
   tests/pipeline/test_review_fixes.cpp
   tests/pipeline/test_jpda_contributing_sources.cpp
   tests/pipeline/test_bias_correction_orthogonality.cpp
@@ -360,6 +361,10 @@ add_test(NAME CoreOnlyLinks COMMAND $<TARGET_FILE:navtracker_core_only_smoke>)
 
 add_executable(navtracker_example app/example.cpp)
 target_link_libraries(navtracker_example PRIVATE
+    navtracker_core Eigen3::Eigen)
+
+add_executable(navtracker_mht_fusion_example app/mht_fusion_example.cpp)
+target_link_libraries(navtracker_mht_fusion_example PRIVATE
     navtracker_core Eigen3::Eigen)
 
 if(NAVTRACKER_BUILD_FOXGLOVE)

@@ -529,6 +529,19 @@ Raised 2026-06-17 in the item-9 closeout review.
 
 ## 15. Batch must be pre-sorted by the caller (QUICK FIX — schedule soon)
 
+**STATUS: DONE (2026-07-02).** Both `MhtTracker::processBatch` and
+`PmbmTracker::processBatch` now `std::stable_sort` the batch by time at the top,
+behind an `is_sorted` fast-path (already-sorted input = no-op = bit-identical;
+verified — 889 tests green, pmbm A/B unchanged). MHT was the real fix (it used
+`scan.front().time` as the instant, so an unsorted batch mis-timed and could
+whole-batch stale-drop); PMBM was already order-robust (predicts to `t_max`,
+set-wise association) so its sort is defensive/uniform + pins the optional
+idle-decay knob's `front()` read. Manual sort removed from
+`app/mht_fusion_example.cpp`; contract restated ("the tracker orders the batch").
+Test: `tests/pipeline/test_batch_ordering.cpp` (MHT RED→green equivalence, PMBM
+order-independence guard, determinism). Cross-tick late-data recovery
+(`ReorderBuffer`, item 1) and batch-resolution remain out of scope as noted below.
+
 **Problem (ergonomics).** `processBatch` is documented and implemented as
 "one scan at `scan.front().time`". The *very common* consumer pattern —
 run a fixed-rate loop (e.g. 10 Hz), collect every measurement that arrived

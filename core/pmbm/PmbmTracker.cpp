@@ -1181,7 +1181,25 @@ void PmbmTracker::mergeStagedActivityMaps() {
     last_cooperative_touch_[id] = t;
 }
 
-void PmbmTracker::processBatch(const std::vector<Measurement>& scan_in) {
+void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
+  // Backlog #15: order the batch by time so callers need not pre-sort. PMBM is
+  // already largely order-robust (predict advances to t_max below; association is
+  // set-wise), so this is a no-op for the tracked state on default configs — it
+  // makes the contract uniform with MhtTracker and pins the optional idle-decay
+  // knob (which reads scan.front().time) to the earliest instant deterministically.
+  // stable_sort keeps it deterministic; the is_sorted fast-path makes an
+  // already-sorted batch a true no-op (bit-identical — every existing test/bench).
+  std::vector<Measurement> scan_ordered;
+  const auto by_time = [](const Measurement& a, const Measurement& b) {
+    return a.time < b.time;
+  };
+  const bool need_sort =
+      !std::is_sorted(scan_arg.begin(), scan_arg.end(), by_time);
+  if (need_sort) {
+    scan_ordered = scan_arg;
+    std::stable_sort(scan_ordered.begin(), scan_ordered.end(), by_time);
+  }
+  const std::vector<Measurement>& scan_in = need_sort ? scan_ordered : scan_arg;
   // Task 6: reset per-scan stale set. enumerateChildren will populate it.
   cooperative_overdue_ids_.clear();
   // Task 5 Step-4 fix: reset the per-scan staging maps. enumerateChildren
