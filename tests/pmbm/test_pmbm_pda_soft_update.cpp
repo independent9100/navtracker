@@ -9,6 +9,7 @@
 #include "core/estimation/EkfEstimator.hpp"
 #include "core/pmbm/PmbmTracker.hpp"
 #include "core/types/Measurement.hpp"
+#include "ports/ILandModel.hpp"
 
 using navtracker::ConstantVelocity2D;
 using navtracker::EkfEstimator;
@@ -96,4 +97,61 @@ TEST(PmbmPdaSoftUpdate, SingleGatedMeasurementReducesToHard) {
     return dominantMeanY(t);
   };
   EXPECT_DOUBLE_EQ(run(false), run(true));
+}
+
+namespace {
+
+// Flags points at y >= boundary_y as shore (clutter prior 0.9); open water
+// (0.0) below it. Lets a test place a clutter return on "land" or in "water".
+struct HalfPlaneLand : navtracker::ILandModel {
+  double boundary_y;
+  explicit HalfPlaneLand(double b) : boundary_y(b) {}
+  double clutterPrior(const Eigen::Vector2d& p) const override {
+    return p.y() >= boundary_y ? 0.9 : 0.0;
+  }
+};
+
+// Establish a y=0 track, then a scan whose WINNER is the real return on the
+// (80,0) prediction and whose non-winner clutter sits at (80,6). Optionally
+// wire a land model + enable the land-aware pool. Returns the track's y.
+double runLandScenario(bool pda, bool exclude_land,
+                       const navtracker::ILandModel* land) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+  auto c = cfg(pda);
+  c.pda_pool_excludes_land = exclude_land;
+  PmbmTracker t(ekf, c);
+  if (land) t.setLandModel(land);
+  for (int k = 0; k <= 7; ++k) {
+    t.predict(Timestamp::fromSeconds(k));
+    t.processBatch({posMeas(10.0 * k, 0.0, k)});
+  }
+  t.predict(Timestamp::fromSeconds(8));
+  t.processBatch({posMeas(80.0, 0.0, 8), posMeas(80.0, 6.0, 8)});
+  return dominantMeanY(t);
+}
+
+}  // namespace
+
+// Land-aware pool: a non-winner clutter return the land model flags as shore
+// must be kept OUT of the PDA softening pool, so the track is not pulled toward
+// the shore. With the sole non-winner excluded, the pool is size 1 and the
+// update is byte-identical to the plain hard update.
+TEST(PmbmPdaLandAwarePool, ShoreClutterExcludedFromPool) {
+  const double y_hard = runLandScenario(false, false, nullptr);
+  const double y_pda = runLandScenario(true, false, nullptr);  // pooled
+  HalfPlaneLand shore{2.0};                                    // (80,6) is shore
+  const double y_land = runLandScenario(true, true, &shore);   // excluded
+  EXPECT_GT(y_pda, y_hard + 0.5);    // plain PDA pulls toward the shore clutter
+  EXPECT_DOUBLE_EQ(y_land, y_hard);  // land-aware drops it → reduces to hard
+}
+
+// Control: land-aware pooling must NOT touch WATER clutter. Same clutter, but a
+// land model whose shore is far away, so (80,6) is open water → it stays in the
+// pool and the result matches plain PDA exactly.
+TEST(PmbmPdaLandAwarePool, WaterClutterStaysInPool) {
+  const double y_pda = runLandScenario(true, false, nullptr);
+  HalfPlaneLand far_shore{1000.0};  // (80,6) is water under this model
+  const double y_land = runLandScenario(true, true, &far_shore);
+  EXPECT_DOUBLE_EQ(y_land, y_pda);
 }

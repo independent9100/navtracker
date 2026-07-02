@@ -83,6 +83,22 @@ class PmbmTracker {
     // output_existence_floor) so young/tentative births keep the crisp hard
     // update. Default OFF = apply to every detected Bernoulli.
     bool pda_soft_detected_branch_on_confirmed_only = false;
+    // Land-aware PDA pool (default OFF): when use_pda_soft_detected_branch is on
+    // AND a land model is wired (setLandModel), drop any NON-winner measurement
+    // whose land clutter prior exceeds pda_pool_land_clutter_gate from the soft-
+    // update pool. PDA then softens against WATER clutter only, not shore/dock
+    // structure — the AutoFerry real-data A/B (2026-07-02) showed the plain
+    // unclaimed-only pool regresses urban channels by pulling tracks onto
+    // unclaimed shore returns while winning open water. The winner is always
+    // kept (hard-assignment decision is unchanged). OFF or no land model →
+    // byte-identical to the plain PDA pool.
+    // See docs/baselines/2026-07-02_autoferry_pda_ab.md.
+    bool pda_pool_excludes_land = false;
+    // Land clutter-prior threshold above which a non-winner return counts as
+    // shore/structure and is excluded from the pool. clutterPrior ≈ 0.5 is the
+    // waterline (see ILandModel), so 0.5 excludes at-shore-and-inland returns
+    // while keeping open-water clutter. Ignored when pda_pool_excludes_land off.
+    double pda_pool_land_clutter_gate = 0.5;
 
     // Murty K-best per parent global hypothesis. Each prior produces up
     // to K child hypotheses; total children = sum across priors, capped

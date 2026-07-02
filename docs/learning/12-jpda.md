@@ -294,6 +294,19 @@ It is off by default (`use_pda_soft_detected_branch`) and reduces to
 today's behaviour whenever only one measurement gates. Full math:
 [pmbm-design.md §11](../algorithms/pmbm-design.md).
 
+**A twist from real data: don't soften toward the shore.** When we
+tried this on a real harbour dataset (AutoFerry), the open sea got
+better but the **urban channel got a little worse**. The reason: near a
+city waterfront the "unowned" returns are not sea clutter — they are
+**docks, walls, moored barges**. Blending toward them pulls the track
+*into* the shore. The fix is to ask the map: if a return sits on land
+(the same coastline map we use to stop births on shore, chapter 13),
+keep it **out of the blend**. So PDA softens against *water* clutter
+only. This is the `pda_pool_excludes_land` option. It is safe — with no
+map loaded it does nothing — but note it can only help where the data
+*has* a coastline; AutoFerry ships none, so we still need a charted
+harbour test to prove it end-to-end.
+
 ---
 
 Previous: [11 — Gating + GNN + Hungarian](11-gating-gnn-hungarian.md)

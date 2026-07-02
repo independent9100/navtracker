@@ -962,15 +962,73 @@ over-count that has repeatedly bitten this codebase.
 - **β₀ miss term.** Add the clutter/missed-detection weight to further damp the
   pull; measure whether it helps beyond detections-only without leaking miss mass
   into the detected branch.
-- **Promotion to default.** A/B measured open-sea ↑, extended-target over-count
-  ↓, philos/anchored flat (eval-log 2026-07-02). Before promoting past opt-in,
-  run the autoferry replay A/B + real-data error bars.
+- **Promotion to default.** Sim A/B measured open-sea ↑, extended-target
+  over-count ↓, philos/anchored flat (eval-log 2026-07-02). The AutoFerry
+  real-data A/B (2026-07-02) then showed the plain pool is **regime-split**:
+  open-water win, anchored flat, but a mild **urban-channel regression** — the
+  unclaimed-only pool admits structured **shore clutter** and pulls tracks onto
+  it. Promotion is therefore blocked pending the land-aware pool (§11.5).
 - **`pda_soft_detected_branch_on_confirmed_only`.** Restricting to confirmed
   tracks is wired but unmeasured — test whether softening young births helps or
   hurts phantom control.
 - **Joint (JPDA) marginals.** The single-target β ignores cross-track competition
   fully modelled only by joint association; a JPDAF marginal β would be the
   principled extension if the unclaimed-only heuristic proves too coarse.
+
+### 11.5 Land-aware pool (`pda_pool_excludes_land`)
+
+Opt-in refinement of the pool P(i) above, motivated directly by the AutoFerry
+real-data A/B (`docs/baselines/2026-07-02_autoferry_pda_ab.md`): the plain
+unclaimed-only pool wins open water but regresses urban channels, because an
+**unclaimed shore/dock return** is exactly the kind of gated-unclaimed clutter
+the pool admits — and softening toward it drags the track onto structure. The
+fix restricts the softening set to **water** clutter:
+
+```
+P_land(i) = { l } ∪ { j ∈ P(i)\{l} : clutterPrior(x̂_{i,j}) ≤ pda_pool_land_clutter_gate }
+```
+
+`clutterPrior(·)` is the same `ILandModel` signed-shoreline prior used by the
+land birth-suppression path (§ land clutter prior): 0 = open water, ≈0.5 =
+waterline, 1 = inland. The query point is the per-cell **post-update** position
+`x̂_{i,j}.head<2>()` (already computed; robust for bearing-only returns whose raw
+`value` is not ENU). The **winner `l` is always kept** — this is a state
+refinement, never a re-selection of the hard assignment. With no land model
+wired (e.g. AutoFerry ships no coastline) or the flag off, P_land ≡ P, so the
+change is **byte-identical**. When the sole non-winner is shore clutter the pool
+collapses to `{l}` and the update reduces to the plain hard update.
+
+**Assumptions.** (1) The coastline/land prior is loaded and datum-aligned (same
+requirement as land birth suppression). (2) The gate `pda_pool_land_clutter_gate`
+(default 0.5 = waterline) separates shore structure from on-water clutter; a
+real vessel *at* the waterline near shore is the boundary case — it is still the
+winner if it is the assigned return, only excluded as a *softening partner* for
+another track. (3) Open-water clutter (prior ≈ 0) still enters the pool, so the
+open-sea K=1 win is preserved.
+
+**Rationale / why-here.** This is the smallest change that keeps the open-water
+gain while removing the urban regression, and it reuses machinery already in the
+tracker (the land model, wired for coastal configs). It ties to ADR 0001
+(land-clutter no-birth-zone) and the sensor-aware-suppression principle: shore
+returns are environment, not vessels, so they should neither birth tracks nor
+soften them. Config `imm_cv_ct_pmbm_land_pda_wateronly` = `_land_pda` + this flag.
+
+**What to test next — the mechanism is currently bench-inert (root-caused).**
+The full A/B (`imm_cv_ct_pmbm_land_pda` vs `_wateronly`, 2026-07-02) is
+**byte-identical on all 42 scenarios**, and a gate=0.0 diagnostic (exclude *any*
+non-open-water return) leaves the coastline-active scenarios (philos, shore_*,
+harbor_*) still byte-identical. Reason: the exclusion can only bite when the PDA
+pool has a non-winner **gated, unclaimed, shore** return, and no current fixture
+provides all four at once — the coastline fixtures are dense enough that the pool
+is already ≈{winner} (nothing to exclude), while the one regime where the plain
+pool *does* pull onto shore clutter (AutoFerry urban) ships **no coastline** so
+the land model cannot flag it. The mechanism is proven only at unit level
+(`ShoreClutterExcludedFromPool`) and is safe-by-construction (zero regression).
+Validating the urban *fix* requires a purpose-built controlled fixture: a vessel
+that **establishes offshore then transits into a near-shore dock-clutter field**
+(so the established track survives the ADR-0001 no-birth band) with a coastline
+flagging the dock returns — or a synthetic coastline draped over the AutoFerry
+urban channels. That fixture is the missing gate before promotion.
 
 ---
 

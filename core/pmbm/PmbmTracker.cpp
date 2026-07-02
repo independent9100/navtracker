@@ -864,6 +864,14 @@ void PmbmTracker::enumerateChildren(
           for (int j = 0; j < m; ++j) {
             if (!std::isfinite(C(i, j))) continue;            // not gated
             if (j != l && claimed_by_existing[j]) continue;   // owned by another track
+            // Land-aware pool: keep shore/structure returns out of the softening
+            // pool so PDA blends against WATER clutter only (the winner l is
+            // always kept — the hard-assignment decision is unchanged). Inert
+            // when off or no land model → byte-identical to the plain pool.
+            if (j != l && cfg_.pda_pool_excludes_land && land_model_ != nullptr &&
+                land_model_->clutterPrior(updated[i][j].mean.head<2>()) >
+                    cfg_.pda_pool_land_clutter_gate)
+              continue;
             pool.push_back(j);
             const double s = std::log(pD_l[j]) + log_lik[i][j];
             if (s > max_s) max_s = s;

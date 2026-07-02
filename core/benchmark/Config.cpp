@@ -668,6 +668,39 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // imm_cv_ct_pmbm_land_pda + the LAND-AWARE pool: shore/structure returns are
+  // dropped from the soft-update pool (clutterPrior > gate), so PDA softens
+  // against WATER clutter only. The AutoFerry real-data A/B (2026-07-02) showed
+  // the plain unclaimed-only pool wins open water but regresses urban channels
+  // by pulling tracks onto unclaimed shore returns; this variant closes that.
+  // A/B vs imm_cv_ct_pmbm_land_pda isolates the land gating (byte-identical on
+  // scenarios with no coastline wired — e.g. AutoFerry). Requires a coastline
+  // in the scenario to differ. See docs/baselines/2026-07-02_autoferry_pda_ab.md.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_land_pda_wateronly";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_land_model = true;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.adaptive_k_best = false;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.lambda_birth = 1e-5;
+      cfg.min_new_bernoulli_existence = 0.05;
+      cfg.use_land_model = true;
+      cfg.use_pda_soft_detected_branch = true;
+      cfg.pda_pool_excludes_land = true;  // the only delta vs _land_pda
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Stage 1 static-obstacle branch (ADR 0002). Honest ablation of
   // imm_cv_ct_pmbm_land with the static-obstacle birth prior added. With no
   // obstacle fixture wired in the scenario this is bit-identical to

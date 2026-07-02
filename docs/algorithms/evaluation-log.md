@@ -5807,3 +5807,48 @@ remove the urban regression. Re-run this exact A/B with a coastline wired for
 the urban scenarios to confirm. Secondary (smaller, after): β₀ miss-term
 variant; `pda_soft_detected_branch_on_confirmed_only`. `imm_cv_ct_pmbm_land`
 stays the recommended default; `imm_cv_ct_pmbm_land_pda` stays opt-in.
+
+## 2026-07-02 — Land-aware PDA pool (`pda_pool_excludes_land`): built + unit-proven + safe, but BENCH-INERT (root-caused)
+
+Follow-up to the AutoFerry regime-split above: the plain PDA pool wins open water
+but regresses urban channels because it admits **unclaimed shore/dock clutter**
+into the β pool. Fix: drop non-winner returns whose `ILandModel::clutterPrior`
+(same signed-shoreline prior as land birth suppression) exceeds
+`pda_pool_land_clutter_gate` (default 0.5 = waterline). The winner is always kept
+(hard assignment unchanged); the query point is the per-cell post-update position
+`updated[i][j].mean.head<2>()` (robust for bearing-only). Off / no land model →
+byte-identical. Config `imm_cv_ct_pmbm_land_pda_wateronly` = `_land_pda` + flag.
+Code: `core/pmbm/PmbmTracker.cpp` pool loop; TDD `PmbmPdaLandAwarePool`
+(`ShoreClutterExcludedFromPool` RED→GREEN: a coastline-flagged non-winner shore
+return is excluded so the update reduces to hard; `WaterClutterStaysInPool`
+control). Full suite green (895 tests); docs pmbm-design §11.5 + learning ch.12.
+
+**Finding: the mechanism is inert on every current bench fixture, and this is
+correct-by-diagnosis, not a bug.** A/B `_land_pda` vs `_wateronly` over the full
+42-scenario matrix: **byte-identical on all 42** (accuracy metrics). A gate=0.0
+diagnostic (exclude *any* non-open-water return) on the coastline-active
+scenarios (philos, philos_radartruth, shore_clutter_open/nearshore, harbor_*)
+is **still byte-identical**. Root cause: the exclusion can only bite when the PDA
+pool holds a non-winner **gated + unclaimed + shore** return, and no fixture has
+all four:
+- Coastline fixtures (philos/shore/harbor): the pool is already ≈{winner}. In
+  shore_clutter_nearshore the vessel runs x∈[−500,−260] while the pier clutter
+  sits x∈[−20,20] — never in the vessel's gate, so nothing to pool (gate=0 proves
+  it, ruling out "gate too high").
+- The one regime where the plain pool *does* pull onto shore clutter (AutoFerry
+  urban) ships **no coastline** → the land model can't flag those returns.
+
+So the plain PDA pool's shore-clutter pull and the land model live in disjoint
+fixtures. The refinement is justified (a charted urban deployment WOULD have both:
+birth suppression removes shore returns from *births* but not from the *scan*, so
+they stay gated+unclaimed and poolable) but unmeasurable here. It ships as a
+safe, unit-proven insurance refinement; kept opt-in via `_wateronly`.
+
+**Validation gate (unchanged conclusion, sharper target):** a controlled sim
+fixture where a vessel **establishes offshore then transits into a near-shore
+dock-clutter field** (established track survives the ADR-0001 no-birth band; the
+in-gate dock returns are coastline-flagged) — plain `_land_pda` should pull the
+track ashore, `_wateronly` should hold it on truth. Or drape a synthetic
+coastline over the AutoFerry urban channels and re-run land/`_land_pda`/
+`_wateronly`. Until one exists, land-aware pooling stays proven-safe-but-
+unmeasured. Baseline: `docs/baselines/2026-07-02_pda_landaware_ab.csv`.
