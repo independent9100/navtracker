@@ -248,6 +248,52 @@ MHT on top.
   some of the benefits of MHT at lower cost. Possible future
   work, but the MHT path is more general.
 
+## 12. PDA comes back: the PMBM soft detected-branch update
+
+Section 11 said plain single-track PDA "is not enough" because we
+have many tracks. That is true as a *whole* data-association method.
+But a small, scoped piece of PDA turns out to be exactly the right
+tool for one specific bug in the PMBM tracker.
+
+**The bug.** PMBM (in its fast K=1 mode) picks, for each track, the
+*one* nearest measurement and updates the track with only that one —
+this is the hard "winner-take-all" pick from chapter 11. On the open
+sea a piece of clutter sometimes lands **closer to the guess** than
+the real ship's return. The track then jumps fully onto the clutter.
+Next scan the real ship is outside the gate, and the track dies.
+
+```
+        guess ●                  hard pick: jump 100% to clutter ✗
+       /       \                 x_new = clutter
+  clutter ○     ○ real ship      → real ship leaves the gate next scan
+   (closer)     (a bit farther)
+```
+
+**The fix (this is PDA).** Instead of jumping fully to the nearest
+return, blend the returns by how likely each one is — exactly the
+`β` weights of this chapter. The real ship still gets some weight, so
+the track only moves **part way** toward the clutter and keeps the
+real ship inside the gate next scan.
+
+```
+  x_new = β_clutter · (update toward clutter)
+        + β_real    · (update toward real ship)
+  → track stays near the real ship, survives ✓
+```
+
+**Why it does not cause the usual over-count.** We only blend in a
+measurement if **no other established track already claimed it**
+(the "unclaimed-only pool"). In a crowded scene every return is
+already owned by some track, so the pool shrinks to just the winner
+and the update is the plain hard update again — no change, no extra
+ghost tracks. In the open sea the clutter is unowned, so it joins the
+pool and does its softening job. This is why the change helps thin
+scenes and leaves dense scenes (philos) untouched.
+
+It is off by default (`use_pda_soft_detected_branch`) and reduces to
+today's behaviour whenever only one measurement gates. Full math:
+[pmbm-design.md §11](../algorithms/pmbm-design.md).
+
 ---
 
 Previous: [11 — Gating + GNN + Hungarian](11-gating-gnn-hungarian.md)

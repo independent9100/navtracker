@@ -900,6 +900,80 @@ requires spatial work on the water side:
 
 ---
 
+## 11. PDA soft detected-branch update (`use_pda_soft_detected_branch`)
+
+Opt-in refinement of the per-Bernoulli detection update (§3.1). Cross-ref:
+[learning ch.12 — JPDA](../learning/12-jpda.md) for the plain-English intro;
+`PmbmTracker::Config::use_pda_soft_detected_branch`, the detected branch in
+`enumerateChildren` (`core/pmbm/PmbmTracker.cpp`).
+
+### 11.1 Math
+
+Under K=1 the assignment gives each detected Bernoulli *i* a single winner
+measurement *l* = `bernoulli_to_meas[i]`, and the Bernoulli's posterior is the
+Kalman update against *l* alone (§3.1). The soft update instead forms a
+probabilistic-data-association posterior over a **pool** P(i):
+
+```
+P(i) = { l } ∪ { gated j : C(i,j) finite AND j not claimed by another existing Bernoulli }
+β_j  = p_D(j)·ℓ_{i,j} / Σ_{k∈P(i)} p_D(k)·ℓ_{i,k}          (detections-only; Σβ_j = 1)
+x̂    = Σ_{j∈P(i)} β_j · x̂_{i,j}                            (β-weighted per-cell means)
+P̂    = Σ_{j∈P(i)} β_j · ( P_{i,j} + (x̂_{i,j} − x̂)(x̂_{i,j} − x̂)ᵀ )   (moment match + spread)
+```
+
+`x̂_{i,j}`, `P_{i,j}` and `ℓ_{i,j}` are the per-cell updated state / covariance /
+likelihood **already pre-computed** during cost-matrix construction (§3.4), so the
+soft update adds no extra `estimator.update` calls — it re-weights cached results.
+For IMM each mode's mean/cov/probability is β-combined the same way. Only the
+**state** changes; the child hypothesis weight still uses the winner *l*
+(`log r + log p_D(l) + log ℓ_{i,l}`), so the mixture / Murty / birth structure is
+untouched. When `|P(i)| = 1` this is byte-identical to the hard update.
+
+### 11.2 Assumptions
+
+1. **The gate captures the target.** β only spreads over gated measurements; a
+   target return outside the χ² gate cannot rescue the state.
+2. **Unclaimed / birth-claimed gated returns are the softening set.** A return
+   claimed by *another established* Bernoulli is excluded (it belongs to that
+   track); returns that are clutter or fresh births may enter the pool.
+3. **Detections-only weighting** (no β₀ miss term): the missed-detection
+   hypothesis stays the separate misdetection branch (§3.1); the soft averaging
+   over the detection pool is what damps the clutter pull, and keeping β₀ out of
+   the detected branch preserves the PMBM branch structure.
+4. **Winner-weighted hypothesis mass.** The soft update is a *state-estimation*
+   refinement inside the winning hypothesis, not a re-weighting of hypotheses.
+
+### 11.3 Rationale
+
+The K=1 GNN winner-take-all mis-assigns a real open-sea track to a gate-**closer**
+clutter return and pulls the state fully onto it, so the real return leaves the
+gate next scan and the track dies (`imm_cv_ct_pmbm_land` dense_clutter lifetime
+0.823 vs MHT 0.925). Raising K in the flat representation regressed anchored
+(phantom-birth Bernoullis in alternative hypotheses). The soft update fixes the
+state pull *without* enumerating alternatives: it never adds a Bernoulli, never
+changes K, never touches Murty. The **unclaimed-only** pool is the load-bearing
+scoping decision — it lets isolated-target clutter soften the update (open-sea)
+while excluding measurements owned by competing tracks, so dense multi-target
+scenes (philos) see pool ≈ {winner} and stay hard/byte-identical, avoiding the
+over-count that has repeatedly bitten this codebase.
+
+### 11.4 Ways to improve / what to test next
+
+- **β₀ miss term.** Add the clutter/missed-detection weight to further damp the
+  pull; measure whether it helps beyond detections-only without leaking miss mass
+  into the detected branch.
+- **Promotion to default.** A/B measured open-sea ↑, extended-target over-count
+  ↓, philos/anchored flat (eval-log 2026-07-02). Before promoting past opt-in,
+  run the autoferry replay A/B + real-data error bars.
+- **`pda_soft_detected_branch_on_confirmed_only`.** Restricting to confirmed
+  tracks is wired but unmeasured — test whether softening young births helps or
+  hurts phantom control.
+- **Joint (JPDA) marginals.** The single-target β ignores cross-track competition
+  fully modelled only by joint association; a JPDAF marginal β would be the
+  principled extension if the unclaimed-only heuristic proves too coarse.
+
+---
+
 ## 8. References
 
 Same as [sota-roadmap.md §4](sota-roadmap.md#4-trajectory-pmbm-as-a-third-idataassociator).
