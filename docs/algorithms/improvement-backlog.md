@@ -526,3 +526,53 @@ CV-based EO/IR with bbox covariance) and stay on the fixed table
 for legacy ARPA / dumb GNSS until per-vendor calibration exists.
 
 Raised 2026-06-17 in the item-9 closeout review.
+
+## 15. Batch must be pre-sorted by the caller (QUICK FIX — schedule soon)
+
+**Problem (ergonomics).** `processBatch` is documented and implemented as
+"one scan at `scan.front().time`". The *very common* consumer pattern —
+run a fixed-rate loop (e.g. 10 Hz), collect every measurement that arrived
+since the last tick, hand the lot to the tracker — produces a batch whose
+members are **not** timestamp-sorted (AIS, radar, EO-IR arrive
+asynchronously). Today the caller must know to sort it themselves:
+`app/mht_fusion_example.cpp:149-159` does exactly this (`std::sort` by time
+before `processBatch`), and the requirement is only stated in a code
+comment. A consumer who skips the sort gets a wrong scan instant
+(`front().time` is not the earliest), and with `reject_stale_measurements`
+on (the default, item 1) the out-of-order tail is **silently dropped and
+counted**. This is a footgun disguised as a no-op — the tracker still
+"works", it just quietly loses data. Confirmed present in **both**
+`MhtTracker::processBatch` and `PmbmTracker::processBatch`
+(`core/pmbm/PmbmTracker.cpp` uses `scan.front().time` as the scan instant).
+
+**Change (quick fix).** Sort the batch inside `processBatch` — a
+deterministic `std::stable_sort` on `time` at the top of the method, in
+both trackers. Already-sorted input is a no-op → **bit-identical** for
+every existing consumer and test (the app example's manual sort becomes
+redundant, not wrong). Then delete the "caller must sort" burden from the
+docs/example and state the new contract: *a batch may arrive in any order;
+the tracker orders it.* Keeps the batch-as-one-scan model unchanged — this
+only fixes which instant represents the scan and stops the stale-guard from
+eating an unsorted tail.
+
+**Scope boundary (NOT this item).** This does **not** address (a) whether a
+100 ms batch should be one scan or several sub-scans (a real design
+question — batching resolution vs. latency), nor (b) recovering genuinely
+late data across ticks (that is item 1's `ReorderBuffer` / OOSM
+retrodiction). It only removes the *within-tick pre-sort* requirement so the
+naive fixed-rate consumer is correct by default.
+
+**Test.** Feed one batch out of order (`[t=126, t=115, t=140]`) to each
+tracker and assert the result is identical to the same batch pre-sorted;
+assert nothing is stale-dropped; assert an already-sorted batch is
+bit-identical to today (determinism pin).
+
+**Lift.** Tiny — two `stable_sort` calls + doc/example cleanup + one
+equivalence test per tracker. Half a day. **Scheduling priority: SOON**
+(high ergonomics value, low risk, unblocks the canonical fixed-rate
+integration pattern). File entry points: `core/pipeline/MhtTracker.cpp`
+and `core/pmbm/PmbmTracker.cpp` `processBatch`; example cleanup in
+`app/mht_fusion_example.cpp`.
+
+Raised 2026-07-02 (user side-quest — "sensor data needs to be sorted" is a
+general smell that will hurt naive consumers).
