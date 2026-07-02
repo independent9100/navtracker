@@ -24,7 +24,7 @@ import csv, glob, json, math, os
 import numpy as np
 
 ROOT = "/home/andreas/workspace/navtracker"
-OUT = "/tmp/claude-1000/-home-andreas-workspace-navtracker/520a673b-184b-42a6-a40b-544ebf598eda/scratchpad"
+OUT = os.environ.get("PHILOS_COVERAGE_OUT", f"{ROOT}/charts")
 SCEN_GLOB = f"{ROOT}/tests/fixtures/philos/out/*/"
 CHART = f"{ROOT}/charts/geojson/radar_clutter.geojson"
 LAND = f"{ROOT}/charts/geojson/land.geojson"
@@ -283,6 +283,53 @@ strong=order[:100]; unch = d_union[strong]>50.0
 if unch.sum():
     print(f"  of top-100 that are >50 m from any structure ({int(unch.sum())}): {100*in_moor[strong][unch].sum()/unch.sum():.0f}% fall inside a charted anchorage/mooring area")
 
+# ── field-check: top clusters vs BRIDGES + ENC coverage extent ──────────────
+def densify_class(path, objclass):
+    d=json.load(open(path)); pts=[]
+    for ft in d["features"]:
+        if ft["properties"].get("obj_class")!=objclass: continue
+        g=ft.get("geometry")
+        if not g: continue
+        t=g["type"]; co=g["coordinates"]; rings=[]
+        if t=="Point": pts.append((co[0],co[1])); continue
+        elif t=="LineString": rings=[co]
+        elif t=="MultiLineString": rings=co
+        elif t=="Polygon": rings=co
+        elif t=="MultiPolygon":
+            for poly in co: rings+=poly
+        for ring in rings:
+            for a,b in zip(ring[:-1],ring[1:]):
+                ae,an=to_enu(a[1],a[0]); be,bn=to_enu(b[1],b[0])
+                L=math.hypot(be-ae,bn-an); steps=max(1,int(L/DENSIFY_M))
+                for k in range(steps+1):
+                    f=k/steps; pts.append((a[0]+f*(b[0]-a[0]), a[1]+f*(b[1]-a[1])))
+    return np.array([to_enu(p[1],p[0]) for p in pts]) if pts else np.empty((0,2))
+bridge_pts=densify_class(f"{ROOT}/charts/geojson/fixed_surface.geojson","BRIDGE")
+cov_u=ogr.Geometry(ogr.wkbMultiPolygon)
+for path in ENC.values():
+    ds=ogr.Open(path); lyr=ds.GetLayerByName("M_COVR")
+    if not lyr: continue
+    for ft in lyr:
+        g=ft.GetGeometryRef()
+        if g is None: continue
+        if g.GetGeometryName()=="POLYGON": cov_u.AddGeometry(g.Clone())
+        elif g.GetGeometryName()=="MULTIPOLYGON":
+            for i in range(g.GetGeometryCount()): cov_u.AddGeometry(g.GetGeometryRef(i).Clone())
+def in_cov(e,n):
+    lon=lon_ref+e/mE; lat=lat_ref+n/mN
+    pt=ogr.Geometry(ogr.wkbPoint); pt.AddPoint(lon,lat); return cov_u.Contains(pt)
+print(f"\n== field-check: top-20 strong clusters (bridges? in coverage?)  (charted BRIDGE pts={len(bridge_pts)}) ==")
+print("  rank      lat        lon      count  d_chart  d_bridge  in_ENC_cov")
+for r,i in enumerate(order[:20]):
+    e,n,cnt=expected[i]; lat=lat_ref+n/mN; lon=lon_ref+e/mE
+    print(f"  {r+1:4d}  {lat:9.5f} {lon:10.5f} {int(cnt):6d} {d_union[i]:7.0f} {nearest(bridge_pts,e,n):8.0f}   {in_cov(e,n)}")
+top=order[:100]
+dbr=np.array([nearest(bridge_pts,expected[i,0],expected[i,1]) for i in top])
+outc=np.array([not in_cov(expected[i,0],expected[i,1]) for i in top])
+print(f"  top-100 within 75 m of a charted BRIDGE: {100*(dbr<=75).sum()/100:.0f}%   within 150 m: {100*(dbr<=150).sum()/100:.0f}%")
+print(f"  top-100 OUTSIDE ENC chart coverage (M_COVR): {100*outc.sum()/100:.0f}%")
+print(f"  top-100 EITHER near a bridge(<=150m) OR outside coverage: {100*((dbr<=150)|outc).sum()/100:.0f}%")
+
 # ── map ─────────────────────────────────────────────────────────────────────
 os.environ.setdefault("MPLCONFIGDIR", OUT)
 import matplotlib; matplotlib.use("Agg")
@@ -309,6 +356,14 @@ for j,ring in enumerate(moor_rings):
     if len(ring)>2:
         ax.fill(ring[:,0],ring[:,1],facecolor="#c39bd3",edgecolor="#7d3c98",alpha=0.30,lw=0.8,
                 zorder=1.5,label=("charted anchorage/mooring area" if j==0 else None))
+
+# charted bridges (orange) + ENC coverage boundary (dotted)
+if len(bridge_pts):
+    ax.scatter(bridge_pts[:,0],bridge_pts[:,1],s=7,c="#e8820c",marker="s",alpha=0.75,
+               label="charted bridges (57 features)",zorder=4.5)
+_cov=[(42.30,-71.10),(42.375,-71.10),(42.375,-70.95),(42.30,-70.95),(42.30,-71.10)]
+_cr=np.array([to_enu(la,lo) for la,lo in _cov])
+ax.plot(_cr[:,0],_cr[:,1],color="#222",lw=1.6,ls=":",label="ENC coverage extent (lat<=42.375)",zorder=2.2)
 
 # charted obstacles
 if len(chart_fixed): ax.scatter(chart_fixed[:,0],chart_fixed[:,1],s=1.2,c="#1f3a5f",alpha=0.35,label=f"charted fixed obstacles ({len(chart_fixed)} pts)",zorder=2)

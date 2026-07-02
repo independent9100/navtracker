@@ -8,6 +8,36 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-02 — R4 (static review): philos chart-coverage field-check committed
+
+Static-branch review ticket R4. The strongest quantitative evidence for the
+philos over-count attribution lived only in the uncommitted working tree
+(`charts/philos_chart_coverage.py` + PNG). Committed it (fixed a stale hardcoded
+scratchpad `OUT` → `ROOT/charts`, env-overridable) and re-ran against the current
+Boston ENC (US5BOSCC/CD) + chart GeoJSON. Field-check numbers (top-100 strongest
+persistent-structure clusters — the actual over-count drivers):
+
+- **0 %** within 75 m of a charted **bridge** (6 % within 150 m).
+- **32 %** fall **outside ENC chart coverage** (M_COVR) entirely.
+- **37 %** are near a bridge (≤150 m) OR outside coverage; ~63 % remain
+  unexplained by any chart layer.
+- Two dominant groups: an in-coverage cluster at **~42.3585 N / −71.0875 E**
+  (~350–470 m from any charted feature, ~500–600 m from bridges) and an
+  **outside-ENC** group at **~42.376–42.379 N / −71.046 E**.
+
+This is the quantitative backing for the R4 doc reconciliation (design spec
+§14.10 + ADR 0002 now say "persistent uncharted structure dominates; a minority
+are moored craft — mixture"). It also confirms the largest slice of the residual
+over-count is **not chartable** — the honest lever is live static-occupancy
+(Stage 1b/2), not the chart (cf. 2026-07-01 "charts are a ~⅓ partial lever").
+
+**Open sub-task (needs imagery, not doable in this environment):** the top-20
+clusters' geometric table (lat/lon, return count, distance-to-chart,
+distance-to-bridge, in/out ENC coverage) is emitted by the script, but the
+per-cluster *visual* classification (fixed structure vs moored craft vs
+own-ship-wake vs sea clutter) requires satellite / raw-radar overlay inspection.
+Deferred — it decides how much of the residual Stage 1b can actually crush.
+
 ## 2026-07-02 — R6 (static review): boat-near-pier gate; R1 not load-bearing on default configs (measured)
 
 Static-branch review ticket R6. Added `harbor_boat_near_pier`: the R5 charted-pier
