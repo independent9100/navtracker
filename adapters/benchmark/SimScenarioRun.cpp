@@ -465,11 +465,40 @@ class HarborCompleteTruthScenarioRun : public ScenarioRun {
   // No syntheticCoastline(): chart-free by design.
 };
 
+// R5: identical to harbor_complete_truth (same measurements + truth), but the
+// pier is now CHARTED — a line of StaticObstacles along pierPoints() exposed via
+// syntheticObstacles(). Lets an A/B of imm_cv_ct_pmbm vs imm_cv_ct_pmbm_static
+// measure the Stage-1a charted-obstacle birth prior: _static should hard-drop
+// the pier phantom births (footprint interior) while the three anchored boats
+// (>= 650 m away) stay byte-identical. Closes the north-star "Stage 1a: no
+// measurement" gap.
+class HarborChartedPierScenarioRun : public HarborCompleteTruthScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return describe("harbor_charted_pier", shoreClutterTable());
+  }
+  std::optional<std::vector<StaticObstacle>> syntheticObstacles() const override {
+    // Same datum as generate(); convert each pier ENU point to geodetic.
+    const geo::Datum datum(navtracker::geo::Geodetic{42.35, -71.05, 0.0});
+    std::vector<StaticObstacle> obs;
+    for (const auto& p : pierPoints()) {
+      StaticObstacle o;
+      o.position = datum.toGeodetic(Eigen::Vector3d(p.x(), p.y(), 0.0));
+      o.footprint_radius_m = 10.0;    // hard core covers the ~10 m-spaced line
+      o.keep_clear_radius_m = 50.0;   // soft keep-clear buffer
+      o.category = ObstacleCategory::Pile;
+      o.source_id = "sim_charted_pier";
+      obs.push_back(std::move(o));
+    }
+    return obs;
+  }
+};
+
 }  // namespace
 
 std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   std::vector<std::unique_ptr<ScenarioRun>> out;
-  out.reserve(18);
+  out.reserve(19);
   out.push_back(std::make_unique<CrossingScenarioRun>());
   out.push_back(std::make_unique<OvertakingScenarioRun>());
   out.push_back(std::make_unique<HeadOnScenarioRun>());
@@ -488,6 +517,7 @@ std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   out.push_back(std::make_unique<ShoreClutterOpenScenarioRun>());
   out.push_back(std::make_unique<ShoreClutterNearShoreScenarioRun>());
   out.push_back(std::make_unique<HarborCompleteTruthScenarioRun>());
+  out.push_back(std::make_unique<HarborChartedPierScenarioRun>());
   return out;
 }
 

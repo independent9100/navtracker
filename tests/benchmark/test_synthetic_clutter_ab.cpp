@@ -37,6 +37,49 @@ std::vector<std::unique_ptr<ScenarioRun>> shoreScenariosOnly() {
 }
 }  // namespace
 
+// R5: Stage-1a charted-obstacle A/B. On harbor_charted_pier (same measurements
+// and truth as harbor_complete_truth, but the pier is charted via
+// syntheticObstacles), imm_cv_ct_pmbm_static must hard-drop the pier phantom
+// births — card_err and gospa_false collapse — while the three anchored boats
+// (>= 650 m from the pier) keep their lifetime. Closes the "Stage 1a: no
+// measurement" gap.
+TEST(SyntheticClutterAB, ChartedPierSuppressesPierKeepsBoats) {
+  std::vector<Config> configs;
+  for (const auto& c : defaultConfigs())
+    if (c.label == "imm_cv_ct_pmbm" || c.label == "imm_cv_ct_pmbm_static")
+      configs.push_back(c);
+  ASSERT_EQ(configs.size(), 2u);
+
+  std::vector<std::unique_ptr<ScenarioRun>> scen;
+  for (auto& s : defaultSimScenarios())
+    if (s->descriptor().label == "harbor_charted_pier") scen.push_back(std::move(s));
+  ASSERT_EQ(scen.size(), 1u);
+
+  SweepParams params;
+  params.run_id = "charted_pier_ab";
+  params.synthetic_seeds = 5;
+  const auto rows = runSweep(configs, scen, params);
+  ASSERT_FALSE(rows.empty());
+
+  const char* base = "imm_cv_ct_pmbm";
+  const char* stat = "imm_cv_ct_pmbm_static";
+  const std::string sc = "harbor_charted_pier";
+  const double card_base = meanMetric(rows, base, sc, "card_err_mean");
+  const double card_stat = meanMetric(rows, stat, sc, "card_err_mean");
+  const double false_base = meanMetric(rows, base, sc, "gospa_false");
+  const double false_stat = meanMetric(rows, stat, sc, "gospa_false");
+  const double life_stat = meanMetric(rows, stat, sc, "lifetime_ratio");
+  std::cout << "\n=== R5 charted-pier A/B ===\n"
+            << "  card_err:    base=" << card_base << "  static=" << card_stat << "\n"
+            << "  gospa_false: base=" << false_base << "  static=" << false_stat << "\n"
+            << "  lifetime(static)=" << life_stat << "\n" << std::flush;
+  // Charting the pier removes phantom-track over-count.
+  EXPECT_LT(card_stat, card_base);
+  EXPECT_LT(false_stat, false_base);
+  // Real targets (the anchored boats + movers) are still tracked well.
+  EXPECT_GT(life_stat, 0.9);
+}
+
 TEST(SyntheticClutterAB, LandModelRemovesShoreOverCountKeepsRealTargets) {
   std::vector<Config> configs;
   for (const auto& c : defaultConfigs()) {

@@ -9,7 +9,7 @@ using namespace navtracker::benchmark;
 
 TEST(SimScenarioRun, ProducesExpectedDefaultScenarios) {
   const auto scenarios = defaultSimScenarios();
-  ASSERT_EQ(scenarios.size(), 18u);
+  ASSERT_EQ(scenarios.size(), 19u);
   std::set<std::string> labels;
   for (const auto& s : scenarios) labels.insert(s->descriptor().label);
   EXPECT_EQ(labels.count("crossing"), 1u);
@@ -30,6 +30,7 @@ TEST(SimScenarioRun, ProducesExpectedDefaultScenarios) {
   EXPECT_EQ(labels.count("shore_clutter_open"), 1u);
   EXPECT_EQ(labels.count("shore_clutter_nearshore"), 1u);
   EXPECT_EQ(labels.count("harbor_complete_truth"), 1u);
+  EXPECT_EQ(labels.count("harbor_charted_pier"), 1u);
 }
 
 TEST(SimScenarioRun, GenerateIsDeterministicForSameSeed) {
@@ -99,7 +100,8 @@ TEST(SimScenarioRun, ClutterFreeScenariosDeclareFloorDensity) {
                 navtracker::MeasurementModel::Bearing2D);
     } else if (d.label == "shore_clutter_open" ||
                d.label == "shore_clutter_nearshore" ||
-               d.label == "harbor_complete_truth") {
+               d.label == "harbor_complete_truth" ||
+               d.label == "harbor_charted_pier") {
       ASSERT_EQ(d.detection_table.size(), 2u) << d.label;
     } else {
       ASSERT_EQ(d.detection_table.size(), 1u) << d.label;

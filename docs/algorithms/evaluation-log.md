@@ -8,6 +8,33 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-02 — R5 (static review): Stage 1a charted-obstacle A/B measured (was "no measurement")
+
+Static-branch review ticket R5. Stage 1a (the charted `StaticObstacle` birth
+prior) shipped 2026-07-01 with **zero measured benefit** — no fixture had charted
+hazards. Added `harbor_charted_pier`: identical measurements + truth to
+`harbor_complete_truth`, but the pier is now charted as a line of `StaticObstacle`s
+(footprint 10 m, keep-clear 50 m) via the scenario `syntheticObstacles()` hook.
+
+**Measured A/B** (`imm_cv_ct_pmbm` vs `imm_cv_ct_pmbm_static`, 5 seeds; test
+`SyntheticClutterAB.ChartedPierSuppressesPierKeepsBoats`):
+
+| Metric | imm_cv_ct_pmbm | imm_cv_ct_pmbm_static |
+|---|---:|---:|
+| card_err_mean | 11.64 | **7.43** |
+| gospa_false | 2362 | **1518** |
+| lifetime_ratio | 0.974 | **0.975** |
+
+Charting the pier removes ~4 phantom tracks (card_err 11.64 → 7.43, gospa_false
+−36%) while every real target keeps its lifetime (0.975 == the harbor baseline).
+The suppression is **partial by construction**: the hard footprint kills returns
+*on* the pier, but the scenario's uniform sea clutter (5/scan, uncharted) is the
+residual over-count — no chart layer addresses it (that is Stage 1b/2's job, cf.
+the 2026-07-01 "charts are a ~⅓ partial lever" finding). This is the first
+*measured* confirmation that the charted birth prior works. Real-data philos A/B
+with the Boston ENC GeoJSON is a predictable partial repeat (deprioritised per
+2026-07-01). north-star Stage 1a row updated from "no measurement" to these deltas.
+
 ## 2026-07-02 — R1 (static review): pre-suppression birth floor, SCOPED to obstacle composition (measured)
 
 Static-branch review ticket R1
