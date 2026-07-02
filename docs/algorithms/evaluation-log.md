@@ -5752,3 +5752,58 @@ sub-1 m/s moored/drifting boat is indistinguishable from a structure in 20 s.
 (track static vessels; handle fixed infrastructure in a separate static-obstacle
 branch) and design spec §14.10. Diagnostic scripts were scratch-only (not
 committed); `tests/replay/test_philos_dump.cpp` was a temporary dumper.
+
+## 2026-07-02 — PDA soft detected-branch update: AutoFerry real-data A/B → NOT promoted (regime-split)
+
+The promotion-to-default gate for `imm_cv_ct_pmbm_land_pda` (PDA soft
+detected-branch update, commit 68c845e). Sim + philos last turn validated the
+mechanism cleanly (dense_clutter lifetime 0.823→0.847, over-count down, philos
+flat, flag-off byte-identical). This is the real-data reality check.
+
+Command: `navtracker_bench_baseline --config-filter imm_cv_ct_pmbm_land
+--scenario-filter autoferry` → A = `imm_cv_ct_pmbm_land`, B =
+`imm_cv_ct_pmbm_land_pda`, over all 18 AutoFerry replays (9 canonical + 9
+anchored). Deterministic replays (seed 0); the per-scenario spread across the
+nine segments is the real-data error bar. Data:
+`docs/baselines/2026-07-02_autoferry_pda_ab.csv`; analysis:
+`docs/baselines/2026-07-02_autoferry_pda_ab.md`.
+
+**Verdict: DO NOT promote. Keep opt-in.** The result is **regime-split**:
+
+- **Open-water (env 1, scenarios 2–6, n=5) = mild win** — the exact regime PDA
+  targets (open-sea K=1 gap). gospa_missed −3.5, gospa_mean 17.69→17.41,
+  id_switches 7.4→6.3, and **pos_rmse lower on all 5** (13.51→12.74 m). Matches
+  design + sim. No open-water regression.
+- **Anchored (all 9) = flat** (lifetime 0.921→0.9203, card_err −0.001,
+  gospa_false +0.05, id_switches +0). The anchored-scenario regression that
+  disqualified "just raise K" is **not** tripped — the one hard gate passes.
+  (Anchored tracks are well-established; in-gate returns already claimed ⇒
+  pool≈1 ⇒ reduces to the hard update, as designed.)
+- **Urban channel (env 2, scenarios 13/16/17/22, n=4) = mild regression** —
+  gospa_mean +0.70 (4/4 worse), **pos_rmse +3.2 m / +20 % (4/4 worse)**,
+  gospa_false +9.4 (3/4 worse; scenario16 +34), id_switches +1.4. Unclaimed
+  structured **shore/dock clutter** enters the PDA pool and pulls tracks toward
+  it. The sim harbor over-count *drop* (a large target's own hull returns
+  pooling constructively) did **not** generalise to real urban shore clutter,
+  which instead adds false pull.
+- **Net canonical (n=9)** = wash / slightly negative on accuracy (gospa_mean
+  +0.15, ospa +4.0, pos_rmse +0.99), lifetime marginally +0.0038 — the urban
+  regression roughly cancels the open-water gain.
+
+**Caveat (matters):** AutoFerry ships **no coastline**, so the land mask is
+inert (land == plain `adapt` for both configs). This A/B is therefore **PDA in
+isolation, no shore suppression on the pool** — a pessimistic view for a charted
+coastal deployment but a fair one for the chartless general/open-water case the
+default must also serve.
+
+**Methodology note:** this is the sim-primary / real-reality-check split doing
+its job — the real replay caught model-matched optimism (the extended-target
+over-count drop was a sim artefact). We do not ship on sim alone.
+
+**Principled next step (blocks promotion):** land/coastline-aware PDA pool —
+exclude returns inside the ADR 0001 land-clutter zone from the β pool so PDA
+softens against *water* clutter only; expected to keep the open-water win and
+remove the urban regression. Re-run this exact A/B with a coastline wired for
+the urban scenarios to confirm. Secondary (smaller, after): β₀ miss-term
+variant; `pda_soft_detected_branch_on_confirmed_only`. `imm_cv_ct_pmbm_land`
+stays the recommended default; `imm_cv_ct_pmbm_land_pda` stays opt-in.
