@@ -831,6 +831,16 @@ void PmbmTracker::enumerateChildren(
         bernoulli_to_meas[row] = col;
       }
     }
+    // PDA soft update (default off): a measurement claimed by ANOTHER existing
+    // Bernoulli in this child must not enter a track's soft-update pool (that
+    // would double-count a shared return → over-count). Measurements that are
+    // unclaimed or claimed only by a new-target birth row may (they were clutter
+    // / a fresh birth anyway). Built once per child.
+    std::vector<char> claimed_by_existing(m, 0);
+    if (cfg_.use_pda_soft_detected_branch)
+      for (int row = 0; row < n; ++row)
+        if (bernoulli_to_meas[row] >= 0)
+          claimed_by_existing[bernoulli_to_meas[row]] = 1;
 
     // Detected Bernoullis.
     for (int i = 0; i < n; ++i) {
@@ -838,6 +848,74 @@ void PmbmTracker::enumerateChildren(
       if (bernoulli_to_meas[i] >= 0) {
         const int l = bernoulli_to_meas[i];
         Bernoulli det = updated[i][l];
+        // PDA soft detected-branch update (default off): rather than commit the
+        // state fully to the assigned winner l, β-weight the per-cell updates
+        // over the pool { l } ∪ { gated j not claimed by another existing
+        // Bernoulli }. β_j ∝ p_D(j)·ℓ_{i,j} (detections-only). Moment-match with
+        // the innovation-spread term. Only the STATE changes — the hypothesis
+        // weight (below) still uses the winner l, so K=1 / Murty are untouched.
+        // Pool size 1 → unchanged hard update. This defeats a gate-closer
+        // clutter dragging a real open-sea track off-target.
+        if (cfg_.use_pda_soft_detected_branch &&
+            (!cfg_.pda_soft_detected_branch_on_confirmed_only ||
+             b.existence_probability >= cfg_.output_existence_floor)) {
+          std::vector<int> pool;
+          double max_s = -kInf;
+          for (int j = 0; j < m; ++j) {
+            if (!std::isfinite(C(i, j))) continue;            // not gated
+            if (j != l && claimed_by_existing[j]) continue;   // owned by another track
+            pool.push_back(j);
+            const double s = std::log(pD_l[j]) + log_lik[i][j];
+            if (s > max_s) max_s = s;
+          }
+          if (pool.size() > 1) {
+            std::vector<double> w(pool.size());
+            double wsum = 0.0;
+            for (std::size_t p = 0; p < pool.size(); ++p) {
+              const int j = pool[p];
+              w[p] = pD_l[j] * std::exp(log_lik[i][j] - max_s);
+              wsum += w[p];
+            }
+            if (wsum > 0.0) {
+              for (double& wp : w) wp /= wsum;
+              // Mode-collapsed mean/cov with the PDA spread-of-innovations term.
+              Eigen::VectorXd mean = Eigen::VectorXd::Zero(det.mean.size());
+              for (std::size_t p = 0; p < pool.size(); ++p)
+                mean += w[p] * updated[i][pool[p]].mean;
+              Eigen::MatrixXd cov =
+                  Eigen::MatrixXd::Zero(det.covariance.rows(), det.covariance.cols());
+              for (std::size_t p = 0; p < pool.size(); ++p) {
+                const Eigen::VectorXd d = updated[i][pool[p]].mean - mean;
+                cov += w[p] * (updated[i][pool[p]].covariance + d * d.transpose());
+              }
+              det.mean = std::move(mean);
+              det.covariance = std::move(cov);
+              // IMM: β-combine each mode's mean/cov/probability likewise.
+              if (det.imm_means.cols() > 0) {
+                const int K = static_cast<int>(det.imm_means.cols());
+                const int sd = static_cast<int>(det.imm_means.rows());
+                Eigen::MatrixXd im = Eigen::MatrixXd::Zero(sd, K);
+                Eigen::VectorXd mp = Eigen::VectorXd::Zero(K);
+                for (std::size_t p = 0; p < pool.size(); ++p) {
+                  const Bernoulli& u = updated[i][pool[p]];
+                  im += w[p] * u.imm_means;
+                  mp += w[p] * u.imm_mode_probabilities;
+                }
+                std::vector<Eigen::MatrixXd> ic(
+                    K, Eigen::MatrixXd::Zero(sd, sd));
+                for (int mode = 0; mode < K; ++mode)
+                  for (std::size_t p = 0; p < pool.size(); ++p) {
+                    const Bernoulli& u = updated[i][pool[p]];
+                    const Eigen::VectorXd d = u.imm_means.col(mode) - im.col(mode);
+                    ic[mode] += w[p] * (u.imm_covariances[mode] + d * d.transpose());
+                  }
+                det.imm_means = std::move(im);
+                det.imm_mode_probabilities = std::move(mp);
+                det.imm_covariances = std::move(ic);
+              }
+            }
+          }
+        }
         det.last_update = scan[l].time;
         det.last_claimed_meas_index = l;  // R2: true assignment for the feed
         // Detection: x_pred = parent's state (post-predict, pre-update);

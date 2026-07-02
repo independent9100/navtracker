@@ -637,6 +637,37 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // imm_cv_ct_pmbm_land + the PDA soft detected-branch update (opt-in). Targets
+  // the residual open-sea K=1 gap noted above: a gate-closer clutter return
+  // dragging a real track off-target. The soft update β-weights the winner with
+  // any gated-but-unclaimed return, so it should lift dense_clutter lifetime
+  // toward MHT (0.925) without touching philos over-count (claimed returns are
+  // excluded from the pool) or anchored (no births, no K change). A/B vs
+  // imm_cv_ct_pmbm_land isolates the update.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_land_pda";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_land_model = true;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.adaptive_k_best = false;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.lambda_birth = 1e-5;
+      cfg.min_new_bernoulli_existence = 0.05;
+      cfg.use_land_model = true;
+      cfg.use_pda_soft_detected_branch = true;  // the only delta vs _land
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Stage 1 static-obstacle branch (ADR 0002). Honest ablation of
   // imm_cv_ct_pmbm_land with the static-obstacle birth prior added. With no
   // obstacle fixture wired in the scenario this is bit-identical to

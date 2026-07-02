@@ -226,6 +226,7 @@ add_executable(navtracker_tests
   tests/pmbm/test_pmbm_static_obstacle.cpp
   tests/pmbm/test_pmbm_clutter_feed.cpp
   tests/pmbm/test_pmbm_birth_floor.cpp
+  tests/pmbm/test_pmbm_pda_soft_update.cpp
   tests/static/test_static_obstacle_model.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp

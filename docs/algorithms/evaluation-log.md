@@ -8,6 +8,43 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-02 — PDA soft detected-branch update (open-sea K=1 gap) [Cl-3]
+
+Closes the north-star's "open (next)": under K=1 GNN a detected PMBM Bernoulli
+hard-commits to its single lowest-cost gated measurement, so a gate-CLOSER
+clutter return drags a real open-sea track off-target (dense_clutter lifetime
+0.823 vs MHT 0.925). New opt-in `use_pda_soft_detected_branch` (default off):
+the detected branch β-weights the winner's per-cell update with any gated
+measurement NOT claimed by another existing Bernoulli (pool), moment-matched with
+the innovation-spread term — only the STATE changes, the hypothesis weight still
+uses the winner, so K=1 / Murty / births are untouched. Reduces to today's hard
+update when the pool is size 1.
+
+**A/B `imm_cv_ct_pmbm_land` vs `imm_cv_ct_pmbm_land_pda` (10 seeds, sim):**
+
+| Scenario | lifetime | gospa | card_err | gospa_false |
+|---|---|---|---|---|
+| dense_clutter (open-sea) | **0.823→0.847** | 13.6→13.1 | −0.19→−0.14 | 38→35.5 |
+| parallel_lanes_dense | 0.976→0.982 | 14.7→14.6 | — | 4→4.5 |
+| harbor_large_anchored_ship | — | 63.7→**56.2** | 19.0→**14.6** | 3827→**2953** |
+| harbor_charted_pier / complete | — | 51.4→46.9 | 12.0→9.8 | 2435→1999 |
+| harbor_boat_near_pier | — | 53.0→50.1 | 11.7→9.9 | 2433→2103 |
+
+Open-sea lifetime up (toward MHT); **extended-target / anchored over-count DROPS
+hard** (the multi-return hull pooling collapses spurious tracks — card_err −2 to
+−4, gospa_false −330 to −874) → no anchored regression, the opposite. Single-
+return scenarios unchanged (reduce-to-hard). Flag off = byte-identical (full
+suite green).
+
+**Philos REPLAY over-count gate PASSED:** `philos` gospa 63.13→63.08,
+`philos_radartruth` 67.08→67.04 (both a hair better; card_err / lifetime /
+gospa_false unchanged). Exactly as the unclaimed-only pool predicted — in dense
+philos, competing returns are claimed by other established tracks → excluded from
+the pool → pool ≈ 1 → hard-like → no over-count. Net: PDA soft update is a clean
+win (open-sea up, extended-target over-count down, philos/anchored flat) with
+zero regression. `imm_cv_ct_pmbm_land_pda` shipped opt-in; a promotion-to-default
+call wants the autoferry replay A/B + real-data error bars next.
+
 ## 2026-07-02 — Static-review code-review, round 2 (9 findings)
 
 A second review of the round-1 fixes. The three load-bearing claims held (land

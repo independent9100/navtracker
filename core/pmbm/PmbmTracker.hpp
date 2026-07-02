@@ -67,6 +67,23 @@ class PmbmTracker {
     // MhtTracker::Config::gate_threshold; 9.0 ≈ 99 % χ²₂.
     double gate_threshold = 9.0;
 
+    // PDA soft detected-branch update (default OFF). Under K=1 GNN a detected
+    // Bernoulli hard-commits to its single lowest-cost gated measurement; a
+    // gate-closer CLUTTER return then pulls the state off a real target (open-sea
+    // lifetime 0.823 vs MHT 0.925). When ON, the detected branch instead applies
+    // a probabilistic-data-association soft update: a likelihood-weighted (β_j)
+    // combination of the per-cell updates over the gated measurements in the
+    // Bernoulli's pool — the assigned winner plus any gated measurement NOT
+    // claimed by another Bernoulli in this child. Unclaimed-only scoping avoids
+    // double-counting a shared measurement (no philos over-count); the update
+    // reduces to today's hard update when only one measurement gates. No new
+    // Bernoullis, no K change, no Murty change → no anchored regression.
+    bool use_pda_soft_detected_branch = false;
+    // Restrict the soft update to CONFIRMED tracks (existence ≥
+    // output_existence_floor) so young/tentative births keep the crisp hard
+    // update. Default OFF = apply to every detected Bernoulli.
+    bool pda_soft_detected_branch_on_confirmed_only = false;
+
     // Murty K-best per parent global hypothesis. Each prior produces up
     // to K child hypotheses; total children = sum across priors, capped
     // by `max_global_hypotheses` after weight pruning. K=3 follows the
