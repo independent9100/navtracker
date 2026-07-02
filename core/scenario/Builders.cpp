@@ -104,9 +104,11 @@ std::vector<double> distinctScanTimes(const Scenario& s) {
 }
 
 void sortMeasurementsByTime(Scenario& s) {
+  // Compare exact Timestamp nanos (not lossy .seconds() doubles) — the same
+  // ordering BenchRunner::flushScansUpTo / groupTruth bucket on downstream.
   std::stable_sort(s.measurements.begin(), s.measurements.end(),
                    [](const Measurement& a, const Measurement& b) {
-                     return a.time.seconds() < b.time.seconds();
+                     return a.time < b.time;
                    });
 }
 
@@ -120,7 +122,7 @@ void sortMeasurementsByTime(Scenario& s) {
 void sortTruthByTime(Scenario& s) {
   std::stable_sort(s.truth.begin(), s.truth.end(),
                    [](const TruthSample& a, const TruthSample& b) {
-                     return a.time.seconds() < b.time.seconds();
+                     return a.time < b.time;
                    });
 }
 

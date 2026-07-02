@@ -207,8 +207,16 @@ class HaxrScenarioRun : public ScenarioRun {
         kHaxrAisCsv, "kattwyk", stations);
 
     Scenario s;
-    s.measurements = std::move(plots);
+    s.measurements = std::move(plots);  // loadPlotCsv already sorts by time
     s.truth = std::move(truth);
+    // loadHaxrTruth returns raw CSV order with no ordering guarantee, but
+    // BenchRunner::groupTruth buckets on exact-time changes and requires truth
+    // sorted by non-decreasing time (unsorted truth silently fragments into
+    // duplicate groups). Sort here, matching the philos/autoferry replay paths.
+    std::sort(s.truth.begin(), s.truth.end(),
+              [](const TruthSample& a, const TruthSample& b) {
+                return a.time < b.time;
+              });
     return s;
   }
 };
