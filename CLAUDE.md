@@ -59,6 +59,18 @@ TrackShifterSink mgr_sink{&mgr};
 provider.registerDatumSink(&mgr_sink);
 ```
 
+`StaticObstacleModel` and `CoastlineModel` also implement `IDatumChangeSink` (they
+cache obstacle/shore positions in the ENU frame). If you use auto-recenter, register
+them as datum sinks too, or their caches go silently stale after a recenter:
+
+```cpp
+provider.registerDatumSink(&obstacle_model);  // rebuilds the ENU cache on recenter
+provider.registerDatumSink(&coastline_model);
+```
+
+(The bench `Sweep` skips this on purpose — it uses a single fixed datum per run, so
+no recenter ever fires.)
+
 Push at least one `OwnShipPose` via `provider.update()` before constructing measurements — this initializes the datum.
 
 ### Common patterns

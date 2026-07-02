@@ -446,15 +446,23 @@ error at short range is small but not zero).
 **Decision of record: ADR 0002.** This section is the design sketch; the
 scope decision and its rationale live in the ADR.
 
-**The insight (measured, 2026-07-01).** The chronic PMBM over-count on the
-philos replay — the phantom tracks the land prior fights — is **fixed
-infrastructure**, not real boats. Checked against the *raw* radar (which is
-raw plots from an offline intensity-threshold + DBSCAN chain, **not** ARPA
-tracks): all returns are near-field (≤ ~976 m), only 1 of 23 AIS vessels is in
-radar range, and the ~1,940 non-AIS returns are persistent, extended, fixed
-structure (`n_cells` up to 6181; piers/breakwaters). A motion test found zero
-coherent non-AIS *moving* boats. So philos is a **clutter-rejection /
-false-positive** test, and the "clutter" is static environment.
+**The insight (measured, 2026-07-01; attribution refined 2026-07-02, R4).** The
+chronic PMBM over-count on the philos replay — the phantom tracks the land prior
+fights — is **dominated by persistent uncharted structure, and is a mixture, not
+purely fixed infrastructure.** Checked against the *raw* radar (raw plots from an
+offline intensity-threshold + DBSCAN chain, **not** ARPA tracks): all returns are
+near-field (≤ ~976 m), only 1 of 23 AIS vessels is in radar range, and the ~1,940
+non-AIS returns are persistent, extended, fixed structure (`n_cells` up to 6181;
+piers/breakwaters). A motion test found zero coherent non-AIS *moving* boats — but
+a 20 s clip **cannot exclude sub-1 m/s moored/drifting craft**, and an operator
+Google-Maps field check confirmed at least one persistent cluster is anchored
+boats. So the honest claim is: **persistent uncharted structure dominates; a
+minority are moored craft indistinguishable from structure in 20 s — treat as a
+mixture.** Either way philos is a **clutter-rejection / false-positive** test
+where the "clutter" is overwhelmingly static environment. (The chart-coverage
+field check — top-100 clusters 0 % within 75 m of a charted bridge, ~32 % outside
+ENC coverage entirely, ~63 % unexplained by any chart layer — is the R4 evidence;
+see `charts/philos_chart_coverage.{py,png}` and eval-log 2026-07-01/-02.)
 
 **The scope rule: vessel-vs-environment, not moving-vs-stationary.**
 - **Static-but-real vessels** (anchored/moored/drifting) are **in scope** as

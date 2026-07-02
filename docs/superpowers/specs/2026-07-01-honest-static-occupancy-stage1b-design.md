@@ -131,13 +131,30 @@ works entirely from the positions the producer already carries.
 
 ## Staging
 
+**Extent is an INTERIM discriminator (R3, 2026-07-02).** Separating KEEP
+(compact) from SUPPRESS (persistent AND extended) by geometry is a stopgap with
+two documented failure directions: a **large anchored ship** (~150–200 m,
+non-AIS) is extended → wrongly SUPPRESSED (dangerous); a **single compact
+pile/dolphin** is compact → wrongly KEPT as a vessel (cardinality pollution). The
+literature discriminates by **classification, not geometry**: Dalhaug, Stahl,
+Mester & Brekke 2025 (arXiv:2502.18368, `docs/references/`) exclude anything
+boat-shaped from the static map via camera instance segmentation, measured both
+failure directions (a pre-trained model read a floating dock as two boats), and
+independently confirm ENC-only layers under-cover real harbour structure (our
+~⅓ chart-coverage finding). So 1b-ii's discriminator is corroboration, not
+extent. Gate scenarios `harbor_large_anchored_ship` (must be KEPT) and
+`harbor_compact_dolphin` (SUPPRESS target) exist to record the 1b-i "before"
+numbers as known limitations.
+
 - **1b-i (this design):** extent field + `LiveOccupancyModel` + birth-prior
-  suppression + hazard output + the four tests above. Measured.
-- **1b-ii / Stage 2 (follow-on):** a **stationary IMM mode** (zero-velocity /
-  constant-position, locking the unobservable turn-rate) so moored tracks keep
-  a tight gate; a **shape** discriminator (aspect ratio / straightness) for the
-  rare large stationary non-AIS vessel that extent alone would misclassify; the
-  full Dempster-Shafer evidential grid with an explicit "unknown".
+  suppression + hazard output + the four tests above. Measured. Extent is the
+  interim discriminator per the note above.
+- **1b-ii / Stage 2 (follow-on):** replace extent with **corroboration** — S-57
+  chart overlay (`PONTON`/`MORFAC`/`ACHARE`), AIS (nav-status 1/5, Message 21
+  AtoN), then camera instance-segmentation classification (Dalhaug 2025). Plus a
+  **stationary IMM mode** (zero-velocity / constant-position, locking the
+  unobservable turn-rate) so moored tracks keep a tight gate, and the full
+  Dempster-Shafer evidential grid with an explicit "unknown".
 
 ## Docs (required)
 

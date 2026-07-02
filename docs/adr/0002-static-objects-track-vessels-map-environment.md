@@ -30,9 +30,32 @@ radar**, not the AIS-only truth (2026-07-01; see eval log for the full run):
   only "coherent" tracks it produced were impossible-speed (12–86 m/s) artifacts
   of a naive linker chaining returns *along* a fixed structure.
 
-Conclusion: the philos over-count is **static infrastructure**, and philos is a
-realistic, valuable **clutter-rejection / false-positive** test — not a
-radar+AIS fusion test.
+Conclusion: the philos over-count is **dominated by persistent static
+structure**, and philos is a realistic, valuable **clutter-rejection /
+false-positive** test — not a radar+AIS fusion test.
+
+> **Amended 2026-07-02 (R3/R4).** Two refinements from the static-branch review
+> (`docs/superpowers/plans/2026-07-02-static-branch-review-fixes.md`):
+> - **Attribution is a *mixture*, not purely infrastructure (R4).** A 20 s clip
+>   cannot exclude sub-1 m/s moored craft, and an operator field check confirmed
+>   at least one persistent cluster is anchored boats. The supportable claim is
+>   "persistent uncharted structure dominates; a minority are moored craft
+>   indistinguishable from structure in 20 s." Evidence: `charts/philos_chart_coverage.{py,png}`
+>   (top-100 clusters 0 % within 75 m of a charted bridge, ~32 % outside ENC
+>   coverage, ~63 % unexplained by any chart layer) + eval-log 2026-07-01/-02.
+>   Design spec §14.10 carries the same refined wording.
+> - **Extent is an *interim* discriminator (R3).** Stage 1b-i separates KEEP
+>   (compact) from SUPPRESS (persistent AND extended) by geometry. That is a
+>   stopgap: the literature discriminates static structure from movable vessels
+>   by **classification**, not extent — Dalhaug, Stahl, Mester & Brekke 2025
+>   (arXiv:2502.18368, `docs/references/`) exclude anything boat-shaped from the
+>   static map via camera instance segmentation, and confirm ENC-only layers
+>   under-cover real harbour structure (our ~⅓ chart-coverage finding). Stage
+>   1b-ii replaces extent with chart corroboration (S-57 `PONTON`/`MORFAC`/
+>   `ACHARE`), AIS corroboration (nav-status 1/5, Message 21 AtoN), then camera
+>   classification. Known failure modes to gate: a large anchored ship (extended
+>   → wrongly SUPPRESSED) and a compact dolphin (compact → wrongly KEPT as a
+>   vessel).
 
 ### The realization
 
