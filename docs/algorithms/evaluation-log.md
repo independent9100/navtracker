@@ -8,6 +8,47 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-02 — R1 (static review): pre-suppression birth floor, SCOPED to obstacle composition (measured)
+
+Static-branch review ticket R1
+(`docs/superpowers/plans/2026-07-02-static-branch-review-fixes.md`). The bug: a
+soft static-obstacle keep-clear buffer, composed with the land prior, multiplies
+into a birth intensity whose `r_new` falls below `min_new_bernoulli_existence` —
+so the phantom-birth floor silently turns the soft buffer into a **hard no-birth
+zone** in the overlap, exactly where ADR 0002 promises a real vessel still
+births. Fix = ADR 0001's parked "A2": check the floor against the
+**pre-suppression** existence, materialise the Bernoulli with the tiny suppressed
+`r_new` (above `r_min = 1e-3`, so it survives pruning and accumulates on
+re-detection).
+
+**The catch (measured, philos guard).** A2 applied UNCONDITIONALLY also relaxes
+the LAND-only near-shore no-birth zone — which ADR 0001 kept *on purpose* to
+protect the philos win (it had rejected the sibling "A1" gate-lowering for the
+same regression). A clean git-version A/B on the real philos replay:
+
+| philos config | A2 off (before) | A2 unconditional | A2 scoped to obstacle (shipped) |
+|---|---|---|---|
+| `imm_cv_ct_pmbm_land` (recommended) | card 3.95 / gospa 63.1 | 3.95 / 63.1 | **3.95 / 63.1** |
+| `imm_cv_ct_pmbm_coverage_land` | card 6.9 / gospa 73.1 | **40.15 / 106.9** ✗ | **6.9 / 73.1** |
+
+Unconditional A2 regressed `coverage_land` (floor == birth_existence_target ==
+0.1, so *any* land suppression drops below the floor) — card_err +6.9 → **+40.15**,
+gospa 73 → **107**, gospa_false 3550 → 10220: it re-admitted the near-shore water
+clutter ADR 0001 was suppressing. `imm_cv_ct_pmbm_land` (floor 0.05 < target) was
+immune either way.
+
+**Decision (2026-07-02).** Scope the pre-suppression relaxation to births where a
+**static obstacle** contributes (`obstacleSuppressionAt(mean) > 0`). Land-only
+suppression keeps its ADR 0001 gating role. Result: the composition hard-drop is
+fixed (unit tests: a stationary target inside a keep-clear buffer + soft shore
+band now births AND confirms), ADR 0001's land-only zone is preserved
+(`LandOnlySuppressionPreservesAdr0001NoBirthZone`), and both philos configs are
+**byte-identical** to A2-off. philos wires no obstacle model, so it is untouched;
+the fix bites only near charted obstacles (harbor / R5 / R6 scenarios). Guarded by
+5 unit tests in `tests/pmbm/test_pmbm_birth_floor.cpp`; full suite 875 green.
+ADR 0001 amended (A2 adopted, obstacle-scoped). The pure land-only
+anchored-vessel case remains open (ADR 0001 A3, sensor-aware — needs EO/IR/AIS).
+
 ## 2026-07-02 — R2 (static review): clutter-feed labeling fixed; dense_clutter regression is NOT the labeling (measured)
 
 Static-branch review ticket R2

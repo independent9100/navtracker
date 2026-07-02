@@ -254,6 +254,8 @@ PmbmTracker::buildNewTargetCandidates(
     if (density_.ppp.empty()) {
       cand.rho_target = 0.0;
       cand.rho_total = lambda_z;
+      cand.rho_target_unsuppressed = 0.0;
+      cand.rho_total_unsuppressed = lambda_z;
       out.push_back(std::move(cand));
       continue;
     }
@@ -385,16 +387,28 @@ PmbmTracker::buildNewTargetCandidates(
     // PPP posterior above). When cand.mean is empty (size<2) birthScale
     // returns 1.0 → no-op, which is correct because rho_target is already
     // 0 in that case.
+    // R1: capture the pre-suppression rho as the phantom-birth gate reference.
+    cand.rho_target_unsuppressed = cand.rho_target;
+    cand.rho_total_unsuppressed = cand.rho_total;
     {
       const double birth_scale = birthScale(cand.mean);
       if (birth_scale < 0.0) {
         cand.rho_target = 0.0;                       // hard gate
         cand.rho_total = lambda_z;
+        cand.rho_target_unsuppressed = 0.0;          // hard-drop kills the floor
+        cand.rho_total_unsuppressed = lambda_z;      // check too
       } else if (birth_scale < 1.0) {
         cand.rho_target *= birth_scale;              // soft suppression
         cand.rho_total = cand.rho_target + lambda_z;
+        // R1 scope: only a STATIC-OBSTACLE contribution relaxes the floor (gate
+        // on the pre-suppression existence, kept above). Land-only suppression
+        // keeps its ADR 0001 gating role → gate on the suppressed value.
+        if (obstacleSuppressionAt(cand.mean) <= 0.0) {
+          cand.rho_target_unsuppressed = cand.rho_target;
+          cand.rho_total_unsuppressed = cand.rho_total;
+        }
       }
-      // birth_scale == 1.0 → no change (bit-identical when no models wired)
+      // birth_scale == 1.0 → no change (unsuppressed == suppressed).
     }
 
     out.push_back(std::move(cand));
@@ -427,6 +441,8 @@ PmbmTracker::buildAdaptiveBirthCandidates(
       // assignment cells stay balanced.
       cand.rho_target = 0.0;
       cand.rho_total = lambda_z;
+      cand.rho_target_unsuppressed = 0.0;
+      cand.rho_total_unsuppressed = lambda_z;
       out.push_back(std::move(cand));
       continue;
     }
@@ -455,6 +471,8 @@ PmbmTracker::buildAdaptiveBirthCandidates(
       if (claimed) {
         cand.rho_target = 0.0;
         cand.rho_total = lambda_z;
+        cand.rho_target_unsuppressed = 0.0;
+        cand.rho_total_unsuppressed = lambda_z;
         out.push_back(std::move(cand));
         continue;
       }
@@ -494,14 +512,31 @@ PmbmTracker::buildAdaptiveBirthCandidates(
     // combined birth-prior at the birth position (cand.mean is already set
     // from estimator.initiate(z) above). Hard-drop when either prior exceeds
     // its hard gate.
+    // R1: capture the pre-suppression intensity so the phantom-birth floor is
+    // checked against the unsuppressed existence (see NewTargetCandidate).
+    const double lambda_birth_unsuppressed = lambda_birth;
     const double birth_scale = birthScale(cand.mean);
     if (birth_scale < 0.0) {
       lambda_birth = 0.0;           // hard gate → no birth
+      cand.rho_target = 0.0;
+      cand.rho_total = lambda_z;
+      cand.rho_target_unsuppressed = 0.0;  // hard-drop kills the floor check too
+      cand.rho_total_unsuppressed = lambda_z;
     } else {
-      lambda_birth *= birth_scale;  // soft suppression
+      lambda_birth *= birth_scale;  // soft suppression (no-op when scale == 1)
+      cand.rho_target = lambda_birth;
+      cand.rho_total = lambda_birth + lambda_z;
+      // R1 scope: relax the floor (gate on the pre-suppression intensity) only
+      // where a STATIC OBSTACLE contributes. Land-only suppression keeps its
+      // ADR 0001 gating role, so gate on the suppressed value there.
+      if (obstacleSuppressionAt(cand.mean) > 0.0) {
+        cand.rho_target_unsuppressed = lambda_birth_unsuppressed;
+        cand.rho_total_unsuppressed = lambda_birth_unsuppressed + lambda_z;
+      } else {
+        cand.rho_target_unsuppressed = lambda_birth;
+        cand.rho_total_unsuppressed = lambda_birth + lambda_z;
+      }
     }
-    cand.rho_target = lambda_birth;
-    cand.rho_total = lambda_birth + lambda_z;
 
     out.push_back(std::move(cand));
   }
@@ -962,10 +997,21 @@ void PmbmTracker::enumerateChildren(
       const auto& nt = nts[l];
       const double r_new =
           (nt.rho_total > 0.0) ? (nt.rho_target / nt.rho_total) : 0.0;
-      // Phantom-birth gate (Config::min_new_bernoulli_existence). The
-      // measurement still consumes ρ_total mass (assignment stays
-      // balanced) but no near-zero-r Bernoulli is materialised.
-      if (r_new < cfg_.min_new_bernoulli_existence) {
+      // R1 phantom-birth gate: check the UNSUPPRESSED existence, not the
+      // suppressed r_new. Soft geographic suppression (land × obstacle) must not
+      // compose with min_new_bernoulli_existence into a hard no-birth zone. A
+      // birth whose unsuppressed existence clears the floor still materialises —
+      // with the tiny SUPPRESSED r_new below, so it survives r_min (1e-3) and
+      // can accumulate on re-detection (anchored-vessel safety, ADR 0001 A2). A
+      // genuine phantom (unsuppressed below the floor) and a hard-drop
+      // (unsuppressed set to 0 by birthScale < 0) are still killed. Bit-identical
+      // when no model is wired (unsuppressed == suppressed). The measurement
+      // still consumes ρ_total mass so the assignment stays balanced.
+      const double r_new_gate =
+          (nt.rho_total_unsuppressed > 0.0)
+              ? (nt.rho_target_unsuppressed / nt.rho_total_unsuppressed)
+              : 0.0;
+      if (r_new_gate < cfg_.min_new_bernoulli_existence) {
         child.log_weight += std::log(std::max(nt.rho_total, 1e-300));
         continue;
       }

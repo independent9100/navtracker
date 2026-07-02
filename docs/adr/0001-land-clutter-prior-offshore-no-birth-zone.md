@@ -1,9 +1,29 @@
 # ADR 0001 — Land-clutter prior keeps a near-shore no-birth zone
 
-- **Status:** Accepted
+- **Status:** Accepted — **amended 2026-07-02** (A2 adopted, obstacle-scoped; see below)
 - **Date:** 2026-06-30
 - **Deciders:** navtracker maintainers
-- **Related:** `docs/algorithms/synthetic-clutter-bench.md`, `docs/algorithms/pmbm-design.md` §10 (land clutter prior), `docs/algorithms/evaluation-log.md` (2026-06-30, Project E), `docs/superpowers/specs/2026-06-30-pmbm-land-clutter-prior-design.md`
+- **Related:** `docs/algorithms/synthetic-clutter-bench.md`, `docs/algorithms/pmbm-design.md` §10 (land clutter prior), `docs/algorithms/evaluation-log.md` (2026-06-30, Project E; 2026-07-02, R1), `docs/superpowers/specs/2026-06-30-pmbm-land-clutter-prior-design.md`, `docs/superpowers/plans/2026-07-02-static-branch-review-fixes.md` (R1)
+
+## Amendment (2026-07-02) — A2 adopted, scoped to static-obstacle composition
+
+Static-branch review ticket **R1** implemented **A2** (apply the phantom-birth
+floor to the *pre-suppression* existence) — but **scoped to births where a static
+obstacle contributes**, not unconditionally. A clean philos A/B (eval-log
+2026-07-02, R1) showed that applying A2 to the **land-only** case *reopens exactly
+this no-birth zone* and regresses `imm_cv_ct_pmbm_coverage_land` (card_err
++6.9 → +40.15, gospa 73.1 → 106.9) — the same failure this ADR rejected "A1" for.
+
+So the decision below is **narrowed, not reversed**: the land-only near-shore
+no-birth zone under `coverage_land` is **kept**. What A2 fixes is the *additional*
+hard-drop created when a soft static-obstacle keep-clear buffer composes with land
+(review ticket R1's bug): a real vessel near a **charted obstacle** now births
+(with a tiny suppressed existence that accumulates on re-detection) instead of
+being silently killed. `imm_cv_ct_pmbm_land` (floor 0.05 < target) — the
+recommended general/coastal config — is byte-identical to before either way; only
+`coverage_land` (floor == target == 0.1) has the land-only zone, and it is
+unchanged. The pure land-only anchored-vessel case remains the open **A3**
+(sensor-aware) work below.
 
 ## Context
 

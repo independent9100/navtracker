@@ -680,6 +680,18 @@ class PmbmTracker {
   struct NewTargetCandidate {
     double rho_target{0.0};
     double rho_total{0.0};
+    // R1 phantom-birth gate reference. The floor is checked against THESE
+    // instead of rho_target/rho_total so a soft STATIC-OBSTACLE keep-clear
+    // buffer cannot compose with land + the floor into a hard no-birth zone: a
+    // suppressed birth near a charted obstacle still materialises (with the tiny
+    // full-suppressed rho_target, above r_min so it accumulates). Scope: the
+    // relaxation applies ONLY where the obstacle prior contributes
+    // (obstacleSuppressionAt > 0). With land alone these equal the suppressed
+    // rho_target/rho_total, preserving ADR 0001's deliberate land-only
+    // near-shore no-birth zone (coverage_land). A hard-drop sets these to 0 too.
+    // Bit-identical to rho_target/rho_total when no model is wired.
+    double rho_target_unsuppressed{0.0};
+    double rho_total_unsuppressed{0.0};
     Eigen::VectorXd mean;
     Eigen::MatrixXd covariance;
     Eigen::MatrixXd imm_means;
@@ -824,6 +836,18 @@ class PmbmTracker {
         c_static > cfg_.static_obstacle_hard_gate)
       return -1.0;  // hard-drop
     return (1.0 - c_land) * (1.0 - c_static);
+  }
+
+  // Static-obstacle birth suppression alone at `mean` (0 if no obstacle model).
+  // Used by the R1 pre-suppression floor: the keep-clear buffer must stay soft
+  // even composed with land, but the LAND-only near-shore no-birth zone remains
+  // ADR 0001's deliberate decision — so the floor is relaxed only where an
+  // obstacle contributes.
+  double obstacleSuppressionAt(const Eigen::VectorXd& mean) const {
+    if (mean.size() < 2) return 0.0;
+    if (cfg_.use_static_obstacle_model && obstacle_model_ != nullptr)
+      return obstacle_model_->birthSuppression(mean.head<2>());
+    return 0.0;
   }
 
   // Returns true when a measurement from sensor `s` should update the
