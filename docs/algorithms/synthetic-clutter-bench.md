@@ -392,3 +392,26 @@ The Milestone-2 A/B gate is:
 
 Meeting all three on `harbor_complete_truth` is required for promotion. A philos win
 is a secondary cross-check, not the gate.
+
+### Mandatory co-gate scenarios (R5/R6, 2026-07-02)
+
+`harbor_complete_truth` proves extent separability only under *generous* spacing
+(its anchored boats sit ≥ 650 m from the pier). Two companion scenarios stress
+the axes it does not:
+
+- **`harbor_charted_pier`** (R5) — identical measurements + truth, but the pier is
+  *charted* (`syntheticObstacles`). The Stage-1a A/B (`imm_cv_ct_pmbm` vs
+  `imm_cv_ct_pmbm_static`) must show `card_err`/`gospa_false` fall while
+  `lifetime_ratio` holds — the charted birth prior suppresses the pier without
+  dropping targets. (Measured 2026-07-02: card_err 11.64→7.43, gospa_false
+  2362→1518, lifetime 0.975.)
+- **`harbor_boat_near_pier`** (R6) — a real anchored boat 20 m off the pier,
+  *inside* the charted keep-clear buffer. Gate: under `imm_cv_ct_pmbm_static` the
+  aggregate `lifetime_ratio` stays ≥ 0.9 (the near-pier boat is not dropped) while
+  `card_err` still falls vs the no-obstacle baseline. This is the boat-next-to-
+  structure case the whole effort is about; it proves the keep-clear buffer is
+  **soft**, not a no-birth zone. Any live-occupancy layer (Stage 1b) must keep
+  passing it.
+
+Both are contract-tested (deterministic, truth time-sorted) and are part of the
+M2/Stage-1b promotion gate alongside `harbor_complete_truth`.

@@ -494,11 +494,40 @@ class HarborChartedPierScenarioRun : public HarborCompleteTruthScenarioRun {
   }
 };
 
+// R6: real boat moored close to the charted pier — the geometry that motivated
+// the static-obstacle work (a vessel *next to* structure). One extra anchored
+// zero-velocity truth boat (id 6) ~20 m off the pier line, inside the charted
+// keep-clear buffer (50 m) but outside the hard footprint (10 m). The gate: this
+// boat must stay tracked under imm_cv_ct_pmbm_static while the pier over-count is
+// suppressed — i.e. the keep-clear buffer is SOFT, not a no-birth zone (ADR
+// 0002). (Measured: R1 is not load-bearing here — the _static birth is robust
+// enough to track the boat with or without R1, since no default config combines
+// an obstacle model with floor == target, the only regime R1 bites. R1's clean
+// proof is the unit tests in test_pmbm_birth_floor.cpp.) Inherits the charted
+// pier via syntheticObstacles.
+class HarborBoatNearPierScenarioRun : public HarborChartedPierScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return describe("harbor_boat_near_pier", shoreClutterTable());
+  }
+  Scenario generate(std::uint64_t seed) override {
+    Scenario base = HarborChartedPierScenarioRun::generate(seed);
+    const geo::Datum datum(navtracker::geo::Geodetic{42.35, -71.05, 0.0});
+    const auto s32 = static_cast<std::uint32_t>(seed);
+    // Pier line is at y = -350; place the boat at y = -330 → 20 m off it, inside
+    // the 50 m keep-clear buffer, outside the 10 m footprint. Truth id 6.
+    base = addAnchoredBoats(std::move(base), datum, {{0.0, -330.0}},
+                            /*truth_id_start=*/6, /*detection_prob=*/0.95,
+                            /*pos_noise_std_m=*/5.0, s32 + 99u);
+    return base;
+  }
+};
+
 }  // namespace
 
 std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   std::vector<std::unique_ptr<ScenarioRun>> out;
-  out.reserve(19);
+  out.reserve(20);
   out.push_back(std::make_unique<CrossingScenarioRun>());
   out.push_back(std::make_unique<OvertakingScenarioRun>());
   out.push_back(std::make_unique<HeadOnScenarioRun>());
@@ -518,6 +547,7 @@ std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   out.push_back(std::make_unique<ShoreClutterNearShoreScenarioRun>());
   out.push_back(std::make_unique<HarborCompleteTruthScenarioRun>());
   out.push_back(std::make_unique<HarborChartedPierScenarioRun>());
+  out.push_back(std::make_unique<HarborBoatNearPierScenarioRun>());
   return out;
 }
 

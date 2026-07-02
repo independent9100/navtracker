@@ -8,6 +8,33 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-02 — R6 (static review): boat-near-pier gate; R1 not load-bearing on default configs (measured)
+
+Static-branch review ticket R6. Added `harbor_boat_near_pier`: the R5 charted-pier
+scenario plus one anchored zero-velocity truth boat (id 6) 20 m off the pier line
+— inside the 50 m keep-clear buffer, outside the 10 m footprint — the
+boat-next-to-structure case the whole effort is about. Contract-tested (6 closed
+truth targets, time-sorted into 40 complete {1..6} groups) and added to the M2
+gate.
+
+**Gate (imm_cv_ct_pmbm vs imm_cv_ct_pmbm_static, 5 seeds):** aggregate
+lifetime_ratio (static) = **0.975** — the near-pier boat is tracked (a dropped
+boat would pull the 6-target aggregate to ~0.81) — while card_err falls 11.6 →
+7.5 (pier suppressed). The charted keep-clear buffer is **soft**, not a no-birth
+zone: a moored boat next to structure still initiates and holds.
+
+**Finding — R1 is NOT load-bearing on any default config here.** A git-version
+A/B (R1 in vs out) on this scenario is **byte-identical** — the boat is tracked
+either way. Under `imm_cv_ct_pmbm_static` (floor 0.05 < birth target) the buffer
+suppression does not drive the birth below the floor, so R1's obstacle-scoped
+relaxation never fires; and the only regime where it would (floor == target, i.e.
+`coverage_land`) wires no obstacle model. So R1, like R2, is a latent-bug fix +
+Stage-1b prerequisite with **no delta on any current default config** — consistent
+with the byte-identical philos A/B. R1's clean discrimination lives in the unit
+tests (`test_pmbm_birth_floor.cpp`), where a floor==target config with an obstacle
+provably needs it. The scenario comment and gate test were corrected to reflect
+this (no "R1 proven e2e" overclaim).
+
 ## 2026-07-02 — R5 (static review): Stage 1a charted-obstacle A/B measured (was "no measurement")
 
 Static-branch review ticket R5. Stage 1a (the charted `StaticObstacle` birth

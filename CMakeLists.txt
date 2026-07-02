@@ -326,6 +326,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_philos_cluttermap_ab.cpp
   tests/benchmark/test_harbor_complete_truth.cpp
   tests/benchmark/test_harbor_complete_truth_baseline.cpp
+  tests/benchmark/test_harbor_boat_near_pier.cpp
   tests/sensor_activity/test_declared_sensor_activity.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
