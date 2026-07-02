@@ -132,38 +132,16 @@ TEST(PmbmClutterFeed, TwoTargetsBothReturnsClaimed) {
   EXPECT_EQ(full_weight, 0);    // no real return leaked as full-weight clutter
 }
 
-// R2 finding #2: two returns close enough that their Bernoullis merge in the
-// SAME scan (equal timestamps) must both stay credited. mergeBernoulliDuplicates
-// used to carry the absorbed duplicate's claim only when it was strictly newer,
-// so at equal timestamps the merged-away claim was dropped and its real return
-// leaked to the clutter map as full-weight (1.0). The fix carries the claim of
-// the higher-existence duplicate and never drops a real claim for none.
-TEST(PmbmClutterFeed, MergedSameScanReturnsStayCredited) {
-  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
-  EkfEstimator ekf{motion, 5.0};
-  PmbmTracker::Config c = cfg();
-  c.feed_clutter_map = true;
-  PmbmTracker t(ekf, c);
-  auto spy = std::make_shared<SpyDetectionModel>();
-  t.setSensorDetectionModel(spy);
-  // Two returns ~3 m apart every scan — close enough to fall inside the
-  // Bhattacharyya merge gate once both Bernoullis converge, exercising the
-  // same-scan merge path.
-  for (int k = 0; k < 14; ++k) {
-    t.predict(Timestamp::fromSeconds(k));
-    t.processBatch({posMeas(100.0, 0.0, k), posMeas(103.0, 0.0, k)});
-  }
-  ASSERT_FALSE(spy->bundles.empty());
-  int total_weights = 0, full_weight = 0;
-  for (const auto& bundle : spy->bundles)
-    for (const auto& obs : bundle)
-      for (double w : obs.clutter_position_weights) {
-        ++total_weights;
-        if (w >= 0.999) ++full_weight;
-      }
-  EXPECT_GT(total_weights, 0);
-  EXPECT_EQ(full_weight, 0);  // no merged-away real return leaked as clutter
-}
+// NOTE (review): an earlier fix guarded mergeBernoulliDuplicates to refuse
+// folding two same-scan distinct-claim Bernoullis, to keep both credited in the
+// feed. That guard was REVERTED — a fused batch is multi-sensor, so one physical
+// target detected by two sensors (or one large target split into two radar plots)
+// legitimately yields two distinct-claim Bernoullis that MUST merge; the guard
+// would leave a duplicate track per vessel. The single-index feed's residual
+// (only the survivor's claim credited on a merge, the folded return fed as
+// clutter) is an accepted limitation until the feed carries a claim SET. The
+// survivor-claim carry itself (higher-existence, never drop a real claim for
+// none) is still covered by TwoTargetsBothReturnsClaimed above.
 
 // Determinism: identical inputs → identical observe() call count and weights.
 TEST(PmbmClutterFeed, DeterministicFeed) {

@@ -8,6 +8,37 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-02 — Static-review code-review, round 2 (9 findings)
+
+A second review of the round-1 fixes. The three load-bearing claims held (land
+factor genuinely preserved, merge-guard byte-identical for default-off, A/B
+story stands), but two fixes had introduced second-order problems:
+
+- **Merge guard REVERTED (finding #1).** The round-1 distinct-same-scan-claim
+  merge guard assumed one detection per target per scan — FALSE for a fused
+  multi-sensor batch: one target seen by AIS+radar (or a large target split into
+  two plots) yields two distinct-claim Bernoullis that MUST merge; the guard
+  would leave a duplicate track per vessel, and its own test only passed because
+  it never left the never-merge regime. Reverted. The single-index clutter-feed
+  leak it targeted (survivor's claim credited on a merge, folded return fed as
+  clutter) is accepted as a documented limitation until the feed carries a claim
+  SET. `feed_clutter_map` is default-off, so no default-config impact either way.
+- **take_b_claim corrected (finding #3):** it could drop a's real claim for b's
+  −1 when r_b > r_a; now guarded (`b.idx>=0 && (a.idx<0 || r_b>r_a)`).
+- **Negative keep_clear (finding #2):** kept the clamp-to-0 (hazard preserved,
+  review 1) but made it explicit — a negative/zero keep_clear = footprint-only
+  hazard with NO alarm ring; restored the dropped test coverage + documented the
+  contract. A per-field diagnostic channel is the deeper fix (out of scope for a
+  pure parser).
+- **Consolidation (findings #6/#7/#8):** `birthScale`, the obstacle/land prior
+  queries and the R1 gate-reference block were re-evaluating the models 2–3× per
+  candidate and copy-pasted across both builders. Unified into `birthPriorsAt`
+  (one model eval) + `applyBirthPriors` (one shared block). **A/B (all 11 pmbm
+  configs × 22 scenarios): 0 focus-cell change — byte-identical.**
+- **Docs/chart (findings #4/#5/#9):** fixed the stale `NewTargetCandidate` gate-
+  reference comment; regenerated the stale philos coverage PNG (derived legend);
+  parse `fixed_surface.geojson` once. 889 tests green.
+
 ## 2026-07-02 — Backlog #15: processBatch orders the batch (ergonomics quick fix)
 
 Both `MhtTracker` and `PmbmTracker` `processBatch` now `stable_sort` the scan by

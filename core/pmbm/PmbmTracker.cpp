@@ -382,41 +382,19 @@ PmbmTracker::buildNewTargetCandidates(
       cand.covariance = Eigen::MatrixXd::Zero(0, 0);
     }
 
-    // Task A + Stage 1 static-obstacle: scale rho_target by the combined
-    // birth-prior at the birth position (cand.mean, moment-matched from the
-    // PPP posterior above). When cand.mean is empty (size<2) birthScale
-    // returns 1.0 → no-op, which is correct because rho_target is already
-    // 0 in that case.
-    // R1: capture the pre-suppression rho as the phantom-birth gate reference.
-    const double rho_target_presuppress = cand.rho_target;
-    cand.rho_target_unsuppressed = cand.rho_target;
-    cand.rho_total_unsuppressed = cand.rho_total;
+    // Task A + Stage 1 static-obstacle: scale rho_target by the combined birth
+    // prior at the birth position (cand.mean, moment-matched from the PPP
+    // posterior above), and compute the R1 phantom-birth gate reference. One
+    // model evaluation (birthPriorsAt) shared with applyBirthPriors — see the
+    // helper for the obstacle-relaxed / land-kept semantics. Empty cand.mean
+    // (size<2) → priors are all 0 → no-op (rho_target is already 0 there).
     {
-      const double birth_scale = birthScale(cand.mean);
-      if (birth_scale < 0.0) {
-        cand.rho_target = 0.0;                       // hard gate
-        cand.rho_total = lambda_z;
-        cand.rho_target_unsuppressed = 0.0;          // hard-drop kills the floor
-        cand.rho_total_unsuppressed = lambda_z;      // check too
-      } else if (birth_scale < 1.0) {
-        cand.rho_target *= birth_scale;              // soft suppression
-        cand.rho_total = cand.rho_target + lambda_z;
-        // R1 scope (finding #3): only a STATIC-OBSTACLE contribution relaxes the
-        // floor, and it relaxes the OBSTACLE factor only — the land factor
-        // (1 − c_land) stays in the gate reference so ADR-0001's near-shore
-        // no-birth zone survives in the overlap. Land-only suppression keeps its
-        // full gating role → gate on the suppressed value.
-        if (obstacleSuppressionAt(cand.mean) > 0.0) {
-          const double land_only =
-              rho_target_presuppress * (1.0 - landSuppressionAt(cand.mean));
-          cand.rho_target_unsuppressed = land_only;
-          cand.rho_total_unsuppressed = land_only + lambda_z;
-        } else {
-          cand.rho_target_unsuppressed = cand.rho_target;
-          cand.rho_total_unsuppressed = cand.rho_total;
-        }
-      }
-      // birth_scale == 1.0 → no change (unsuppressed == suppressed).
+      const SuppressedBirth sb =
+          applyBirthPriors(cand.rho_target, lambda_z, birthPriorsAt(cand.mean));
+      cand.rho_target = sb.rho_target;
+      cand.rho_total = sb.rho_total;
+      cand.rho_target_unsuppressed = sb.rho_target_unsuppressed;
+      cand.rho_total_unsuppressed = sb.rho_total_unsuppressed;
     }
 
     out.push_back(std::move(cand));
@@ -517,38 +495,17 @@ PmbmTracker::buildAdaptiveBirthCandidates(
       }
     }
     // Task A + Stage 1 static-obstacle: scale the birth intensity by the
-    // combined birth-prior at the birth position (cand.mean is already set
-    // from estimator.initiate(z) above). Hard-drop when either prior exceeds
-    // its hard gate.
-    // R1: capture the pre-suppression intensity so the phantom-birth floor is
-    // checked against the unsuppressed existence (see NewTargetCandidate).
-    const double lambda_birth_unsuppressed = lambda_birth;
-    const double birth_scale = birthScale(cand.mean);
-    if (birth_scale < 0.0) {
-      lambda_birth = 0.0;           // hard gate → no birth
-      cand.rho_target = 0.0;
-      cand.rho_total = lambda_z;
-      cand.rho_target_unsuppressed = 0.0;  // hard-drop kills the floor check too
-      cand.rho_total_unsuppressed = lambda_z;
-    } else {
-      lambda_birth *= birth_scale;  // soft suppression (no-op when scale == 1)
-      cand.rho_target = lambda_birth;
-      cand.rho_total = lambda_birth + lambda_z;
-      // R1 scope (finding #3): where a STATIC OBSTACLE contributes, relax the
-      // floor by gating on the OBSTACLE-relaxed intensity — but keep the land
-      // factor (1 − c_land). Stripping land too (using the fully unsuppressed
-      // lambda_birth) would disable ADR-0001's near-shore no-birth zone wherever
-      // a keep-clear ring overlaps the shore band. Land-only suppression keeps
-      // its full ADR-0001 gating role, so gate on the suppressed value there.
-      if (obstacleSuppressionAt(cand.mean) > 0.0) {
-        const double land_only =
-            lambda_birth_unsuppressed * (1.0 - landSuppressionAt(cand.mean));
-        cand.rho_target_unsuppressed = land_only;
-        cand.rho_total_unsuppressed = land_only + lambda_z;
-      } else {
-        cand.rho_target_unsuppressed = lambda_birth;
-        cand.rho_total_unsuppressed = lambda_birth + lambda_z;
-      }
+    // combined birth prior at the birth position (cand.mean is already set from
+    // estimator.initiate(z) above) and compute the R1 phantom-birth gate
+    // reference — same shared helper as buildNewTargetCandidates (one model
+    // evaluation; obstacle-relaxed / land-kept semantics live in the helper).
+    {
+      const SuppressedBirth sb =
+          applyBirthPriors(lambda_birth, lambda_z, birthPriorsAt(cand.mean));
+      cand.rho_target = sb.rho_target;
+      cand.rho_total = sb.rho_total;
+      cand.rho_target_unsuppressed = sb.rho_target_unsuppressed;
+      cand.rho_total_unsuppressed = sb.rho_total_unsuppressed;
     }
 
     out.push_back(std::move(cand));
@@ -1481,7 +1438,7 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
   // Bernoulli keeping the older id.
   if (cfg_.bhattacharyya_merge_threshold > 0.0) {
     for (auto& h : density_.mbm) {
-      mergeBernoulliDuplicates(h, /*claims_current=*/true);
+      mergeBernoulliDuplicates(h);
     }
   }
 
@@ -1714,8 +1671,7 @@ double bhattacharyyaState(const Eigen::VectorXd& mean_a,
 
 }  // namespace
 
-void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h,
-                                           bool claims_current) const {
+void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h) const {
   // Sort by id ascending so the survivor (kept) carries the older id.
   std::sort(h.bernoullis.begin(), h.bernoullis.end(),
             [](const Bernoulli& a, const Bernoulli& b) {
@@ -1731,23 +1687,18 @@ void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h,
           h.bernoullis[j].mean, h.bernoullis[j].covariance);
       if (dB > cfg_.bhattacharyya_merge_threshold) continue;
 
-      // R2 finding #2: two Bernoullis that each claimed a DIFFERENT measurement
-      // in the current scan are distinct targets (a target yields one detection
-      // per scan), not a split→rejoin duplicate. Folding them drops one target's
-      // real return to the clutter map as full-weight clutter. Skip the merge so
-      // both returns stay credited. (Same claim, or one claim + one misdetection,
-      // still merges — those are genuine duplicates.) SCOPED to feed_clutter_map:
-      // this guard exists only to keep the clutter feed honest; changing the
-      // merge otherwise regresses tracking on every config (measured:
-      // +card_err / +gospa_false across all scenarios, 306 cells). With the feed
-      // off (the default) the merge is unchanged — bit-identical to pre-fix.
-      // Requires claims_current so the indices reflect this scan (non-empty path).
-      if (claims_current && cfg_.feed_clutter_map &&
-          h.bernoullis[i].last_claimed_meas_index >= 0 &&
-          h.bernoullis[j].last_claimed_meas_index >= 0 &&
-          h.bernoullis[i].last_claimed_meas_index !=
-              h.bernoullis[j].last_claimed_meas_index)
-        continue;
+      // NOTE (review, distinct same-scan claims): a state-close pair that each
+      // claimed a DIFFERENT measurement this scan is NOT necessarily two targets
+      // — a fused batch is multi-sensor, so one physical target detected by two
+      // sensors (or one large target split into two radar plots) legitimately
+      // produces exactly that. A guard that refused such merges would leave a
+      // duplicate track per multi-sensor vessel, so we do NOT guard here. The
+      // side effect is a known limitation of the single-index clutter feed: when
+      // two claimed Bernoullis fold, only the survivor's claim (below) is
+      // credited and the folded measurement is fed as clutter. Feeding it as
+      // clutter is defensible (the merged target explains one return); the
+      // proper fix, when feed_clutter_map graduates from experimental, is to
+      // carry a claim SET through the merge rather than a single index.
 
       // Merge j INTO i. r_merged = max(r_i, r_j) — the merge gate fires
       // only when (px, py, vx, vy) overlap closely, which in practice
@@ -1776,13 +1727,14 @@ void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h,
         a.covariance = std::move(new_cov);
       }
       a.existence_probability = r_m;
-      // R2: the survivor carries the claim consistent with the merged existence
-      // (r_m = max), and never drops a real claim in favour of none — so a
-      // detected Bernoulli folded into a missed survivor keeps crediting its
-      // real return in the clutter feed, at equal timestamps too (finding #2).
+      // Clutter-feed claim carry: the survivor keeps a REAL claim over none, and
+      // when both are real follows the higher-existence duplicate (consistent
+      // with r_m = max). Guarded so it can never drop a's real claim in favour of
+      // b's -1 (the r_b > r_a branch alone would, when b is a misdetection with
+      // higher existence than a — not saved by any incidental invariant here).
       const bool take_b_claim =
-          (r_b > r_a) ||
-          (a.last_claimed_meas_index < 0 && b.last_claimed_meas_index >= 0);
+          b.last_claimed_meas_index >= 0 &&
+          (a.last_claimed_meas_index < 0 || r_b > r_a);
       if (take_b_claim) a.last_claimed_meas_index = b.last_claimed_meas_index;
       if (b.last_update.seconds() > a.last_update.seconds())
         a.last_update = b.last_update;

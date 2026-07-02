@@ -138,6 +138,25 @@ TEST(GeoJsonStaticObstacles, NegativeRadiusClampedObstacleKept) {
   EXPECT_DOUBLE_EQ(obs[0].keep_clear_radius_m, 120.0);   // valid field intact
 }
 
+// Review finding #2: a negative keep_clear_radius_m (e.g. a sign-flipped export)
+// clamps to 0 — the obstacle is KEPT but becomes footprint-only with NO
+// proximity-alarm ring (keep_clear==0 == "no operational keep-clear margin", a
+// valid chart state). This is the DOCUMENTED behaviour (header contract): a
+// consumer that relies on the keep-clear alarm must treat keep_clear==0 hazards
+// accordingly rather than assume every charted obstacle alarms. Explicit
+// coverage of exactly this field (the earlier rewrite dropped it).
+TEST(GeoJsonStaticObstacles, NegativeKeepClearClampsToFootprintOnly) {
+  const std::string json = R"({"type":"FeatureCollection","features":[
+     {"type":"Feature","geometry":{"type":"Point","coordinates":[-71.05,42.35]},
+      "properties":{"category":"rock","footprint_radius_m":8.0,
+      "keep_clear_radius_m":-120.0}}]})";
+  const std::vector<StaticObstacle> obs = parseStaticObstaclesGeoJson(json);
+  ASSERT_EQ(obs.size(), 1u);                            // hazard kept
+  EXPECT_EQ(obs[0].category, ObstacleCategory::Rock);
+  EXPECT_DOUBLE_EQ(obs[0].footprint_radius_m, 8.0);     // birth suppression intact
+  EXPECT_DOUBLE_EQ(obs[0].keep_clear_radius_m, 0.0);    // alarm ring cleared
+}
+
 // R7.2: malformed JSON surfaces as std::runtime_error (documented), not a raw
 // nlohmann::json::parse_error leaking to the caller.
 TEST(GeoJsonStaticObstacles, MalformedJsonThrowsRuntimeError) {

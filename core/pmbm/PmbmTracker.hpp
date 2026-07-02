@@ -681,15 +681,18 @@ class PmbmTracker {
     double rho_target{0.0};
     double rho_total{0.0};
     // R1 phantom-birth gate reference. The floor is checked against THESE
-    // instead of rho_target/rho_total so a soft STATIC-OBSTACLE keep-clear
-    // buffer cannot compose with land + the floor into a hard no-birth zone: a
-    // suppressed birth near a charted obstacle still materialises (with the tiny
-    // full-suppressed rho_target, above r_min so it accumulates). Scope: the
-    // relaxation applies ONLY where the obstacle prior contributes
-    // (obstacleSuppressionAt > 0). With land alone these equal the suppressed
-    // rho_target/rho_total, preserving ADR 0001's deliberate land-only
-    // near-shore no-birth zone (coverage_land). A hard-drop sets these to 0 too.
-    // Bit-identical to rho_target/rho_total when no model is wired.
+    // instead of rho_target/rho_total so a soft STATIC-OBSTACLE keep-clear buffer
+    // does not compose with the floor into a hard no-birth zone. The relaxation
+    // removes the OBSTACLE factor only and KEEPS land (finding #3): where the
+    // obstacle prior contributes (c_static > 0), these hold the land-suppressed
+    // pre-obstacle intensity rho0·(1−c_land), so ADR-0001's deliberate land-only
+    // near-shore no-birth zone still gates in the land×obstacle overlap. With
+    // land alone (c_static == 0) these EQUAL the suppressed rho_target/rho_total,
+    // fully preserving that zone (coverage_land); a hard-drop sets them to 0.
+    // Bit-identical to rho_target/rho_total when no model is wired. NOTE: an
+    // admitted birth still materialises at its SUPPRESSED rho_target — if deep
+    // land×obstacle composition drives that below r_min it is pruned the same
+    // scan (not trackable position-only; sensor-aware ADR-0001-A3 is the cure).
     double rho_target_unsuppressed{0.0};
     double rho_total_unsuppressed{0.0};
     Eigen::VectorXd mean;
@@ -742,14 +745,7 @@ class PmbmTracker {
   // Merge near-duplicate Bernoullis within one global hypothesis by
   // Bhattacharyya distance on the position block (§3.5 of
   // docs/algorithms/pmbm-design.md, MhtTracker::mergeBranches analogue).
-  // `claims_current` is true only on the non-empty-scan path, where each
-  // Bernoulli's last_claimed_meas_index reflects THIS scan's association — the
-  // merge then refuses to fold two Bernoullis that each claimed a DIFFERENT
-  // measurement this scan (distinct real targets, not a split→rejoin duplicate;
-  // R2 finding #2). On the empty-scan path the indices are stale, so the guard
-  // is disabled.
-  void mergeBernoulliDuplicates(GlobalHypothesis& h,
-                                bool claims_current = false) const;
+  void mergeBernoulliDuplicates(GlobalHypothesis& h) const;
 
   void refreshAggregatedTracks() const;
 
@@ -825,49 +821,73 @@ class PmbmTracker {
   // so the result is independent of which parent/assignment wrote first.
   void stageActivityCheck(BernoulliId id, Timestamp t);
   void stageCooperativeTouch(BernoulliId id, Timestamp t);
-  // Returns the birth-intensity scale in [0, 1] for a birth at ENU position
-  // `mean.head<2>()`, or a negative value meaning "hard-drop this birth".
-  // Combines the land prior and the static-obstacle prior multiplicatively:
-  //   scale = (1 − c_land) · (1 − c_static)
-  // and hard-drops when EITHER prior exceeds its own hard gate. With no models
-  // wired both priors are 0 → scale 1.0 (bit-identical to pre-Stage-1).
+  // The two geographic birth priors evaluated ONCE at an ENU birth position.
+  // c_land from ILandModel, c_static from IStaticObstacleModel; either is 0 when
+  // its model is unwired (bit-identical to pre-Stage-1). hard_drop is set when
+  // either exceeds its own hard gate; otherwise scale = (1−c_land)(1−c_static).
+  // Computing both here lets birthScale + the R1 gate reference share one model
+  // evaluation instead of re-querying (review: no double model cost, one guard).
+  struct BirthPriors {
+    double c_land{0.0};
+    double c_static{0.0};
+    bool hard_drop{false};
+    double scale{1.0};
+  };
+  BirthPriors birthPriorsAt(const Eigen::VectorXd& mean) const {
+    BirthPriors p;
+    if (mean.size() < 2) return p;  // c=0, scale=1, no hard-drop
+    if (cfg_.use_land_model && land_model_ != nullptr)
+      p.c_land = land_model_->clutterPrior(mean.head<2>());
+    if (cfg_.use_static_obstacle_model && obstacle_model_ != nullptr)
+      p.c_static = obstacle_model_->birthSuppression(mean.head<2>());
+    if (p.c_land > cfg_.land_birth_hard_gate ||
+        p.c_static > cfg_.static_obstacle_hard_gate) {
+      p.hard_drop = true;
+      return p;
+    }
+    p.scale = (1.0 - p.c_land) * (1.0 - p.c_static);
+    return p;
+  }
+
+  // Birth-intensity scale in [0, 1], or −1 for "hard-drop this birth". Thin
+  // wrapper over birthPriorsAt for callers that only need the scalar.
   double birthScale(const Eigen::VectorXd& mean) const {
-    if (mean.size() < 2) return 1.0;
-    double c_land = 0.0;
-    if (cfg_.use_land_model && land_model_ != nullptr)
-      c_land = land_model_->clutterPrior(mean.head<2>());
-    double c_static = 0.0;
-    if (cfg_.use_static_obstacle_model && obstacle_model_ != nullptr)
-      c_static = obstacle_model_->birthSuppression(mean.head<2>());
-    if (c_land > cfg_.land_birth_hard_gate ||
-        c_static > cfg_.static_obstacle_hard_gate)
-      return -1.0;  // hard-drop
-    return (1.0 - c_land) * (1.0 - c_static);
+    const BirthPriors p = birthPriorsAt(mean);
+    return p.hard_drop ? -1.0 : p.scale;
   }
 
-  // Static-obstacle birth suppression alone at `mean` (0 if no obstacle model).
-  // Used by the R1 pre-suppression floor: the keep-clear buffer must stay soft
-  // even composed with land, but the LAND-only near-shore no-birth zone remains
-  // ADR 0001's deliberate decision — so the floor is relaxed only where an
-  // obstacle contributes.
-  double obstacleSuppressionAt(const Eigen::VectorXd& mean) const {
-    if (mean.size() < 2) return 0.0;
-    if (cfg_.use_static_obstacle_model && obstacle_model_ != nullptr)
-      return obstacle_model_->birthSuppression(mean.head<2>());
-    return 0.0;
-  }
-
-  // Land birth suppression alone at `mean` (0 if no land model). Symmetric to
-  // obstacleSuppressionAt. Used by the R1 floor (finding #3): where an obstacle
-  // contributes, the phantom-birth gate relaxes the OBSTACLE suppression only —
-  // the land factor (1 − c_land) is kept in the gate reference so ADR-0001's
-  // near-shore no-birth zone survives wherever a keep-clear ring overlaps the
-  // shore band, instead of being stripped by the obstacle's presence.
-  double landSuppressionAt(const Eigen::VectorXd& mean) const {
-    if (mean.size() < 2) return 0.0;
-    if (cfg_.use_land_model && land_model_ != nullptr)
-      return land_model_->clutterPrior(mean.head<2>());
-    return 0.0;
+  // Apply the geographic priors to a pre-suppression target intensity rho0 with
+  // clutter intensity lambda_z. Returns the SUPPRESSED (rho_target, rho_total)
+  // and the R1 phantom-birth gate reference (rho_*_unsuppressed): where a static
+  // obstacle contributes it removes the OBSTACLE factor only and keeps land
+  // (rho0·(1−c_land)), so ADR-0001's land-only no-birth zone still gates in the
+  // overlap (finding #3); with land alone the reference equals the suppressed
+  // value. Shared by both birth builders (review: single copy of the block).
+  struct SuppressedBirth {
+    double rho_target{0.0};
+    double rho_total{0.0};
+    double rho_target_unsuppressed{0.0};
+    double rho_total_unsuppressed{0.0};
+  };
+  SuppressedBirth applyBirthPriors(double rho0, double lambda_z,
+                                   const BirthPriors& p) const {
+    SuppressedBirth s;
+    if (p.hard_drop) {
+      s.rho_total = lambda_z;
+      s.rho_total_unsuppressed = lambda_z;
+      return s;  // rho_target / rho_target_unsuppressed stay 0
+    }
+    s.rho_target = rho0 * p.scale;
+    s.rho_total = s.rho_target + lambda_z;
+    if (p.c_static > 0.0) {
+      const double land_only = rho0 * (1.0 - p.c_land);  // obstacle relaxed, land kept
+      s.rho_target_unsuppressed = land_only;
+      s.rho_total_unsuppressed = land_only + lambda_z;
+    } else {
+      s.rho_target_unsuppressed = s.rho_target;
+      s.rho_total_unsuppressed = s.rho_total;
+    }
+    return s;
   }
 
   // Returns true when a measurement from sensor `s` should update the

@@ -290,9 +290,9 @@ if unch.sum():
     print(f"  of top-100 that are >50 m from any structure ({int(unch.sum())}): {100*in_moor[strong][unch].sum()/unch.sum():.0f}% fall inside a charted anchorage/mooring area")
 
 # ── field-check: top clusters vs BRIDGES + ENC coverage extent ──────────────
-def densify_class(path, objclass):
-    d=json.load(open(path)); pts=[]
-    for ft in d["features"]:
+def densify_class(data, objclass):
+    pts=[]
+    for ft in data["features"]:
         if ft["properties"].get("obj_class")!=objclass: continue
         g=ft.get("geometry")
         if not g: continue
@@ -310,12 +310,15 @@ def densify_class(path, objclass):
                 for k in range(steps+1):
                     f=k/steps; pts.append((a[0]+f*(b[0]-a[0]), a[1]+f*(b[1]-a[1])))
     return np.array([to_enu(p[1],p[0]) for p in pts]) if pts else np.empty((0,2))
-bridge_pts=densify_class(f"{ROOT}/charts/geojson/fixed_surface.geojson","BRIDGE")
+# Parse fixed_surface.geojson ONCE (finding #9) — used for both the densified
+# BRIDGE geometry and the legend feature count.
+_fixed_surface=json.load(open(f"{ROOT}/charts/geojson/fixed_surface.geojson"))
+bridge_pts=densify_class(_fixed_surface,"BRIDGE")
 # finding #4: derive the BRIDGE feature count from the data so the legend can
 # never go stale against a regenerated fixed_surface.geojson (e.g. after a new
 # ENC cell is added to export_obstacles.py).
 _bridge_feat_count=sum(
-    1 for ft in json.load(open(f"{ROOT}/charts/geojson/fixed_surface.geojson"))["features"]
+    1 for ft in _fixed_surface["features"]
     if ft["properties"].get("obj_class")=="BRIDGE")
 cov_u=ogr.Geometry(ogr.wkbMultiPolygon)
 for path in ENC.values():

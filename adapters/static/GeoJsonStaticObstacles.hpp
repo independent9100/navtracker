@@ -15,7 +15,13 @@ namespace navtracker {
 ///   - has lat outside [-90, 90] or lon outside [-180, 180].
 /// A negative footprint / keep-clear / position-uncertainty radius is CLAMPED to
 /// 0 with the obstacle kept (finding #6) — a charted hazard is never dropped over
-/// one malformed optional field.
+/// one malformed optional field. NOTE: a negative (or zero) keep_clear_radius_m
+/// therefore yields a FOOTPRINT-ONLY hazard with NO proximity-alarm ring
+/// (keep_clear==0 == "no operational keep-clear margin", a valid chart state).
+/// A consumer that relies on the keep-clear alarm must treat keep_clear==0
+/// hazards accordingly rather than assume every charted obstacle alarms; a
+/// pipeline that must distinguish "malformed" from "intentionally absent" should
+/// validate radii before this parser (it has no per-field error channel).
 /// Throws std::runtime_error if the JSON itself is malformed.
 ///
 /// Caller contract (finding #5): individual bad features are skipped for
