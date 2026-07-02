@@ -82,3 +82,76 @@ TEST(GeoJsonStaticObstacles, MissingFileThrows) {
   EXPECT_THROW(loadStaticObstaclesGeoJson("tests/fixtures/static/nope.geojson"),
                std::runtime_error);
 }
+
+// R7.2: a non-numeric coordinate is skipped, not thrown (header contract says
+// invalid-geometry features are skipped).
+TEST(GeoJsonStaticObstacles, NonNumericCoordinateSkipped) {
+  const std::string json = R"({
+    "type":"FeatureCollection","features":[
+     {"type":"Feature","geometry":{"type":"Point",
+      "coordinates":["not_a_number",42.35]},"properties":{"category":"rock"}}]})";
+  std::vector<StaticObstacle> obs;
+  EXPECT_NO_THROW(obs = parseStaticObstaclesGeoJson(json));
+  EXPECT_EQ(obs.size(), 0u);
+}
+
+// R7.2: latitude outside [-90, 90] is skipped.
+TEST(GeoJsonStaticObstacles, OutOfRangeLatitudeSkipped) {
+  const std::string hi = R"({"type":"FeatureCollection","features":[
+     {"type":"Feature","geometry":{"type":"Point","coordinates":[-71.05,95.0]},
+      "properties":{}}]})";
+  const std::string lo = R"({"type":"FeatureCollection","features":[
+     {"type":"Feature","geometry":{"type":"Point","coordinates":[-71.05,-91.0]},
+      "properties":{}}]})";
+  EXPECT_EQ(parseStaticObstaclesGeoJson(hi).size(), 0u);
+  EXPECT_EQ(parseStaticObstaclesGeoJson(lo).size(), 0u);
+}
+
+// R7.2: longitude outside [-180, 180] is skipped.
+TEST(GeoJsonStaticObstacles, OutOfRangeLongitudeSkipped) {
+  const std::string hi = R"({"type":"FeatureCollection","features":[
+     {"type":"Feature","geometry":{"type":"Point","coordinates":[181.0,42.35]},
+      "properties":{}}]})";
+  const std::string lo = R"({"type":"FeatureCollection","features":[
+     {"type":"Feature","geometry":{"type":"Point","coordinates":[-181.0,42.35]},
+      "properties":{}}]})";
+  EXPECT_EQ(parseStaticObstaclesGeoJson(hi).size(), 0u);
+  EXPECT_EQ(parseStaticObstaclesGeoJson(lo).size(), 0u);
+}
+
+// R7.2: a negative radius (footprint / keep-clear / position-uncertainty) is
+// skipped — radii are geometric magnitudes and must be non-negative.
+TEST(GeoJsonStaticObstacles, NegativeRadiusSkipped) {
+  auto feat = [](const char* radius_key, double v) {
+    return std::string(R"({"type":"FeatureCollection","features":[
+      {"type":"Feature","geometry":{"type":"Point","coordinates":[-71.05,42.35]},
+       "properties":{")") + radius_key + "\":" + std::to_string(v) + "}}]}";
+  };
+  EXPECT_EQ(parseStaticObstaclesGeoJson(feat("footprint_radius_m", -5.0)).size(),
+            0u);
+  EXPECT_EQ(
+      parseStaticObstaclesGeoJson(feat("keep_clear_radius_m", -10.0)).size(),
+      0u);
+  EXPECT_EQ(
+      parseStaticObstaclesGeoJson(feat("position_uncertainty_m", -2.0)).size(),
+      0u);
+}
+
+// R7.2: malformed JSON surfaces as std::runtime_error (documented), not a raw
+// nlohmann::json::parse_error leaking to the caller.
+TEST(GeoJsonStaticObstacles, MalformedJsonThrowsRuntimeError) {
+  EXPECT_THROW(parseStaticObstaclesGeoJson("{invalid json"), std::runtime_error);
+}
+
+// R7.2: an invalid feature is skipped without discarding a following valid one.
+TEST(GeoJsonStaticObstacles, ValidFeatureAfterInvalidIsKept) {
+  const std::string json = R"({
+    "type":"FeatureCollection","features":[
+     {"type":"Feature","geometry":{"type":"Point",
+      "coordinates":["bad",42.35]},"properties":{"category":"rock"}},
+     {"type":"Feature","geometry":{"type":"Point","coordinates":[-71.05,42.35]},
+      "properties":{"category":"pile"}}]})";
+  const std::vector<StaticObstacle> obs = parseStaticObstaclesGeoJson(json);
+  ASSERT_EQ(obs.size(), 1u);
+  EXPECT_EQ(obs[0].category, ObstacleCategory::Pile);
+}

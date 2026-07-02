@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cstdint>
+#include <cstddef>
 #include <map>
 
 #include <Eigen/Core>
@@ -43,7 +43,11 @@ class StaticHazardEvaluator {
   const IStaticObstacleModel* model_{nullptr};
   IStaticHazardSink* sink_{nullptr};
   Config cfg_;
-  std::map<std::uint64_t, bool> inside_;  // hazard_id -> currently inside ring
+  // R7.3: keyed by obstacle index (stable within a run), NOT hazard_id — two
+  // co-located ENC records share a hazard_id, and sharing hysteresis state
+  // there lets one obstacle's Exit mask another's Enter. Events still carry
+  // hazard_id for operator identification.
+  std::map<std::size_t, bool> inside_;  // obstacle index -> inside ring
 };
 
 }  // namespace navtracker

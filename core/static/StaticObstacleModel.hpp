@@ -36,6 +36,11 @@ class StaticObstacleModel : public IStaticObstacleModel, public IDatumChangeSink
   StaticObstacleModel(std::vector<StaticObstacle> obstacles, geo::Datum datum,
                       StaticObstacleParams params = {})
       : obstacles_(std::move(obstacles)), datum_(datum), params_(params) {
+    // R7.1: enforce the soft_max invariant at construction. birthSuppression
+    // approaches soft_max at the footprint edge; clamping it to 0.9 keeps the
+    // keep-clear buffer strictly below the tracker's 0.95 static_obstacle_hard_gate
+    // so the buffer stays soft-only (only the c=1.0 footprint interior hard-drops).
+    params_.soft_max = std::min(params_.soft_max, 0.9);
     rebuildEnu();
   }
 

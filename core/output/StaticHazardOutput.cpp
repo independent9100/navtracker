@@ -16,6 +16,10 @@ std::uint64_t staticHazardId(const StaticObstacle& obs) {
   mix(static_cast<std::uint64_t>(lat));
   mix(static_cast<std::uint64_t>(lon));
   mix(static_cast<std::uint64_t>(obs.category));
+  // R7.3: when present, mix source_id so co-located ENC records (e.g. a wreck
+  // and an obstruction at the same rounded position + category) get distinct
+  // ids. Empty source_id leaves the id unchanged (backward-compatible).
+  for (unsigned char c : obs.source_id) mix(static_cast<std::uint64_t>(c));
   return h;
 }
 

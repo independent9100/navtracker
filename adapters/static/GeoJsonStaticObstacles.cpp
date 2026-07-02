@@ -66,39 +66,63 @@ std::string stringOr(const nlohmann::json& props, const char* key) {
 std::vector<StaticObstacle> parseStaticObstaclesGeoJson(
     const std::string& json_text) {
   std::vector<StaticObstacle> out;
-  const nlohmann::json root = nlohmann::json::parse(json_text);
+  // R7.2: surface malformed JSON as the documented std::runtime_error rather
+  // than leaking a raw nlohmann::json::parse_error to the caller.
+  nlohmann::json root;
+  try {
+    root = nlohmann::json::parse(json_text);
+  } catch (const nlohmann::json::exception& e) {
+    throw std::runtime_error(std::string("invalid static-obstacle GeoJSON: ") +
+                             e.what());
+  }
   if (!root.contains("features") || !root["features"].is_array()) return out;
 
   for (const auto& feat : root["features"]) {
-    if (!feat.contains("geometry") || feat["geometry"].is_null()) continue;
-    const auto& geom = feat["geometry"];
-    if (!geom.contains("type") || geom["type"] != "Point") continue;
-    if (!geom.contains("coordinates") || !geom["coordinates"].is_array() ||
-        geom["coordinates"].size() < 2)
-      continue;
-    const double lon = geom["coordinates"][0].get<double>();
-    const double lat = geom["coordinates"][1].get<double>();
-    if (!std::isfinite(lon) || !std::isfinite(lat)) continue;
+    // R7.2: any per-feature error skips that feature (header contract) rather
+    // than aborting the whole parse.
+    try {
+      if (!feat.contains("geometry") || feat["geometry"].is_null()) continue;
+      const auto& geom = feat["geometry"];
+      if (!geom.contains("type") || geom["type"] != "Point") continue;
+      if (!geom.contains("coordinates") || !geom["coordinates"].is_array() ||
+          geom["coordinates"].size() < 2)
+        continue;
+      // Non-numeric coordinates: skip, do not throw.
+      if (!geom["coordinates"][0].is_number() ||
+          !geom["coordinates"][1].is_number())
+        continue;
+      const double lon = geom["coordinates"][0].get<double>();
+      const double lat = geom["coordinates"][1].get<double>();
+      if (!std::isfinite(lon) || !std::isfinite(lat)) continue;
+      if (lat < -90.0 || lat > 90.0) continue;    // WGS-84 latitude range
+      if (lon < -180.0 || lon > 180.0) continue;  // WGS-84 longitude range
 
-    StaticObstacle o;
-    o.position = geo::Geodetic{lat, lon, 0.0};
-    const nlohmann::json props =
-        feat.contains("properties") && feat["properties"].is_object()
-            ? feat["properties"]
-            : nlohmann::json::object();
-    o.category = toCategory(stringOr(props, "category"));
-    o.water_level = toWaterLevel(stringOr(props, "watlev"));
-    o.aton = toAton(stringOr(props, "aton"));
-    o.depth_m = numberOr(props, "depth_m",
-                         std::numeric_limits<double>::quiet_NaN());
-    o.lit = props.contains("lit") && props["lit"].is_boolean()
-                ? props["lit"].get<bool>()
-                : false;
-    o.footprint_radius_m = numberOr(props, "footprint_radius_m", 0.0);
-    o.keep_clear_radius_m = numberOr(props, "keep_clear_radius_m", 0.0);
-    o.position_uncertainty_m = numberOr(props, "position_uncertainty_m", 0.0);
-    o.source_id = stringOr(props, "source_id");
-    out.push_back(std::move(o));
+      StaticObstacle o;
+      o.position = geo::Geodetic{lat, lon, 0.0};
+      const nlohmann::json props =
+          feat.contains("properties") && feat["properties"].is_object()
+              ? feat["properties"]
+              : nlohmann::json::object();
+      o.category = toCategory(stringOr(props, "category"));
+      o.water_level = toWaterLevel(stringOr(props, "watlev"));
+      o.aton = toAton(stringOr(props, "aton"));
+      o.depth_m = numberOr(props, "depth_m",
+                           std::numeric_limits<double>::quiet_NaN());
+      o.lit = props.contains("lit") && props["lit"].is_boolean()
+                  ? props["lit"].get<bool>()
+                  : false;
+      o.footprint_radius_m = numberOr(props, "footprint_radius_m", 0.0);
+      o.keep_clear_radius_m = numberOr(props, "keep_clear_radius_m", 0.0);
+      o.position_uncertainty_m = numberOr(props, "position_uncertainty_m", 0.0);
+      // Radii are geometric magnitudes — a negative value is malformed; skip.
+      if (o.footprint_radius_m < 0.0 || o.keep_clear_radius_m < 0.0 ||
+          o.position_uncertainty_m < 0.0)
+        continue;
+      o.source_id = stringOr(props, "source_id");
+      out.push_back(std::move(o));
+    } catch (const nlohmann::json::exception&) {
+      continue;  // defensive: any unexpected type error skips the feature
+    }
   }
   return out;
 }

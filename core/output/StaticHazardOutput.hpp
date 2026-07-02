@@ -28,9 +28,11 @@ struct StaticHazardOutput {
   std::string source_id;
 };
 
-// Deterministic stable id from an obstacle's charted position + category.
-// Order-independent (not a list index). Rounds lat/lon to ~1 m before hashing
-// so numeric jitter does not change the id.
+// Deterministic stable id from an obstacle's charted position + category, plus
+// source_id when non-empty (so co-located ENC records with different sources
+// get distinct ids). Order-independent (not a list index); session-scoped, not
+// a database primary key. Rounds lat/lon to ~1 m before hashing so numeric
+// jitter does not change the id.
 std::uint64_t staticHazardId(const StaticObstacle& obs);
 
 // Build a StaticHazardOutput from a charted obstacle (attributes verbatim,

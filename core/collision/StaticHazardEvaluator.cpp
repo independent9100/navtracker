@@ -7,14 +7,18 @@ namespace navtracker {
 void StaticHazardEvaluator::evaluate(const Eigen::Vector2d& own_ship_enu,
                                      const geo::Datum& datum, Timestamp t) {
   if (model_ == nullptr) return;
-  for (const auto& obs : model_->obstacles()) {
+  const auto& obstacles = model_->obstacles();
+  for (std::size_t i = 0; i < obstacles.size(); ++i) {
+    const auto& obs = obstacles[i];
     const Eigen::Vector3d e = datum.toEnu(obs.position);
     const double d = (Eigen::Vector2d(e.x(), e.y()) - own_ship_enu).norm();
-    const std::uint64_t id = staticHazardId(obs);
+    const std::uint64_t id = staticHazardId(obs);  // for the event payload
     const double enter_r = obs.keep_clear_radius_m;
     const double exit_r = obs.keep_clear_radius_m * cfg_.exit_hysteresis;
 
-    auto it = inside_.find(id);
+    // Hysteresis state is keyed by obstacle index so co-located obstacles
+    // (colliding hazard_id) keep independent enter/exit state (R7.3).
+    auto it = inside_.find(i);
     const bool was_inside = (it != inside_.end()) ? it->second : false;
     bool now_inside = was_inside;
     if (!was_inside && d < enter_r) {
@@ -35,7 +39,7 @@ void StaticHazardEvaluator::evaluate(const Eigen::Vector2d& own_ship_enu,
                                obs.keep_clear_radius_m});
       }
     }
-    inside_[id] = now_inside;
+    inside_[i] = now_inside;
   }
 }
 

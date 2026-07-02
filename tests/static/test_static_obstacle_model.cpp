@@ -78,6 +78,29 @@ TEST(StaticObstacleModel, ObstaclesAccessor) {
   EXPECT_DOUBLE_EQ(m.obstacles()[0].keep_clear_radius_m, 100.0);
 }
 
+// R7.1: soft_max above the clamp threshold (0.9) is clamped in the constructor,
+// so the buffer ramp's peak stays strictly below the tracker's 0.95 hard gate.
+// Just outside the footprint the ramp factor is ~1, so the returned suppression
+// approaches the (clamped) soft_max, not the requested 0.95.
+TEST(StaticObstacleModel, ConstructorClampsSoftMaxAboveHardGate) {
+  navtracker::StaticObstacleParams params;
+  params.soft_max = 0.95;  // illegal: >= hard gate margin
+  StaticObstacleModel m({originObstacle()}, datum(), params);
+  const double c = m.birthSuppression(Eigen::Vector2d(15.001, 0.0));
+  EXPECT_LE(c, 0.9 + 1e-9);  // clamped down to 0.9
+  EXPECT_GT(c, 0.85);        // but still near the clamped peak (ramp ~1)
+}
+
+// R7.1: a soft_max already below the clamp is preserved verbatim (min, not set).
+TEST(StaticObstacleModel, ConstructorPreservesSoftMaxBelowClamp) {
+  navtracker::StaticObstacleParams params;
+  params.soft_max = 0.5;
+  StaticObstacleModel m({originObstacle()}, datum(), params);
+  const double c = m.birthSuppression(Eigen::Vector2d(15.001, 0.0));
+  EXPECT_LT(c, 0.5 + 1e-9);  // not raised to 0.9
+  EXPECT_GT(c, 0.49);        // preserved near 0.5
+}
+
 // After a datum recenter, the obstacle's ENU cache is rebuilt so a query at
 // the obstacle's true position is still fully suppressed. Use a datum shifted
 // by a large offset; the obstacle's geodetic position is unchanged, so its ENU
