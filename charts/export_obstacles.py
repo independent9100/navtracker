@@ -35,6 +35,7 @@ gdal.SetConfigOption(
 CELLS = {
     "US5BOSCC": "ENC_ROOT/US5BOSCC/US5BOSCC.000",  # Inner Harbor / Charles R.
     "US5BOSCD": "ENC_ROOT/US5BOSCD/US5BOSCD.000",  # President Roads approach
+    "US5BOSDC": "ENC_ROOT/US5BOSDC/US5BOSDC.000",  # Inner Harbor -> Mystic R. / Chelsea R.
 }
 OUT_DIR = "geojson"
 
