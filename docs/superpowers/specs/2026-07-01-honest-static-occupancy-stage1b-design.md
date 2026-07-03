@@ -114,18 +114,41 @@ works entirely from the positions the producer already carries.
 
 ## Testing (the promotion gates)
 
-- **philos:** the win holds (over-count from piers suppressed; gospa ≈ 52, or
-  better than the raw spike because real boats are no longer suppressed →
-  card_err should NOT overshoot to −3.2).
-- **anchored-boat preservation (new synthetic):** a compact, ~zero-velocity,
-  non-AIS return that persists near shore MUST still birth + confirm as a
-  stationary track (its occupancy region stays compact → not suppressed). This
-  is the regression test for the user's insight, and the reason the philos
-  gospa metric is NOT the gate (its AIS-only truth would score kept boats as
-  "false"). Validate on synthetic COMPLETE truth instead.
+**REVISED 2026-07-03 after measuring across regimes + R4 (eval-log
+2026-07-03).** Two gates below were mis-specified and are corrected here; the
+churn variant is now a PERMANENT gate member.
+
+- **`harbor_complete_truth` (P_D 0.9) is NOT a suppression gate — it is
+  structurally unpassable by ANY birth-channel suppressor.** At P_D 0.9 the
+  pier's phantom cohort confirms in scans 1–2 and never dies, so the birth
+  channel never gets a second query (measured: `suppress_hits ≈ 0`, byte-
+  identical). It stays the *classification* + off-bit-identical + boat-
+  preservation gate, NOT the suppression gate. Recording this so the gate/
+  mechanism mismatch is never re-litigated.
+- **`harbor_complete_truth_churn` (P_D 0.4) — NEW PERMANENT gate member.** The
+  low-P_D pier decays and must re-birth, so a birth suppressor is measurable at
+  all. This is the complete-truth suppression gate: a valid birth-channel
+  mechanism must cut pier `gospa_false` here WITHOUT dropping the three anchored
+  boats' lifetime (measured with a tuned classifier: −78 false, lifetime held
+  0.975, `suppress_hits` 26). Any future suppression change is evaluated here,
+  not on the P_D-0.9 yardstick.
+- **philos gate is BOUNDED by R4, not a bare "gospa ≈ 52".** R4 measured the
+  removable ceiling: only **~50% of the persistent over-count mass is
+  chart-confirmed structure**; **~35% is real craft (KEEP)**. So the honest
+  philos gate is: suppress toward the SUPPRESS canaries, never the KEEP canaries
+  (`charts/philos_cluster_classification.csv`); `card_err` must NOT overshoot
+  negative and total suppressed mass must NOT exceed the ~50% structure ceiling
+  (the raw λ_C spike deleted ~58% → into KEEP mass → rejected). philos gospa is
+  a *reality check bounded by canaries*, never a bare scalar to minimise.
+- **anchored-boat preservation (synthetic COMPLETE truth):** a compact,
+  ~zero-velocity, non-AIS return that persists near shore MUST still birth +
+  confirm. R4 shows why this is load-bearing: on real data **dwell/persistence
+  does not separate craft from structure** (p50 0.64 vs 0.68), so a suppressor
+  that keys on persistence alone WILL kill moored boats — the gate that catches
+  it.
 - **dense_clutter:** clean — transient uniform clutter never becomes
-  persistent+extended → not suppressed → lifetime back to ~0.90 (fixing the
-  spike regression).
+  persistent+extended → not suppressed → lifetime back to ~0.90. (Measured:
+  byte-identical at every occupancy tuning — safety holds.)
 - **clean geometry / near-shore:** byte-identical / no regression.
 - **determinism + null/off bit-identical** (model unwired → today's behaviour).
 
@@ -155,6 +178,14 @@ numbers as known limitations.
   **stationary IMM mode** (zero-velocity / constant-position, locking the
   unobservable turn-rate) so moored tracks keep a tight gate, and the full
   Dempster-Shafer evidential grid with an explicit "unknown".
+  **R4 (2026-07-03) is the quantitative mandate for this:** on real philos,
+  persistence and extent do NOT separate the ~35% KEEP craft from the ~50%
+  SUPPRESS structure (dwell p50 0.64 vs 0.68; extents overlap). No occupancy-grid
+  tuning can make that split — corroboration is not a refinement, it is the only
+  discriminator that works on real data. The 1b-ii detector must fire on real
+  sparse/projection-smeared returns (100 m cells classify philos structure where
+  25–50 m do not) AND gate suppression on chart/AIS/camera corroboration; the
+  birth channel is adequate once the detector fires (Stage 1b-i measurement).
 
 ## Docs (required)
 

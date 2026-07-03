@@ -71,9 +71,21 @@ TEST(HarborGateScenarios, CompactDolphinAddsNoTruth) {
   EXPECT_TRUE(hasSource(h, "sim_dolphin"));
 }
 
+// The churn variant keeps harbor_complete_truth's closed truth (ids 1-5: two
+// movers + three anchored boats; pier + clutter carry no truth). Only the
+// uncharted pier's per-scan detection probability drops (0.9 -> 0.4).
+TEST(HarborGateScenarios, ChurnVariantHasCompleteTruthAndPier) {
+  const auto scenarios = defaultSimScenarios();
+  ScenarioRun* h = find(scenarios, "harbor_complete_truth_churn");
+  ASSERT_NE(h, nullptr);
+  EXPECT_EQ(truthIds(h), (std::set<std::uint64_t>{1u, 2u, 3u, 4u, 5u}));
+  EXPECT_TRUE(hasSource(h, "sim_pier"));
+}
+
 TEST(HarborGateScenarios, DeterministicForSameSeed) {
   for (const std::string label :
-       {"harbor_large_anchored_ship", "harbor_compact_dolphin"}) {
+       {"harbor_large_anchored_ship", "harbor_compact_dolphin",
+        "harbor_complete_truth_churn"}) {
     const auto scenarios = defaultSimScenarios();
     ScenarioRun* h = find(scenarios, label);
     ASSERT_NE(h, nullptr) << label;
@@ -89,8 +101,9 @@ TEST(HarborGateScenarios, DeterministicForSameSeed) {
 // extent discriminator, so these numbers are the baseline the future 1b-ii pass
 // must improve (ship KEPT; dolphin phantom SUPPRESSED).
 TEST(HarborGateScenarios, RecordOneBiBaseline) {
+  const auto all_configs = defaultConfigs();  // hold — `base` aliases it
   const Config* base = nullptr;
-  for (const auto& c : defaultConfigs())
+  for (const auto& c : all_configs)
     if (c.label == "imm_cv_ct_pmbm") base = &c;
   ASSERT_NE(base, nullptr);
 
@@ -116,4 +129,56 @@ TEST(HarborGateScenarios, RecordOneBiBaseline) {
               << "\n";
   std::cout << std::flush;
   SUCCEED();  // recorder, not a gate
+}
+
+// The PERMANENT suppression gate (2026-07-03). harbor_complete_truth at P_D 0.9
+// is structurally unpassable by a birth-channel suppressor (the pier cohort
+// confirms in scans 1-2 and never dies -> suppress_hits ~ 0). The churn variant
+// (P_D 0.4) is where phantoms decay + re-birth, so birth suppression is
+// MEASURABLE at all — this is where any future suppression mechanism must be
+// evaluated. Gate properties, on complete truth so they cannot be gamed:
+//   (1) the mechanism FIRES here (occ_suppress_hits > 0) — the churn variant's
+//       reason to exist, vs ~0 on the P_D-0.9 yardstick;
+//   (2) it does NOT harm the three anchored boats (lifetime not reduced) —
+//       the ADR-0002 safety invariant;
+//   (3) it does not increase false mass (gospa_false not worse).
+// Uses imm_cv_ct_pmbm_occupancy_sensitive: the default 25 m/bar-0.5 classifier
+// does not fire at P_D 0.4 (bar > per-cell P_D), so the gate tracks the tuning
+// that is actually measurable — see eval-log 2026-07-03.
+TEST(HarborGateScenarios, ChurnSuppressionGateBaseline) {
+  const auto all_configs = defaultConfigs();  // hold — pointers below alias it
+  const Config* land = nullptr;
+  const Config* occ = nullptr;
+  for (const auto& c : all_configs) {
+    if (c.label == "imm_cv_ct_pmbm_land") land = &c;
+    if (c.label == "imm_cv_ct_pmbm_occupancy_sensitive") occ = &c;
+  }
+  ASSERT_NE(land, nullptr);
+  ASSERT_NE(occ, nullptr);
+
+  std::vector<std::unique_ptr<ScenarioRun>> scen;
+  for (auto& s : defaultSimScenarios())
+    if (s->descriptor().label == "harbor_complete_truth_churn")
+      scen.push_back(std::move(s));
+  ASSERT_EQ(scen.size(), 1u);
+
+  SweepParams params;
+  params.run_id = "harbor_churn_suppression_gate";
+  params.synthetic_seeds = 8;
+  const std::vector<Config> gate_configs = {*land, *occ};
+  const auto rows = runSweep(gate_configs, scen, params);
+  const char* S = "harbor_complete_truth_churn";
+  const double life_land = meanMetric(rows, "imm_cv_ct_pmbm_land", S, "lifetime_ratio");
+  const double life_occ = meanMetric(rows, "imm_cv_ct_pmbm_occupancy_sensitive", S, "lifetime_ratio");
+  const double gf_land = meanMetric(rows, "imm_cv_ct_pmbm_land", S, "gospa_false");
+  const double gf_occ = meanMetric(rows, "imm_cv_ct_pmbm_occupancy_sensitive", S, "gospa_false");
+  const double hits = meanMetric(rows, "imm_cv_ct_pmbm_occupancy_sensitive", S, "occ_suppress_hits");
+  std::cout << "\n=== churn suppression gate (P_D 0.4, complete truth) ===\n"
+            << "  land   : gospa_false=" << gf_land << " lifetime=" << life_land << "\n"
+            << "  +occ   : gospa_false=" << gf_occ << " lifetime=" << life_occ
+            << " suppress_hits=" << hits << "\n"
+            << std::flush;
+  EXPECT_GT(hits, 0.0);                       // (1) mechanism is measurable here
+  EXPECT_GE(life_occ, life_land - 1e-9);      // (2) boats preserved (ADR 0002)
+  EXPECT_LE(gf_occ, gf_land + 1e-9);          // (3) false mass not worse
 }
