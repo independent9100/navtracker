@@ -1,15 +1,24 @@
 # Stage 1b-i — Live static-occupancy layer (implementation plan)
 
 - **Date:** 2026-07-03
-- **Status (2026-07-03):** Layer BUILT + unit-tested + wired + measured. Result:
-  classification works and the layer is SAFE, but **birth-only suppression is
-  INERT** on all available synthetic fixtures — `suppress_hits ≈ 0`,
-  `_occupancy` ≈ byte-identical to `_land`. Root cause: within a scan births
-  precede the feed, so the pier cohort confirms before the layer classifies, and
-  `smart_birth_skip_existing` then owns the region (see eval-log 2026-07-03). The
-  effective mechanism needs the philos dense regime (unavailable here) or an
-  existence channel (deferred to 1b-ii for safety). **Direction decision pending
-  — do not treat steps 5–7 below as done.**
+- **Status (2026-07-03, UPDATED):** Layer BUILT + unit-tested + wired + measured
+  ACROSS REGIMES (see eval-log 2026-07-03 *follow-up*). Two earlier claims were
+  corrected: (1) **philos IS reachable** — the tests use cwd-relative fixture
+  paths and skip only under ctest (runs from build/); from the repo root they all
+  run. (2) **birth-only suppression is NOT inert everywhere** — on synthetic
+  churn (`harbor_complete_truth_churn`, pier P_D 0.4) with a tuned classifier it
+  fires 26×, cuts false mass 4.6% (−78), holds boat lifetime, leaves
+  dense_clutter byte-identical (SAFE + real). On **real philos it is inert at
+  every tuning** (25/50/100 m): fine cells → the classifier never fires
+  (sparsity + own-ship projection smear); coarse 100 m → classifies but
+  `suppress_hits=0` because philos phantoms are already-confirmed
+  association-maintained tracks the birth channel can't reach. **Real-data wall
+  is two-layered** (classifier robustness AND channel reach). **1b-ii priority is
+  the STRUCTURE DETECTOR (coarse-grid/projection-robust + chart/AIS/camera
+  corroboration), NOT the suppression channel.** Instrument shipped (commits
+  928c536, 3d93231); suppression not promoted. **Steps 5–7 below are superseded by
+  this regime measurement — the docs/learning/ADR updates for 1b-ii await the
+  detector direction.**
 - **Design:** `docs/superpowers/specs/2026-07-01-honest-static-occupancy-stage1b-design.md`
 - **North-star:** Cl-3 (`docs/algorithms/comparison-baselines.md`)
 - **Motivation carried in from the PDA promotion HOLD (2026-07-03):** the residual
