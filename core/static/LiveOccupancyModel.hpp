@@ -94,8 +94,12 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   LiveOccupancyParams params_;
 
   std::map<Cell, double> persistence_;      // EWMA persistence per touched cell
-  std::map<Cell, double> structure_conf_;   // cell → suppression confidence
-  std::vector<StaticObstacle> obstacles_;   // one per structure component
+  // Emitted hazards + the geometry birthSuppression() is DERIVED from, so
+  // suppression > 0 ⇒ inside some hazard's keep-clear ring (the ADR-0002
+  // conservation invariant, structural). All three vectors are index-aligned.
+  std::vector<StaticObstacle> obstacles_;        // one per structure component
+  std::vector<Eigen::Vector2d> obstacle_center_; // anchor-ENU centroid per hazard
+  std::vector<double> obstacle_conf_;            // suppression confidence per hazard
   int peak_structure_count_ = 0;
   double peak_persistence_ = 0.0;
   mutable long suppression_hits_ = 0;

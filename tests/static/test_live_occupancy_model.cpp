@@ -161,6 +161,46 @@ TEST(LiveOccupancyModel, IntrospectionTracksStructureAndHits) {
   EXPECT_EQ(boat.suppressionHits(), 0);
 }
 
+// CONSERVATION INVARIANT (ADR 0002 amendment 2026-07-03): birth suppression at
+// a location is legal ONLY if that location is emitted as a static hazard.
+// Every query with birthSuppression > 0 must lie inside some emitted hazard's
+// keep_clear ring. A 2D block exposes the failure a single centroid hazard has:
+// a per-cell-suppressed corner point can fall outside the centroid's keep-clear.
+TEST(LiveOccupancyModel, SuppressionImpliesAnEmittedHazardCoversIt) {
+  const geo::Datum anchor = anchorDatum();
+  LiveOccupancyModel m(anchor, testParams());
+  // A 3x3 block of cells (extended → classified structure).
+  std::vector<std::pair<Eigen::Vector2d, double>> block;
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j)
+      block.emplace_back(Eigen::Vector2d(12.5 + 25.0 * i, 12.5 + 25.0 * j), 1.0);
+  for (int scan = 0; scan < 12; ++scan) m.observe(feed(block, scan));
+  ASSERT_FALSE(m.obstacles().empty());
+
+  // Precompute each hazard's anchor-ENU centre + keep-clear radius.
+  std::vector<std::pair<Eigen::Vector2d, double>> rings;
+  for (const auto& o : m.obstacles()) {
+    const Eigen::Vector3d e = anchor.toEnu(o.position);
+    rings.emplace_back(Eigen::Vector2d(e.x(), e.y()), o.keep_clear_radius_m);
+  }
+
+  // Sweep a fine grid over the structure's neighbourhood.
+  for (double x = -80.0; x <= 160.0; x += 4.0) {
+    for (double y = -80.0; y <= 160.0; y += 4.0) {
+      const Eigen::Vector2d q(x, y);
+      if (m.birthSuppression(q) <= 0.0) continue;
+      bool covered = false;
+      for (const auto& r : rings)
+        if ((q - r.first).norm() <= r.second + 1e-6) {
+          covered = true;
+          break;
+        }
+      EXPECT_TRUE(covered)
+          << "suppressed q=(" << x << "," << y << ") not in any hazard ring";
+    }
+  }
+}
+
 // Identical feed sequences produce identical suppression (determinism).
 TEST(LiveOccupancyModel, DeterministicAcrossIdenticalRuns) {
   auto run = []() {

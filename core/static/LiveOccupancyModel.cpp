@@ -78,8 +78,9 @@ void LiveOccupancyModel::observe(
 }
 
 void LiveOccupancyModel::recomputeStructure() {
-  structure_conf_.clear();
   obstacles_.clear();
+  obstacle_center_.clear();
+  obstacle_conf_.clear();
 
   // Persistent cells (ordered → deterministic component labeling).
   std::map<Cell, double> persistent;
@@ -113,52 +114,60 @@ void LiveOccupancyModel::recomputeStructure() {
     if (static_cast<int>(component.size()) < params_.extended_cells_min)
       continue;  // compact → a boat / small feature → never suppressed
 
-    // Structure component: record per-cell suppression confidence and one
-    // synthesized live (uncharted) hazard at the component centroid.
+    // Structure component → ONE synthesized live (uncharted) hazard whose
+    // footprint COVERS every cell in the component, so the birth suppression
+    // derived from it (below) can never exceed the emitted hazard's keep-clear
+    // ring (the conservation invariant). conf = the component's peak
+    // persistence (capped), used as the suppression strength.
     Eigen::Vector2d centroid = Eigen::Vector2d::Zero();
-    int imin = component.front().first, imax = imin;
-    int jmin = component.front().second, jmax = jmin;
+    double conf = 0.0;
     for (const Cell& c : component) {
-      structure_conf_[c] = std::min(1.0, persistent.at(c));
       centroid += cellCenter(c);
-      imin = std::min(imin, c.first);
-      imax = std::max(imax, c.first);
-      jmin = std::min(jmin, c.second);
-      jmax = std::max(jmax, c.second);
+      conf = std::max(conf, std::min(1.0, persistent.at(c)));
     }
     centroid /= static_cast<double>(component.size());
 
-    const double span_x = (imax - imin + 1) * params_.cell_size_m;
-    const double span_y = (jmax - jmin + 1) * params_.cell_size_m;
+    // Footprint = the max cell-centre reach from the centroid + a half-cell, so
+    // the hard core encloses all persistent cells; keep-clear adds the ramp.
+    double reach = 0.0;
+    for (const Cell& c : component)
+      reach = std::max(reach, (cellCenter(c) - centroid).norm());
+    const double footprint = reach + 0.5 * params_.cell_size_m;
+
     StaticObstacle o;
     o.position = anchor_.toGeodetic(Eigen::Vector3d(centroid.x(), centroid.y(),
                                                     0.0));
-    o.footprint_radius_m = 0.5 * std::max(span_x, span_y);
-    o.keep_clear_radius_m = o.footprint_radius_m + params_.suppression_radius_m;
+    o.footprint_radius_m = footprint;
+    o.keep_clear_radius_m = footprint + params_.suppression_radius_m;
     o.category = ObstacleCategory::Obstruction;
     o.water_level = WaterLevel::AlwaysAboveWater;
     o.source_id = "live_occupancy";
     obstacles_.push_back(std::move(o));
+    obstacle_center_.push_back(centroid);
+    obstacle_conf_.push_back(conf);
   }
 }
 
 double LiveOccupancyModel::birthSuppression(
     const Eigen::Vector2d& enu_xy) const {
-  if (structure_conf_.empty()) return 0.0;
+  if (obstacles_.empty()) return 0.0;
   const Eigen::Vector2d q = toAnchorEnu(enu_xy);
-  const double half = 0.5 * params_.cell_size_m;
-  const double R = params_.suppression_radius_m;
+  // Derived ENTIRELY from the emitted hazards: ramp 1.0 inside footprint,
+  // linear to 0 at keep-clear. best > 0 ⇒ q is inside some hazard's keep-clear
+  // ring ⇒ that hazard is emitted (the conservation invariant, by construction).
   double best = 0.0;
-  for (const auto& kv : structure_conf_) {
-    const double d = (cellCenter(kv.first) - q).norm();
+  for (std::size_t i = 0; i < obstacles_.size(); ++i) {
+    const double d = (obstacle_center_[i] - q).norm();
+    const double fr = obstacles_[i].footprint_radius_m;
+    const double kc = obstacles_[i].keep_clear_radius_m;
     double ramp;
-    if (d <= half)
-      ramp = 1.0;                         // inside the structure cell
-    else if (d <= half + R)
-      ramp = (half + R - d) / R;          // soft ramp to the buffer edge
+    if (d <= fr)
+      ramp = 1.0;                         // inside the structure footprint
+    else if (d <= kc && kc > fr)
+      ramp = (kc - d) / (kc - fr);        // soft ramp to the keep-clear edge
     else
-      continue;                           // outside this cell's influence
-    best = std::max(best, params_.suppression_max * kv.second * ramp);
+      continue;                           // outside this hazard's influence
+    best = std::max(best, params_.suppression_max * obstacle_conf_[i] * ramp);
   }
   if (best > 0.0) ++suppression_hits_;
   return best;
