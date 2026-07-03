@@ -1,8 +1,15 @@
 #include "core/benchmark/Sweep.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <fstream>
+#include <map>
 #include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <Eigen/Core>
 
 // Sweep — drives the (config x scenario x seed) matrix, runs BenchRunner,
 // computes metrics, emits long-format rows.
@@ -232,6 +239,13 @@ std::vector<MetricRow> runSweep(
         double occ_peak_structures = -1.0;
         double occ_peak_persistence = -1.0;
         double occ_suppress_hits = -1.0;
+        // Increment 5 (conservation/presence at bench): per-truth-id, is that
+        // truth's final position covered by an emitted live-occupancy hazard's
+        // keep-clear ring? 1 = emitted as a static hazard, 0 = not. Combined
+        // with lifetime_ratio:truth_<id> the gate asserts presence over
+        // classification — a suppressed truth object is a track OR a hazard,
+        // never neither. Truth-independent of GOSPA scoring (pure geometry).
+        std::map<std::uint64_t, double> occ_truth_in_hazard;
         const auto t_cell0 = std::chrono::steady_clock::now();
         if (config.tracker_kind == TrackerKind::Mht) {
           MhtTracker::Config cfg =
@@ -455,6 +469,25 @@ std::vector<MetricRow> runSweep(
             occ_peak_persistence = occupancy->peakPersistence();
             occ_suppress_hits =
                 static_cast<double>(occupancy->suppressionHits());
+            // Presence check: cover each truth's final position against the
+            // emitted hazard set. Fixed datum per run ⇒ obstacle geodetic →
+            // ENU about scen.datum matches the model's anchor frame exactly.
+            if (scen.datum.has_value()) {
+              std::map<std::uint64_t, Eigen::Vector2d> last_pos;
+              for (const auto& ts : scen.truth) last_pos[ts.truth_id] = ts.position;
+              std::vector<std::pair<Eigen::Vector2d, double>> rings;
+              for (const auto& o : occupancy->obstacles()) {
+                const Eigen::Vector3d e = scen.datum->toEnu(o.position);
+                rings.emplace_back(Eigen::Vector2d(e.x(), e.y()),
+                                   o.keep_clear_radius_m);
+              }
+              for (const auto& [tid, pos] : last_pos) {
+                double in = 0.0;
+                for (const auto& r : rings)
+                  if ((pos - r.first).norm() <= r.second) { in = 1.0; break; }
+                occ_truth_in_hazard[tid] = in;
+              }
+            }
           }
           // Phase 6 measurement hook: drain + RTS-smooth the alive
           // Bernoulli trajectories. Empty when trajectory_window_scans
@@ -512,6 +545,11 @@ std::vector<MetricRow> runSweep(
                           "occ_peak_persistence", occ_peak_persistence, "ratio"});
           rows.push_back({params.run_id, config.label, desc.label, s64,
                           "occ_suppress_hits", occ_suppress_hits, "count"});
+          for (const auto& [tid, in] : occ_truth_in_hazard) {
+            rows.push_back({params.run_id, config.label, desc.label, s64,
+                            "occ_truth_in_hazard:truth_" + std::to_string(tid),
+                            in, "bool"});
+          }
         }
       }
     }

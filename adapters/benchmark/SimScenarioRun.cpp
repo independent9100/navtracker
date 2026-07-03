@@ -256,6 +256,30 @@ class DenseClutterScenarioRun : public ScenarioRun {
   }
 };
 
+// dense_clutter with a DATUM attached. buildClutterCrossingScenario emits
+// directly in ENU and leaves scen.datum empty, so under the occupancy configs
+// the live layer is never wired (Sweep gates on scen.datum) — the dense_clutter
+// "safety" in the occupancy A/B is therefore vacuous (byte-identical only
+// because the layer is OFF). This variant attaches the bench datum so the layer
+// IS wired, turning it into an end-to-end death-spiral guard: on dense uniform
+// clutter the detector's clutter-adaptive bar must reject the (transient,
+// low-persistence) clutter cells — classify ~no structure, suppress ~no births
+// — so the two real crossing targets are tracked exactly as under the land
+// baseline. Same measurements + truth as dense_clutter; only the datum differs.
+class DenseClutterDatumScenarioRun : public DenseClutterScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return describe("dense_clutter_datum", denseClutterTable());
+  }
+  Scenario generate(std::uint64_t seed) override {
+    Scenario base = DenseClutterScenarioRun::generate(seed);
+    // Same Boston-approach bench frame the harbor scenarios use. The clutter is
+    // generated in ENU already; the datum only tells Sweep to wire the layer.
+    base.datum = geo::Datum(navtracker::geo::Geodetic{42.35, -71.05, 0.0});
+    return base;
+  }
+};
+
 class CrossingDropoutScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
@@ -659,11 +683,40 @@ class HarborCompleteTruthChurnScenarioRun
   double pierDetectionProb() const override { return 0.4; }
 };
 
+// Recovery gate (ADR 0002 amendment rule-3, static→moving). harbor_complete_truth
+// plus ONE non-cooperative boat (truth id 6) that sits anchored for the first 10
+// scans — long enough for a live-occupancy detector to classify + suppress it as
+// a static hazard (the accepted degraded mode) — then gets underway at t = 11 and
+// runs west through open water. The gate: once moving, the boat must recover to a
+// confirmed MOVING track within a bounded number of scans (the vacated cells must
+// decay out of the hazard set so its births are no longer suppressed). Complete
+// truth, so lifetime is honestly scored. Anchored spot (−300, 50) is clear of the
+// movers (y = ±150), the pier (y = −350) and the three KEEP boats (y ≈ 300).
+class HarborAnchoredGetsUnderwayScenarioRun
+    : public HarborCompleteTruthScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return describe("harbor_anchored_gets_underway", shoreClutterTable());
+  }
+  Scenario generate(std::uint64_t seed) override {
+    Scenario base = HarborCompleteTruthScenarioRun::generate(seed);
+    const geo::Datum datum(navtracker::geo::Geodetic{42.35, -71.05, 0.0});
+    const auto s32 = static_cast<std::uint32_t>(seed);
+    base = addStopGoBoat(std::move(base), datum,
+                         /*anchored_pos=*/Eigen::Vector2d(-300.0, 50.0),
+                         /*depart_velocity=*/Eigen::Vector2d(-8.0, 0.0),
+                         /*move_start_s=*/11.0, /*truth_id=*/6,
+                         /*detection_prob=*/0.95, /*pos_noise_std_m=*/5.0,
+                         s32 + 123u);
+    return base;
+  }
+};
+
 }  // namespace
 
 std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   std::vector<std::unique_ptr<ScenarioRun>> out;
-  out.reserve(24);
+  out.reserve(26);
   out.push_back(std::make_unique<CrossingScenarioRun>());
   out.push_back(std::make_unique<OvertakingScenarioRun>());
   out.push_back(std::make_unique<HeadOnScenarioRun>());
@@ -673,6 +726,7 @@ std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   out.push_back(std::make_unique<SpeedChangeScenarioRun>());
   out.push_back(std::make_unique<NonCooperativeScenarioRun>());
   out.push_back(std::make_unique<DenseClutterScenarioRun>());
+  out.push_back(std::make_unique<DenseClutterDatumScenarioRun>());
   out.push_back(std::make_unique<CrossingDropoutScenarioRun>());
   out.push_back(std::make_unique<ParallelLanesDenseScenarioRun>());
   out.push_back(std::make_unique<CrossingAngleScenarioRun>("crossing_30", 30.0));
@@ -688,6 +742,7 @@ std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   out.push_back(std::make_unique<HarborLargeAnchoredShipScenarioRun>());
   out.push_back(std::make_unique<HarborCompactDolphinScenarioRun>());
   out.push_back(std::make_unique<HarborCompleteTruthChurnScenarioRun>());
+  out.push_back(std::make_unique<HarborAnchoredGetsUnderwayScenarioRun>());
   return out;
 }
 

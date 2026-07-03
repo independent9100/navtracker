@@ -263,6 +263,26 @@ Scenario addAnchoredBoats(
     std::uint64_t truth_id_start, double detection_prob, double pos_noise_std_m,
     std::uint32_t seed = 0);
 
+// Add ONE target that transitions from anchored to underway with a STABLE
+// truth id (the ADR-0002 amendment rule-3 recovery case). For each scan
+// timestamp already in `base`:
+//   t <  move_start_s : truth position = anchored_pos, velocity = 0.
+//   t >= move_start_s : truth position = anchored_pos + depart_velocity ·
+//                       (t − move_start_s), velocity = depart_velocity.
+// Truth is emitted every scan under the single id `truth_id` (identity must
+// survive the transition). A radar-like ArpaTtm / "sim_stopgo" Position2D
+// return is emitted with probability `detection_prob` (seeded Bernoulli). The
+// boat is non-cooperative (no AIS) on purpose: while anchored a live-occupancy
+// detector may classify + suppress it as a static hazard (accepted degraded
+// mode); once underway the vacated cells must decay so it births + confirms as
+// a moving track. Sets base.datum; returns measurements + truth re-sorted by
+// time.
+Scenario addStopGoBoat(
+    Scenario base, const geo::Datum& datum, const Eigen::Vector2d& anchored_pos,
+    const Eigen::Vector2d& depart_velocity, double move_start_s,
+    std::uint64_t truth_id, double detection_prob, double pos_noise_std_m,
+    std::uint32_t seed = 0);
+
 // Add `n_per_scan` uniform-random false alarms per scan to `base`, drawn in
 // the ENU box [box_min, box_max], tagged ArpaTtm / "sim_clutter". Positions
 // are re-drawn every scan (transient — the defining contrast with the fixed

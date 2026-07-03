@@ -384,3 +384,52 @@ TEST(Builders, AddAnchoredBoatsAddsZeroVelocityTruthAndRadarReturns) {
   for (std::size_t i = 1; i < s.truth.size(); ++i)
     EXPECT_LE(s.truth[i - 1].time.seconds(), s.truth[i].time.seconds());
 }
+
+TEST(Builders, AddStopGoBoatEmitsAnchoredThenMovingTruthUnderOneId) {
+  Scenario base = buildStraightLineScenario(
+      Eigen::Vector2d(0.0, 0.0), Eigen::Vector2d(10.0, 0.0),
+      {1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, /*pos_noise_std_m=*/1.0, /*seed=*/7,
+      /*truth_id=*/1);
+  const std::size_t base_truth = base.truth.size();  // 6
+  const geo::Datum datum(geo::Geodetic{42.35, -71.05, 0.0});
+  const Eigen::Vector2d anchored(-300.0, 50.0);
+  const Eigen::Vector2d depart(-8.0, 0.0);
+
+  Scenario s = navtracker::addStopGoBoat(
+      base, datum, anchored, depart, /*move_start_s=*/4.0, /*truth_id=*/9,
+      /*detection_prob=*/1.0, /*pos_noise_std_m=*/2.0, /*seed=*/3);
+
+  // One truth per scan under id 9 (6 added).
+  EXPECT_EQ(s.truth.size(), base_truth + 6u);
+  int anchored_ticks = 0, moving_ticks = 0;
+  for (const auto& ts : s.truth) {
+    if (ts.truth_id != 9) continue;
+    const double t = ts.time.seconds();
+    if (t < 4.0) {
+      ++anchored_ticks;
+      EXPECT_DOUBLE_EQ((ts.position - anchored).norm(), 0.0);
+      EXPECT_DOUBLE_EQ(ts.velocity.norm(), 0.0);
+    } else {
+      ++moving_ticks;
+      const Eigen::Vector2d expect_pos = anchored + depart * (t - 4.0);
+      EXPECT_LT((ts.position - expect_pos).norm(), 1e-9) << "t=" << t;
+      EXPECT_DOUBLE_EQ((ts.velocity - depart).norm(), 0.0);
+    }
+  }
+  EXPECT_EQ(anchored_ticks, 3);  // t = 1, 2, 3
+  EXPECT_EQ(moving_ticks, 3);    // t = 4, 5, 6 (t=4 is the first moving tick, 0 displacement)
+
+  // detection_prob 1.0 -> one radar return per scan (6), tagged sim_stopgo.
+  int stopgo = 0;
+  for (const auto& m : s.measurements)
+    if (m.source_id == "sim_stopgo") {
+      ++stopgo;
+      EXPECT_EQ(m.sensor, SensorKind::ArpaTtm);
+    }
+  EXPECT_EQ(stopgo, 6);
+
+  // Truth is time-sorted (no fragmentation).
+  for (std::size_t i = 1; i < s.truth.size(); ++i)
+    EXPECT_LE(s.truth[i - 1].time.seconds(), s.truth[i].time.seconds());
+  EXPECT_TRUE(s.datum.has_value());
+}

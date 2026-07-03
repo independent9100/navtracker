@@ -706,6 +706,38 @@ Scenario addAnchoredBoats(Scenario base, const geo::Datum& datum,
   return base;
 }
 
+Scenario addStopGoBoat(Scenario base, const geo::Datum& datum,
+                       const Eigen::Vector2d& anchored_pos,
+                       const Eigen::Vector2d& depart_velocity,
+                       double move_start_s, std::uint64_t truth_id,
+                       double detection_prob, double pos_noise_std_m,
+                       std::uint32_t seed) {
+  const std::vector<double> scan_times = distinctScanTimes(base);
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> noise(0.0, pos_noise_std_m);
+  std::uniform_real_distribution<double> u(0.0, 1.0);
+  for (double t : scan_times) {
+    const bool moving = t >= move_start_s;
+    const Eigen::Vector2d pos =
+        moving ? anchored_pos + depart_velocity * (t - move_start_s)
+               : anchored_pos;
+    const Eigen::Vector2d vel =
+        moving ? depart_velocity : Eigen::Vector2d::Zero();
+    // Truth exists every scan under the one id — identity must survive the
+    // static→moving transition.
+    base.truth.push_back(makeTruth(pos, vel, t, truth_id));
+    if (u(rng) < detection_prob) {
+      const Eigen::Vector2d noisy(pos.x() + noise(rng), pos.y() + noise(rng));
+      base.measurements.push_back(
+          makeArpaPositionMeasurement(noisy, t, pos_noise_std_m, "sim_stopgo"));
+    }
+  }
+  sortMeasurementsByTime(base);
+  sortTruthByTime(base);
+  base.datum = datum;
+  return base;
+}
+
 Scenario addUniformClutter(Scenario base, const geo::Datum& datum,
                            const Eigen::Vector2d& box_min,
                            const Eigen::Vector2d& box_max, int n_per_scan,

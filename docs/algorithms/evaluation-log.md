@@ -8,6 +8,55 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-03 — Stage 1b-ii detector bench gates: death-spiral guard, presence-over-classification, static→moving recovery (increments 4/5/7) [Cl-3]
+
+Three end-to-end bench gates for `imm_cv_ct_pmbm_occupancy_detector` on complete
+synthetic truth (`tests/benchmark/test_occupancy_detector_gates.cpp`), plus the
+formal M2 gate split (§5.6 of `synthetic-clutter-bench.md`). 8 seeds, A/B vs
+`imm_cv_ct_pmbm_land`.
+
+**Increment 4 — death-spiral guard (`dense_clutter_datum`).** New scenario =
+`dense_clutter` with a datum attached so the live layer actually wires (the
+plain `dense_clutter` A/B "safety" was vacuous — no datum ⇒ layer OFF ⇒
+byte-identical for a trivial reason). Wired on dense uniform clutter: land
+lifetime 0.845 → detector 0.836 (−0.009), gospa 13.07 → 13.09. **No death
+spiral** (the λ_C spike regressed this same metric 0.90 → 0.26). The detector
+does classify ~4 structures / 65 suppress-hits here because synthetic
+`dense_clutter` concentrates its false alarms in a ~12-cell box (pathologically
+high per-cell revisit vs a realistic spread field), so a few cells cross the
+adaptive bar — but it suppresses *phantom clutter births*, not the real AIS
+targets, so lifetime/gospa hold. On realistically spread / real clutter the
+adaptive bar rejects it outright (R4: philos clutter 0.28 ≯ its own background).
+
+**Increment 5 — presence over classification (`harbor_complete_truth`).** Movers
+(ids 1–2) hold lifetime 1.0 / 0.997 and are not hazards. Anchored boats (ids
+3–5) stay **tracked** (life 0.94–0.97, `occ_truth_in_hazard` ≈ 0, KEEP-as-hazard
+fraction 0.04) — at P_D 0.9 they confirm in scans 1–2, before the layer
+classifies them, and birth-channel suppression cannot remove an already-confirmed
+cohort. So the feared 0.975 → 0.9725 boat→hazard trade is **negligible at this
+yardstick**; the presence check (track OR hazard, never neither) passes via the
+track path. The new `occ_truth_in_hazard:truth_<id>` bench column (truth's final
+position ∈ an emitted hazard's keep-clear ring — pure geometry, GOSPA-independent)
+is what makes the three-way split machine-checkable.
+
+**Increment 7 — static→moving recovery (`harbor_anchored_gets_underway`).** New
+scenario: a non-cooperative boat anchored 10 scans then underway. truth_6
+lifetime land 0.981 → detector 0.972 (structures 4.4, suppress_hits 24 → the
+layer IS active), final_in_hazard 0 → **the mover is tracked while suppression
+runs** (rule-3 safety). Honest limitation: at P_D 0.9–0.95 the boat confirms
+before it can be suppressed, so the bench recovery gate proves "suppression does
+not brick the mover" rather than exercising a genuine suppress→re-birth
+transition — the precise bounded-latency decay is unit-tested at the model level
+(`VacatedCellsRecoverWithinBoundedLatency`) and the real transition lives in the
+churn / R8.3 stop→go / HAXR regimes.
+
+**Takeaway:** the detector is safe end-to-end on complete truth (no death spiral,
+presence conserved, movers preserved, recovery holds). The gates are valid
+regression guards; the P_D-0.9 yardstick cannot exercise post-confirmation
+suppression (the established confirmed-cohort wall), so the sharp invariants stay
+with the model unit tests + churn/HAXR. M2 gate formally split three ways
+(presence hard-gate / movers lifetime / classification-quality reported).
+
 ## 2026-07-03 — R4: philos cluster classification bounds the Stage 1b removable ceiling; persistence does NOT separate craft from structure [Cl-3]
 
 Closed the R4 open sub-task (2026-07-02): per-cluster classification of the

@@ -393,6 +393,58 @@ The Milestone-2 A/B gate is:
 Meeting all three on `harbor_complete_truth` is required for promotion. A philos win
 is a secondary cross-check, not the gate.
 
+### 5.6 M2 gate amendment — presence over classification (2026-07-03)
+
+The Stage-1b-ii detector (`imm_cv_ct_pmbm_occupancy_detector`) drops the extent
+gate and lets a **compact anchored radar-only boat** be classified and
+suppressed-as-a-hazard when no sensor can tell it from fixed structure — an
+*acceptable degraded mode* under the ADR 0002 amendment ("presence over
+classification"). The bench scores a boat represented as a hazard as a **missed
+track** (its `lifetime_ratio` drops), so the blanket "`lifetime_ratio` must not
+decrease" rule of §5.5 would read that legitimate trade as a regression. It is
+therefore **split three ways** (matching the amendment's three rules), enforced
+by `tests/benchmark/test_occupancy_detector_gates.cpp`:
+
+1. **Presence (hard gate).** Every anchored radar-only truth boat (ids 3–5) is
+   emitted either as a confirmed **track** *or* as a `StaticHazardOutput`
+   (`is_charted=false`) — **never neither**. Measured at the bench via
+   `occ_truth_in_hazard:truth_<id>` (1 = the truth's final position lies inside
+   an emitted hazard's keep-clear ring) alongside `lifetime_ratio:truth_<id>`.
+   A boat that is neither a track nor a hazard is the forbidden "suppressed into
+   nothing" failure. This *replaces* the old lifetime-not-decrease rule for the
+   anchored radar-only boats.
+2. **Movers keep their lifetime gate (unchanged, hard).** A **moving** vessel
+   (ids 1–2) represented as a static hazard is **not** degraded mode — it is a
+   rule-3 violation. Their `lifetime_ratio` must hold (≥ the land baseline), and
+   they must not be emitted as hazards. The static→moving recovery transition is
+   covered by `harbor_anchored_gets_underway` (below) and the R8.3 real-data
+   stop→go fixture.
+3. **Classification quality — reported, not gated (yet).** The KEEP-as-hazard
+   fraction (how many KEEP boats are shown as hazards rather than tracks) is a
+   *reported* column, not a threshold. Reason: once corroboration (chart/AIS/
+   camera, increment 6) exists for an object, boat-as-hazard stops being
+   acceptable for it and this number is exactly how the corroboration layer's
+   value is measured. Deleting the measurement now would leave 1b-ii nothing to
+   improve against.
+
+`gospa_false` / `card_err_mean` (net over-count must fall) are unchanged from
+§5.5. **Note on the 0.975 → 0.9725 harbor lifetime delta:** this is the
+boat→hazard trade priced by rule 1, *not* an unexplained regression — the
+suppressed boat is conserved as a static hazard (verified by rule 1's presence
+check), not lost. At the P_D-0.9 yardstick the trade is negligible in practice
+(the boats confirm in scans 1–2, before the layer classifies them, and
+birth-channel suppression cannot remove an already-confirmed cohort — so they
+stay tracks); the trade only becomes material in the churn / real-data regimes.
+
+**Recovery gate scenario (`harbor_anchored_gets_underway`).** A non-cooperative
+boat sits anchored for 10 scans (long enough for the detector to classify +
+suppress it) then gets underway. Gate: it must recover to a confirmed **moving
+track** (a substantial `lifetime_ratio:truth_6`, only achievable from the moving
+phase; a permanent static pin would be ≈ 0). This is the bench instance of ADR
+0002 rule 3; the model-level bounded-latency decay is unit-tested in
+`tests/static/test_live_occupancy_model.cpp`
+(`VacatedCellsRecoverWithinBoundedLatency`).
+
 ### Mandatory co-gate scenarios (R5/R6, 2026-07-02)
 
 `harbor_complete_truth` proves extent separability only under *generous* spacing

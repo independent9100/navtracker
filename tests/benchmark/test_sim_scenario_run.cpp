@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <memory>
 #include <set>
+#include <string>
 #include <utility>
 
 #include "adapters/benchmark/SimScenarioRun.hpp"
@@ -11,7 +13,7 @@ using namespace navtracker::benchmark;
 
 TEST(SimScenarioRun, ProducesExpectedDefaultScenarios) {
   const auto scenarios = defaultSimScenarios();
-  ASSERT_EQ(scenarios.size(), 24u);
+  ASSERT_EQ(scenarios.size(), 26u);
   std::set<std::string> labels;
   for (const auto& s : scenarios) labels.insert(s->descriptor().label);
   EXPECT_EQ(labels.count("crossing"), 1u);
@@ -23,6 +25,7 @@ TEST(SimScenarioRun, ProducesExpectedDefaultScenarios) {
   EXPECT_EQ(labels.count("speed_change"), 1u);
   EXPECT_EQ(labels.count("non_cooperative"), 1u);
   EXPECT_EQ(labels.count("dense_clutter"), 1u);
+  EXPECT_EQ(labels.count("dense_clutter_datum"), 1u);
   EXPECT_EQ(labels.count("crossing_dropout"), 1u);
   EXPECT_EQ(labels.count("parallel_lanes_dense"), 1u);
   EXPECT_EQ(labels.count("crossing_30"), 1u);
@@ -38,6 +41,7 @@ TEST(SimScenarioRun, ProducesExpectedDefaultScenarios) {
   EXPECT_EQ(labels.count("harbor_large_anchored_ship"), 1u);
   EXPECT_EQ(labels.count("harbor_compact_dolphin"), 1u);
   EXPECT_EQ(labels.count("harbor_complete_truth_churn"), 1u);
+  EXPECT_EQ(labels.count("harbor_anchored_gets_underway"), 1u);
 }
 
 // The churn variant is harbor_complete_truth with the pier detected at a low
@@ -60,6 +64,34 @@ TEST(SimScenarioRun, ChurnVariantEmitsFewerPierReturnsThanBaseline) {
   const auto c = churn->generate(0);
   EXPECT_LT(c.measurements.size(), b.measurements.size())
       << "churn pier P_D should be lower than baseline";
+}
+
+// dense_clutter_datum is dense_clutter (two crossing targets + uniform
+// transient clutter) with a datum attached, so the live-occupancy layer wires
+// (Sweep gates on scen.datum). It is the end-to-end death-spiral guard: the
+// detector runs on dense uniform clutter and must NOT classify it as structure
+// (adaptive bar) nor drop the real targets. Contract: same closed truth as
+// dense_clutter (ids 1-2), but a datum is present.
+TEST(SimScenarioRun, DenseClutterDatumCarriesDatumWithSameTruthAsDenseClutter) {
+  std::unique_ptr<ScenarioRun> plain, with_datum;
+  for (auto& s : defaultSimScenarios()) {
+    const auto label = s->descriptor().label;
+    if (label == "dense_clutter") plain = std::move(s);
+    else if (label == "dense_clutter_datum") with_datum = std::move(s);
+  }
+  ASSERT_TRUE(plain) << "dense_clutter missing";
+  ASSERT_TRUE(with_datum) << "dense_clutter_datum missing";
+  const auto p = plain->generate(0);
+  const auto d = with_datum->generate(0);
+  EXPECT_FALSE(p.datum.has_value()) << "dense_clutter must stay datum-free";
+  EXPECT_TRUE(d.datum.has_value()) << "dense_clutter_datum must carry a datum";
+  // Same measurements/truth (only the datum differs) — the guard measures the
+  // layer's effect on the identical clutter environment.
+  ASSERT_EQ(p.measurements.size(), d.measurements.size());
+  EXPECT_EQ(p.truth.size(), d.truth.size());
+  std::set<std::uint64_t> ids;
+  for (const auto& ts : d.truth) ids.insert(ts.truth_id);
+  EXPECT_EQ(ids, (std::set<std::uint64_t>{1u, 2u}));
 }
 
 TEST(SimScenarioRun, GenerateIsDeterministicForSameSeed) {
@@ -119,7 +151,7 @@ TEST(SimScenarioRun, ClutterFreeScenariosDeclareFloorDensity) {
   const auto scenarios = navtracker::benchmark::defaultSimScenarios();
   for (const auto& s : scenarios) {
     const auto d = s->descriptor();
-    if (d.label == "dense_clutter") {
+    if (d.label == "dense_clutter" || d.label == "dense_clutter_datum") {
       ASSERT_EQ(d.detection_table.size(), 1u);
       EXPECT_NEAR(d.detection_table[0].params.clutter_intensity, 3.33e-5,
                   1e-6);
@@ -135,7 +167,8 @@ TEST(SimScenarioRun, ClutterFreeScenariosDeclareFloorDensity) {
                d.label == "harbor_boat_near_pier" ||
                d.label == "harbor_large_anchored_ship" ||
                d.label == "harbor_compact_dolphin" ||
-               d.label == "harbor_complete_truth_churn") {
+               d.label == "harbor_complete_truth_churn" ||
+               d.label == "harbor_anchored_gets_underway") {
       ASSERT_EQ(d.detection_table.size(), 2u) << d.label;
     } else {
       ASSERT_EQ(d.detection_table.size(), 1u) << d.label;

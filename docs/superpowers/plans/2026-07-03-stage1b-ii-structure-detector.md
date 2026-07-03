@@ -96,13 +96,29 @@ is a config (`imm_cv_ct_pmbm_occupancy_detector`), not a new class.
    Layer-1 CONFIRMED: fires on real philos (structures 8, suppress_hits 94; no
    card_err overshoot → KEEP anchorage safe). Weak on 20 s clips (confirmed-
    cohort horizon limit → Layer-2).
-4. TODO — datum-bearing dense-clutter safety scenario (bench death-spiral guard).
-5. TODO — conservation/presence at BENCH: assert suppressed boats are emitted as
-   StaticHazardOutput(is_charted=false); the harbor boat→hazard lifetime trade
-   (0.975→0.9725) needs a hazard-presence check, not a track-lifetime gate.
-6. TODO — corroboration KEEP-guard (chart confirm + AIS veto); benefits from the
-   video-check UNKNOWN classifications.
-7. TODO — recovery gate SCENARIO (anchored→underway → track within N scans).
+4. DONE — datum-bearing dense-clutter death-spiral guard. New scenario
+   `dense_clutter_datum` (dense_clutter + a datum so the layer wires); bench
+   gate `OccupancyDetectorGates.DenseClutterDatumNoDeathSpiral`. land lifetime
+   0.845 → detector 0.836, gospa 13.07 → 13.09: no spiral. (Commit: this batch.)
+5. DONE — conservation/presence at BENCH. New per-truth Sweep column
+   `occ_truth_in_hazard:truth_<id>` (truth's final position ∈ an emitted hazard
+   ring — pure geometry); gate `OccupancyDetectorGates.PresenceOverClassifica-
+   tionOnHarbor` enforces the THREE-WAY split (presence hard-gate / movers
+   lifetime / classification-quality reported). M2 gate formalized in
+   synthetic-clutter-bench.md §5.6 + eval-log. Boats stay tracked at P_D 0.9
+   (confirmed-cohort wall) so the boat→hazard trade is negligible there.
+6. TODO — corroboration KEEP-guard (chart confirm + AIS veto) + R8.4
+   observed-empty / coverage-aware decay. Video-check labels DELIVERED (R8).
+7. DONE — recovery gate SCENARIO `harbor_anchored_gets_underway` (stop→go boat
+   via new `addStopGoBoat` builder); gate
+   `OccupancyDetectorGates.AnchoredGetsUnderwayRecovers` (truth_6 lifetime 0.972
+   ≥ 0.4 while suppression active). Bounded-latency decay is the model unit test.
 8. TODO — Layer-2 HAXR hours A/B (steady-state churn the 20 s clips cannot show).
 9. TODO — docs: live-static-occupancy.md four-part + learning chapter + figure;
    ADR 0002 staging; comparison-baselines row; eval-log.
+
+Interleaved (before increment 6, per 2026-07-03 steer — "build the exam before
+the student"): R8.1 label fixture, R8.2 label-aware philos decomposition
+(false_on_suppress / tracks_on_keep / false_unlabeled), R8.3 binary canary +
+stop→go gates (must pass TODAY under imm_cv_ct_pmbm_land). Then R8.4 folds into
+increment 6.
