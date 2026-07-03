@@ -117,10 +117,17 @@ is a config (`imm_cv_ct_pmbm_occupancy_detector`), not a new class.
      full coverage ⇒ universal decay (legacy, bit-identical — proven by the 10
      pre-existing model tests staying green). 3 new unit tests: out-of-range and
      out-of-sector cells do NOT decay, observed-empty cells DO. Full suite 928/928.
-   - 6b TODO — producer wiring: `feed_clutter_map` in `PmbmTracker.cpp` (~L1664)
-     self-estimates each burst's sector from its plot azimuth span + conservative
-     padding + sensor pose; synthetics emit no footprint (full coverage, bit-
-     identical). Under-estimated coverage is the safe direction.
+   - **6b DONE — producer wiring.** `CoverageSector::fromReturns(sensor, points,
+     az_pad, range_pad)` self-estimates the swept sector as the SMALLEST arc
+     covering a scan's return bearings (largest-circular-gap method; handles the
+     ±180° wrap), range = farthest return + padding; under-estimates coverage
+     (safe). Unit-tested (`tests/tracking/test_sensor_detection_models.cpp`:
+     sector/range, degenerate empty/single, wraparound). Producer (`PmbmTracker.cpp`
+     bundle builder) sets `obs.coverage` per bundle when the new config flag
+     `estimate_coverage_sector` is on (default OFF → no footprint → universal
+     decay → bit-identical; synthetics stay off, a per-burst radar turns it on).
+     Wiring tested via `SpyOccupancyFeed` (flag-on populates a covering sector,
+     flag-off leaves it invalid). Full suite 933/933.
    - 6c TODO — validate on `sunset_cruise` (loiterer cessation t≈94 resolves as a
      DEPARTED vessel; ferry-vacated cells after t≈98) + KEEP_MIXED departure
      protection on `close_approach`; then AIS veto (synthetics/HAXR only — all

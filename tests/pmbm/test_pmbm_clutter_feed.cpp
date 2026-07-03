@@ -197,6 +197,56 @@ TEST(PmbmOccupancyFeed, UnwiredIsInert) {
   EXPECT_EQ(detspy->observe_calls, 0);
 }
 
+// Increment 6b — with estimate_coverage_sector on, each occupancy bundle carries
+// a self-estimated CoverageSector covering that scan's returns (built about the
+// sensor position); the LiveOccupancyModel then decays only observed cells.
+TEST(PmbmOccupancyFeed, EstimatesCoverageSectorWhenEnabled) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+  PmbmTracker::Config c = cfg();
+  c.estimate_coverage_sector = true;
+  PmbmTracker t(ekf, c);
+  SpyOccupancyFeed occ;
+  t.setLiveOccupancyFeed(&occ);
+  // Returns over the NE quadrant from a sensor at the origin (posMeas leaves
+  // sensor_position_enu = 0).
+  for (int k = 0; k < 8; ++k) {
+    t.predict(Timestamp::fromSeconds(k));
+    t.processBatch({posMeas(100.0, 0.0, k), posMeas(70.0, 70.0, k),
+                    posMeas(0.0, 100.0, k)});
+  }
+  ASSERT_FALSE(occ.bundles.empty());
+  bool saw_valid = false;
+  for (const auto& bundle : occ.bundles)
+    for (const auto& obs : bundle)
+      if (obs.coverage.valid) {
+        saw_valid = true;
+        EXPECT_TRUE(obs.coverage.covers(Eigen::Vector2d(100.0, 0.0)));
+        EXPECT_TRUE(obs.coverage.covers(Eigen::Vector2d(0.0, 100.0)));
+        EXPECT_FALSE(obs.coverage.covers(Eigen::Vector2d(-100.0, -100.0)))
+            << "opposite-sector point wrongly inside the estimated footprint";
+      }
+  EXPECT_TRUE(saw_valid) << "coverage sector never populated with the flag on";
+}
+
+// Flag off (default): occupancy bundles carry no coverage footprint → the model
+// assumes full coverage (universal decay) → bit-identical to today's behaviour.
+TEST(PmbmOccupancyFeed, NoCoverageSectorWhenDisabled) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+  PmbmTracker t(ekf, cfg());  // estimate_coverage_sector off
+  SpyOccupancyFeed occ;
+  t.setLiveOccupancyFeed(&occ);
+  for (int k = 0; k < 6; ++k) {
+    t.predict(Timestamp::fromSeconds(k));
+    t.processBatch({posMeas(100.0, 0.0, k)});
+  }
+  ASSERT_FALSE(occ.bundles.empty());
+  for (const auto& bundle : occ.bundles)
+    for (const auto& obs : bundle)
+      EXPECT_FALSE(obs.coverage.valid);
+}
+
 // Determinism: identical inputs → identical observe() call count and weights.
 TEST(PmbmClutterFeed, DeterministicFeed) {
   auto run = []() {

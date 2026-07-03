@@ -1662,6 +1662,10 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     }
     using Key = std::tuple<SensorKind, MeasurementModel>;
     std::map<Key, ISensorDetectionModel::ScanObservation> by_sensor;
+    // Coverage-aware decay (increment 6b): capture a representative sensor
+    // position per bundle to self-estimate its swept footprint after the loop.
+    const bool estimate_cov = cfg_.estimate_coverage_sector;
+    std::map<Key, Eigen::Vector2d> cov_sensor;
     for (std::size_t j = 0; j < scan.size(); ++j) {
       const Key k{scan[j].sensor, scan[j].model};
       auto it = by_sensor.find(k);
@@ -1678,6 +1682,8 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
           claimed ? std::clamp(1.0 - claim_r[j], 0.0, 1.0) : 1.0;
       if (canInitiateTrack(scan[j].model) && scan[j].value.size() >= 2) {
         it->second.positions.emplace_back(scan[j].value(0), scan[j].value(1));
+        if (estimate_cov && cov_sensor.find(k) == cov_sensor.end())
+          cov_sensor[k] = scan[j].sensor_position_enu;
         if (weight > 0.0) {
           it->second.clutter_positions.emplace_back(scan[j].value(0),
                                                     scan[j].value(1));
@@ -1693,6 +1699,19 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
         }
       }
       if (!claimed) ++it->second.num_unassociated;
+    }
+    // Self-estimate each bundle's swept footprint from its position returns
+    // (about the representative sensor position). Under-estimated coverage is the
+    // safe direction (unobserved cells simply don't decay). Bundles with no
+    // positional returns (bearing-only) get no footprint → full coverage.
+    if (estimate_cov) {
+      for (auto& kv : by_sensor) {
+        const auto sit = cov_sensor.find(kv.first);
+        if (sit == cov_sensor.end()) continue;
+        kv.second.coverage = ISensorDetectionModel::CoverageSector::fromReturns(
+            sit->second, kv.second.positions, cfg_.coverage_az_pad_rad,
+            cfg_.coverage_range_pad_frac);
+      }
     }
     std::vector<ISensorDetectionModel::ScanObservation> bundle;
     bundle.reserve(by_sensor.size());

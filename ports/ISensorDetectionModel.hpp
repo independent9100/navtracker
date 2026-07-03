@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -162,6 +163,60 @@ class ISensorDetectionModel {
         if (std::abs(off) > 0.5 * sector_width_rad) return false;
       }
       return true;
+    }
+
+    // Self-estimate a coverage footprint from the returns a sensor produced this
+    // scan (the same self-estimation pattern as the clutter-adaptive bar — no
+    // configured sector, portable across datasets). The swept sector is the
+    // SMALLEST arc covering all return bearings about `sensor` (found via the
+    // largest circular gap), widened by `az_pad_rad`; the range is the farthest
+    // return, scaled by (1 + `range_pad_frac`). This UNDER-estimates coverage
+    // (returns land only where the sweep actually hit something), which is the
+    // safe error direction: cells outside the estimate simply don't decay, so
+    // hazards persist rather than being wrongly forgotten. Empty ⇒ invalid
+    // (valid=false ⇒ the consumer assumes full coverage).
+    static CoverageSector fromReturns(
+        const Eigen::Vector2d& sensor,
+        const std::vector<Eigen::Vector2d>& points, double az_pad_rad = 0.0,
+        double range_pad_frac = 0.0) {
+      CoverageSector c;
+      c.sensor_enu = sensor;
+      if (points.empty()) {
+        c.valid = false;
+        return c;
+      }
+      std::vector<double> az;
+      az.reserve(points.size());
+      double max_r = 0.0;
+      for (const auto& p : points) {
+        const Eigen::Vector2d d = p - sensor;
+        max_r = std::max(max_r, d.norm());
+        az.push_back(std::atan2(d.y(), d.x()));
+      }
+      c.valid = true;
+      c.max_range_m = max_r * (1.0 + range_pad_frac);
+      std::sort(az.begin(), az.end());
+      // Largest circular gap between consecutive bearings (incl. the wrap gap
+      // from the max bearing back to the min). The covered arc is its complement.
+      double gap_lo = az.back();
+      double gap_hi = az.front() + DetectionParams::kFullCircleRad;
+      double max_gap = gap_hi - gap_lo;
+      for (std::size_t i = 1; i < az.size(); ++i) {
+        const double g = az[i] - az[i - 1];
+        if (g > max_gap) {
+          max_gap = g;
+          gap_lo = az[i - 1];
+          gap_hi = az[i];
+        }
+      }
+      const double covered = DetectionParams::kFullCircleRad - max_gap;
+      // Sector centre = diametrically opposite the gap centre (covers() wraps
+      // the centre via std::remainder, so no explicit normalisation needed).
+      c.sector_center_rad =
+          0.5 * (gap_lo + gap_hi) + 0.5 * DetectionParams::kFullCircleRad;
+      c.sector_width_rad = std::min(covered + 2.0 * az_pad_rad,
+                                    DetectionParams::kFullCircleRad);
+      return c;
     }
   };
 

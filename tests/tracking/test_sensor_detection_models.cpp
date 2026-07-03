@@ -350,3 +350,49 @@ TEST(FixedSensorDetectionModel, SourceKeyedMissPdRespectsSourceEntry) {
                                  "ir"),
       0.4);
 }
+
+// R8.4 / increment 6b — CoverageSector::fromReturns self-estimates the swept
+// footprint from a scan's returns (the same self-estimation pattern as the
+// clutter-adaptive bar). The swept sector is the SMALLEST arc covering all
+// return bearings about the sensor; range is the farthest return (padded).
+TEST(CoverageSector, FromReturnsEstimatesSweptSectorAndRange) {
+  using Cov = ISensorDetectionModel::CoverageSector;
+  const Eigen::Vector2d sensor(0.0, 0.0);
+  // Returns over the NE quadrant: bearings 0°, 45°, 90°; farthest 100 m.
+  const std::vector<Eigen::Vector2d> pts = {
+      {100.0, 0.0}, {70.0, 70.0}, {0.0, 100.0}};
+  const Cov c = Cov::fromReturns(sensor, pts, /*az_pad_rad=*/0.0,
+                                 /*range_pad_frac=*/0.0);
+  ASSERT_TRUE(c.valid);
+  for (const auto& p : pts) EXPECT_TRUE(c.covers(p)) << "built-from return not covered";
+  EXPECT_NEAR(c.max_range_m, 100.0, 1e-9);
+  EXPECT_FALSE(c.covers(Eigen::Vector2d(1000.0, 1000.0)))  // in sector, out of range
+      << "beyond-range point wrongly covered";
+  EXPECT_FALSE(c.covers(Eigen::Vector2d(-50.0, -50.0)))    // in range, out of sector
+      << "opposite-sector point wrongly covered";
+}
+
+// Degenerate inputs: empty ⇒ invalid (consumer assumes full coverage); a single
+// return ⇒ a narrow sector at its bearing widened by the padding.
+TEST(CoverageSector, FromReturnsDegenerateCases) {
+  using Cov = ISensorDetectionModel::CoverageSector;
+  EXPECT_FALSE(Cov::fromReturns(Eigen::Vector2d(0.0, 0.0), {}).valid);
+
+  const Cov one = Cov::fromReturns(Eigen::Vector2d(0.0, 0.0), {{100.0, 0.0}},
+                                   /*az_pad_rad=*/0.1, /*range_pad_frac=*/0.0);
+  ASSERT_TRUE(one.valid);
+  EXPECT_TRUE(one.covers(Eigen::Vector2d(100.0, 0.0)));
+  EXPECT_FALSE(one.covers(Eigen::Vector2d(0.0, 100.0)));  // 90° off, outside pad
+}
+
+// The circular span handles the ±180° wrap: returns straddling due-west must
+// yield the NARROW western arc, not the wide eastern complement.
+TEST(CoverageSector, FromReturnsHandlesWraparound) {
+  using Cov = ISensorDetectionModel::CoverageSector;
+  const Cov c = Cov::fromReturns(Eigen::Vector2d(0.0, 0.0),
+                                 {{-100.0, 18.0}, {-100.0, -18.0}},  // ≈ ±170°
+                                 /*az_pad_rad=*/0.0, /*range_pad_frac=*/0.0);
+  ASSERT_TRUE(c.valid);
+  EXPECT_TRUE(c.covers(Eigen::Vector2d(-100.0, 0.0)));   // due west — inside the arc
+  EXPECT_FALSE(c.covers(Eigen::Vector2d(100.0, 0.0)));   // due east — the wide gap
+}

@@ -551,6 +551,18 @@ class PmbmTracker {
     // anyway). See docs/algorithms/comparison-baselines.md (Static-obstacle
     // Stage 1b row) + ADR 0002 Staging.
     bool feed_clutter_map = false;
+
+    // Stage 1b-ii coverage-aware occupancy decay: when set, each per-scan
+    // occupancy bundle carries a self-estimated CoverageSector (the swept arc of
+    // that scan's returns about the sensor, + padding), so the LiveOccupancyModel
+    // decays only cells it actually observed. Default false → no footprint →
+    // full-coverage/universal decay → bit-identical (synthetics leave it off; a
+    // per-burst radar like philos turns it on). Under-estimated coverage is the
+    // safe direction (unobserved ⇒ no decay ⇒ hazards persist). Padding is added
+    // to the raw swept sector (azimuth) and to the farthest-return range.
+    bool estimate_coverage_sector = false;
+    double coverage_az_pad_rad = 0.087;    // ≈ 5° half-widen each side
+    double coverage_range_pad_frac = 0.1;  // 10 % beyond the farthest return
   };
 
   // Birth intensity callback. Called once per predict() (after the
