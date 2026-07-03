@@ -89,11 +89,20 @@ is a config (`imm_cv_ct_pmbm_occupancy_detector`), not a new class.
 
 ## Increments
 
-1. Conservation refactor (suppression ⊆ hazards) + coarse/low-extent params +
-   conservation unit test. Preserves 1b-i behaviour at 1b-i params.
-2. Recovery gate scenario + α latency check.
-3. Corroboration input (chart confirm + AIS veto) + wiring + tests.
-4. Detector config + Sweep wiring; Layer-1 philos + Layer-2 HAXR A/B.
-5. Docs: `docs/algorithms/live-static-occupancy.md` four-part update +
-   `docs/learning/26-static-obstacles.md` chapter + figure; ADR 0002 staging;
-   comparison-baselines row; eval-log.
+1. DONE — conservation refactor (suppression ⊆ hazards) + unit test (61e2293).
+2. DONE — recovery bounded-latency unit test (≤5 scans; mover never suppressed).
+3. DONE — coarse grid + extent floor 1 + clutter-ADAPTIVE bar (self-estimated
+   from feed median) + config imm_cv_ct_pmbm_occupancy_detector (b6a4280).
+   Layer-1 CONFIRMED: fires on real philos (structures 8, suppress_hits 94; no
+   card_err overshoot → KEEP anchorage safe). Weak on 20 s clips (confirmed-
+   cohort horizon limit → Layer-2).
+4. TODO — datum-bearing dense-clutter safety scenario (bench death-spiral guard).
+5. TODO — conservation/presence at BENCH: assert suppressed boats are emitted as
+   StaticHazardOutput(is_charted=false); the harbor boat→hazard lifetime trade
+   (0.975→0.9725) needs a hazard-presence check, not a track-lifetime gate.
+6. TODO — corroboration KEEP-guard (chart confirm + AIS veto); benefits from the
+   video-check UNKNOWN classifications.
+7. TODO — recovery gate SCENARIO (anchored→underway → track within N scans).
+8. TODO — Layer-2 HAXR hours A/B (steady-state churn the 20 s clips cannot show).
+9. TODO — docs: live-static-occupancy.md four-part + learning chapter + figure;
+   ADR 0002 staging; comparison-baselines row; eval-log.
