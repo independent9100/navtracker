@@ -13,7 +13,7 @@ How to interpret `TrackOutput` and read the track position, velocity, and metada
 - **`sog_m_per_s`**: Speed over ground, m/s, ≥ 0.
 - **`cog_deg`**: Course over ground, degrees true (clockwise from true north), ∈ [0, 360). Undefined when sog < 0.01 m/s (see stationary singularity below).
 - **`sigma_sog_m_per_s`, `sigma_cog_deg`**: 1σ uncertainties derived from the velocity covariance via the standard polar Jacobian. σ_cog is in degrees.
-- **`is_valid`**: true when the track carries meaningful velocity information. Set false when the underlying track has 2D state (position-only), or when the velocity covariance is zero (e.g., fresh own-ship pose, or 4D state with zero velocity uncertainty).
+- **`is_valid`**: true only when velocity has actually been observed **and** its covariance is usable. Concretely, `toTrackOutput` requires all of: the track has ≥ 4D state (position + velocity); `track.velocity_observed` is true (≥ 1 update past initiation, so a pure init-prior velocity never reports valid); and the 2×2 velocity covariance is finite and positive-definite (`v_cov(0,0) > 0` **and** `det > 0`). If any of these fails → `is_valid = false` — i.e. a 2D-only state, a velocity that has not yet been observed, or a zero/degenerate velocity covariance.
 
 ### Stationary tracks
 
@@ -22,7 +22,7 @@ When sog < 0.01 m/s, the COG direction is not meaningful and **both `cog_deg` an
 ## Track metadata
 
 - **`id`**: Stable, monotonically increasing integer. Never reused after a track is deleted. Two successive drains on the same processing cycle return the same id.
-- **`status`**: Enum. Tentative (new, < M-of-N confirmed), Confirmed (M-of-N threshold met), Deleted (marked for removal, drained one final time).
+- **`status`**: Enum. Tentative (new, < M-of-N confirmed), Confirmed (M-of-N threshold met), Coasting (was Confirmed, now propagated through a detection gap without a fresh update), Deleted (marked for removal, drained one final time).
 - **`last_update`**: Timestamp of the most recent measurement that contributed to this track's state.
 - **`attributes`**: Optional fields sourced from identity-carrying sensors (AIS, etc.): mmsi, vessel_name, vessel_type, length_m, beam_m. All optional; client should test presence before use.
 - **`contributing_sources`**: Vector of source_id strings ("ais", "arpa", "eoir") that have ever contributed measurements to this track. Order and multiplicity are unspecified.
@@ -71,7 +71,7 @@ covariance_is_default   = false
 | Condition | Field values | Operator signal |
 |---|---|---|
 | **Stationary** (sog < 0.01 m/s) | cog_deg=0, σ_cog_deg=0; is_valid=true | "Confirmed stationary; direction undefined." |
-| **No velocity info** (2D state) | sog=0, cog=0, σ_sog=0, σ_cog=0; is_valid=false | "No velocity data available." |
+| **No velocity info** (2D state, or velocity not yet observed / covariance degenerate) | sog=0, cog=0, σ_sog=0, σ_cog=0; is_valid=false | "No velocity data available." |
 | **At datum** (track position = datum origin) | position_covariance_m2 unchanged (R = identity rotation) | Covariance magnitude is exact; no rotation error. |
 | **Distant track** (track < 30 km from datum) | Rotation < 0.5°; off-diagonal terms small relative to diagonals | Covariance is exact to within rounding. |
 

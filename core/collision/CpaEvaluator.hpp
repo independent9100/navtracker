@@ -21,7 +21,8 @@ struct CpaEvaluatorConfig {
   bool   emit_updates{false};
 };
 
-// Walks own-ship × each (Confirmed by default) track at every evaluate(t)
+// Walks own-ship × each risk-eligible track (Confirmed or Coasting by
+// default; Tentative too when evaluate_tentative) at every evaluate(t)
 // call, computes CPA with uncertainty, and emits CollisionRiskEvents on
 // per-pair Entered/Exited transitions (with hysteresis), plus optional
 // Updated events when configured. See spec
