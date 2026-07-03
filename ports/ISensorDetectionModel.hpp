@@ -131,9 +131,43 @@ class ISensorDetectionModel {
     return p.probability_of_detection;
   }
 
+  // Per-scan coverage footprint of the sensor that produced a bundle, for
+  // COVERAGE-AWARE occupancy decay (R8.4 / Stage 1b-ii): a live-occupancy cell
+  // forgets only when it was OBSERVABLE (inside this footprint) and returned
+  // empty — absence of returns where the sensor did not look is not evidence of
+  // vacancy. `valid == false` (the default) ⇒ full coverage assumed, i.e.
+  // universal decay, i.e. the legacy behaviour — bit-identical for synthetic /
+  // unwired feeds that supply no footprint. A disc is the degenerate full-circle
+  // sector (`sector_width_rad == kFullCircleRad`). Same angle/range convention as
+  // DetectionParams: ENU math azimuth (atan2(dy,dx), CCW from east); the
+  // footprint is expressed in the feed's ENU frame (the consumer re-expresses it
+  // in its own frame; angles are datum-relative — exact for a fixed datum).
+  // Under-estimated coverage is the SAFE error direction (no decay ⇒ hazards
+  // persist longer, never the reverse).
+  struct CoverageSector {
+    bool valid{false};
+    Eigen::Vector2d sensor_enu{Eigen::Vector2d::Zero()};
+    double max_range_m{std::numeric_limits<double>::infinity()};
+    double sector_center_rad{0.0};
+    double sector_width_rad{DetectionParams::kFullCircleRad};
+
+    // Is ENU point `p` (SAME frame as `sensor_enu`) inside the footprint?
+    bool covers(const Eigen::Vector2d& p) const {
+      const Eigen::Vector2d d = p - sensor_enu;
+      if (d.norm() > max_range_m) return false;
+      if (sector_width_rad < DetectionParams::kFullCircleRad) {
+        const double az = std::atan2(d.y(), d.x());
+        const double off = std::remainder(az - sector_center_rad,
+                                          DetectionParams::kFullCircleRad);
+        if (std::abs(off) > 0.5 * sector_width_rad) return false;
+      }
+      return true;
+    }
+  };
+
   // One bucket of post-scan evidence, partitioned by (sensor, model).
-  // The trailing fields (time, clutter_*, bearings) feed spatial
-  // clutter estimators; they are additive so existing aggregate
+  // The trailing fields (time, clutter_*, bearings, coverage) feed spatial
+  // clutter / occupancy estimators; they are additive so existing aggregate
   // initialisers `{sensor, model, n, positions}` stay valid.
   struct ScanObservation {
     SensorKind sensor;
@@ -156,6 +190,9 @@ class ISensorDetectionModel {
     std::vector<double> bearings;
     std::vector<double> clutter_bearings;
     std::vector<double> clutter_bearing_weights;
+    // Coverage footprint of this bundle's sensor this scan (see CoverageSector).
+    // Default (valid=false) ⇒ full coverage ⇒ universal occupancy decay.
+    CoverageSector coverage;
   };
 
   // Feed the scan outcome for adaptation. Fixed models ignore.

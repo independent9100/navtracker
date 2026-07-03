@@ -4,6 +4,7 @@
 // and uniform clutter (transient) are never suppressed.
 #include "core/static/LiveOccupancyModel.hpp"
 
+#include <cmath>
 #include <vector>
 
 #include <Eigen/Core>
@@ -35,6 +36,26 @@ std::vector<ISensorDetectionModel::ScanObservation> feed(
     obs.clutter_position_weights.push_back(w);
   }
   return {obs};
+}
+
+// Single-sensor feed with a coverage footprint attached (R8.4 coverage-aware
+// decay). Absent this, feed() leaves coverage.valid == false ⇒ full coverage.
+std::vector<ISensorDetectionModel::ScanObservation> feedCov(
+    const std::vector<std::pair<Eigen::Vector2d, double>>& returns, double t_sec,
+    const ISensorDetectionModel::CoverageSector& cov) {
+  auto bundle = feed(returns, t_sec);
+  bundle[0].coverage = cov;
+  return bundle;
+}
+
+// A coverage disc about `sensor` of radius `range` (full azimuth).
+ISensorDetectionModel::CoverageSector disc(const Eigen::Vector2d& sensor,
+                                           double range) {
+  ISensorDetectionModel::CoverageSector c;
+  c.valid = true;
+  c.sensor_enu = sensor;
+  c.max_range_m = range;
+  return c;  // sector_width_rad defaults to full circle
 }
 
 // A pier: six contiguous cell centres along x (25 m cells) at y = 0.
@@ -268,6 +289,75 @@ TEST(LiveOccupancyModel, SuppressionImpliesAnEmittedHazardCoversIt) {
           << "suppressed q=(" << x << "," << y << ") not in any hazard ring";
     }
   }
+}
+
+// COVERAGE-AWARE DECAY (R8.4 / increment 6): a cell forgets ONLY when it was
+// observable (inside the scan's coverage footprint) and returned empty. A cell
+// OUTSIDE coverage must NOT decay — absence of returns where the sensor did not
+// look is not evidence of vacancy. This is what distinguishes a DEPARTED vessel
+// (returns cease while the cell is still in view — the sunset_cruise loiterer at
+// t≈94) from a cell that merely fell out of coverage this scan.
+TEST(LiveOccupancyModel, OutOfRangeCellsDoNotDecay) {
+  LiveOccupancyParams p = testParams();
+  p.extended_cells_min = 1;  // detector mode: a compact cell classifies
+  LiveOccupancyModel m(anchorDatum(), p);
+  const Eigen::Vector2d spot(1012.5, 1012.5);  // |spot| ≈ 1431 m from origin
+  for (int scan = 0; scan < 15; ++scan) m.observe(feed({{spot, 1.0}}, scan));
+  const double s0 = m.birthSuppression(spot);
+  ASSERT_GT(s0, 0.0);
+
+  // The sensor now looks only within 500 m of the origin — spot is out of range.
+  // Feed a return inside the disc so scans are non-empty. spot must not decay.
+  const auto cov = disc(Eigen::Vector2d(0.0, 0.0), 500.0);
+  for (int k = 0; k < 25; ++k)
+    m.observe(feedCov({{Eigen::Vector2d(100.0, 0.0), 1.0}}, 15 + k, cov));
+
+  EXPECT_DOUBLE_EQ(m.birthSuppression(spot), s0)
+      << "a cell outside the sensor's coverage range must not decay";
+}
+
+// The azimuth SECTOR matters (philos per-burst sweeps — the reason a disc-only
+// model is wrong): a cell IN RANGE but OUTSIDE the swept sector is unobserved
+// and must not decay.
+TEST(LiveOccupancyModel, InRangeButOutOfSectorDoesNotDecay) {
+  LiveOccupancyParams p = testParams();
+  p.extended_cells_min = 1;
+  LiveOccupancyModel m(anchorDatum(), p);
+  const Eigen::Vector2d spot(1012.5, 1012.5);  // bearing ≈ 45° from origin
+  for (int scan = 0; scan < 15; ++scan) m.observe(feed({{spot, 1.0}}, scan));
+  const double s0 = m.birthSuppression(spot);
+  ASSERT_GT(s0, 0.0);
+
+  // Sensor at origin, range covers spot, but the sector points WEST (180°),
+  // 90° wide → [135°, 225°], which excludes spot's 45°.
+  ISensorDetectionModel::CoverageSector cov = disc(Eigen::Vector2d(0.0, 0.0), 5000.0);
+  cov.sector_center_rad = M_PI;       // west
+  cov.sector_width_rad = M_PI / 2.0;  // 90°
+  for (int k = 0; k < 25; ++k)
+    m.observe(feedCov({{Eigen::Vector2d(-100.0, 0.0), 1.0}}, 15 + k, cov));
+
+  EXPECT_DOUBLE_EQ(m.birthSuppression(spot), s0)
+      << "a cell in range but outside the swept sector must not decay";
+}
+
+// Recovery still works: an OBSERVED-but-empty cell DOES decay (else a departed
+// vessel's cells would pin forever). Same setup, coverage now INCLUDES spot.
+TEST(LiveOccupancyModel, ObservedEmptyCellsStillDecay) {
+  LiveOccupancyParams p = testParams();
+  p.extended_cells_min = 1;
+  LiveOccupancyModel m(anchorDatum(), p);
+  const Eigen::Vector2d spot(1012.5, 1012.5);
+  for (int scan = 0; scan < 15; ++scan) m.observe(feed({{spot, 1.0}}, scan));
+  ASSERT_GT(m.birthSuppression(spot), 0.0);
+
+  const auto cov = disc(Eigen::Vector2d(0.0, 0.0), 5000.0);  // covers spot
+  int latency = -1;
+  for (int k = 0; k < 20; ++k) {
+    m.observe(feedCov({{Eigen::Vector2d(100.0, 0.0), 1.0}}, 15 + k, cov));
+    if (m.birthSuppression(spot) <= 0.0) { latency = k + 1; break; }
+  }
+  EXPECT_GE(latency, 0)
+      << "observed-empty cell never decayed — a departed vessel would pin forever";
 }
 
 // Identical feed sequences produce identical suppression (determinism).

@@ -35,8 +35,36 @@ void LiveOccupancyModel::observe(
     const std::vector<ISensorDetectionModel::ScanObservation>& by_sensor) {
   const double a = params_.ewma_alpha;
 
-  // 1) EWMA decay of every known cell toward 0 (untouched cells forget).
-  for (auto& kv : persistence_) kv.second *= (1.0 - a);
+  // 1) COVERAGE-AWARE EWMA decay: a cell forgets only when it was OBSERVABLE
+  //    this scan (inside some bundle's coverage footprint) and returned empty.
+  //    Absence of returns where no sensor looked is not evidence of vacancy —
+  //    that is exactly what separates a departed vessel (returns cease while the
+  //    cell is still in coverage) from a cell that merely left coverage. If no
+  //    bundle carries a valid footprint, full coverage is assumed → every cell
+  //    decays (the legacy behaviour, bit-identical for synthetic/unwired feeds).
+  //    Footprints arrive in the tracker's current-datum ENU; re-express the
+  //    sensor position in the grid's anchor frame (sector angles are datum-
+  //    relative — exact for a fixed datum, negligible inter-datum rotation).
+  std::vector<ISensorDetectionModel::CoverageSector> cover;
+  for (const auto& obs : by_sensor) {
+    if (!obs.coverage.valid) continue;
+    ISensorDetectionModel::CoverageSector cs = obs.coverage;
+    cs.sensor_enu = toAnchorEnu(cs.sensor_enu);
+    cover.push_back(cs);
+  }
+  const bool have_cover = !cover.empty();
+  for (auto& kv : persistence_) {
+    bool observable = !have_cover;  // no footprint ⇒ full coverage
+    if (have_cover) {
+      const Eigen::Vector2d center = cellCenter(kv.first);  // anchor ENU
+      for (const auto& cs : cover)
+        if (cs.covers(center)) {
+          observable = true;
+          break;
+        }
+    }
+    if (observable) kv.second *= (1.0 - a);
+  }
 
   // 2) Largest clutter weight touching each cell this scan (order-independent).
   std::map<Cell, double> touched;

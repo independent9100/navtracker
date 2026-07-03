@@ -107,8 +107,26 @@ is a config (`imm_cv_ct_pmbm_occupancy_detector`), not a new class.
    lifetime / classification-quality reported). M2 gate formalized in
    synthetic-clutter-bench.md §5.6 + eval-log. Boats stay tracked at P_D 0.9
    (confirmed-cohort wall) so the boat→hazard trade is negligible there.
-6. TODO — corroboration KEEP-guard (chart confirm + AIS veto) + R8.4
-   observed-empty / coverage-aware decay. Video-check labels DELIVERED (R8).
+6. IN PROGRESS — corroboration KEEP-guard. Order (2026-07-03 steer): coverage-
+   aware decay FIRST, then AIS veto, then chart corroboration.
+   - **6a DONE — coverage-aware decay, MODEL mechanism (inert-by-default).**
+     `ScanObservation` gains an optional `CoverageSector` (sensor ENU + max range
+     + azimuth sector, mirroring `DetectionParams`; disc = degenerate full
+     circle). `LiveOccupancyModel::observe()` decays a cell only when it is
+     inside some bundle's footprint (observable) and empty; no valid footprint ⇒
+     full coverage ⇒ universal decay (legacy, bit-identical — proven by the 10
+     pre-existing model tests staying green). 3 new unit tests: out-of-range and
+     out-of-sector cells do NOT decay, observed-empty cells DO. Full suite 928/928.
+   - 6b TODO — producer wiring: `feed_clutter_map` in `PmbmTracker.cpp` (~L1664)
+     self-estimates each burst's sector from its plot azimuth span + conservative
+     padding + sensor pose; synthetics emit no footprint (full coverage, bit-
+     identical). Under-estimated coverage is the safe direction.
+   - 6c TODO — validate on `sunset_cruise` (loiterer cessation t≈94 resolves as a
+     DEPARTED vessel; ferry-vacated cells after t≈98) + KEEP_MIXED departure
+     protection on `close_approach`; then AIS veto (synthetics/HAXR only — all
+     labelled philos clips are zero-AIS), then chart corroboration.
+   - 6d TODO — docs (folds into increment 9): live-static-occupancy.md four-part +
+     learning chapter + figure for coverage-aware decay.
 7. DONE — recovery gate SCENARIO `harbor_anchored_gets_underway` (stop→go boat
    via new `addStopGoBoat` builder); gate
    `OccupancyDetectorGates.AnchoredGetsUnderwayRecovers` (truth_6 lifetime 0.972
