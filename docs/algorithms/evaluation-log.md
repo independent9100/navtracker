@@ -8,6 +8,77 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-03 — Stage 1b-ii increment 6c: coverage-aware vs universal decay, validated on real philos (`sunset_cruise`, `close_approach`) [Cl-3]
+
+The coverage-aware decay mechanism (6a model + 6b producer + multi-cluster
+guard) run on real philos for the first time. A/B is a single-flag swap:
+`imm_cv_ct_pmbm_occupancy_detector_coverage` (`estimate_coverage_sector = true`)
+vs `imm_cv_ct_pmbm_occupancy_detector` (universal decay). New instrumentation:
+`tests/replay/PhilosLabelReplay.hpp` extended **additively** to capture the
+emitted hazard set per scan and the coverage sectors the feed actually decayed
+against (the existing land-config label tests stay bit-identical — sunset
+1633/3070/18295, close_approach 5570/0/15182 — proving the extension inert on
+the track-only path). Tests: `tests/replay/test_philos_occupancy_coverage_6c.cpp`
+(2 tests).
+
+**The sector mechanism bites — not inert.** On `sunset_cruise` the producer
+self-estimated **1328 valid sectors, median 12.6°** (min 10.0°, max 46.8°),
+**zero** collapsing to full circle. The 12.6° median is padding-dominated
+(≈2.6° raw sweep + the conservative 2×5° `az_pad`), consistent with the raw
+per-burst span (~3°) measured 2026-07-03. The self-estimated sector never goes
+degenerate on real radar, so the coverage gate is live everywhere.
+
+**`sunset_cruise` — structure presence: coverage-aware materially better.**
+Scans on which a hazard covers each region (universal → coverage):
+`astern_blob` (large real structure out of camera FOV, rarely swept as own-ship
+departs) **9 → 31**; hazards/scan max **4 → 14**, final **0 → 11**. Universal
+decay forgets *everything* by clip end; coverage-aware holds genuine off-beam
+structure ~3.4× longer. This is a **structural invariant**, not a lucky number:
+coverage-aware decays a cell only when observed empty — a subset of the scans
+universal decays it — so per-cell persistence is pointwise ≥ universal, the
+hazard set is a superset, and presence is held ≥ as long over *every* region
+(asserted across all labels).
+
+**`sunset_cruise` — the loiterer is NOT resolved-as-departed by radar alone, and
+that is correct, not a bug.** `loiterer_v2` (returns cease t≈94 while in *camera*
+view) stays pinned as a hazard to clip end (118 s) under coverage-aware, vs never
+pinned under universal. The label optimistically predicted coverage-aware would
+"resolve this as a departed vessel" — the measurement shows the opposite, and the
+observability probe explains why: after t94 the loiterer's cell is swept in
+**0 of 283 scans**. Its departure is a *camera* fact ("final frame empty");
+to the radar the cell simply left the swept sector, indistinguishable from
+"still there, unobserved". Coverage-aware correctly refuses to decay an
+unobserved cell (that IS the mechanism's contract); universal only drops it as a
+side effect of dropping all structure. **No radar-only decay policy can resolve
+this** — it is exactly the corroboration wall (R4): persistence/coverage cannot
+discriminate a departed-out-of-coverage vessel from held structure; only
+AIS/camera/chart can. (Presence-safe: a lingering *hazard* is conserved output,
+ADR-0002's acceptable degraded mode, not a suppression-into-nothing.)
+
+**`close_approach` — KEEP_MIXED presence held/improved under the suppressor.**
+Presence = track OR the region inside some emitted hazard's keep-clear ring
+(the ADR-0002 conservation-correct test; a co-located-centre test under-counts
+because a suppressed birth's covering hazard may be a large off-region
+structure). Fraction of active scans with presence (land → detector-universal →
+detector-coverage): `sailing_dock` 0.964 → 0.965 → **0.998**; `far_bank_line`
+0.494 → 0.494 → **0.616**. The detector never drops KEEP_MIXED presence below the
+land baseline (no object suppressed into nothing); coverage-aware backfills
+durable keep-clear zones exactly where the intermittent far-bank craft lose their
+tracks at range.
+
+**Verdict: coverage-aware decay is validated on real data — kept.** It is not
+inert, it is epistemically correct (decays only observed-empty cells), and it
+improves both structure-hazard and KEEP_MIXED presence with zero conservation
+loss. **Limit surfaced (drives the next steps):** a vessel that departs by
+*leaving radar coverage* lingers as a conserved hazard — only AIS/camera/chart
+corroboration cuts that latency → motivates the next increment-6 units (AIS veto,
+then chart corroboration). **Follow-up risk for Layer-2 (increment 8):** on
+hour-long runs, permanently-unobserved cells never decay (no observed-empty
+evidence ever arrives), so stale pins could accumulate; a slow unobserved-decay
+floor or corroboration-driven eviction is needed before HAXR-hours steady-state
+relies on this. New config asserted to differ from the universal arm in the
+coverage flag alone (`Config.OccupancyDetectorArmsDifferOnlyInCoverageFlag`).
+
 ## 2026-07-03 — R8.6: `close_approach` KEEP-stress benchmark (KEEP_MIXED labels, densest clip) + R4 ceiling correction [Cl-3]
 
 Second operator video pass (Charles River sailing basin, regatta-density
@@ -6284,3 +6355,57 @@ pull is an association/existence problem, not a land-mask one (β₀ miss term,
 confirmed-only softening, or the live static-occupancy layer / Stage 1b) — none
 promoted here. This is the sim-primary / real-reality-check split working as
 intended.
+
+## 2026-07-03 — philos camera → bearing-only fixtures (multi-sensor enablement)
+
+Built the offline camera→bearing pipeline (`tests/fixtures/philos/
+extract_camera_bearings.py`) so the radar-only philos clips carry a real EO/IR
+bearing-only corroboration channel. Fixture-generation + C++ wiring proof ONLY
+(the Stage 1b-ii KEEP-guard consumer is a later ticket). Detector: ultralytics
+YOLO `yolov8n.pt` (v8.4.0, sha256 f59b3d83…), COCO boat class, conf 0.25, imgsz
+1280, CPU, in a dedicated `.venv-cam` (no C++/Conan dependency added). The
+dataset ships real intrinsics + extrinsics (`metadata/cal_files`, appendix), so
+the model is intrinsics-based with one AIS-fit yaw offset per camera — better
+than the ticket's linear `a+b·u` fallback.
+
+**Calibration (ais_ferry_near center, AIS RANSAC fit vs the Frederick Nolan
+ferry).** 262 correspondences → 259 inliers (98.9%); yaw_offset = **2.29°**;
+held-out (30%) residual **median 0.45°, p90 1.32°** — comfortably inside the
+≤2°/≤4° target. The small 2.29° confirms the philos heading behaves as
+effectively true-referenced (radar world bearing matches AIS true bearing on the
+~90 m ferry to ~1–6°, not the ~14° Boston declination); the fit absorbs the
+residual. Left/right propagated from center via the known ±45.3° body-frame
+extrinsics (σ +2° floor, boresight not AIS-validated).
+
+**Detection counts / emission.**
+- `ais_ferry_near` (240 frames/cam): center 306 / left 1 / right 729 boat
+  detections → emitted center 304 + left 1 + right 725 (6 dropped no-pose).
+- `sunset_cruise` (philos 2021, same vessel; 1439/1439/765 frames): center 4609
+  / left 0 / right 14 (sunset glare inflates center false-positives). Center yaw
+  transferred from the 2022 AIS fit; sanity check vs the labeled ferry: n=3008,
+  median 2.58°, p90 6.80° (larger — cross-deployment mount + 40 m label fuzz);
+  passed the lenient ≤4° transfer gate → emitted **center only** (4605 rows,
+  σ≈3.5°); left/right withheld (no validation that side).
+- `close_approach` (prodromos 2021): **REFUSED**, detector not run — the
+  prodromos vessel ships no camera cal files (no intrinsics) and is a different
+  platform; a wrong bearing is worse than none.
+
+**C++ wiring proof.** `adapters/replay/CameraBearingCsvReader` loads the CSV to
+`Bearing2D` (EoIr) measurements, composing own-ship heading at load time to the
+same `atan2(dN,dE)` ENU convention radar plots use. `tests/replay/
+test_camera_bearing_loader.cpp`: 6 unit tests (parse / heading composition /
+value convention / wrap / no-pose drop / invalid-σ / per-camera source-id /
+`canInitiateTrack==false`) + 2 skip-guarded smoke tests on ais_ferry_near —
+camera-only births **0** tracks; radar+camera lands **≥1** Bearing2D update on a
+radar-born track (mechanics only; no accuracy assertions — circularity rule).
+Full suite **945/945 green**, determinism green.
+
+**Contract notes.** Absence asymmetry (a detection is presence evidence; its
+absence is never SUPPRESS evidence) and circularity (labels derived from the
+same videos → detections are corroboration/mechanics only, never accuracy
+truth) are documented at the fixture (`README.md`) and in sensor-reference §3.
+`camera_bearings.csv` is gitignored like its ownship/radar siblings (regenerated
+from frames + the committed `camera_bearing_calibration.json`); the committed
+interface is the script + calibration JSON, not the CSV — a deliberate deviation
+from the ticket's "commit the CSV," consistent with the repo's derived-fixture
+convention and the skip-guarded smoke test.

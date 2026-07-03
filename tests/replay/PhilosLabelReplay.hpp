@@ -49,15 +49,66 @@ struct ConfirmedTrack {
   Eigen::Vector2d pos;
   Eigen::Vector2d vel;
 };
+// One emitted static hazard (LiveOccupancyModel structure component), captured in
+// the datum's ENU frame so a hazard's presence at a labelled region can be scored
+// the same way a track is. Populated only when an occupancy model is wired
+// (empty otherwise → track-only configs are bit-identical).
+struct HazardSnapshot {
+  Eigen::Vector2d center;
+  double footprint_m;
+  double keep_clear_m;
+};
 struct ScanTracks {
   double t_unix;
   std::vector<ConfirmedTrack> tracks;
+  std::vector<HazardSnapshot> hazards;
 };
 struct ClipRun {
   geo::Datum datum{geo::Geodetic{0, 0, 0}};
   double clip_start_unix{0.0};
   std::vector<ScanTracks> history;
   bool valid{false};
+  // 6c coverage-sector introspection: the width (rad) of every VALID sector the
+  // occupancy feed actually decayed against, plus how many collapsed to the
+  // degenerate full circle. Empty unless estimate_coverage_sector is on. Lets a
+  // clip assert the mechanism bit (median sector ≪ 360°) before trusting an A/B.
+  std::vector<double> sector_widths_rad;
+  long sector_full_circle = 0;
+  // Per-scan sectors (current-datum ENU) so a point's OBSERVABILITY can be
+  // reconstructed post-hoc — the bug-vs-correct discriminator for a cell that
+  // stays pinned as a hazard (is it genuinely unswept, or swept-empty and not
+  // decaying?). Single fixed datum on these clips ⇒ current == anchor ENU.
+  struct ScanSectors {
+    double t_unix;
+    std::vector<ISensorDetectionModel::CoverageSector> sectors;
+  };
+  std::vector<ScanSectors> sector_history;
+};
+
+// Transparent decorator over the LiveOccupancyModel feed face: records each
+// bundle's valid coverage-sector widths, then forwards observe() unchanged. The
+// occupancy model's behaviour is untouched (same call, same order) — this only
+// observes what the producer estimated.
+struct RecordingOccupancyFeed : ILiveOccupancyFeed {
+  ILiveOccupancyFeed* inner = nullptr;
+  std::vector<double>* widths = nullptr;
+  long* full_circle = nullptr;
+  ClipRun* run = nullptr;  // for per-scan sector_history
+  void observe(const std::vector<ISensorDetectionModel::ScanObservation>&
+                   by_sensor) override {
+    ClipRun::ScanSectors ss;
+    ss.t_unix = by_sensor.empty() ? 0.0 : by_sensor.front().time.seconds();
+    for (const auto& obs : by_sensor) {
+      if (!obs.coverage.valid) continue;
+      if (widths) widths->push_back(obs.coverage.sector_width_rad);
+      if (full_circle &&
+          obs.coverage.sector_width_rad >= DetectionParams::kFullCircleRad)
+        ++(*full_circle);
+      ss.sectors.push_back(obs.coverage);
+    }
+    if (run) run->sector_history.push_back(std::move(ss));
+    inner->observe(by_sensor);
+  }
 };
 
 inline std::string srcDir() { return std::string(NAVTRACKER_SOURCE_DIR); }
@@ -129,12 +180,17 @@ inline ClipRun runClip(const std::string& clip_name,
     }
   }
   std::shared_ptr<LiveOccupancyModel> occ;
+  RecordingOccupancyFeed rec;  // outlives runBenchPmbm; used only when occ wired
   if (c->use_live_occupancy_model) {
     auto op = c->live_occupancy_params.value_or(LiveOccupancyParams{});
     if (c->occupancy_adaptive_clutter_bar) op.clutter_adaptive = true;
     occ = std::make_shared<LiveOccupancyModel>(*scen.datum, op);
     tracker.setStaticObstacleModel(occ.get());
-    tracker.setLiveOccupancyFeed(occ.get());
+    rec.inner = occ.get();
+    rec.widths = &run.sector_widths_rad;
+    rec.full_circle = &run.sector_full_circle;
+    rec.run = &run;
+    tracker.setLiveOccupancyFeed(&rec);  // transparent; records sector widths
   }
 
   benchmark::PmbmPostScanHook hook = [&](const pmbm::PmbmTracker& t,
@@ -148,6 +204,16 @@ inline ClipRun runClip(const std::string& clip_name,
                                 : Eigen::Vector2d::Zero();
       st.tracks.push_back(
           {tr.id.value, Eigen::Vector2d(tr.state(0), tr.state(1)), vel});
+    }
+    // Capture the emitted hazard set (ENU) so a KEEP_MIXED region can be
+    // satisfied by a hazard as well as a track, and so structure decay-out is
+    // observable. Empty for non-occupancy configs.
+    if (occ) {
+      for (const StaticObstacle& o : occ->obstacles()) {
+        const Eigen::Vector3d e = run.datum.toEnu(o.position);
+        st.hazards.push_back({Eigen::Vector2d(e.x(), e.y()),
+                              o.footprint_radius_m, o.keep_clear_radius_m});
+      }
     }
     run.history.push_back(std::move(st));
   };

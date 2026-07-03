@@ -850,6 +850,50 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // Stage 1b-ii increment 6c: coverage-AWARE decay arm. IDENTICAL to
+  // imm_cv_ct_pmbm_occupancy_detector except cfg.estimate_coverage_sector = true,
+  // so the producer self-estimates each burst's swept footprint (fromReturns) and
+  // the LiveOccupancyModel decays a cell only when it is inside some bundle's
+  // footprint (observable). The A/B partner isolates ONE variable — universal vs
+  // coverage-aware decay — so a delta in structure-hazard stability or KEEP_MIXED
+  // departure recovery is attributable to the coverage gate alone. On synthetic
+  // scenarios (single fixed datum, no per-burst sector) fromReturns still runs but
+  // the scenarios feed dense full-circle returns → near-universal → the M2 gates
+  // stay green; the mechanism only bites on the per-burst philos radar.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_occupancy_detector_coverage";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_land_model = true;
+    c.use_live_occupancy_model = true;
+    c.occupancy_adaptive_clutter_bar = true;
+    LiveOccupancyParams lp;
+    lp.cell_size_m = 100.0;
+    lp.ewma_alpha = 0.3;
+    lp.persistence_bar = 0.2;
+    lp.extended_cells_min = 1;
+    lp.clutter_reject_factor = 1.5;
+    c.live_occupancy_params = lp;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.adaptive_k_best = false;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.lambda_birth = 1e-5;
+      cfg.min_new_bernoulli_existence = 0.05;
+      cfg.use_land_model = true;
+      cfg.use_static_obstacle_model = true;
+      cfg.estimate_coverage_sector = true;  // the one variable under test
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Task 1 probe: clutter-invariant birth existence. Same as
   // imm_cv_ct_pmbm_adapt but r_new is pinned to a target instead of a
   // fixed absolute λ_birth — fixes the philos over-confident-birth bug.

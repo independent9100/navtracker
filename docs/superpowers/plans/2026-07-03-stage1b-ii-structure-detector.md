@@ -128,11 +128,27 @@ is a config (`imm_cv_ct_pmbm_occupancy_detector`), not a new class.
      decay → bit-identical; synthetics stay off, a per-burst radar turns it on).
      Wiring tested via `SpyOccupancyFeed` (flag-on populates a covering sector,
      flag-off leaves it invalid). Full suite 933/933.
-   - 6c TODO — validate on `sunset_cruise` (loiterer cessation t≈94 resolves as a
-     DEPARTED vessel; ferry-vacated cells after t≈98) + KEEP_MIXED departure
-     protection on `close_approach`; then AIS veto (synthetics/HAXR only — all
-     labelled philos clips are zero-AIS), then chart corroboration.
-     **Scan-batching MEASURED 2026-07-03 (unblocks 6c): philos bursts ARE
+   - **6c DONE — clip validation (sunset_cruise + close_approach A/B).** New
+     coverage-aware config arm `imm_cv_ct_pmbm_occupancy_detector_coverage`
+     (differs from `_detector` in `estimate_coverage_sector` ALONE, asserted by
+     `Config.OccupancyDetectorArmsDifferOnlyInCoverageFlag`). Harness extended
+     additively (per-scan hazard set + coverage-sector introspection; existing
+     label tests bit-identical). Tests: `test_philos_occupancy_coverage_6c.cpp`.
+     **Findings (eval-log 2026-07-03):** mechanism bites — 1328 sub-circle
+     sectors, median 12.6° (≈3° sweep + 2×5° pad), zero full-circle. Coverage-
+     aware **improves structure presence** (astern_blob held 9→31 scans; final
+     hazards 0→11) and **KEEP_MIXED presence** (sailing_dock 0.964→0.998,
+     far_bank 0.494→0.616 by keep-clear coverage) with **zero conservation loss**;
+     presence is monotone ≥ universal by construction (decays a subset of
+     universal's events). **The loiterer is NOT resolved-as-departed by radar
+     alone** — its cell is swept 0/283 scans after t94 (departure is a *camera*
+     fact), so coverage-aware correctly holds it as a conserved hazard; universal
+     drops it only by forgetting all structure. This is the corroboration wall,
+     confirmed → **next: AIS veto** (synthetics/HAXR only — all labelled philos
+     clips are zero-AIS), then chart corroboration. **Layer-2 caveat (increment
+     8):** permanently-unobserved cells never decay → need a slow unobserved-decay
+     floor or corroboration-driven eviction before HAXR-hours steady-state.
+     **Scan-batching MEASURED 2026-07-03 (unblocked 6c): philos bursts ARE
      sub-360°.** Grouping fixture rows by identical `tod`: cadence 0.063–0.26 s,
      median azimuth span per burst 2.9° (sunset_cruise) / 2.8° (close_approach) /
      4.7° (ais_ferry_near); zero bursts span >350° in any labelled clip. The

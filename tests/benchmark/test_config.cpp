@@ -16,8 +16,10 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   // imm_cv_ct_pmbm_occupancy (Stage 1b live occupancy layer; A/B vs _land) +
   // imm_cv_ct_pmbm_occupancy_sensitive (diagnostic: coarser/lower-bar occupancy
   // classifier to separate mis-tuning from architectural sparsity limit) +
-  // imm_cv_ct_pmbm_occupancy_detector (Stage 1b-ii: coarse grid, adaptive bar).
-  ASSERT_EQ(configs.size(), 36u);
+  // imm_cv_ct_pmbm_occupancy_detector (Stage 1b-ii: coarse grid, adaptive bar) +
+  // imm_cv_ct_pmbm_occupancy_detector_coverage (6c: coverage-aware decay arm,
+  // differs from _detector in estimate_coverage_sector only).
+  ASSERT_EQ(configs.size(), 37u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   // Canonical wires the bias estimator unconditionally; the
@@ -29,7 +31,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 36u);
+  EXPECT_EQ(labels.size(), 37u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_land"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_land_pda"), 1u);
@@ -38,6 +40,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_occupancy"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_occupancy_sensitive"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_occupancy_detector"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_pmbm_occupancy_detector_coverage"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt_k3"), 1u);
   // Phase 9 probe siblings dropped 2026-06-23 (S4 fold-in):
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt_k3_altgate"), 0u);
@@ -101,6 +104,48 @@ TEST(Config, FactoriesProduceUsableObjects) {
     EXPECT_NE(est, nullptr) << "label=" << c.label;
     EXPECT_NE(asc, nullptr) << "label=" << c.label;
   }
+}
+
+// 6c A/B validity: the coverage-aware detector arm must differ from the
+// universal-decay detector in the estimate_coverage_sector flag ALONE, so any
+// measured delta (structure-hazard stability, KEEP_MIXED departure recovery) is
+// attributable to the coverage gate and nothing else. This guards against silent
+// drift that would invalidate the A/B comparison.
+TEST(Config, OccupancyDetectorArmsDifferOnlyInCoverageFlag) {
+  const auto configs = defaultConfigs();
+  const Config* base = nullptr;
+  const Config* cov = nullptr;
+  for (const auto& c : configs) {
+    if (c.label == "imm_cv_ct_pmbm_occupancy_detector") base = &c;
+    if (c.label == "imm_cv_ct_pmbm_occupancy_detector_coverage") cov = &c;
+  }
+  ASSERT_NE(base, nullptr);
+  ASSERT_NE(cov, nullptr);
+  ASSERT_TRUE(base->pmbm_config && cov->pmbm_config);
+  const auto b = base->pmbm_config();
+  const auto v = cov->pmbm_config();
+  // The one variable under test.
+  EXPECT_FALSE(b.estimate_coverage_sector);
+  EXPECT_TRUE(v.estimate_coverage_sector);
+  // Every other knob that defines the detector must match.
+  EXPECT_EQ(b.lambda_birth, v.lambda_birth);
+  EXPECT_EQ(b.min_new_bernoulli_existence, v.min_new_bernoulli_existence);
+  EXPECT_EQ(b.adaptive_birth, v.adaptive_birth);
+  EXPECT_EQ(b.use_land_model, v.use_land_model);
+  EXPECT_EQ(b.use_static_obstacle_model, v.use_static_obstacle_model);
+  // ...and the occupancy-layer wiring + grid/classifier params.
+  EXPECT_EQ(base->use_live_occupancy_model, cov->use_live_occupancy_model);
+  EXPECT_EQ(base->occupancy_adaptive_clutter_bar,
+            cov->occupancy_adaptive_clutter_bar);
+  ASSERT_TRUE(base->live_occupancy_params && cov->live_occupancy_params);
+  EXPECT_EQ(base->live_occupancy_params->cell_size_m,
+            cov->live_occupancy_params->cell_size_m);
+  EXPECT_EQ(base->live_occupancy_params->ewma_alpha,
+            cov->live_occupancy_params->ewma_alpha);
+  EXPECT_EQ(base->live_occupancy_params->persistence_bar,
+            cov->live_occupancy_params->persistence_bar);
+  EXPECT_EQ(base->live_occupancy_params->extended_cells_min,
+            cov->live_occupancy_params->extended_cells_min);
 }
 
 TEST(Config, FactoriesReturnDistinctInstancesPerCall) {
