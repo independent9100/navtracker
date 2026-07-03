@@ -14,6 +14,11 @@ namespace navtracker {
 // Opportunistic identity cues from a sensor; never the fusion key.
 struct AssociationHints {
   std::optional<std::uint32_t> mmsi;
+  // The emitting sensor's own track/target number (e.g. ARPA TTM/TLL target
+  // number, EO-IR detector track id). Scoped to that ONE sensor (source_id):
+  // unique only within it, never across sensors, and may be reused by the
+  // sensor after a track drop or target swap. Currently carried for
+  // diagnostics/attribute purposes only — association does not consume it.
   std::optional<std::int32_t> sensor_track_id;
   // Cooperative-channel native id (numeric, settled 2026-06-29). Always
   // set by the Cooperative adapter; assumed unique per fleet member. A

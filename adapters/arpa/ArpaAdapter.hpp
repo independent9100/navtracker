@@ -25,6 +25,14 @@ struct ArpaAdapterConfig {
 // Parses NMEA 0183 TTM (range/bearing) and TLL (target lat/lon) into
 // Position2D Measurements in the supplied Datum's ENU frame. TTM needs
 // the latest own-ship pose to project relative measurements.
+//
+// PREFER TTM over TLL when the radar offers both. Only the TTM path
+// composes the range-dependent error ellipse (cross-range σ grows with
+// range), applies the heading-bias correction, and separates own-pose
+// error; TLL gets a flat position_std_m and no bias correction because
+// the radar already baked its own heading/GPS into the fix. Full
+// comparison table: docs/sensors/sensor-reference.md §2 "TTM vs TLL".
+// Also set heading_std_deg — the 0.0 default means "perfect gyro".
 class ArpaAdapter : public ISensorAdapter {
  public:
   ArpaAdapter(geo::Datum datum, OwnShipProvider& own_ship,

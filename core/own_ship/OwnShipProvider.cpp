@@ -34,7 +34,15 @@ void OwnShipProvider::update(const OwnShipPose& pose) {
       }
     }
   }
-  history_.push_back(pose);
+  // Insert in timestamp order: multi-source nav or a late-arriving sentence
+  // can deliver fixes out of time order, and poseAtOrBefore's reverse walk
+  // requires a sorted history. In-order pushes (the common case) hit the
+  // upper_bound at end() immediately. Equal timestamps insert after existing
+  // entries, so the most recently pushed pose wins the lookup.
+  const auto it = std::upper_bound(
+      history_.begin(), history_.end(), pose.time,
+      [](const Timestamp& t, const OwnShipPose& h) { return t < h.time; });
+  history_.insert(it, pose);
   while (history_.size() > history_size_limit_) history_.pop_front();
 }
 

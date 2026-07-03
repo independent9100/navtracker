@@ -56,7 +56,35 @@ Most radars/ARPA emit one or both of these target sentences; the adapter should 
 - **TTM** — Tracked Target Message: target number, distance (range), bearing from own-ship, bearing units (T/R), speed, course, course units, CPA, TCPA, target name, status, reference-target flag, checksum. Transmitted ~every 2 s. → maps to a **range/bearing relative `Measurement`**.
 - **TLL** — Target Latitude/Longitude: target number, target **latitude/longitude** (WGS-84), target name, UTC of data, target status, reference-target flag. The radar has already combined the echo with own-ship GNSS to produce an absolute fix. → maps to a **position `Measurement`** (lat/lon → ENU).
 
-Modeling note: prefer **TTM** when you want to model own-ship pose error explicitly in `R` (range/bearing relative to own-ship). **TLL** has own-ship position error already folded into the reported lat/lon and cannot be separated out — inflate its position `R` accordingly. The two may describe the same target; associate by target number within one radar.
+#### TTM vs TLL — always prefer TTM (common pitfall)
+
+Both sentences are parsed by `ArpaAdapter`, and both "work" — but they are
+**not equivalent**, and picking TLL because it looks simpler (a ready-made
+lat/lon) silently loses most of the error modeling. What each path actually
+does in `adapters/arpa/ArpaAdapter.cpp`:
+
+| | TTM (range/bearing) | TLL (lat/lon) |
+|---|---|---|
+| Measurement built | range + bearing projected to ENU by *navtracker*, using *your* own-ship pose at measurement time | radar's pre-computed lat/lon → ENU verbatim |
+| Covariance | composed per measurement: range σ along the line of sight, bearing σ **sideways, growing with range** (σ_cross ≈ range · σ_bearing), + heading σ, + own-GPS σ | flat configured `position_std_m` (default 50 m) — same ellipse at 100 m and at 10 km |
+| Heading-bias correction | **yes** — the current `HeadingBiasEstimator` estimate is subtracted from every bearing, and the bias variance is added to the bearing σ | **no** — the radar already baked its own heading into the fix; a gyro offset shifts every TLL target sideways and nothing can correct it |
+| Own-ship pose error | separated out and composed honestly | folded invisibly into the position by the radar; not recoverable |
+
+Rules of thumb:
+
+- **Send TTM if the radar offers it.** TLL is the fallback when TTM is
+  unavailable — inflate its `position_std_m` for the hidden own-pose and
+  heading error you can no longer decompose.
+- **Prefer relative bearings** (TTM bearing-units flag `R`): navtracker adds
+  own heading itself, so the bias estimator keeps correcting gyro drift over
+  the whole mission. With `T` (true) bearings the radar has already applied
+  *its* heading source.
+- **Set `ArpaAdapterConfig.heading_std_deg`.** It defaults to **0.0**
+  ("my gyro is perfect") — leaving it there gives far targets overconfident
+  cross-range ellipses. Use your gyro's real 1-σ.
+- The two sentences may describe the same target; associate by target number
+  within one radar. Don't feed both for the same target — that double-counts
+  the echo.
 
 ### Units
 Range meters/NM; bearing degrees relative (convert to true using own-ship heading); speed knots; course degrees true.
@@ -109,6 +137,23 @@ No MMSI. Provides type/classification and size cues for attribute fusion. Camera
 - Fails in fog/low light (EO) — IR mitigates but lower resolution; sun glare, spray, horizon clutter.
 - Bearing depends critically on accurate mount calibration + own-ship attitude (roll/pitch) and PTZ angles at capture time → needs precise time sync with own-ship nav.
 - Bearing-only updates need care in association/estimation (don't let an unbounded range collapse a track).
+
+### Fixture: philos camera-bearing channel
+
+The philos replay clips now carry a real EO/IR bearing-only fixture
+(`tests/fixtures/philos/out/<clip>/camera_bearings.csv`, produced offline by
+`extract_camera_bearings.py`; loaded by
+`adapters/replay/CameraBearingCsvReader`). A YOLO boat detector over the RGB
+cameras is calibrated to bearings via the committed camera intrinsics + a
+single AIS-fit per-camera yaw offset (held-out residual on `ais_ferry_near`
+center: median 0.45°, p90 1.32° → per-detection σ ≈ 1–3.5°). It is
+**corroboration-only**: `Bearing2D`, so it can update/refine a track but never
+initiate one (`canInitiateTrack(Bearing2D) == false`), and its **absence** is
+never evidence of absence. Because the detections derive from the same videos
+as the existence labels in `tests/fixtures/philos/labels/`, they test fusion
+mechanics and act as a corroboration channel only — never as truth for accuracy
+claims. See `tests/fixtures/philos/README.md` for the full calibration method
+and per-clip provenance.
 
 ---
 

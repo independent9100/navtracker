@@ -58,6 +58,44 @@ TEST(OwnShipProviderTest, PoseAtOrBeforeReturnsNulloptWhenAllPosesNewer) {
   EXPECT_FALSE(pose_at_3.has_value());
 }
 
+TEST(OwnShipProviderTest, OutOfOrderPushIsInsertedInTimestampOrder) {
+  // Multi-source nav (or a late-arriving sentence) can deliver fixes out of
+  // time order. The history must stay time-sorted so poseAtOrBefore's
+  // reverse walk keeps returning the newest pose at-or-before t.
+  OwnShipProvider p(8);
+  OwnShipPose a; a.time = Timestamp::fromSeconds(1.0); a.lat_deg = 1.0;
+  OwnShipPose c; c.time = Timestamp::fromSeconds(3.0); c.lat_deg = 3.0;
+  OwnShipPose b; b.time = Timestamp::fromSeconds(2.0); b.lat_deg = 2.0;
+  p.update(a); p.update(c); p.update(b);  // b arrives late
+
+  // Before the sorted insert, the reverse walk hit b (t=2) first and wrongly
+  // returned it for queries at t >= 2 even though c (t=3) exists at t=4.
+  const auto at_4 = p.poseAtOrBefore(Timestamp::fromSeconds(4.0));
+  ASSERT_TRUE(at_4.has_value());
+  EXPECT_DOUBLE_EQ(at_4->lat_deg, 3.0);
+
+  const auto at_2 = p.poseAtOrBefore(Timestamp::fromSeconds(2.5));
+  ASSERT_TRUE(at_2.has_value());
+  EXPECT_DOUBLE_EQ(at_2->lat_deg, 2.0);
+
+  // latest() = newest by time, not newest by arrival.
+  ASSERT_TRUE(p.latest().has_value());
+  EXPECT_DOUBLE_EQ(p.latest()->lat_deg, 3.0);
+}
+
+TEST(OwnShipProviderTest, EqualTimestampPushesKeepLastPushedWins) {
+  // Duplicate timestamps (e.g. two talkers emitting the same fix second):
+  // the most recently pushed pose wins the lookup, as before the sort.
+  OwnShipProvider p(8);
+  OwnShipPose a; a.time = Timestamp::fromSeconds(1.0); a.lat_deg = 1.0;
+  OwnShipPose a2; a2.time = Timestamp::fromSeconds(1.0); a2.lat_deg = 1.5;
+  p.update(a); p.update(a2);
+
+  const auto at_1 = p.poseAtOrBefore(Timestamp::fromSeconds(1.0));
+  ASSERT_TRUE(at_1.has_value());
+  EXPECT_DOUBLE_EQ(at_1->lat_deg, 1.5);
+}
+
 TEST(OwnShipProviderTest, HistoryDropsOldestWhenLimitReached) {
   OwnShipProvider p(2);  // tiny limit for the test
   OwnShipPose a; a.time = Timestamp::fromSeconds(1.0); a.lat_deg = 1.0;
