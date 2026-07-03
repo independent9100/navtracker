@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <memory>
 #include <set>
+#include <utility>
 
 #include "adapters/benchmark/SimScenarioRun.hpp"
 
@@ -9,7 +11,7 @@ using namespace navtracker::benchmark;
 
 TEST(SimScenarioRun, ProducesExpectedDefaultScenarios) {
   const auto scenarios = defaultSimScenarios();
-  ASSERT_EQ(scenarios.size(), 23u);
+  ASSERT_EQ(scenarios.size(), 24u);
   std::set<std::string> labels;
   for (const auto& s : scenarios) labels.insert(s->descriptor().label);
   EXPECT_EQ(labels.count("crossing"), 1u);
@@ -35,6 +37,29 @@ TEST(SimScenarioRun, ProducesExpectedDefaultScenarios) {
   EXPECT_EQ(labels.count("harbor_boat_near_pier"), 1u);
   EXPECT_EQ(labels.count("harbor_large_anchored_ship"), 1u);
   EXPECT_EQ(labels.count("harbor_compact_dolphin"), 1u);
+  EXPECT_EQ(labels.count("harbor_complete_truth_churn"), 1u);
+}
+
+// The churn variant is harbor_complete_truth with the pier detected at a low
+// per-scan probability (~0.4 vs 0.9), so its phantom cohort decays and must
+// re-birth — the only regime where a BIRTH-channel occupancy suppressor can
+// act. Complete truth (boats scored) is unchanged: only the no-truth pier's
+// detection rate drops. Observable: strictly fewer returns on the same seed,
+// since only the pier's detection draw changes (movers/boats/clutter use
+// disjoint seed streams).
+TEST(SimScenarioRun, ChurnVariantEmitsFewerPierReturnsThanBaseline) {
+  std::unique_ptr<ScenarioRun> baseline, churn;
+  for (auto& s : defaultSimScenarios()) {
+    const auto label = s->descriptor().label;
+    if (label == "harbor_complete_truth") baseline = std::move(s);
+    else if (label == "harbor_complete_truth_churn") churn = std::move(s);
+  }
+  ASSERT_TRUE(baseline) << "harbor_complete_truth missing";
+  ASSERT_TRUE(churn) << "harbor_complete_truth_churn missing";
+  const auto b = baseline->generate(0);
+  const auto c = churn->generate(0);
+  EXPECT_LT(c.measurements.size(), b.measurements.size())
+      << "churn pier P_D should be lower than baseline";
 }
 
 TEST(SimScenarioRun, GenerateIsDeterministicForSameSeed) {
@@ -109,7 +134,8 @@ TEST(SimScenarioRun, ClutterFreeScenariosDeclareFloorDensity) {
                d.label == "harbor_charted_pier" ||
                d.label == "harbor_boat_near_pier" ||
                d.label == "harbor_large_anchored_ship" ||
-               d.label == "harbor_compact_dolphin") {
+               d.label == "harbor_compact_dolphin" ||
+               d.label == "harbor_complete_truth_churn") {
       ASSERT_EQ(d.detection_table.size(), 2u) << d.label;
     } else {
       ASSERT_EQ(d.detection_table.size(), 1u) << d.label;

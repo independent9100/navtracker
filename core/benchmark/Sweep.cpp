@@ -224,6 +224,14 @@ std::vector<MetricRow> runSweep(
         NisCollector nis;
         std::map<std::uint64_t, std::vector<pmbm::TrajectoryPoint>>
             pmbm_smoothed_trajectories;
+        // Stage 1b-i occupancy introspection: negative sentinel = layer not
+        // wired for this (config, scenario); populated inside the PMBM branch
+        // when a LiveOccupancyModel is constructed, emitted after the standard
+        // metrics. These are truth-independent mechanism observations (did the
+        // birth suppressor fire at all?), safe from any ground-truth gaming.
+        double occ_peak_structures = -1.0;
+        double occ_peak_persistence = -1.0;
+        double occ_suppress_hits = -1.0;
         const auto t_cell0 = std::chrono::steady_clock::now();
         if (config.tracker_kind == TrackerKind::Mht) {
           MhtTracker::Config cfg =
@@ -402,7 +410,9 @@ std::vector<MetricRow> runSweep(
           // datum) → identical to the base config.
           std::shared_ptr<LiveOccupancyModel> occupancy;
           if (config.use_live_occupancy_model && scen.datum.has_value()) {
-            occupancy = std::make_shared<LiveOccupancyModel>(*scen.datum);
+            occupancy = std::make_shared<LiveOccupancyModel>(
+                *scen.datum,
+                config.live_occupancy_params.value_or(LiveOccupancyParams{}));
             tracker.setStaticObstacleModel(occupancy.get());
             tracker.setLiveOccupancyFeed(occupancy.get());
           }
@@ -433,6 +443,13 @@ std::vector<MetricRow> runSweep(
                 };
           }
           result = runBenchPmbm(scen, tracker, pmbm_post_scan);
+          if (occupancy) {
+            occ_peak_structures =
+                static_cast<double>(occupancy->peakStructureCount());
+            occ_peak_persistence = occupancy->peakPersistence();
+            occ_suppress_hits =
+                static_cast<double>(occupancy->suppressionHits());
+          }
           // Phase 6 measurement hook: drain + RTS-smooth the alive
           // Bernoulli trajectories. Empty when trajectory_window_scans
           // is 0; passed through to computeMetrics for tgospa_smooth.
@@ -481,6 +498,15 @@ std::vector<MetricRow> runSweep(
             computeConsistency(nis, result, params.metrics.assoc_gate_m);
         emit(rows, params, config.label, desc.label,
              static_cast<std::uint64_t>(seed), m, c, wall_seconds);
+        if (occ_peak_structures >= 0.0) {
+          const auto s64 = static_cast<std::uint64_t>(seed);
+          rows.push_back({params.run_id, config.label, desc.label, s64,
+                          "occ_peak_structures", occ_peak_structures, "count"});
+          rows.push_back({params.run_id, config.label, desc.label, s64,
+                          "occ_peak_persistence", occ_peak_persistence, "ratio"});
+          rows.push_back({params.run_id, config.label, desc.label, s64,
+                          "occ_suppress_hits", occ_suppress_hits, "count"});
+        }
       }
     }
   }

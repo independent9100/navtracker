@@ -13,8 +13,10 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   // 34: 31 standing + imm_cv_ct_pmbm_land_pda (PDA soft detected-branch update,
   // opt-in; A/B vs imm_cv_ct_pmbm_land for the open-sea K=1 gap) +
   // imm_cv_ct_pmbm_land_pda_wateronly (land-aware pool; A/B vs _land_pda) +
-  // imm_cv_ct_pmbm_occupancy (Stage 1b live occupancy layer; A/B vs _land).
-  ASSERT_EQ(configs.size(), 34u);
+  // imm_cv_ct_pmbm_occupancy (Stage 1b live occupancy layer; A/B vs _land) +
+  // imm_cv_ct_pmbm_occupancy_sensitive (diagnostic: coarser/lower-bar occupancy
+  // classifier to separate mis-tuning from architectural sparsity limit).
+  ASSERT_EQ(configs.size(), 35u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   // Canonical wires the bias estimator unconditionally; the
@@ -26,13 +28,14 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 34u);
+  EXPECT_EQ(labels.size(), 35u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_land"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_land_pda"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_land_pda_wateronly"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_static"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_occupancy"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_pmbm_occupancy_sensitive"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt_k3"), 1u);
   // Phase 9 probe siblings dropped 2026-06-23 (S4 fold-in):
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt_k3_altgate"), 0u);

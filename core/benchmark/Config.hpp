@@ -2,12 +2,14 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "core/bias/SensorBiasEstimator.hpp"
 #include "core/pipeline/MhtTracker.hpp"
 #include "core/pmbm/PmbmTracker.hpp"
+#include "core/static/LiveOccupancyModel.hpp"
 #include "ports/IDataAssociator.hpp"
 #include "ports/IEstimator.hpp"
 #include "ports/ISensorDetectionModel.hpp"
@@ -113,6 +115,12 @@ struct Config {
   // exclusive with use_static_obstacle_model (both drive setStaticObstacleModel).
   // Scenarios with no datum silently skip wiring (model stays null → identical).
   bool use_live_occupancy_model{false};
+  // Optional override of the LiveOccupancyModel grid/classifier parameters. When
+  // unset, Sweep uses LiveOccupancyParams{} defaults. Used by sensitivity-probe
+  // configs (e.g. imm_cv_ct_pmbm_occupancy_sensitive) to test whether coarser
+  // cells / a lower persistence bar rescue structure classification on
+  // realistic (churn / real-radar) detection rates.
+  std::optional<LiveOccupancyParams> live_occupancy_params;
 };
 
 // Returns the five baseline configurations in fixed order:

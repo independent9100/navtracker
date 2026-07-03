@@ -767,6 +767,47 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // Sensitivity probe for the Stage 1b-i "inert on realistic data" finding
+  // (eval-log 2026-07-03). Identical to imm_cv_ct_pmbm_occupancy but with a
+  // deliberately GENEROUS occupancy classifier: coarser 50 m cells (robust to
+  // own-ship projection smear), slower forgetting (alpha 0.15), a low
+  // persistence bar (0.25 < realistic per-cell P_D on the churn variant), and a
+  // 3-cell extent floor. Purpose: distinguish "the persistence x extent classifier
+  // is MIS-TUNED" from "it is architecturally defeated by detection sparsity."
+  // If structure still fails to classify on philos / harbor_complete_truth_churn
+  // even here (occ_peak_structures ~ 0), the layer's classifier — not its channel
+  // — is the wall. NOT a shipping config; a diagnostic.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_occupancy_sensitive";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_land_model = true;
+    c.use_live_occupancy_model = true;
+    LiveOccupancyParams lp;
+    lp.cell_size_m = 50.0;
+    lp.ewma_alpha = 0.15;
+    lp.persistence_bar = 0.25;
+    lp.extended_cells_min = 3;
+    c.live_occupancy_params = lp;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.adaptive_k_best = false;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.lambda_birth = 1e-5;
+      cfg.min_new_bernoulli_existence = 0.05;
+      cfg.use_land_model = true;
+      cfg.use_static_obstacle_model = true;
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Task 1 probe: clutter-invariant birth existence. Same as
   // imm_cv_ct_pmbm_adapt but r_new is pinned to a target instead of a
   // fixed absolute λ_birth — fixes the philos over-confident-birth bug.

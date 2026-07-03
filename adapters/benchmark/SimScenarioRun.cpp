@@ -506,8 +506,8 @@ class HarborCompleteTruthScenarioRun : public ScenarioRun {
         s32);
 
     base = addFixedClutter(std::move(base), datum, pierPoints(), "sim_pier",
-                           /*detection_prob=*/0.9, /*pos_noise_std_m=*/4.0,
-                           s32 + 7u);
+                           /*detection_prob=*/pierDetectionProb(),
+                           /*pos_noise_std_m=*/4.0, s32 + 7u);
 
     base = addUniformClutter(std::move(base), datum,
                              Eigen::Vector2d(-600.0, -450.0),
@@ -516,6 +516,11 @@ class HarborCompleteTruthScenarioRun : public ScenarioRun {
     return base;
   }
   // No syntheticCoastline(): chart-free by design.
+ protected:
+  // Per-scan detection probability of the uncharted pier. 0.9 (near-persistent)
+  // is the default yardstick. Subclasses lower it to create phantom churn (see
+  // HarborCompleteTruthChurnScenarioRun).
+  virtual double pierDetectionProb() const { return 0.9; }
 };
 
 // R5: identical to harbor_complete_truth (same measurements + truth), but the
@@ -630,11 +635,35 @@ class HarborCompactDolphinScenarioRun : public HarborCompleteTruthScenarioRun {
   }
 };
 
+// Churn variant of harbor_complete_truth: identical geometry and complete truth
+// (two AIS movers + three anchored boats scored), but the uncharted pier is
+// detected at a LOW per-scan probability (0.4, vs 0.9 in the yardstick). This is
+// the regime the Stage 1b-i occupancy layer needs to be measurable at all: at
+// P_D 0.9 the pier's phantom cohort confirms once in scans 1-2 and never dies,
+// so a BIRTH-channel suppressor can never act on it (the eval-log 2026-07-03
+// "inert" finding). At P_D ~0.4 the phantom Bernoullis decay through miss-runs,
+// get pruned, and must RE-BIRTH — and re-birth is exactly where a warm
+// occupancy map can suppress. 0.4 is chosen to sit inside the philos recurrence
+// band (~0.07 raw, but per-cell revisit is higher) and is honestly more
+// realistic than 0.9-for-40-scans; it is NOT tuned to make any config pass.
+// The A/B here (imm_cv_ct_pmbm_land vs _occupancy) is the complete-truth decider
+// for whether birth-only suppression works, versus needing an existence channel.
+class HarborCompleteTruthChurnScenarioRun
+    : public HarborCompleteTruthScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return describe("harbor_complete_truth_churn", shoreClutterTable());
+  }
+
+ protected:
+  double pierDetectionProb() const override { return 0.4; }
+};
+
 }  // namespace
 
 std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   std::vector<std::unique_ptr<ScenarioRun>> out;
-  out.reserve(22);
+  out.reserve(24);
   out.push_back(std::make_unique<CrossingScenarioRun>());
   out.push_back(std::make_unique<OvertakingScenarioRun>());
   out.push_back(std::make_unique<HeadOnScenarioRun>());
@@ -658,6 +687,7 @@ std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   out.push_back(std::make_unique<HarborBoatNearPierScenarioRun>());
   out.push_back(std::make_unique<HarborLargeAnchoredShipScenarioRun>());
   out.push_back(std::make_unique<HarborCompactDolphinScenarioRun>());
+  out.push_back(std::make_unique<HarborCompleteTruthChurnScenarioRun>());
   return out;
 }
 
