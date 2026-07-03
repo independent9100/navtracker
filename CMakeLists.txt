@@ -342,6 +342,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_occupancy_detector_gates.cpp
   tests/benchmark/test_existence_label.cpp
   tests/sensor_activity/test_declared_sensor_activity.cpp
+  tests/docs/test_integration_guide_config_coverage.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE

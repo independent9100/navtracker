@@ -34,7 +34,13 @@ docs/      specs/, sensors/, algorithm docs
 
 ## Library use
 
-navtracker is designed as a hexagonal-architecture library. The contract a consumer plugs against is two concrete types and two methods:
+navtracker is designed as a hexagonal-architecture library. **If you are wiring
+navtracker into your own system, read `docs/integration-guide.md`** — it is the
+consumer-facing guide organized by "what you have / what you want" and indexes
+every config, port, builder, adapter, and output type. This section is the quick
+orientation; the guide is the full map.
+
+The contract a consumer plugs against is two concrete types and two methods:
 
 - `core/types/Measurement.hpp` — what you feed in (per sensor reading).
 - `adapters/own_ship/OwnShipProvider.hpp` — `OwnShipPose` (per GPS fix).
@@ -122,22 +128,11 @@ fully supported alongside.
 ### Heading-bias estimator (multi-source)
 
 `HeadingBiasEstimator` (`core/bias/HeadingBiasEstimator.hpp`) is a
-scalar KF on a single gyro-bias state `b` with random-walk dynamics.
-It accepts five observation kinds, any subset can be wired:
-
-| Kind | Source | Math |
-|---|---|---|
-| `AisArpaPairObservation` | v1 AIS↔ARPA bearing pair | direct b measurement at the pair's range |
-| `BearingInnovation` | v2 Tracker emission via `IBearingInnovationSink` | r = wrap(β_obs − β_pred); R = HᵀPH + R_meas; needs an anchor |
-| `GyroVsGpsHeadingObservation` | v3 multi-antenna GPS | r = gyro − gps_hdg; R = σ_gps² |
-| `GyroVsGpsCogObservation` | v3 GPS COG | r = gyro − cog; R = σ_cog² + σ_crab²; SOG and turn-rate gates |
-| `GyroVsMagneticObservation` | v3 magnetic compass | r = gyro − (mag + variation); R = σ_mag² + σ_deviation² |
-
-`OwnShipNmeaAdapter` dispatches the three v3 kinds automatically when
-wired via `setHeadingBiasEstimator(&est)` and `gps_heading_talkers`
-config. v1 AIS-pair flow is via `AisArpaPairExtractor`. v2 bearing
-innovation flow is via `Tracker::setBearingInnovationSink(&est)`. Any
-combination works; sources can come and go mid-mission.
+scalar KF on a single gyro-bias state `b` with random-walk dynamics,
+fed by any subset of five observation kinds. The five-kinds table and
+the wiring for each source now live in the consumer guide,
+`docs/integration-guide.md` §5 ("Heading and bias"). The concepts are
+in `docs/learning/` (heading-bias chapter).
 
 ### End-to-end example
 
@@ -205,6 +200,34 @@ change the script and re-run. Add new figures by adding a
 A PR that introduces a non-trivial new algorithm without an
 accompanying `docs/learning/` update (text + figure) is
 incomplete.
+
+## Integration guide (REQUIRED to keep in sync)
+
+`docs/integration-guide.md` is the consumer-facing map of the library,
+organized by *integration surface* — "what you have / what you want".
+It indexes every knob and wiring option a consumer of `navtracker_core`
++ `navtracker_nmea` touches.
+
+**Whenever a change touches the consumer surface, the same PR must
+update `docs/integration-guide.md`.** The consumer surface is: a new or
+renamed config field or changed default; a new port, sink, builder, or
+adapter; a new output field; a new named strategy config. The update is
+a new entry or a corrected entry, *including the config-reference table
+in the appendix*. A PR that changes the consumer surface without a guide
+update is **incomplete** — the same standard as the learning-docs rule.
+
+This is mechanically enforced for config structs by
+`tests/docs/test_integration_guide_config_coverage.cpp`: every
+`struct <Name>Config` under `core/`, `ports/`, `adapters/` (excluding
+tests and `core/benchmark/`) must be mentioned in the guide, or be
+listed with a reason in that test's explicit exclusion set. "Added a
+Config, forgot the guide" is a red test, not a review hope.
+
+**Three docs, three personas — keep material where it belongs.**
+`docs/learning/` teaches concepts to team members; `docs/integration-guide.md`
+serves a consumer wiring the library; `docs/algorithms/` justifies design
+decisions. New material goes to whichever persona it serves — usually one,
+not all three.
 
 ## Testing expectations
 
