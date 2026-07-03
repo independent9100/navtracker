@@ -26,7 +26,7 @@ navtracker fuses outputs from multiple maritime sensors (AIS, navigation radar/A
 ```
 core/      domain types, tracker, estimators, association, track mgmt   (no I/O)
 ports/     interfaces (IEstimator, IDataAssociator, ISensorAdapter, ...)
-adapters/  ais/ arpa/ eoir/ ownship/ sinks/                              (I/O, formats)
+adapters/  ais/ arpa/ eoir/ own_ship/ land/ static/ …                    (I/O, formats)
 app/       composition root: wires adapters + strategies; run/replay modes
 tests/     gtest unit + scenario/replay tests, metrics harness
 docs/      specs/, sensors/, algorithm docs
@@ -43,7 +43,9 @@ orientation; the guide is the full map.
 The contract a consumer plugs against is two concrete types and two methods:
 
 - `core/types/Measurement.hpp` — what you feed in (per sensor reading).
-- `adapters/own_ship/OwnShipProvider.hpp` — `OwnShipPose` (per GPS fix).
+- `core/own_ship/OwnShipProvider.hpp` — `OwnShipPose` (per GPS fix). (The
+  `adapters/own_ship/OwnShipProvider.hpp` path is a back-compat shim that just
+  includes this one; new code should include the `core/` header directly.)
 - `Tracker::process(Measurement)` / `OwnShipProvider::update(pose)` — the entry points.
 
 You construct Measurements directly from your parsed sensor data. The NMEA adapters in `adapters/` are one optional implementation for consumers whose input is NMEA strings — they're not the canonical path. Skip them if you have your own pipeline.
@@ -65,13 +67,16 @@ TrackShifterSink mgr_sink{&mgr};
 provider.registerDatumSink(&mgr_sink);
 ```
 
-`StaticObstacleModel` and `CoastlineModel` also implement `IDatumChangeSink` (they
-cache obstacle/shore positions in the ENU frame). If you use auto-recenter, register
-them as datum sinks too, or their caches go silently stale after a recenter:
+`StaticObstacleModel`, `CoastlineModel`, and `LiveOccupancyModel` also implement
+`IDatumChangeSink` (they cache obstacle / shore / occupancy positions in the ENU
+frame). If you use auto-recenter, register each one you wire as a datum sink too,
+or its cache goes silently stale after a recenter — for the occupancy grid that
+means a consumer using it with auto-recenter gets a silently wrong suppression map:
 
 ```cpp
-provider.registerDatumSink(&obstacle_model);  // rebuilds the ENU cache on recenter
+provider.registerDatumSink(&obstacle_model);   // rebuilds the ENU cache on recenter
 provider.registerDatumSink(&coastline_model);
+provider.registerDatumSink(&occupancy_model);  // re-anchors the occupancy grid
 ```
 
 (The bench `Sweep` skips this on purpose — it uses a single fixed datum per run, so
