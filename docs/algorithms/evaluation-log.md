@@ -5852,3 +5852,37 @@ track ashore, `_wateronly` should hold it on truth. Or drape a synthetic
 coastline over the AutoFerry urban channels and re-run land/`_land_pda`/
 `_wateronly`. Until one exists, land-aware pooling stays proven-safe-but-
 unmeasured. Baseline: `docs/baselines/2026-07-02_pda_landaware_ab.csv`.
+
+## 2026-07-03 — Land-aware PDA pool: controlled fixture built → VALIDATED (10/10 seeds)
+
+Closes the "proven-safe-but-unmeasured" gap above with a purpose-built
+sim-primary fixture, `shore_clutter_transit` (`adapters/benchmark/SimScenarioRun.cpp`).
+Design lessons from the failed first attempt are baked in:
+- **First geometry (perpendicular transit) was too weak** — vessel establishes
+  offshore then crosses toward shore; the dock only enters the gate for the last
+  ~10 of 40 scans, so the pull was noise-dominated (paired pos_rmse: 6/10 seeds
+  better, mean +0.36 m, sd 0.84 — could flip). Root cause: with the default 50 m
+  shoreline ramp, a vessel far enough offshore to birth cleanly (d ≥ 50 m ⇒ c=0)
+  is > 43 m from any c>0.5 dock return, so the dock barely gates.
+- **Fix = alongshore channel + steep quay.** The vessel runs **parallel** to a
+  **20 m-ramp** quay at y=478 (22 m offshore ⇒ c=0, clean births, never in the
+  ADR-0001 no-birth band), with a dense line of unclaimed quay returns just
+  inland at y=510 (c=0.75 ⇒ r_new≈0.025, never births ⇒ stays unclaimed), 25 m
+  apart so 2–3 are in-gate EVERY scan (offset ≈ 32 m ⇒ Mahalanobis² ≈ 11 < gate
+  20). Births are land-suppressed identically under both configs — the ONLY A/B
+  difference is the PDA softening pool.
+
+**Result (10 seeds, `_land_pda` vs `_wateronly`):** pos_rmse plain **17.0 m** →
+wateronly **8.6 m** (Δ **+8.4 m**, paired **10/10 seeds better**, min +0.06 m);
+lifetime 1.0 for both (the fix costs no track). Plain PDA is dragged toward the
+quay (~doubled error); the land-aware pool holds the track at the ~8 m
+measurement-limited tracking error. Contract test
+`SyntheticClutterAB.LandAwarePoolResistsDockClutterPull` (8 seeds, margin 2 m).
+Scenario count 22→23; config count 33 unchanged. gospa/ospa/card are noisy on
+this scene (persistent quay + inland clutter → phantom over-count in BOTH), so
+pos_rmse (single-truth position error) is the clean discriminator.
+
+**Residual:** the mechanism is now proven both at unit level and on a controlled
+sim fixture. The one open step before promoting `_land_pda` past opt-in is
+real-data: AutoFerry urban ships no coastline, so drape a synthetic coastline
+over those channels and re-run the land/`_land_pda`/`_wateronly` A/B.

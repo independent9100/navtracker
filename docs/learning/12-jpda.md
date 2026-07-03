@@ -303,9 +303,18 @@ city waterfront the "unowned" returns are not sea clutter — they are
 (the same coastline map we use to stop births on shore, chapter 13),
 keep it **out of the blend**. So PDA softens against *water* clutter
 only. This is the `pda_pool_excludes_land` option. It is safe — with no
-map loaded it does nothing — but note it can only help where the data
-*has* a coastline; AutoFerry ships none, so we still need a charted
-harbour test to prove it end-to-end.
+map loaded it does nothing.
+
+To prove it end-to-end we built a small harbour test
+(`shore_clutter_transit`): one boat drives down a channel right next to
+a **quay wall**, with a row of quay/dock echoes just on the land side.
+Without the map trick, PDA keeps blending toward the wall and the track
+drifts toward it — its position error roughly **doubles** (about 17 m).
+With the map trick the wall echoes are dropped from the blend and the
+track stays on the boat (about 8 m — the best the noisy sensor allows),
+on **every** random seed. The real harbour dataset (AutoFerry) still
+ships no coastline, so proving it on *real* data needs a map drawn over
+those channels — that is the one step left.
 
 ---
 

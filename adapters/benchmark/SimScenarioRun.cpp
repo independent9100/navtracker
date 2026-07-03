@@ -418,6 +418,59 @@ class ShoreClutterNearShoreScenarioRun : public ScenarioRun {
   }
 };
 
+// A steep-quay shoreline (20 m ramp half-widths, a seawall/dock edge rather
+// than a gentle beach) so a vessel can run in open water (clutterPrior c = 0)
+// yet still be within gate range of dock returns that sit inland at c > 0.5.
+// Waterline at y = 500; land is y >= 500. Deterministic (no RNG).
+SyntheticShore makeDockShore() {
+  return buildSyntheticShore(navtracker::geo::Geodetic{42.35, -71.05, 0.0},
+                             /*shore_y_m=*/500.0, /*extent_m=*/1500.0,
+                             /*land_depth_m=*/400.0, /*pier_width_m=*/40.0,
+                             /*pier_length_m=*/150.0, /*n_clutter=*/30,
+                             CoastlinePriorParams{/*inland_halfwidth_m=*/20.0,
+                                                  /*offshore_halfwidth_m=*/20.0});
+}
+
+// Validation fixture for the land-aware PDA pool (pda_pool_excludes_land). One
+// vessel transits a channel running PARALLEL to the quay at y = 478 (22 m
+// offshore of the y = 500 waterline; with the 20 m steep-quay band this is
+// clean open water, c = 0, so it initiates immediately and never touches the
+// ADR-0001 no-birth zone). A dense line of stationary DOCK/quay returns sits
+// just inland at y = 510 (signed distance d = −10 ⇒ clutterPrior = 0.75 > the
+// 0.5 pool gate), spaced 25 m in x across the whole run so 2–3 are inside the
+// vessel's gate EVERY scan (offset ≈ 32 m ⇒ Mahalanobis² ≈ 11 < the gate 20).
+// The dock returns carry NO truth; their births are land-suppressed identically
+// under both configs (c = 0.75 ⇒ r_new ≈ 0.025, far below confirmation, so they
+// stay unclaimed) — the ONLY A/B difference is the PDA softening pool. Plain
+// imm_cv_ct_pmbm_land_pda pools the unclaimed dock returns and is pulled toward
+// the quay; imm_cv_ct_pmbm_land_pda_wateronly excludes them and holds the track
+// on truth. This is the controlled fixture the AutoFerry urban channels are
+// (they have the alongshore dock-pull geometry) but cannot exercise (they ship
+// no coastline). See docs/baselines/2026-07-02_autoferry_pda_ab.md, §11.5.
+class ShoreClutterTransitScenarioRun : public ScenarioRun {
+ public:
+  ScenarioDescriptor descriptor() const override {
+    return describe("shore_clutter_transit", shoreClutterTable());
+  }
+  Scenario generate(std::uint64_t seed) override {
+    const SyntheticShore shore = makeDockShore();  // steep quay, waterline y=500
+    Scenario base = buildStraightLineScenario(
+        Eigen::Vector2d(-250.0, 478.0), Eigen::Vector2d(4.0, 0.0),
+        linearSeconds(1, 40), /*pos_noise_std_m=*/8.0,
+        static_cast<std::uint32_t>(seed), /*truth_id=*/1);
+    // Quay-edge returns just inland (y = 510), 25 m apart across the vessel's
+    // x-range [-246, -90] (clear of the pier at x in [-20, 20]).
+    std::vector<Eigen::Vector2d> dock;
+    for (double x = -260.0; x <= -80.0; x += 25.0) dock.emplace_back(x, 510.0);
+    return addFixedClutter(std::move(base), shore.datum, dock, "sim_dock",
+                           /*detection_prob=*/0.95, /*pos_noise_std_m=*/6.0,
+                           static_cast<std::uint32_t>(seed));
+  }
+  std::optional<CoastlineGeometry> syntheticCoastline() const override {
+    return makeDockShore().geometry;
+  }
+};
+
 class HarborCompleteTruthScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
@@ -599,6 +652,7 @@ std::vector<std::unique_ptr<ScenarioRun>> defaultSimScenarios() {
   out.push_back(std::make_unique<ConvoyOvertakeScenarioRun>());
   out.push_back(std::make_unique<ShoreClutterOpenScenarioRun>());
   out.push_back(std::make_unique<ShoreClutterNearShoreScenarioRun>());
+  out.push_back(std::make_unique<ShoreClutterTransitScenarioRun>());
   out.push_back(std::make_unique<HarborCompleteTruthScenarioRun>());
   out.push_back(std::make_unique<HarborChartedPierScenarioRun>());
   out.push_back(std::make_unique<HarborBoatNearPierScenarioRun>());

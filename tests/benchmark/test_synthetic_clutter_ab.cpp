@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -78,6 +77,58 @@ TEST(SyntheticClutterAB, ChartedPierSuppressesPierKeepsBoats) {
   EXPECT_LT(false_stat, false_base);
   // Real targets (the anchored boats + movers) are still tracked well.
   EXPECT_GT(life_stat, 0.9);
+}
+
+// Land-aware PDA pool end-to-end validation. On shore_clutter_transit a vessel
+// establishes offshore then transits into a near-shore dock-clutter field. The
+// dock returns are unclaimed, gated to the vessel, and coastline-flagged. Plain
+// imm_cv_ct_pmbm_land_pda pools them and is pulled ashore; the land-aware pool
+// (imm_cv_ct_pmbm_land_pda_wateronly) excludes them and holds the track nearer
+// truth. Births are land-suppressed identically under both, so the only A/B
+// difference is the softening pool.
+TEST(SyntheticClutterAB, LandAwarePoolResistsDockClutterPull) {
+  std::vector<Config> configs;
+  for (const auto& c : defaultConfigs())
+    if (c.label == "imm_cv_ct_pmbm_land_pda" ||
+        c.label == "imm_cv_ct_pmbm_land_pda_wateronly")
+      configs.push_back(c);
+  ASSERT_EQ(configs.size(), 2u);
+
+  std::vector<std::unique_ptr<ScenarioRun>> scen;
+  for (auto& s : defaultSimScenarios())
+    if (s->descriptor().label == "shore_clutter_transit")
+      scen.push_back(std::move(s));
+  ASSERT_EQ(scen.size(), 1u);
+
+  SweepParams params;
+  params.run_id = "landaware_transit_ab";
+  params.synthetic_seeds = 8;
+  const auto rows = runSweep(configs, scen, params);
+  ASSERT_FALSE(rows.empty());
+
+  const std::string sc = "shore_clutter_transit";
+  const double rmse_plain =
+      meanMetric(rows, "imm_cv_ct_pmbm_land_pda", sc, "pos_rmse_m");
+  const double rmse_water =
+      meanMetric(rows, "imm_cv_ct_pmbm_land_pda_wateronly", sc, "pos_rmse_m");
+  const double life_plain =
+      meanMetric(rows, "imm_cv_ct_pmbm_land_pda", sc, "lifetime_ratio");
+  const double life_water =
+      meanMetric(rows, "imm_cv_ct_pmbm_land_pda_wateronly", sc, "lifetime_ratio");
+  std::cout << "\n=== land-aware transit A/B ===\n"
+            << "  pos_rmse_m:    plain=" << rmse_plain
+            << "  wateronly=" << rmse_water << "\n"
+            << "  lifetime_ratio: plain=" << life_plain
+            << "  wateronly=" << life_water << "\n"
+            << std::flush;
+  // Plain PDA pools the unclaimed quay returns and is dragged ashore (pos_rmse
+  // roughly doubles); the land-aware pool excludes them and holds the track on
+  // truth (near the ~8 m measurement-limited tracking error). Margin 2 m is far
+  // inside the measured ~8 m gap (paired: 10/10 seeds better, mean +8.4 m).
+  EXPECT_LT(rmse_water, rmse_plain - 2.0);
+  EXPECT_LT(rmse_water, 12.0);
+  // The fix costs no track lifetime.
+  EXPECT_GE(life_water, life_plain - 1e-9);
 }
 
 TEST(SyntheticClutterAB, LandModelRemovesShoreOverCountKeepsRealTargets) {

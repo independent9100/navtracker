@@ -1013,22 +1013,29 @@ tracker (the land model, wired for coastal configs). It ties to ADR 0001
 returns are environment, not vessels, so they should neither birth tracks nor
 soften them. Config `imm_cv_ct_pmbm_land_pda_wateronly` = `_land_pda` + this flag.
 
-**What to test next — the mechanism is currently bench-inert (root-caused).**
-The full A/B (`imm_cv_ct_pmbm_land_pda` vs `_wateronly`, 2026-07-02) is
-**byte-identical on all 42 scenarios**, and a gate=0.0 diagnostic (exclude *any*
-non-open-water return) leaves the coastline-active scenarios (philos, shore_*,
-harbor_*) still byte-identical. Reason: the exclusion can only bite when the PDA
-pool has a non-winner **gated, unclaimed, shore** return, and no current fixture
-provides all four at once — the coastline fixtures are dense enough that the pool
-is already ≈{winner} (nothing to exclude), while the one regime where the plain
-pool *does* pull onto shore clutter (AutoFerry urban) ships **no coastline** so
-the land model cannot flag it. The mechanism is proven only at unit level
-(`ShoreClutterExcludedFromPool`) and is safe-by-construction (zero regression).
-Validating the urban *fix* requires a purpose-built controlled fixture: a vessel
-that **establishes offshore then transits into a near-shore dock-clutter field**
-(so the established track survives the ADR-0001 no-birth band) with a coastline
-flagging the dock returns — or a synthetic coastline draped over the AutoFerry
-urban channels. That fixture is the missing gate before promotion.
+**Validation (2026-07-02).** The refinement was first found **bench-inert** — a
+full A/B (`imm_cv_ct_pmbm_land_pda` vs `_wateronly`) is byte-identical on all 42
+then-existing scenarios, and a gate=0.0 diagnostic on the coastline-active
+scenarios (philos, shore_*, harbor_*) is *still* byte-identical, because the
+exclusion only bites when the pool has a non-winner **gated + unclaimed + shore**
+return and no fixture had all three: the coastline fixtures keep the pool
+≈{winner} (their shore clutter is never in a vessel's gate), while the one regime
+where the plain pool *does* pull onto shore clutter (AutoFerry urban) ships no
+coastline. So a purpose-built fixture was added — **`shore_clutter_transit`**: a
+vessel runs a channel **parallel to a steep quay** (20 m shoreline ramp) at 22 m
+offshore (clutterPrior c=0, clean births, never in the ADR-0001 no-birth band),
+with a dense line of unclaimed quay returns just inland (c=0.75) in-gate every
+scan. Result (8–10 seeds): plain PDA is dragged ashore — **pos_rmse ≈ 17–18 m**
+— while the land-aware pool holds the track on truth at the measurement-limited
+**≈ 8.5 m**, a paired win on **10/10 seeds**, with track lifetime 1.0 for both.
+Contract test `SyntheticClutterAB.LandAwarePoolResistsDockClutterPull`.
+
+**What to test next.** The remaining gap is real-data: AutoFerry urban ships no
+coastline, so the *measured* urban regression can only be closed by draping a
+synthetic coastline over those channels and re-running land / `_land_pda` /
+`_wateronly`. Until then, `shore_clutter_transit` is the controlled (sim-primary)
+proof, and promotion of `_land_pda` past opt-in still wants the charted-AutoFerry
+confirmation.
 
 ---
 
