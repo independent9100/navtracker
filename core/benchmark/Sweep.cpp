@@ -42,6 +42,7 @@
 #include "core/benchmark/Consistency.hpp"
 #include "core/bias/SensorBiasPairExtractor.hpp"
 #include "core/land/CoastlineModel.hpp"
+#include "core/static/LiveOccupancyModel.hpp"
 #include "core/static/StaticObstacleModel.hpp"
 #include "core/pipeline/Tracker.hpp"
 #include "core/sensor_activity/DeclaredSensorActivity.hpp"
@@ -392,6 +393,18 @@ std::vector<MetricRow> runSweep(
                 }
               }
             }
+          }
+
+          // Stage 1b live occupancy layer: one object wired both as the
+          // birth-suppression model and as the per-scan occupancy feed. Fixed
+          // datum per run → no datum-sink registration needed (as above). The
+          // shared_ptr outlives the synchronous runBenchPmbm call. Null (no
+          // datum) → identical to the base config.
+          std::shared_ptr<LiveOccupancyModel> occupancy;
+          if (config.use_live_occupancy_model && scen.datum.has_value()) {
+            occupancy = std::make_shared<LiveOccupancyModel>(*scen.datum);
+            tracker.setStaticObstacleModel(occupancy.get());
+            tracker.setLiveOccupancyFeed(occupancy.get());
           }
 
           // Same item-9 bias-estimator wiring as the MHT path:

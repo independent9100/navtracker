@@ -732,6 +732,41 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // Stage 1b live occupancy layer (design 2026-07-01): imm_cv_ct_pmbm_land plus
+  // a LiveOccupancyModel that learns persistent + spatially extended structure
+  // (piers, breakwaters) from the per-scan (position, 1−r) feed and softly
+  // suppresses births there ONLY. Compact persistent regions (an anchored boat's
+  // watch circle) and transient uniform clutter are never suppressed, so
+  // dense_clutter does not regress and moored boats are preserved. Birth-channel
+  // only: the learned map is fed via setLiveOccupancyFeed, independent of the
+  // detection model, so it never touches λ_C (the design's hard requirement).
+  // With no datum in the scenario the model is not wired → bit-identical to
+  // imm_cv_ct_pmbm_land, which is the A/B baseline that isolates the layer.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_occupancy";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_land_model = true;             // gate Sweep CoastlineModel wiring
+    c.use_live_occupancy_model = true;   // gate Sweep LiveOccupancyModel wiring
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.adaptive_k_best = false;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.lambda_birth = 1e-5;
+      cfg.min_new_bernoulli_existence = 0.05;  // == adapt; NO birth brake
+      cfg.use_land_model = true;               // spatial birth prior
+      cfg.use_static_obstacle_model = true;    // consult birthSuppression seam
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Task 1 probe: clutter-invariant birth existence. Same as
   // imm_cv_ct_pmbm_adapt but r_new is pinned to a target instead of a
   // fixed absolute λ_birth — fixes the philos over-confident-birth bug.

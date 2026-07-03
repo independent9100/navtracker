@@ -105,6 +105,14 @@ struct Config {
   // Pmbm and the PMBM config sets use_static_obstacle_model. Scenarios with no
   // obstacles silently skip wiring (model stays null → bit-identical).
   bool use_static_obstacle_model{false};
+  // Stage 1b live occupancy layer: when true, Sweep builds a LiveOccupancyModel
+  // anchored at the scenario datum and wires it BOTH as the birth-suppression
+  // model (setStaticObstacleModel) and as the per-scan occupancy feed
+  // (setLiveOccupancyFeed). Only meaningful for tracker_kind == Pmbm with the
+  // PMBM config setting use_static_obstacle_model (to consult the seam). Mutually
+  // exclusive with use_static_obstacle_model (both drive setStaticObstacleModel).
+  // Scenarios with no datum silently skip wiring (model stays null → identical).
+  bool use_live_occupancy_model{false};
 };
 
 // Returns the five baseline configurations in fixed order:
