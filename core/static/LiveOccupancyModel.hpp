@@ -25,6 +25,16 @@ struct LiveOccupancyParams {
   double suppression_max = 0.9;   // cap < tracker hard gate (0.95): soft-only
   double suppression_radius_m = 25.0;  // ramp distance beyond a structure cell
   double erase_floor = 1e-3;      // drop cells whose EWMA decays below this
+  // Clutter-adaptive persistence bar (detector mode). Uniform clutter reaches a
+  // per-cell persistence set by its density; structure exceeds its OWN clutter
+  // background even where absolute persistence does not separate them (philos
+  // structure 0.30 ≫ its clutter; dense clutter 0.28 ≯ its 0.28). The background
+  // is ESTIMATED from the feed — the median persistence of live cells, since the
+  // clutter-map feed is dominated by clutter, not structure — so no external λ_C
+  // is needed (works on real data). Effective bar = max(persistence_bar,
+  // clutter_reject_factor × median). false ⇒ absolute bar only (1b-i behaviour).
+  bool clutter_adaptive = false;
+  double clutter_reject_factor = 1.5;
 };
 
 // A datum-stable live occupancy grid that learns persistent + spatially

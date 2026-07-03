@@ -73,9 +73,12 @@ TEST(OccupancyAB, BirthOnlySuppressionAcrossRegimes) {
   const Config* occ = configByLabel(all, "imm_cv_ct_pmbm_occupancy");
   const Config* occ_sens =
       configByLabel(all, "imm_cv_ct_pmbm_occupancy_sensitive");
+  const Config* detector =
+      configByLabel(all, "imm_cv_ct_pmbm_occupancy_detector");
   ASSERT_NE(land, nullptr);
   ASSERT_NE(occ, nullptr);
   ASSERT_NE(occ_sens, nullptr);
+  ASSERT_NE(detector, nullptr);
 
   // Third occupancy tuning built locally (not a shipped config): very coarse
   // 100 m cells + a 0.2 bar with the default alpha. Brackets the tuning space so
@@ -90,7 +93,7 @@ TEST(OccupancyAB, BirthOnlySuppressionAcrossRegimes) {
   coarse.extended_cells_min = 3;
   occ_coarse.live_occupancy_params = coarse;
 
-  std::vector<Config> configs = {*land, *occ, *occ_sens, occ_coarse};
+  std::vector<Config> configs = {*land, *occ, *occ_sens, occ_coarse, *detector};
 
   // Sim scenarios by label (yardstick + churn decider + dense_clutter safety).
   const std::set<std::string> sim_labels = {"harbor_complete_truth",
@@ -138,17 +141,21 @@ TEST(OccupancyAB, BirthOnlySuppressionAcrossRegimes) {
       const double a = meanMetric(rows, A, s, m);
       const double b = meanMetric(rows, B, s, m);
       const double c = meanMetric(rows, C, s, m);
+      const double d =
+          meanMetric(rows, "imm_cv_ct_pmbm_occupancy_detector", s, m);
       std::cout << "  " << m;
       for (std::size_t k = m.size(); k < 18; ++k) std::cout << ' ';
       std::cout << "  land=" << a << "\t+occ=" << b << "\t+occ_sens=" << c
-                << "\n";
+                << "\tDETECTOR=" << d << "\n";
     }
     // Truth-independent mechanism observation: did the classifier fire? (default
     // occupancy | sensitive occupancy). occ_suppress_hits > 0 means a birth was
     // actually gated at classified structure.
-    for (const char* cfg : {B, C, D}) {
-      const std::string tag =
-          (cfg == B) ? "occ" : (cfg == C) ? "occ_sens" : "occ_coarse";
+    for (const char* cfg : {B, C, D, "imm_cv_ct_pmbm_occupancy_detector"}) {
+      const std::string tag = (cfg == B)   ? "occ"
+                              : (cfg == C)  ? "occ_sens"
+                              : (cfg == D)  ? "occ_coarse"
+                                            : "DETECTOR";
       std::cout << "  [" << tag << "] structures="
                 << meanMetric(rows, cfg, s, "occ_peak_structures")
                 << "  persistence="

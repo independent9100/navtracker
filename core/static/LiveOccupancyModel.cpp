@@ -82,10 +82,25 @@ void LiveOccupancyModel::recomputeStructure() {
   obstacle_center_.clear();
   obstacle_conf_.clear();
 
+  // Effective persistence bar. In detector mode, raise it above the estimated
+  // uniform-clutter background (median live-cell persistence — the clutter-map
+  // feed is clutter-dominated) so dense clutter is rejected relative to its own
+  // density (no death-spiral) while sparse structure, which sits far above its
+  // own clutter, still classifies.
+  double bar = params_.persistence_bar;
+  if (params_.clutter_adaptive && !persistence_.empty()) {
+    std::vector<double> vals;
+    vals.reserve(persistence_.size());
+    for (const auto& kv : persistence_) vals.push_back(kv.second);
+    std::sort(vals.begin(), vals.end());
+    const double median = vals[vals.size() / 2];
+    bar = std::max(bar, params_.clutter_reject_factor * median);
+  }
+
   // Persistent cells (ordered → deterministic component labeling).
   std::map<Cell, double> persistent;
   for (const auto& kv : persistence_)
-    if (kv.second >= params_.persistence_bar) persistent.emplace(kv);
+    if (kv.second >= bar) persistent.emplace(kv);
 
   std::map<Cell, bool> visited;
   for (const auto& seed : persistent) {

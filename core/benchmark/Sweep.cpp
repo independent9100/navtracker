@@ -410,9 +410,15 @@ std::vector<MetricRow> runSweep(
           // datum) → identical to the base config.
           std::shared_ptr<LiveOccupancyModel> occupancy;
           if (config.use_live_occupancy_model && scen.datum.has_value()) {
-            occupancy = std::make_shared<LiveOccupancyModel>(
-                *scen.datum,
-                config.live_occupancy_params.value_or(LiveOccupancyParams{}));
+            auto occ_params =
+                config.live_occupancy_params.value_or(LiveOccupancyParams{});
+            // Detector mode: enable the clutter-adaptive persistence bar. The
+            // clutter background is estimated from the feed (median live-cell
+            // persistence), so no external λ_C is passed — robust on real data.
+            if (config.occupancy_adaptive_clutter_bar)
+              occ_params.clutter_adaptive = true;
+            occupancy =
+                std::make_shared<LiveOccupancyModel>(*scen.datum, occ_params);
             tracker.setStaticObstacleModel(occupancy.get());
             tracker.setLiveOccupancyFeed(occupancy.get());
           }

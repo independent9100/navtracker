@@ -161,6 +161,47 @@ TEST(LiveOccupancyModel, IntrospectionTracksStructureAndHits) {
   EXPECT_EQ(boat.suppressionHits(), 0);
 }
 
+// CLUTTER SAFETY (detector mode): the clutter-adaptive bar rejects dense uniform
+// clutter that an absolute bar would classify — preventing the dense_clutter
+// death-spiral (false hazards everywhere + suppressed births). Uniform cells fed
+// at a sub-structure rate stay below the adaptive bar; a structure cell fed every
+// scan stays above it.
+TEST(LiveOccupancyModel, ClutterAdaptiveBarRejectsDenseUniformClutter) {
+  auto drive = [](LiveOccupancyModel& m) {
+    const Eigen::Vector2d structure(50.0, 50.0);
+    const std::vector<Eigen::Vector2d> clutter = {
+        {3000.0, 0.0}, {3200.0, 0.0}, {3400.0, 0.0}, {3600.0, 0.0}, {3800.0, 0.0}};
+    for (int scan = 0; scan < 30; ++scan) {
+      std::vector<std::pair<Eigen::Vector2d, double>> r = {{structure, 1.0}};
+      if (scan % 3 == 0)  // uniform cells revisited ~1/3 of scans
+        for (const auto& c : clutter) r.emplace_back(c, 1.0);
+      m.observe(feed(r, scan));
+    }
+  };
+  LiveOccupancyParams base;
+  base.cell_size_m = 100.0;
+  base.ewma_alpha = 0.3;
+  base.persistence_bar = 0.2;
+  base.extended_cells_min = 1;  // detector: a single persistent cell classifies
+
+  // Absolute bar (clutter-adaptive OFF): the 1/3-rate clutter cells cross 0.2 →
+  // wrongly classified alongside the structure cell.
+  LiveOccupancyModel abs_m(anchorDatum(), base);
+  drive(abs_m);
+  EXPECT_GT(abs_m.peakStructureCount(), 1)
+      << "absolute bar wrongly classifies uniform clutter cells";
+
+  // Clutter-adaptive ON: bar rises above the uniform-clutter persistence at this
+  // density → only the every-scan structure cell survives.
+  LiveOccupancyParams adapt = base;
+  adapt.clutter_adaptive = true;      // estimate clutter background from the feed
+  adapt.clutter_reject_factor = 2.0;  // bar ≈ 2×median > clutter, < structure
+  LiveOccupancyModel ad_m(anchorDatum(), adapt);
+  drive(ad_m);
+  EXPECT_EQ(ad_m.peakStructureCount(), 1)
+      << "adaptive bar should keep ONLY the structure cell, reject clutter";
+}
+
 // RECOVERY / bounded latency (ADR 0002 amendment rule 3): a static object that
 // starts moving must stop being suppressed within a bounded number of scans, so
 // the mover can birth normally (no permanent "static" pin). At the detector's

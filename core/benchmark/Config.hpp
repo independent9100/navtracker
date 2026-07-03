@@ -121,6 +121,11 @@ struct Config {
   // cells / a lower persistence bar rescue structure classification on
   // realistic (churn / real-radar) detection rates.
   std::optional<LiveOccupancyParams> live_occupancy_params;
+  // Detector mode: when true, Sweep sets the LiveOccupancyModel's
+  // expected_clutter_per_m2 to the PMBM config's clutter_intensity, activating
+  // the clutter-adaptive persistence bar (uniform clutter rejected relative to
+  // its own density). Requires use_live_occupancy_model.
+  bool occupancy_adaptive_clutter_bar{false};
 };
 
 // Returns the five baseline configurations in fixed order:

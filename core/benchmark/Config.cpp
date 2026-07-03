@@ -808,6 +808,48 @@ std::vector<Config> defaultConfigs() {
     configs.push_back(std::move(c));
   }
 
+  // Stage 1b-ii DETECTOR (2026-07-03, presence over classification). Coarse
+  // 100 m grid (R4: fires on philos projection-smeared returns where 25-50 m
+  // don't), low extent floor (R4: charted structure p50 = 1 cell), and the
+  // clutter-ADAPTIVE persistence bar (occupancy_adaptive_clutter_bar → Sweep
+  // feeds the tracker's clutter_intensity in) so uniform clutter is rejected
+  // relative to its own density (no dense_clutter death-spiral). Suppression is
+  // conservation-by-construction (every suppressed cell is an emitted hazard);
+  // vacated cells recover within a bounded latency. A/B vs imm_cv_ct_pmbm_land.
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_occupancy_detector";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_land_model = true;
+    c.use_live_occupancy_model = true;
+    c.occupancy_adaptive_clutter_bar = true;  // clutter-adaptive bar from λ_C
+    LiveOccupancyParams lp;
+    lp.cell_size_m = 100.0;
+    lp.ewma_alpha = 0.3;
+    lp.persistence_bar = 0.2;        // low floor; the adaptive bar does rejection
+    lp.extended_cells_min = 1;       // compact structure/craft classifies (safe:
+                                     // conservation + recovery + corroboration)
+    lp.clutter_reject_factor = 1.5;
+    c.live_occupancy_params = lp;
+    c.pmbm_config = []() {
+      auto cfg = makePmbmConfig();
+      cfg.adaptive_birth = true;
+      cfg.adaptive_k_best = false;
+      cfg.k_best_per_hypothesis = 1;
+      cfg.lambda_birth = 1e-5;
+      cfg.min_new_bernoulli_existence = 0.05;
+      cfg.use_land_model = true;
+      cfg.use_static_obstacle_model = true;
+      return cfg;
+    };
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
   // Task 1 probe: clutter-invariant birth existence. Same as
   // imm_cv_ct_pmbm_adapt but r_new is pinned to a target instead of a
   // fixed absolute λ_birth — fixes the philos over-confident-birth bug.
