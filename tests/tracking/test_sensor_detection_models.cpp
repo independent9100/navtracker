@@ -353,23 +353,48 @@ TEST(FixedSensorDetectionModel, SourceKeyedMissPdRespectsSourceEntry) {
 
 // R8.4 / increment 6b — CoverageSector::fromReturns self-estimates the swept
 // footprint from a scan's returns (the same self-estimation pattern as the
-// clutter-adaptive bar). The swept sector is the SMALLEST arc covering all
-// return bearings about the sensor; range is the farthest return (padded).
+// clutter-adaptive bar). The swept sector is the largest CONTIGUOUS cluster of
+// return bearings about the sensor (a physical burst sweeps only a small arc);
+// range is the farthest return in that cluster (padded).
 TEST(CoverageSector, FromReturnsEstimatesSweptSectorAndRange) {
   using Cov = ISensorDetectionModel::CoverageSector;
   const Eigen::Vector2d sensor(0.0, 0.0);
-  // Returns over the NE quadrant: bearings 0°, 45°, 90°; farthest 100 m.
+  // A tight cluster: bearings 0°, ~5.7°, ~11.3° (a realistic ~11° burst span);
+  // farthest return (100, 20).
   const std::vector<Eigen::Vector2d> pts = {
-      {100.0, 0.0}, {70.0, 70.0}, {0.0, 100.0}};
+      {100.0, 0.0}, {100.0, 10.0}, {100.0, 20.0}};
   const Cov c = Cov::fromReturns(sensor, pts, /*az_pad_rad=*/0.0,
                                  /*range_pad_frac=*/0.0);
   ASSERT_TRUE(c.valid);
   for (const auto& p : pts) EXPECT_TRUE(c.covers(p)) << "built-from return not covered";
-  EXPECT_NEAR(c.max_range_m, 100.0, 1e-9);
-  EXPECT_FALSE(c.covers(Eigen::Vector2d(1000.0, 1000.0)))  // in sector, out of range
+  EXPECT_NEAR(c.max_range_m, std::hypot(100.0, 20.0), 1e-9);
+  EXPECT_FALSE(c.covers(Eigen::Vector2d(1000.0, 50.0)))  // in sector, out of range
       << "beyond-range point wrongly covered";
-  EXPECT_FALSE(c.covers(Eigen::Vector2d(-50.0, -50.0)))    // in range, out of sector
+  EXPECT_FALSE(c.covers(Eigen::Vector2d(-50.0, -50.0)))  // out of sector
       << "opposite-sector point wrongly covered";
+}
+
+// The multi-cluster guard (6c): a wide burst whose returns form two clusters
+// with a large internal gap is TWO echo clusters sharing one timestamp — an
+// 80 ms burst cannot physically sweep across a 90° gap. The estimator must keep
+// only the largest contiguous cluster and NOT claim the unswept gap as observed
+// (claiming it would decay cells the sensor never looked at — the unsafe
+// direction, and it lands hardest on the dense close_approach clip).
+TEST(CoverageSector, FromReturnsKeepsLargestClusterNotTheInterClusterGap) {
+  using Cov = ISensorDetectionModel::CoverageSector;
+  const Eigen::Vector2d sensor(0.0, 0.0);
+  const std::vector<Eigen::Vector2d> pts = {
+      {100.0, 0.0}, {100.0, 5.0}, {100.0, 10.0},  // 3-return cluster near 0–5.7°
+      {-17.0, 97.0}, {-20.0, 98.0}};               // 2-return cluster near 100°
+  const Cov c = Cov::fromReturns(sensor, pts, /*az_pad_rad=*/0.0,
+                                 /*range_pad_frac=*/0.0);  // default ~20° gap
+  ASSERT_TRUE(c.valid);
+  EXPECT_TRUE(c.covers(Eigen::Vector2d(100.0, 0.0)));   // kept (larger) cluster
+  EXPECT_TRUE(c.covers(Eigen::Vector2d(100.0, 10.0)));
+  EXPECT_FALSE(c.covers(Eigen::Vector2d(70.0, 70.0)))   // 45° — the unswept gap
+      << "inter-cluster gap wrongly claimed as swept (over-claim, unsafe)";
+  EXPECT_FALSE(c.covers(Eigen::Vector2d(-17.0, 97.0)))  // dropped smaller cluster
+      << "dropped cluster should wait for its own burst";
 }
 
 // Degenerate inputs: empty ⇒ invalid (consumer assumes full coverage); a single
@@ -385,12 +410,13 @@ TEST(CoverageSector, FromReturnsDegenerateCases) {
   EXPECT_FALSE(one.covers(Eigen::Vector2d(0.0, 100.0)));  // 90° off, outside pad
 }
 
-// The circular span handles the ±180° wrap: returns straddling due-west must
-// yield the NARROW western arc, not the wide eastern complement.
+// The circular span handles the ±180° wrap: a tight cluster straddling due-west
+// (≈ ±175°, a ~10° span) must yield the NARROW western arc, not the wide eastern
+// complement.
 TEST(CoverageSector, FromReturnsHandlesWraparound) {
   using Cov = ISensorDetectionModel::CoverageSector;
   const Cov c = Cov::fromReturns(Eigen::Vector2d(0.0, 0.0),
-                                 {{-100.0, 18.0}, {-100.0, -18.0}},  // ≈ ±170°
+                                 {{-100.0, 9.0}, {-100.0, -9.0}},  // ≈ ±175°
                                  /*az_pad_rad=*/0.0, /*range_pad_frac=*/0.0);
   ASSERT_TRUE(c.valid);
   EXPECT_TRUE(c.covers(Eigen::Vector2d(-100.0, 0.0)));   // due west — inside the arc

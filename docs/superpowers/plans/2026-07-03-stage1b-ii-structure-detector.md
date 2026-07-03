@@ -132,6 +132,29 @@ is a config (`imm_cv_ct_pmbm_occupancy_detector`), not a new class.
      DEPARTED vessel; ferry-vacated cells after t≈98) + KEEP_MIXED departure
      protection on `close_approach`; then AIS veto (synthetics/HAXR only — all
      labelled philos clips are zero-AIS), then chart corroboration.
+     **Scan-batching MEASURED 2026-07-03 (unblocks 6c): philos bursts ARE
+     sub-360°.** Grouping fixture rows by identical `tod`: cadence 0.063–0.26 s,
+     median azimuth span per burst 2.9° (sunset_cruise) / 2.8° (close_approach) /
+     4.7° (ais_ferry_near); zero bursts span >350° in any labelled clip. The
+     self-estimated sector collapses to full circle NOWHERE — the mechanism
+     bites on philos. Consequence: a cell is observed ~once per antenna
+     rotation, so decay proceeds per-rotation, not per-burst — expected.
+     **Caveat found — non-contiguous bursts overclaim coverage.** 68/1330 (5%)
+     sunset_cruise and 146/882 (17%) close_approach bursts span >30°, and 100%
+     of those are MULTI-CLUSTER (largest internal bearing gap 80–169°; a 0.08 s
+     burst cannot sweep 175° — these are separate echo clusters sharing a
+     timestamp). Smallest-covering-arc claims the unswept gap between clusters
+     as observed-empty → over-decay there, the UNSAFE direction.
+     **GUARD DONE (before 6c, this batch):** `CoverageSector::fromReturns` now
+     splits a scan's return bearings into contiguous clusters (internal gap >
+     `cluster_gap_rad`, default ~20°) and keeps ONLY the largest cluster's arc —
+     the single-sector safe fallback (under-claims; other clusters wait for their
+     own narrower bursts). Config `coverage_cluster_gap_rad`. New unit test
+     `FromReturnsKeepsLargestClusterNotTheInterClusterGap` (the 45°-gap point is
+     no longer claimed); the synthetic estimator/wiring tests were retightened to
+     realistic <20°-span clusters. Full suite 934/934. The remaining 6c work is
+     the actual clip validation (loiterer/ferry decay-out + KEEP_MIXED
+     protection), now safe to run.
    - 6d TODO — docs (folds into increment 9): live-static-occupancy.md four-part +
      learning chapter + figure for coverage-aware decay.
 7. DONE — recovery gate SCENARIO `harbor_anchored_gets_underway` (stop→go boat

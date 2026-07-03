@@ -1710,7 +1710,7 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
         if (sit == cov_sensor.end()) continue;
         kv.second.coverage = ISensorDetectionModel::CoverageSector::fromReturns(
             sit->second, kv.second.positions, cfg_.coverage_az_pad_rad,
-            cfg_.coverage_range_pad_frac);
+            cfg_.coverage_range_pad_frac, cfg_.coverage_cluster_gap_rad);
       }
     }
     std::vector<ISensorDetectionModel::ScanObservation> bundle;

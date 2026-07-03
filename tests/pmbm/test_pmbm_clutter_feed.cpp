@@ -208,12 +208,12 @@ TEST(PmbmOccupancyFeed, EstimatesCoverageSectorWhenEnabled) {
   PmbmTracker t(ekf, c);
   SpyOccupancyFeed occ;
   t.setLiveOccupancyFeed(&occ);
-  // Returns over the NE quadrant from a sensor at the origin (posMeas leaves
-  // sensor_position_enu = 0).
+  // A tight cluster of returns (≈ 0–11°) from a sensor at the origin (posMeas
+  // leaves sensor_position_enu = 0).
   for (int k = 0; k < 8; ++k) {
     t.predict(Timestamp::fromSeconds(k));
-    t.processBatch({posMeas(100.0, 0.0, k), posMeas(70.0, 70.0, k),
-                    posMeas(0.0, 100.0, k)});
+    t.processBatch({posMeas(100.0, 0.0, k), posMeas(100.0, 10.0, k),
+                    posMeas(100.0, 20.0, k)});
   }
   ASSERT_FALSE(occ.bundles.empty());
   bool saw_valid = false;
@@ -222,7 +222,7 @@ TEST(PmbmOccupancyFeed, EstimatesCoverageSectorWhenEnabled) {
       if (obs.coverage.valid) {
         saw_valid = true;
         EXPECT_TRUE(obs.coverage.covers(Eigen::Vector2d(100.0, 0.0)));
-        EXPECT_TRUE(obs.coverage.covers(Eigen::Vector2d(0.0, 100.0)));
+        EXPECT_TRUE(obs.coverage.covers(Eigen::Vector2d(100.0, 20.0)));
         EXPECT_FALSE(obs.coverage.covers(Eigen::Vector2d(-100.0, -100.0)))
             << "opposite-sector point wrongly inside the estimated footprint";
       }

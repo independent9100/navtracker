@@ -563,6 +563,12 @@ class PmbmTracker {
     bool estimate_coverage_sector = false;
     double coverage_az_pad_rad = 0.087;    // ≈ 5° half-widen each side
     double coverage_range_pad_frac = 0.1;  // 10 % beyond the farthest return
+    // Return bearings separated by more than this within one scan are treated as
+    // SEPARATE echo clusters (a burst can't sweep across a wide gap); only the
+    // largest cluster's arc is claimed as swept — the unswept inter-cluster gap
+    // is not (over-claiming it is the unsafe direction). ≈ 20°; philos multi-
+    // cluster bursts show 80–169° internal gaps, well above this.
+    double coverage_cluster_gap_rad = 0.349;
   };
 
   // Birth intensity callback. Called once per predict() (after the

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -167,55 +168,100 @@ class ISensorDetectionModel {
 
     // Self-estimate a coverage footprint from the returns a sensor produced this
     // scan (the same self-estimation pattern as the clutter-adaptive bar — no
-    // configured sector, portable across datasets). The swept sector is the
-    // SMALLEST arc covering all return bearings about `sensor` (found via the
-    // largest circular gap), widened by `az_pad_rad`; the range is the farthest
-    // return, scaled by (1 + `range_pad_frac`). This UNDER-estimates coverage
-    // (returns land only where the sweep actually hit something), which is the
-    // safe error direction: cells outside the estimate simply don't decay, so
+    // configured sector, portable across datasets). The swept sector is the arc
+    // of the largest CONTIGUOUS cluster of return bearings about `sensor`,
+    // widened by `az_pad_rad`; range = the farthest return IN that cluster,
+    // scaled by (1 + `range_pad_frac`).
+    //
+    // Clustering matters: a physical burst sweeps only a small arc, so return
+    // bearings separated by more than `cluster_gap_rad` are SEPARATE echo
+    // clusters that merely share one timestamp (measured on philos: 5–17 % of
+    // bursts are multi-cluster with 80–169° internal gaps). Claiming the unswept
+    // arc BETWEEN clusters as observed would decay cells the sensor never looked
+    // at — over-claiming, the unsafe direction. Keeping only the largest cluster
+    // (others are credited by their own narrower bursts) UNDER-estimates coverage
+    // instead, the safe direction: cells outside the estimate don't decay, so
     // hazards persist rather than being wrongly forgotten. Empty ⇒ invalid
     // (valid=false ⇒ the consumer assumes full coverage).
     static CoverageSector fromReturns(
         const Eigen::Vector2d& sensor,
         const std::vector<Eigen::Vector2d>& points, double az_pad_rad = 0.0,
-        double range_pad_frac = 0.0) {
+        double range_pad_frac = 0.0,
+        double cluster_gap_rad = 0.3490658503988659 /* ≈ 20° */) {
       CoverageSector c;
       c.sensor_enu = sensor;
       if (points.empty()) {
         c.valid = false;
         return c;
       }
-      std::vector<double> az;
-      az.reserve(points.size());
-      double max_r = 0.0;
+      const double full = DetectionParams::kFullCircleRad;
+      std::vector<std::pair<double, double>> br;  // (bearing, range) per return
+      br.reserve(points.size());
       for (const auto& p : points) {
         const Eigen::Vector2d d = p - sensor;
-        max_r = std::max(max_r, d.norm());
-        az.push_back(std::atan2(d.y(), d.x()));
+        br.emplace_back(std::atan2(d.y(), d.x()), d.norm());
       }
+      std::sort(br.begin(), br.end(),
+                [](const std::pair<double, double>& a,
+                   const std::pair<double, double>& b) {
+                  return a.first < b.first;
+                });
+      const std::size_t n = br.size();
       c.valid = true;
-      c.max_range_m = max_r * (1.0 + range_pad_frac);
-      std::sort(az.begin(), az.end());
-      // Largest circular gap between consecutive bearings (incl. the wrap gap
-      // from the max bearing back to the min). The covered arc is its complement.
-      double gap_lo = az.back();
-      double gap_hi = az.front() + DetectionParams::kFullCircleRad;
-      double max_gap = gap_hi - gap_lo;
-      for (std::size_t i = 1; i < az.size(); ++i) {
-        const double g = az[i] - az[i - 1];
-        if (g > max_gap) {
-          max_gap = g;
-          gap_lo = az[i - 1];
-          gap_hi = az[i];
+      if (n == 1) {  // a lone return → a bearing ray widened only by the padding
+        c.sector_center_rad = br[0].first;
+        c.sector_width_rad = std::min(2.0 * az_pad_rad, full);
+        c.max_range_m = br[0].second * (1.0 + range_pad_frac);
+        return c;
+      }
+      // Cut the circle at the LARGEST gap so no cluster wraps, then walk CCW,
+      // unwrapping bearings into a monotone sequence.
+      std::size_t gmax_i = 0;
+      double gmax = -1.0;
+      for (std::size_t i = 0; i < n; ++i) {
+        const double g = (i + 1 < n) ? br[i + 1].first - br[i].first
+                                     : br[0].first + full - br[n - 1].first;
+        if (g > gmax) {
+          gmax = g;
+          gmax_i = i;
         }
       }
-      const double covered = DetectionParams::kFullCircleRad - max_gap;
-      // Sector centre = diametrically opposite the gap centre (covers() wraps
-      // the centre via std::remainder, so no explicit normalisation needed).
-      c.sector_center_rad =
-          0.5 * (gap_lo + gap_hi) + 0.5 * DetectionParams::kFullCircleRad;
-      c.sector_width_rad = std::min(covered + 2.0 * az_pad_rad,
-                                    DetectionParams::kFullCircleRad);
+      std::vector<double> az_u, r_u;
+      az_u.reserve(n);
+      r_u.reserve(n);
+      for (std::size_t s = 0; s < n; ++s) {
+        const std::size_t idx = (gmax_i + 1 + s) % n;
+        double a = br[idx].first;
+        if (!az_u.empty())
+          while (a < az_u.back()) a += full;  // unwrap: monotone increasing
+        az_u.push_back(a);
+        r_u.push_back(br[idx].second);
+      }
+      // Split into contiguous clusters (internal gap > cluster_gap_rad); keep the
+      // one with the most returns (tie → the wider arc).
+      std::size_t best_lo = 0, best_hi = 0, best_cnt = 0, lo = 0;
+      for (std::size_t i = 1; i <= n; ++i) {
+        const bool split = (i == n) || (az_u[i] - az_u[i - 1] > cluster_gap_rad);
+        if (split) {
+          const std::size_t cnt = i - lo;
+          const double span = az_u[i - 1] - az_u[lo];
+          const double best_span =
+              best_cnt > 0 ? az_u[best_hi] - az_u[best_lo] : -1.0;
+          if (cnt > best_cnt || (cnt == best_cnt && span > best_span)) {
+            best_cnt = cnt;
+            best_lo = lo;
+            best_hi = i - 1;
+          }
+          lo = i;
+        }
+      }
+      const double cmin = az_u[best_lo], cmax = az_u[best_hi];
+      double cmax_r = 0.0;
+      for (std::size_t k = best_lo; k <= best_hi; ++k)
+        cmax_r = std::max(cmax_r, r_u[k]);
+      c.sector_center_rad = 0.5 * (cmin + cmax);
+      c.sector_width_rad = std::min((cmax - cmin) + 2.0 * az_pad_rad, full);
+      c.max_range_m = cmax_r * (1.0 + range_pad_frac);
       return c;
     }
   };
