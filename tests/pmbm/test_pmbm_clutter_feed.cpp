@@ -6,6 +6,7 @@
 #include "core/estimation/EkfEstimator.hpp"
 #include "core/pmbm/PmbmTracker.hpp"
 #include "core/types/Measurement.hpp"
+#include "ports/ILiveOccupancyFeed.hpp"
 #include "ports/ISensorDetectionModel.hpp"
 
 using navtracker::ConstantVelocity2D;
@@ -31,6 +32,17 @@ struct SpyDetectionModel : ISensorDetectionModel {
     return p;
   }
   void observe(const std::vector<ISensorDetectionModel::ScanObservation>& by_sensor) override {
+    ++observe_calls;
+    bundles.push_back(by_sensor);
+  }
+};
+
+// Records every occupancy feed bundle (the Stage 1b sink).
+struct SpyOccupancyFeed : navtracker::ILiveOccupancyFeed {
+  int observe_calls = 0;
+  std::vector<std::vector<ISensorDetectionModel::ScanObservation>> bundles;
+  void observe(const std::vector<ISensorDetectionModel::ScanObservation>&
+                   by_sensor) override {
     ++observe_calls;
     bundles.push_back(by_sensor);
   }
@@ -142,6 +154,48 @@ TEST(PmbmClutterFeed, TwoTargetsBothReturnsClaimed) {
 // clutter) is an accepted limitation until the feed carries a claim SET. The
 // survivor-claim carry itself (higher-existence, never drop a real claim for
 // none) is still covered by TwoTargetsBothReturnsClaimed above.
+
+// Stage 1b: the live occupancy sink is fed the per-scan bundle INDEPENDENTLY of
+// the detection model. With feed_clutter_map OFF a wired detection model is NOT
+// fed (no λ_C coupling — the design's hard requirement), yet the occupancy sink
+// still receives the (position, 1 − r) feed for birth-channel learning.
+TEST(PmbmOccupancyFeed, FedWithoutDetectionCoupling) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+  PmbmTracker::Config c = cfg();
+  c.feed_clutter_map = false;  // detection model must NOT be fed
+  PmbmTracker t(ekf, c);
+  auto detspy = std::make_shared<SpyDetectionModel>();
+  SpyOccupancyFeed occspy;
+  t.setSensorDetectionModel(detspy);
+  t.setLiveOccupancyFeed(&occspy);
+  for (int k = 0; k < 8; ++k) {
+    t.predict(Timestamp::fromSeconds(k));
+    t.processBatch({posMeas(100.0, 0.0, k)});
+  }
+  EXPECT_EQ(detspy->observe_calls, 0);  // λ_C never adapted (decoupled)
+  EXPECT_GE(occspy.observe_calls, 1);   // occupancy learns
+  bool saw_positions = false;
+  for (const auto& bundle : occspy.bundles)
+    for (const auto& obs : bundle)
+      if (!obs.clutter_positions.empty()) saw_positions = true;
+  EXPECT_TRUE(saw_positions);
+}
+
+// Off (no sink wired) + feed_clutter_map off → the producer block never runs →
+// bit-identical to today's (no occupancy call, no detection call).
+TEST(PmbmOccupancyFeed, UnwiredIsInert) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+  PmbmTracker t(ekf, cfg());  // feed_clutter_map off, no sinks
+  auto detspy = std::make_shared<SpyDetectionModel>();
+  t.setSensorDetectionModel(detspy);
+  for (int k = 0; k < 6; ++k) {
+    t.predict(Timestamp::fromSeconds(k));
+    t.processBatch({posMeas(0.0, 0.0, k)});
+  }
+  EXPECT_EQ(detspy->observe_calls, 0);
+}
 
 // Determinism: identical inputs → identical observe() call count and weights.
 TEST(PmbmClutterFeed, DeterministicFeed) {

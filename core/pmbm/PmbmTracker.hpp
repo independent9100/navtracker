@@ -11,6 +11,7 @@
 #include "core/types/Timestamp.hpp"
 #include "core/types/Track.hpp"
 #include "ports/IEstimator.hpp"
+#include "ports/ILiveOccupancyFeed.hpp"
 #include "ports/ISensorBiasProvider.hpp"
 #include "ports/ISensorDetectionModel.hpp"
 #include "ports/ILandModel.hpp"
@@ -657,6 +658,16 @@ class PmbmTracker {
     obstacle_model_ = m;
   }
 
+  // Stage 1b: optional live occupancy/structure sink. When set, the per-scan
+  // clutter-labeled feed (the same (position, 1 − r) bundle the feed_clutter_map
+  // producer builds) is ALSO handed to this sink so it can learn persistent
+  // extended structure. Independent of the detection model → NO λ_C coupling.
+  // Null (default) → bit-identical to today's (the producer builds/feeds nothing
+  // unless feed_clutter_map is on). The sink typically also implements
+  // IStaticObstacleModel and is wired via setStaticObstacleModel to close the
+  // loop (learned structure → birth suppression).
+  void setLiveOccupancyFeed(ILiveOccupancyFeed* f) { occupancy_feed_ = f; }
+
   // Next Bernoulli id that will be minted (introspection / tests).
   BernoulliId nextBernoulliId() const noexcept { return next_bernoulli_id_; }
 
@@ -799,6 +810,7 @@ class PmbmTracker {
   const ISensorActivity* sensor_activity_{nullptr};
   const ILandModel* land_model_{nullptr};
   const IStaticObstacleModel* obstacle_model_{nullptr};
+  ILiveOccupancyFeed* occupancy_feed_{nullptr};
   // Task 5: per-Bernoulli "last activity check" timestamp for the sensor-
   // activity path. Keyed by BernoulliId; absent = use b.birth_time as the
   // window start.  Updated to current_time_ each time a surveillance miss

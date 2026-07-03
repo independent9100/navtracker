@@ -1631,8 +1631,14 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
   // for now — the learned occupancy is birth-channel-only and a no-return scan
   // carries no positional evidence to feed; revisit if a duty-cycle decay knob
   // is added.
-  if (cfg_.feed_clutter_map && detection_model_ != nullptr &&
-      !density_.mbm.empty() && !scan.empty()) {
+  // The bundle is built when EITHER consumer is wired: the detection model
+  // (feed_clutter_map → λ_C adaptation) or the live occupancy sink (birth-only,
+  // no λ_C). With neither wired the block never runs → bit-identical to today's.
+  const bool feed_detection =
+      cfg_.feed_clutter_map && detection_model_ != nullptr;
+  const bool feed_occupancy = occupancy_feed_ != nullptr;
+  if ((feed_detection || feed_occupancy) && !density_.mbm.empty() &&
+      !scan.empty()) {
     const auto& dom = *std::max_element(
         density_.mbm.begin(), density_.mbm.end(),
         [](const GlobalHypothesis& a, const GlobalHypothesis& b) {
@@ -1691,7 +1697,8 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     std::vector<ISensorDetectionModel::ScanObservation> bundle;
     bundle.reserve(by_sensor.size());
     for (auto& kv : by_sensor) bundle.push_back(std::move(kv.second));
-    detection_model_->observe(bundle);
+    if (feed_detection) detection_model_->observe(bundle);
+    if (feed_occupancy) occupancy_feed_->observe(bundle);
   }
 
   aggregated_tracks_dirty_ = true;
