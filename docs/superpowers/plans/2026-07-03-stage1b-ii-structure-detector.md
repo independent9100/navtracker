@@ -127,5 +127,16 @@ the student"):
   2.89 m/s late), in `tests/replay/test_philos_sunset_labels.cpp`, pass TODAY
   under `imm_cv_ct_pmbm_land`. sunset_cruise is zero-AIS/no-truth so it is run
   through the tracker directly (empty truth ⇒ no Sweep slices).
+- DONE — R8.6 items 1/4/5: `KEEP_MIXED` label class + `close_approach_labels.csv`
+  (2 video-verified regions); shared replay harness `PhilosLabelReplay.hpp`
+  (sunset bit-identical after extraction); close_approach KEEP-stress baseline
+  (`tracks_on_keep=5570`, `false_on_suppress=0`, `false_unlabeled=15182`; both
+  KEEP_MIXED canaries COVERED, 0.14 m / 1.40 m); eval-log entry + R4 ceiling
+  correction. Full suite 925/925. R8.6 items 2 (CPA fixture) + 3 (sensor-doc
+  note) deferred as an independent task; `almost_cross`/`sailboats_busy`
+  anchorage canaries deferred pending FOV-confirming video passes.
 - TODO — R8.4 (observed-empty / coverage-aware decay) folds into increment 6.
+  Coverage descriptor decided (R8.6 amendment): feed carries (sensor ENU, max
+  range, azimuth sector); disc = degenerate [0°,360°); synthetics pass full
+  circle (bit-identical), philos self-estimates each burst's sector.
 - TODO — R8.5 comparison-baselines philos-metric note.

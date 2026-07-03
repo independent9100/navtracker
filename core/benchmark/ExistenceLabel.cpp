@@ -37,6 +37,7 @@ ExistenceLabelClass parseClass(const std::string& s) {
   if (s == "KEEP_VESSEL") return ExistenceLabelClass::KeepVessel;
   if (s == "SUPPRESS_STRUCTURE") return ExistenceLabelClass::SuppressStructure;
   if (s == "KEEP_ANCHORAGE") return ExistenceLabelClass::KeepAnchorage;
+  if (s == "KEEP_MIXED") return ExistenceLabelClass::KeepMixed;
   return ExistenceLabelClass::Unknown;
 }
 

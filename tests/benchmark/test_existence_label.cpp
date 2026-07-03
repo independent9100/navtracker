@@ -59,6 +59,21 @@ TEST(ExistenceLabel, ParsesWindowedAndWholeClipRows) {
   EXPECT_EQ(mystery->notes, "defaults to KEEP; pending");
 }
 
+// R8.6 — KEEP_MIXED: a region containing both vessels and structure. The
+// loader must recognise it as its own class (presence-gated in the gates), not
+// silently fold it into Unknown/KeepVessel.
+TEST(ExistenceLabel, ParsesKeepMixedLabel) {
+  const std::string csv =
+      "region_id,source_rank,lat,lon,radius_m,t_start_s,t_end_s,label,evidence,confidence,notes\n"
+      "dock,rank1,42.35853,-71.08768,70,,,KEEP_MIXED,berthed + sailing dinghies,med,mixed region\n";
+  std::istringstream is(csv);
+  const auto labels = parseExistenceLabels(is);
+  ASSERT_EQ(labels.size(), 1u);
+  EXPECT_EQ(labels[0].label, ExistenceLabelClass::KeepMixed);
+  EXPECT_TRUE(labels[0].covers_whole_clip);
+  EXPECT_DOUBLE_EQ(labels[0].radius_m, 70.0);
+}
+
 // Window membership: whole-clip labels are always active; windowed labels test
 // the relative offset against the clip start.
 TEST(ExistenceLabel, ActiveAtUnixRespectsWindow) {
@@ -108,4 +123,29 @@ TEST(ExistenceLabel, SunsetCruiseFixtureLoads) {
   EXPECT_GT(a->t_end_s, 90.0);
   EXPECT_LT(b->t_start_s, 90.0);
   EXPECT_GT(b->t_end_s, 110.0);  // must still cover the "reports motion by ~110-116" window
+}
+
+// R8.6 — the committed close_approach fixture parses and contains the two
+// video-verified KEEP_MIXED regions (guards the column-count trap: a stray
+// comma in evidence/confidence would silently drop a row or shift fields).
+TEST(ExistenceLabel, CloseApproachFixtureLoads) {
+  const std::string path =
+      std::string(NAVTRACKER_SOURCE_DIR) +
+      "/tests/fixtures/philos/labels/close_approach_labels.csv";
+  std::ifstream f(path);
+  ASSERT_TRUE(f.good()) << "missing fixture: " << path;
+  const auto labels = parseExistenceLabels(f);
+  ASSERT_EQ(labels.size(), 2u);
+  for (const auto& l : labels) {
+    EXPECT_EQ(l.label, ExistenceLabelClass::KeepMixed)
+        << l.region_id << " should be KEEP_MIXED";
+    EXPECT_TRUE(l.covers_whole_clip) << l.region_id << " should be whole-clip";
+    EXPECT_GT(l.radius_m, 0.0);
+  }
+  const ExistenceLabel* dock = find(labels, "sailing_dock");
+  ASSERT_NE(dock, nullptr);
+  EXPECT_DOUBLE_EQ(dock->radius_m, 70.0);
+  EXPECT_NEAR(dock->lat_deg, 42.35853, 1e-5);
+  EXPECT_NEAR(dock->lon_deg, -71.08768, 1e-5);
+  EXPECT_NE(find(labels, "far_bank_line"), nullptr);
 }

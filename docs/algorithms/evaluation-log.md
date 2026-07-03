@@ -8,6 +8,58 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-03 — R8.6: `close_approach` KEEP-stress benchmark (KEEP_MIXED labels, densest clip) + R4 ceiling correction [Cl-3]
+
+Second operator video pass (Charles River sailing basin, regatta-density
+dinghies). Added the `KEEP_MIXED` existence-label class (`core/benchmark/
+ExistenceLabel`): a region holding vessels AND structure, **presence-gated** — a
+confirmed track OR an emitted static hazard satisfies; a departure from the
+region must become a track. New fixture `tests/fixtures/philos/labels/
+close_approach_labels.csv` (2 regions, both KEEP_MIXED, video-verified):
+`sailing_dock` (R4 ranks 1–2, 42.35853 N/−71.08768 E, r70 — float/dock lined
+with ~25 berthed dinghies + 3–4 crewed dinghies sailing beside it, right camera
+t≈5 s) and `far_bank_line` (ex-UNKNOWN shore group, 42.3570 N/−71.0837 E, r80 —
+far-bank small-craft line, cells persistent across recording days ⇒ fixed
+floats/moorings).
+
+The label-scored replay harness is now shared (`tests/replay/
+PhilosLabelReplay.hpp`): `runClip(clip, config)` + `decompose(run, labels)`,
+used by both sunset_cruise and close_approach. The sunset_cruise numbers are
+bit-identical after the extraction (1633 / 3070 / 18295; canaries 0.17/0.47/1.2/
+3.6 m; stop→go id 13 @ 2.89 m/s) — the refactor changed no behaviour.
+
+**close_approach KEEP-stress baseline (imm_cv_ct_pmbm_land, 880 scans,
+`tests/replay/test_philos_close_approach_labels.cpp`):** `tracks_on_keep = 5570`
+(densest clip — this is the value any suppressor MUST hold flat here),
+`false_on_suppress = 0` (no SUPPRESS region labelled on this clip),
+`false_unlabeled = 15182`. Both KEEP_MIXED canaries **COVERED**: a confirmed
+track sits 0.14 m from `sailing_dock` and 1.40 m from `far_bank_line` — the
+tracks land on the exact returns the labels were located from. This clip is now
+the standing **KEEP-stress benchmark**: increment 6's suppressor is a regression
+if `tracks_on_keep` falls here.
+
+**R4 ceiling correction (item 5).** R4 (below) classified the philos over-count
+as ~49.5% SUPPRESS_CHARTED (deletable), ~32.5% KEEP_INCOV_UNCHARTED with the
+42.3585 N anchorage "the largest single driver", and 14.2% UNKNOWN "chart silent,
+defaults to KEEP, needs a visual pass". This video pass CLOSES that visual pass
+for close_approach: the largest KEEP driver (`sailing_dock` = R4 ranks 1–2) and
+the largest in-coverage ex-UNKNOWN group (`far_bank_line`) are both **frame-
+confirmed to contain real craft** → KEEP_MIXED, presence-gated, definitively
+**not delete-suppressible**. So the honestly-deletable ceiling is now firmly
+bounded at ≤ the 49.5% SUPPRESS_CHARTED mass; the earlier optimism that some of
+the 14.2% UNKNOWN might be additional suppressible structure is closed on this
+clip — it resolves toward KEEP, not toward more deletable structure. Any philos
+suppressor exceeding ~50% removal deletes real craft, now with direct frame
+evidence, not just chart distance.
+
+**Deferred (independent, do not gate the coverage-aware-decay work):** R8.6 item
+2 (real-data CPA/collision fixture on the t≈61 s dinghy contact) + item 3 (the
+15 m plot-floor sensor-doc note) trail as a separate task. The chart-derived
+anchorage canaries for `almost_cross`/`sailboats_busy` are also deferred: the
+anchorage sits 200–800 m off each clip's own-ship track and I have not confirmed
+it is in their radar/camera FOV — asserting an unverified KEEP region would be a
+fake gate. They get labels when their own video pass lands.
+
 ## 2026-07-03 — R8: video-derived existence labels + label-aware philos decomposition + binary gates on sunset_cruise [Cl-3]
 
 Built the "exam before the student" (the measurement surface the increment-6
@@ -126,7 +178,11 @@ over-count mass, not all of it — ~35% is real craft it MUST preserve (ADR
 quantitatively confirming its `card_err` 3.95→−3.25 over-deletion. This is the
 anti-gaming bound the discussion asked for: any philos suppression that removes
 > ~50% of the persistent mass is deleting real craft, regardless of what the
-AIS-only truth scores.
+AIS-only truth scores. **(Updated 2026-07-03, R8.6 — see the entry at the top:**
+the largest KEEP driver (ranks 1–2, 42.3585 N anchorage) and the largest
+in-coverage ex-UNKNOWN group are now frame-confirmed KEEP_MIXED on
+`close_approach`, tightening the ≤50%-deletable bound with direct video evidence
+and closing the hope that the UNKNOWN slice hides more suppressible structure.**)
 
 **Detector-design finding (the load-bearing one):** dwell/persistence does NOT
 separate structure (p50 0.68) from craft (p50 0.64), and their footprints

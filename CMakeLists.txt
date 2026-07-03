@@ -306,6 +306,7 @@ add_executable(navtracker_tests
   tests/replay/test_haxr_ospa.cpp
   tests/replay/test_philos_ospa.cpp
   tests/replay/test_philos_sunset_labels.cpp
+  tests/replay/test_philos_close_approach_labels.cpp
   tests/replay/test_radar_truth_loader.cpp
   tests/replay/test_autoferry_json_replay.cpp
   tests/estimation/test_noise_models.cpp

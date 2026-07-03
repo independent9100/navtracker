@@ -1,0 +1,21 @@
+# Video-derived existence/region labels for the philos `close_approach` clip.
+# Produced by the 2026-07-03 SECOND operator video + frame/radar cross-reference
+# pass (ticket R8.6). These are NOT kinematic truth — see
+# core/benchmark/ExistenceLabel.hpp and
+# docs/superpowers/plans/2026-07-02-static-branch-review-fixes.md (R8.6).
+#
+# Clip context: Charles River sailing basin, regatta-density dinghies; 80 s,
+# start unix 1635536559.010674, ZERO AIS, the DENSEST scene in the dataset
+# (~330-550 plots per 10 s). This clip is the standing KEEP-STRESS benchmark:
+# any suppression mechanism must hold tracks_on_keep flat here.
+#
+# Both regions are KEEP_MIXED (vessels AND structure in one region) — presence-
+# gated: a confirmed track OR an emitted static hazard satisfies; a departure
+# from the region must become a track (coverage-aware decay detects departures).
+#
+# t_start_s / t_end_s are RELATIVE to the clip's first ownship timestamp; blank
+# window = whole clip. `evidence`/`confidence` must be comma-free (semicolons
+# used); the last `notes` column may contain commas.
+region_id,source_rank,lat,lon,radius_m,t_start_s,t_end_s,label,evidence,confidence,notes
+sailing_dock,1/2,42.35853,-71.08768,70,,,KEEP_MIXED,frame t~5s right camera; float/dock lined with ~25 berthed dinghies + 3-4 crewed dinghies sailing beside it,high,R4 ranks 1-2; largest single KEEP driver (was KEEP_INCOV_UNCHARTED 32.5%); Charles River sailing basin
+far_bank_line,ex-UNKNOWN,42.3570,-71.0837,80,,,KEEP_MIXED,end-of-clip center frame; far-bank small-craft line in exactly this direction; cells persistent across recording days => fixed floats/moorings,med,reclassifies from UNKNOWN_INCOV; satellite pending for dock-vs-moorings detail only

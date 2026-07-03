@@ -22,6 +22,11 @@ enum class ExistenceLabelClass {
   KeepVessel,         // a real vessel — a valid tracker MUST hold a track here
   SuppressStructure,  // fixed structure — phantom mass a suppressor should remove
   KeepAnchorage,      // moored craft inside a charted anchorage — KEEP
+  KeepMixed,          // vessels AND structure in one region (R8.6) — PRESENCE-
+                      // gated: a confirmed track OR an emitted static hazard
+                      // satisfies; never a strict must-be-tracks assertion. A
+                      // departure from the region must become a track (the
+                      // coverage-aware-decay mechanism detects departures).
   Unknown,            // chart/video silent — defaults to KEEP, gated by nothing
 };
 
@@ -53,9 +58,9 @@ struct ExistenceLabel {
 // Parse the label CSV from `is`. Schema (header row required, order fixed):
 //   region_id,source_rank,lat,lon,radius_m,t_start_s,t_end_s,label,evidence,confidence,notes
 // Blank t_start_s / t_end_s ⇒ covers_whole_clip. `label` is one of
-// KEEP_VESSEL / SUPPRESS_STRUCTURE / KEEP_ANCHORAGE / UNKNOWN (unrecognised →
-// Unknown). Lines starting with '#' and blank lines are skipped. The final
-// `notes` field absorbs any embedded commas (it is the last column).
+// KEEP_VESSEL / SUPPRESS_STRUCTURE / KEEP_ANCHORAGE / KEEP_MIXED / UNKNOWN
+// (unrecognised → Unknown). Lines starting with '#' and blank lines are skipped.
+// The final `notes` field absorbs any embedded commas (it is the last column).
 std::vector<ExistenceLabel> parseExistenceLabels(std::istream& is);
 
 }  // namespace benchmark
