@@ -319,3 +319,43 @@ deliberately take the modern *map-and-output* stance.
 - A deployment needs uncharted-static-obstacle avoidance → build stage 2.
 - EO/IR or AIS coverage near shore becomes available → enables the sensor-aware
   discriminator and unblocks reliable near-shore static-*vessel* tracking.
+
+## Amendment (2026-07-03): presence over classification — the operational goal, stated plainly
+
+Operator decision of record, resolving recurring confusion about WHY we
+separate static from dynamic. The goal hierarchy for any persistent object in
+the water is:
+
+1. **Detected at all — never invisible.** The unforgivable failure is an
+   object that is neither a track nor a static hazard in the output. We must
+   not crash into it; everything else is secondary.
+2. **Classified correctly — preferred, not required.** When no sensor can
+   tell an anchored/unmoving vessel from a fixed structure (no camera
+   classification, no AIS, chart silent), representing that vessel as a
+   **static hazard with a keep-clear ring is an acceptable degraded mode**:
+   the operator still sees it, the proximity alarm still fires, collision
+   avoidance still works. Misclassification static↔vessel is a quality bug,
+   not a safety violation — *provided rule 1 and rule 3 hold*.
+3. **Static → moving transition must recover.** If an object represented as
+   static starts moving, the system must promote it to a vessel track within
+   bounded latency (its returns leave the occupancy footprint → they must
+   birth normally; occupancy at the vacated cells must decay). A "static"
+   label is never allowed to permanently pin a mover.
+
+Consequences for the design and its gates:
+
+- **Conservation invariant:** birth suppression at a location is legal ONLY
+  if that location is simultaneously emitted as a static hazard
+  (`StaticHazardOutput`, `is_charted=false` for the live layer). Suppression
+  into *nothing* is forbidden and must be asserted against in tests.
+- The KEEP-guard (chart/AIS/camera corroboration) upgrades classification
+  from rule-2-degraded to rule-2-correct; it does not carry rule-1 safety by
+  itself.
+- New required gate scenario: an anchored boat (mis)classified as structure
+  gets underway → recovered as a confirmed track within N scans, stable
+  behaviour of the vacated occupancy cells. Extends the existing
+  anchored→underway stable-id row in `comparison-baselines.md`.
+- This does NOT weaken the vessel-vs-environment rule above: where sensors
+  CAN discriminate (AIS status 1/5, camera, compact watch-circle + chart
+  silent), a vessel must be a track. The amendment only prices the
+  no-information case honestly.

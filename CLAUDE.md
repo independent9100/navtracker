@@ -6,6 +6,14 @@ Guidance for working in this repository. Read before making changes.
 
 navtracker fuses outputs from multiple maritime sensors (AIS, navigation radar/ARPA, EO/IR camera, own-ship nav) into a single authoritative set of vessel **tracks**. It is a *fusion/tracking* system, not a raw detector. Full design: `docs/superpowers/specs/2026-05-28-maritime-sensor-fusion-design.md`. Sensor data details: `docs/sensors/sensor-reference.md`.
 
+**Static-vs-dynamic goal (do not re-litigate; ADR 0002 + its 2026-07-03 amendment):**
+every persistent object must appear in the output as a vessel track OR a static
+hazard — never neither ("presence over classification"). When sensors cannot
+tell an anchored vessel from fixed structure, static-hazard-with-keep-clear is
+an acceptable degraded mode; suppressing an object into *nothing* is the
+forbidden failure. Anything represented as static must be promoted to a moving
+track within bounded latency once it starts moving.
+
 ## Tech stack
 
 - **C++17** (no later standard without discussion).
