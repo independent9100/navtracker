@@ -8,6 +8,55 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-03 — R4: philos cluster classification bounds the Stage 1b removable ceiling; persistence does NOT separate craft from structure [Cl-3]
+
+Closed the R4 open sub-task (2026-07-02): per-cluster classification of the
+philos persistent over-count against the Boston S-57 ENC
+(`charts/philos_cluster_classification.py`, CSV + PNG). Classifies every
+persistent 25 m radar cell; SUPPRESS requires BOTH `fixed_surface` AND the
+curated `radar_clutter` layer to place charted structure ≤ 50 m (neither layer
+alone decides). Per-CELL, not connected-component — 8-conn over a dense harbour
+front over-merges shore + piers + offshore craft into one 1325 m blob whose
+shore-touching centroid mislabels the whole mass (a methodology trap; the 25 m
+cell is the honest unit). Dual chart-layer distances agree, resolving the
+2026-07-02 layer discrepancy: the dominant 42.3585 N cluster is 350–650 m from
+charted structure in BOTH layers (the earlier "1 m SLCONS" was the merge
+artifact).
+
+**Removable ceiling (return-mass split, n=1727 persistent cells, mass=11557):**
+
+| class | cells | mass % | meaning |
+|---|---|---|---|
+| SUPPRESS_CHARTED | 914 | **49.5%** | chart-confirmed fixed structure/shore/aid → suppressible |
+| KEEP_INCOV_UNCHARTED | 449 | **32.5%** | in charted water, 100 m+ from any charted structure → real craft (a charted harbor would show fixed structure); the 42.3585 N anchorage the largest single driver |
+| UNKNOWN_INCOV / _OUTCOV | 273 | 14.2% | chart silent → needs a visual pass; defaults to KEEP |
+| KEEP_ANCHORAGE | 85 | 2.7% | compact, inside a charted anchorage → moored craft |
+| TRANSIENT_NEARLANE | 6 | 1.1% | hugs own-ship track, low dwell → wake/near-field |
+
+**So a perfect structure detector can legitimately remove ~50% of the philos
+over-count mass, not all of it — ~35% is real craft it MUST preserve (ADR
+0002).** The reference λ_C spike deleted ~58% of philos `gospa_false`
+(2440→1020) — which OVERSHOOTS the 49.5% structure ceiling into KEEP mass,
+quantitatively confirming its `card_err` 3.95→−3.25 over-deletion. This is the
+anti-gaming bound the discussion asked for: any philos suppression that removes
+> ~50% of the persistent mass is deleting real craft, regardless of what the
+AIS-only truth scores.
+
+**Detector-design finding (the load-bearing one):** dwell/persistence does NOT
+separate structure (p50 0.68) from craft (p50 0.64), and their footprints
+overlap (extent p90 127 m vs 108 m; cells/comp p90 7 vs 6). **No occupancy-grid
+tuning — cell size, bar, extent floor — can split the 35% KEEP craft from the
+50% SUPPRESS structure, because anchored boats are as persistent and as compact
+as fixed structure on real data.** The Stage 1b-ii detector MUST discriminate by
+chart / AIS / camera corroboration, not persistence + extent. This is the
+real-data evidence behind "the wall is the detector, not the channel."
+
+Canaries emitted for the later channel decision: SUPPRESS canaries
+(chart-confirmed PONTON/SLCONS/PILPNT clusters, e.g. 42.3758 N/−71.0495 E) that
+a valid suppressor SHOULD hit; KEEP canaries (42.3585 N/−71.0877 E anchorage and
+the offshore group) that it must NOT — with maps URLs for the UNKNOWN visual
+pass. No philos gospa is cited as a suppression win anywhere.
+
 ## 2026-07-03 (follow-up) — Stage 1b-i occupancy: philos WAS reachable (cwd artifact); birth-only works on *tuned synthetic churn* but is inert on real data at every tuning [Cl-3]
 
 This follow-up **corrects two claims** in the entry below it (kept for the record):
