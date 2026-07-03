@@ -7,7 +7,9 @@
 # Clip context: Charles River sailing basin, regatta-density dinghies; 80 s,
 # start unix 1635536559.010674, ZERO AIS, the DENSEST scene in the dataset
 # (~330-550 plots per 10 s). This clip is the standing KEEP-STRESS benchmark:
-# any suppression mechanism must hold tracks_on_keep flat here.
+# tracks_on_keep here is the KEEP baseline a future suppressor is compared
+# against (flatness = the increment-6 A/B; the always-on tests gate only a
+# catastrophic drop plus a per-region 70%-of-baseline coverage floor).
 #
 # Both regions are KEEP_MIXED (vessels AND structure in one region) — presence-
 # gated: a confirmed track OR an emitted static hazard satisfies; a departure

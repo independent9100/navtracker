@@ -14,7 +14,10 @@ Second operator video pass (Charles River sailing basin, regatta-density
 dinghies). Added the `KEEP_MIXED` existence-label class (`core/benchmark/
 ExistenceLabel`): a region holding vessels AND structure, **presence-gated** — a
 confirmed track OR an emitted static hazard satisfies; a departure from the
-region must become a track. New fixture `tests/fixtures/philos/labels/
+region must become a track. (The current harness scores confirmed TRACKS only,
+which is complete under the non-suppressing baseline config below — it emits no
+hazards; the OR-hazard branch is exercised when a suppressor config is first
+scored on this clip.) New fixture `tests/fixtures/philos/labels/
 close_approach_labels.csv` (2 regions, both KEEP_MIXED, video-verified):
 `sailing_dock` (R4 ranks 1–2, 42.35853 N/−71.08768 E, r70 — float/dock lined
 with ~25 berthed dinghies + 3–4 crewed dinghies sailing beside it, right camera
@@ -30,27 +33,44 @@ bit-identical after the extraction (1633 / 3070 / 18295; canaries 0.17/0.47/1.2/
 
 **close_approach KEEP-stress baseline (imm_cv_ct_pmbm_land, 880 scans,
 `tests/replay/test_philos_close_approach_labels.cpp`):** `tracks_on_keep = 5570`
-(densest clip — this is the value any suppressor MUST hold flat here),
-`false_on_suppress = 0` (no SUPPRESS region labelled on this clip),
-`false_unlabeled = 15182`. Both KEEP_MIXED canaries **COVERED**: a confirmed
-track sits 0.14 m from `sailing_dock` and 1.40 m from `far_bank_line` — the
-tracks land on the exact returns the labels were located from. This clip is now
-the standing **KEEP-stress benchmark**: increment 6's suppressor is a regression
-if `tracks_on_keep` falls here.
+(densest clip), `false_on_suppress = 0` (no SUPPRESS region labelled),
+`false_unlabeled = 15182`. Per-region coverage (fraction of active scans holding
+a confirmed track within radius): `sailing_dock` **0.96** (a track sits 0.14 m
+off the label centre), `far_bank_line` **0.49** — the far bank is a distant,
+med-confidence float/mooring line, honestly intermittent at range (a track sits
+1.40 m off it when present). This clip is the standing **KEEP-stress benchmark**.
+The always-on gates are deliberately loose regression guards: a catastrophic-drop
+floor on `tracks_on_keep` and a per-region coverage floor at **70% of each
+region's own baseline** (so a config eroding a region's real-craft coverage by
+>30% relative trips it, without punishing the far bank's honest range-limited
+intermittency). The *flatness* judgement — a suppressor's `tracks_on_keep` vs
+this land baseline — is the increment-6 A/B, not a fixed threshold here. (Note: a
+whole-clip existential "any track ever grazed the region" would be satisfied ~6×
+per scan for free in this density and could not tell a real dinghy from a
+phantom, so the gate is the per-scan coverage fraction, not mere presence.)
 
 **R4 ceiling correction (item 5).** R4 (below) classified the philos over-count
 as ~49.5% SUPPRESS_CHARTED (deletable), ~32.5% KEEP_INCOV_UNCHARTED with the
 42.3585 N anchorage "the largest single driver", and 14.2% UNKNOWN "chart silent,
-defaults to KEEP, needs a visual pass". This video pass CLOSES that visual pass
-for close_approach: the largest KEEP driver (`sailing_dock` = R4 ranks 1–2) and
-the largest in-coverage ex-UNKNOWN group (`far_bank_line`) are both **frame-
-confirmed to contain real craft** → KEEP_MIXED, presence-gated, definitively
-**not delete-suppressible**. So the honestly-deletable ceiling is now firmly
-bounded at ≤ the 49.5% SUPPRESS_CHARTED mass; the earlier optimism that some of
-the 14.2% UNKNOWN might be additional suppressible structure is closed on this
-clip — it resolves toward KEEP, not toward more deletable structure. Any philos
-suppressor exceeding ~50% removal deletes real craft, now with direct frame
-evidence, not just chart distance.
+defaults to KEEP, needs a visual pass". This video pass advances that visual pass
+for close_approach: the largest KEEP driver (`sailing_dock` = R4 ranks 1–2) is
+now **directly frame-confirmed** — right camera t≈5 s shows a float/dock lined
+with ~25 berthed dinghies + crewed dinghies sailing beside it → KEEP_MIXED,
+high confidence. The **single largest in-coverage ex-UNKNOWN group on this clip**
+(`far_bank_line`) resolves toward KEEP as **uncharted floats/moorings/small-craft**
+(med confidence: an end-of-clip frame shows a far-bank small-craft line in that
+bearing and the cells persist across recording days ⇒ fixed; satellite pending
+for the dock-vs-moorings split) — either way a presence-gated KEEP_MIXED region,
+not delete-suppressible.
+
+This **corroborates** R4's ≤49.5% deletable ceiling with direct video evidence;
+it does not *lower* the number — 49.5% was already R4's conservative deletable
+bound (only SUPPRESS_CHARTED). What R8.6 rules out is the *upside*: the hope that
+some of the 14.2% UNKNOWN slice hid additional suppressible structure is closed
+for this clip's largest in-coverage UNKNOWN group (it resolves toward KEEP). The
+remaining UNKNOWN — the out-of-coverage groups and other clips — is still
+unresolved. Any philos suppressor exceeding ~50% removal deletes real craft, now
+with direct frame evidence for this region, not chart distance alone.
 
 **Deferred (independent, do not gate the coverage-aware-decay work):** R8.6 item
 2 (real-data CPA/collision fixture on the t≈61 s dinghy contact) + item 3 (the
@@ -179,10 +199,11 @@ quantitatively confirming its `card_err` 3.95→−3.25 over-deletion. This is t
 anti-gaming bound the discussion asked for: any philos suppression that removes
 > ~50% of the persistent mass is deleting real craft, regardless of what the
 AIS-only truth scores. **(Updated 2026-07-03, R8.6 — see the entry at the top:**
-the largest KEEP driver (ranks 1–2, 42.3585 N anchorage) and the largest
-in-coverage ex-UNKNOWN group are now frame-confirmed KEEP_MIXED on
-`close_approach`, tightening the ≤50%-deletable bound with direct video evidence
-and closing the hope that the UNKNOWN slice hides more suppressible structure.**)
+the largest KEEP driver (ranks 1–2, 42.3585 N anchorage) is now frame-confirmed
+KEEP_MIXED and the largest in-coverage ex-UNKNOWN group on `close_approach`
+resolves toward KEEP — **corroborating** the ≤49.5% deletable bound with direct
+video evidence (the number is unchanged) and closing, for this clip's largest
+UNKNOWN group, the hope that the UNKNOWN slice hides more suppressible structure.**)
 
 **Detector-design finding (the load-bearing one):** dwell/persistence does NOT
 separate structure (p50 0.68) from craft (p50 0.64), and their footprints
