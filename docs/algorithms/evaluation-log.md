@@ -8,7 +8,94 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-03 (follow-up) — Stage 1b-i occupancy: philos WAS reachable (cwd artifact); birth-only works on *tuned synthetic churn* but is inert on real data at every tuning [Cl-3]
+
+This follow-up **corrects two claims** in the entry below it (kept for the record):
+(1) philos was NOT absent, and (2) birth-only suppression is NOT inert everywhere.
+
+**Correction 1 — philos is reachable.** The philos replay/A-B tests resolve the
+fixture via *cwd-relative* paths (`tests/fixtures/philos/out/...`) and
+`GTEST_SKIP()` only when those don't resolve. `ctest` runs test binaries from
+`build/`, so they skip there. Run `./build/navtracker_tests` **from the repo
+root** and every philos test runs. The fixture (7 clips) is present and
+gitignored, not missing. "philos unavailable in this environment" was a cwd
+artifact.
+
+**Reference spike reconfirmed on philos (from repo root), λ_C-coupled
+`feed_clutter_map`, `imm_cv_ct_pmbm_land` A/B, 5 seeds:**
+
+| scenario | metric | base | +cluttermap | Δ |
+|---|---|---|---|---|
+| philos | gospa_mean | 63.13 | 51.83 | **−11.3** |
+| philos | gospa_false | 2440 | 1020 | **−1420** |
+| philos | card_err | **3.95** | **−3.25** | −7.2 (overshoots *negative* — deletes more than AIS truth cardinality) |
+| dense_clutter | lifetime | 0.90 | **0.26** | **−0.64 (death spiral)** |
+
+The spike's philos win is real but **unsafe** (dense_clutter collapses) and
+**over-deletes** (card_err flips negative) — exactly why 1b-i excluded the
+existence channel. This is the anti-gaming red flag: the win partly rewards
+deleting non-AIS objects the AIS-only truth cannot score.
+
+**Correction 2 — birth-only is not inert; it has one operating regime.** New
+instrument `OccupancyAB.BirthOnlySuppressionAcrossRegimes`: A/B of
+`imm_cv_ct_pmbm_land` vs the occupancy config at three classifier tunings
+(default 25 m/α0.3/bar0.5/ext4; *sensitive* 50 m/α0.15/bar0.25/ext3; *coarse*
+100 m/α0.3/bar0.2/ext3), across a regime axis. New churn scenario
+`harbor_complete_truth_churn` = `harbor_complete_truth` with the uncharted pier
+at per-scan P_D 0.4 (vs 0.9) — so phantoms decay and must re-birth; complete
+truth (boats scored) → card_err/lifetime honest. 8 seeds:
+
+| scenario | classifier | structures | suppress_hits | gospa_false Δ vs land | lifetime |
+|---|---|---|---|---|---|
+| harbor_complete_truth (P_D 0.9) | default | 0.875 | 0.25 | −1.3 | 0.975 |
+| harbor_complete_truth (P_D 0.9) | sensitive | 1 | 3.75 | **−29** | 0.975 |
+| **harbor_complete_truth_churn (P_D 0.4)** | default | **0** | 0 | 0 | 0.975 |
+| **harbor_complete_truth_churn (P_D 0.4)** | **sensitive** | **1** | **25.9** | **−78 (−4.6%)** | **0.975** |
+| harbor_complete_truth_churn (P_D 0.4) | coarse | 0.625 | 2.5 | (small) | 0.975 |
+| **philos (real)** | default | **0** | 0 | 0 | 0.369 |
+| **philos (real)** | sensitive | **0** | 0 | 0 | 0.369 |
+| **philos (real)** | **coarse** | **3** | **0** | **0** | 0.369 |
+| dense_clutter | all three | 0 | 0 | 0 | 0.845 |
+
+**Synthesis — a regime squeeze and a two-layer wall.**
+- On **synthetic churn with a tuned classifier**, birth-only suppression **works
+  and is safe**: it fires 26×, cuts false mass 4.6%, holds boat lifetime, leaves
+  dense_clutter byte-identical. The earlier "inert everywhere" was an artifact of
+  (a) the P_D-0.9 yardstick, where the cohort confirms in scans 1–2 and the
+  within-scan-order block dominates, and (b) a persistence bar (0.5) set *above*
+  the churn per-cell P_D (0.4), so the default classifier saw nothing to gate.
+- On **real philos, birth-only delivers nothing at any of the three tunings**,
+  for two *independent* reasons a channel change cannot fix:
+  1. **Classifier vs sparsity/smear** — at 25–50 m the per-cell EWMA persistence
+     (mean ≈ per-cell P_D) never nears any usable bar (peak 0.17–0.30); real
+     fixed returns are sparse per scan and smeared across cells by own-ship
+     projection error. Coarsening to 100 m finally classifies (structures=3).
+  2. **Channel reach** — but even then `suppress_hits=0`: the philos phantoms are
+     *already-confirmed, association-maintained tracks*, which the birth channel
+     cannot touch (the within-scan-order/confirmed-cohort wall, now proven on
+     real data even when classification succeeds).
+- So the real-data wall is two-layered: a classifier that fires on sparse/smeared
+  returns (needs coarse cells and/or chart/AIS/camera corroboration) **and** a
+  channel that can reach confirmed phantoms (an existence channel). An existence
+  channel addresses layer 2 only — and only once layer 1 exists — and damping the
+  existence of confirmed tracks near classified structure is precisely the
+  ADR-0002 vessel-safety risk (at 100 m a real moored/transiting vessel merges
+  into a structure component). No philos *quality* claim is made here (philos
+  Δ = 0), so the AIS-only-truth gaming risk does not arise; the only quality
+  claim is on complete-truth synthetic churn.
+
+**Status: layer shipped opt-in; birth-only suppression proven (safe, small) on
+tuned synthetic churn, inert on real data. Not promoted.** 1b-ii priority is the
+**structure detector** (coarse-grid / projection-robust + corroboration), not the
+suppression channel — birth-only is an adequate channel once the detector fires
+on real returns. Instrument commits below.
+
 ## 2026-07-03 — Stage 1b-i live occupancy layer: built, safe, but birth-only suppression is INERT on all synthetic fixtures [Cl-3]
+
+**[Partly corrected by the follow-up above: philos was reachable (cwd artifact),
+and birth-only is not inert on a tuned classifier in the churn regime. The
+classification observations and the within-scan-order root cause below stand.]**
+
 
 Built `LiveOccupancyModel` (design 2026-07-01): a datum-stable occupancy grid
 that accumulates the PMBM per-scan (position, 1−r) feed as per-cell EWMA
