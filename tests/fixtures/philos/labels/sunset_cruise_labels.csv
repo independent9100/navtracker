@@ -1,0 +1,19 @@
+# Video-derived existence/region labels for the philos `sunset_cruise` clip.
+# Produced by the 2026-07-03 operator video + frame/radar cross-reference pass
+# (ticket R8). These are NOT kinematic truth — see core/benchmark/ExistenceLabel.hpp
+# and docs/superpowers/plans/2026-07-02-static-branch-review-fixes.md.
+#
+# Clip context: ZERO AIS, >=4 real moving vessels; the two strongest "phantom"
+# candidates were real vessels (a ferry with a stop->go transition at t~90 s, and
+# a loiterer whose returns cease at t~94 s while still in radar view).
+#
+# t_start_s / t_end_s are RELATIVE to the clip's first ownship timestamp
+# (1635458136.027552). Blank window = whole clip. `notes` is the last column and
+# may contain commas.
+region_id,source_rank,lat,lon,radius_m,t_start_s,t_end_s,label,evidence,confidence,notes
+ferry_v1_a,rank11,42.378286,-71.046405,40,0,98,KEEP_VESSEL,video+radar+cell-timeline,high,ferry outbound leg before the stop->go transition
+ferry_v1_b,rank16,42.378730,-71.046373,40,88,116,KEEP_VESSEL,video+radar+cell-timeline,high,ferry after the stop->go transition at t~90; must keep a stable id
+loiterer_v2,rank202,42.379817,-71.046039,50,10,94,KEEP_VESSEL,returns cease t~94 while in view; final frame empty; big ferry displaced starboard,med-high,coverage-aware-decay resolves this as a departed vessel not structure
+midriver_grp,39/45/82,42.3766,-71.0432,80,,,SUPPRESS_STRUCTURE,E-W spread 10-15 m from uncharted SLCONS; satellite pending,med,mid-river structure group
+astern_blob,astern,42.3746,-71.0482,120,,,SUPPRESS_STRUCTURE,extended (n_cells ~2400); out of camera FOV; satellite pending,med,large extended structure astern of own-ship
+ranks_84_95,84/95,42.3747,-71.0446,60,,,UNKNOWN,,,defaults to KEEP; satellite pending

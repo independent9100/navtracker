@@ -118,7 +118,14 @@ is a config (`imm_cv_ct_pmbm_occupancy_detector`), not a new class.
    ADR 0002 staging; comparison-baselines row; eval-log.
 
 Interleaved (before increment 6, per 2026-07-03 steer — "build the exam before
-the student"): R8.1 label fixture, R8.2 label-aware philos decomposition
-(false_on_suppress / tracks_on_keep / false_unlabeled), R8.3 binary canary +
-stop→go gates (must pass TODAY under imm_cv_ct_pmbm_land). Then R8.4 folds into
-increment 6.
+the student"):
+- DONE — R8.1 label fixture (`sunset_cruise_labels.csv`) + loader
+  `core/benchmark/ExistenceLabel` (unit-tested).
+- DONE — R8.2 label-aware decomposition (false_on_suppress 3070 / tracks_on_keep
+  1633 / false_unlabeled 18295 under land) +
+- DONE — R8.3 binary gates (KEEP canaries all covered; stop→go id 13 stable +
+  2.89 m/s late), in `tests/replay/test_philos_sunset_labels.cpp`, pass TODAY
+  under `imm_cv_ct_pmbm_land`. sunset_cruise is zero-AIS/no-truth so it is run
+  through the tracker directly (empty truth ⇒ no Sweep slices).
+- TODO — R8.4 (observed-empty / coverage-aware decay) folds into increment 6.
+- TODO — R8.5 comparison-baselines philos-metric note.

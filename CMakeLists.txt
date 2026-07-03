@@ -124,6 +124,7 @@ add_library(navtracker_benchmark
   core/benchmark/Sweep.cpp
   core/benchmark/CsvWriter.cpp
   core/benchmark/CsvReader.cpp
+  core/benchmark/ExistenceLabel.cpp
   core/benchmark/MarkdownRenderer.cpp
   core/benchmark/Comparator.cpp
 )
@@ -304,6 +305,7 @@ add_executable(navtracker_tests
   tests/output/test_static_hazard_output.cpp
   tests/replay/test_haxr_ospa.cpp
   tests/replay/test_philos_ospa.cpp
+  tests/replay/test_philos_sunset_labels.cpp
   tests/replay/test_radar_truth_loader.cpp
   tests/replay/test_autoferry_json_replay.cpp
   tests/estimation/test_noise_models.cpp
@@ -334,6 +336,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_harbor_boat_near_pier.cpp
   tests/benchmark/test_harbor_gate_scenarios.cpp
   tests/benchmark/test_occupancy_detector_gates.cpp
+  tests/benchmark/test_existence_label.cpp
   tests/sensor_activity/test_declared_sensor_activity.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})

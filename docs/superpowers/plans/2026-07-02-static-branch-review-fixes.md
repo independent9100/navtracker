@@ -309,3 +309,111 @@ deltas (bit-identical A/B on philos + synthetics for 7.1–7.4).
 4. **R4 + R3 + R7.4–7.5** (evidence + docs; R4's cluster classification
    ideally before Stage 1b promotes, so we know what the layer can and
    cannot crush).
+
+---
+
+## R8 — Video-derived existence labels: fixture, label-aware philos metrics, binary gates (added 2026-07-03)
+
+**Context.** The R4 video pass on `sunset_cruise` (operator + frame/radar
+cross-reference, recorded in this session's eval-log addendum) resolved the
+open UNKNOWN clusters and produced the first time-coincident ground truth for
+philos. Headline findings: the clip contains **zero AIS** and ≥4 real moving
+vessels; the two strongest "phantom" candidates were real vessels (a ferry
+with a natural **stop→go transition at t≈90 s**, and a loitering vessel whose
+returns **cease at t≈94 s while still in radar view**). Video labels must
+become machine-checkable data — but NOT kinematic truth.
+
+**Hard rule: never convert these labels into `TruthSample`s.** Video gives
+existence + rough position + time window, not per-second positions.
+Fabricating kinematic truth would be circular (positions derived from the
+same radar the tracker consumes) and would corrupt GOSPA's localisation
+term. The AIS-derived truth stays untouched; labels are a NEW category
+("existence/region labels").
+
+### R8.1 — Label fixture
+
+Create `tests/fixtures/philos/labels/sunset_cruise_labels.csv`, schema:
+
+```
+region_id,source_rank,lat,lon,radius_m,t_start_s,t_end_s,label,evidence,confidence,notes
+```
+
+(`t_*` relative to clip start = first ownship timestamp 1635458136.03;
+empty t = whole clip.) Entries from the 2026-07-03 video pass:
+
+| region | lat, lon | radius | window (s) | label | evidence | conf |
+|---|---|---|---|---|---|---|
+| ferry_v1_a (rank11) | 42.378286, −71.046405 | 40 m | 0–98 | KEEP_VESSEL | video+radar+cell-timeline | high |
+| ferry_v1_b (rank16) | 42.378730, −71.046373 | 40 m | 88–116 | KEEP_VESSEL | video+radar+cell-timeline | high |
+| loiterer_v2 (rank202) | 42.379817, −71.046039 | 50 m | 10–94 | KEEP_VESSEL | returns cease t≈94 while in view; final frame empty; big ferry displaced starboard | med-high |
+| midriver_grp (ranks 39/45/82) | 42.3766, −71.0432 | 80 m | — | SUPPRESS_STRUCTURE | E–W spread, 10–15 m from uncharted SLCONS; satellite pending | med |
+| astern_blob | 42.3746, −71.0482 | 120 m | — | SUPPRESS_STRUCTURE | extended (n_cells ≈2400); out of camera FOV; satellite pending | med |
+| ranks 84/95 | 42.3747, −71.0446 | 60 m | — | UNKNOWN | — | — |
+
+Also add the chart-derived anchorage canary from the R4 CSV (42.3585,
+−71.0877, KEEP) for the clips that cover it (`close_approach`,
+`almost_cross`, `sailboats_busy`). Format is per-clip; HAXR gets the same
+format when labeled.
+
+### R8.2 — Label-aware philos metric decomposition
+
+Keep raw `gospa_false` untouched (historical comparability). ADD columns to
+the philos bench output: `false_on_suppress` (false mass whose track falls in
+a SUPPRESS region during its window — the true phantom mass mitigation should
+shrink), `tracks_on_keep` (confirmed-track mass/count in KEEP regions — must
+NOT shrink; a drop = deleting real vessels), `false_unlabeled` (remainder).
+This makes philos un-gameable: a config that "wins" by deleting ferries shows
+a falling `tracks_on_keep`, which is a regression by definition.
+
+### R8.3 — Binary gates
+
+1. **Canary test per labeled clip:** for each KEEP region, assert ≥1
+   confirmed track within `radius_m` during the window; for each SUPPRESS
+   region (once any suppression mechanism is active), assert no long-lived
+   confirmed track persists there. Pass/fail, no scores.
+2. **Stop→go regression fixture:** extract `sunset_cruise` t≈60–120 s.
+   Assert: a confirmed track exists on the ferry (r11→r16 regions), keeps a
+   **stable track_id** through the stop→go transition at t≈90 s, and reports
+   motion (SOG above threshold) by t≈110–116. This is the real-data
+   instance of the ADR 0002 amendment's rule-3 gate; the synthetic variant
+   stays alongside.
+
+### R8.4 — Detector design input (1b-ii): the observed-empty discriminator
+
+Both resolved UNKNOWNs were cracked by the same signature: **occupancy that
+ceases while the cell is still inside radar coverage** = vessel departed;
+structure never goes quiet while observable. Pull the Stage-2 "unknown vs
+observed-empty" distinction forward into the 1b-ii detector as
+**coverage-aware decay**: only decay cell evidence when the cell was
+observable and returned empty; never decay for lack of coverage. Update the
+detector design doc + `docs/learning/` chapter accordingly (CLAUDE.md
+four-part standard applies).
+
+### R8.5 — Bookkeeping
+
+Eval-log addendum for 2026-07-03 must record: zero-AIS finding, the
+stop→go event, the observed-empty discriminator, the full label table, and
+the r202 resolution method (plot-time distribution per cell). Update the
+philos metric-interpretation note in `docs/algorithms/comparison-baselines.md`
+(philos = partial truth: AIS positions + existence labels; decomposed
+reporting; canaries binding). Same labeling method applies to HAXR when it
+becomes the churn testbed.
+
+**Acceptance.** Fixture committed + loader; decomposition columns in the
+philos bench output with a unit test; both binary gates green under
+`imm_cv_ct_pmbm_land` (no suppression active → SUPPRESS assertions vacuous,
+KEEP + stop→go must pass TODAY — they document current-behaviour safety);
+docs updated.
+
+**Shipped 2026-07-03 (R8.1–R8.3):** fixture
+`tests/fixtures/philos/labels/sunset_cruise_labels.csv` + loader
+`core/benchmark/ExistenceLabel` (unit-tested, `tests/benchmark/
+test_existence_label.cpp`). Decomposition + both gates in
+`tests/replay/test_philos_sunset_labels.cpp` — sunset_cruise is zero-AIS/no
+radar-truth, so it is run through `imm_cv_ct_pmbm_land` directly (empty truth ⇒
+no Sweep GOSPA slices) and scored against the labels: `tracks_on_keep=1633`,
+`false_on_suppress=3070`, `false_unlabeled=18295`; all four KEEP canaries covered
+(≤3.6 m); stop→go holds a stable id (id 13) across the t≈90 transition and reports
+2.89 m/s late. Eval-log entry added. **R8.4 (observed-empty / coverage-aware
+decay) and R8.5 bookkeeping remain** — R8.4 folds into increment 6 (the corrobo-
+ration detector); R8.5's comparison-baselines philos-metric note pending.

@@ -8,6 +8,43 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-03 — R8: video-derived existence labels + label-aware philos decomposition + binary gates on sunset_cruise [Cl-3]
+
+Built the "exam before the student" (the measurement surface the increment-6
+corroboration layer is judged against). The `sunset_cruise` clip has **zero AIS**
+and no radar-truth, so there is no kinematic truth — the only evaluation surface
+is the 2026-07-03 video pass's region labels (`tests/fixtures/philos/labels/
+sunset_cruise_labels.csv`, loaded by `core/benchmark/ExistenceLabel`). Labels are
+existence/region truth, NEVER converted to `TruthSample`s (would be circular +
+corrupt GOSPA localisation). Ran the clip through `imm_cv_ct_pmbm_land`
+(`tests/replay/test_philos_sunset_labels.cpp`), 1328 scans.
+
+**R8.2 decomposition (confirmed track-scans, land, no suppression):**
+`tracks_on_keep = 1633` (real vessels tracked — MUST NOT fall under any
+suppressor), `false_on_suppress = 3070` (track-scans in the two SUPPRESS regions
+— a valid suppressor should shrink this), `false_unlabeled = 18295` (the rest of
+the philos over-count, outside every labelled region). This is the un-gameable
+surface: a config that "wins" by deleting the ferry shows `tracks_on_keep` drop.
+
+**R8.3 gate 1 — KEEP canaries (pass TODAY under land):** all four KEEP regions
+covered by a confirmed track within radius — closest tracks 0.17 m (ferry_v1_a),
+0.47 m (ferry_v1_b), 1.2 m (loiterer_v2), 3.6 m (ranks_84_95). The tracks sit on
+the exact radar returns the labels were located from.
+
+**R8.3 gate 2 — stop→go (pass TODAY under land):** a single confirmed track
+(id 13) holds a **stable id** across the ferry's t≈90 transition (present in
+both the ferry_v1_a window and the ferry_v1_b window) and **reports motion**
+(late SOG 2.89 m/s in t≈110–116). 4 ids span both regions; the other 3 are SOG≈0
+(static structure inside the region radius). This is the real-data instance of
+the ADR 0002 rule-3 recovery gate — the synthetic `harbor_anchored_gets_underway`
+gate stays alongside.
+
+**Takeaway:** current coastal PMBM already tracks the real vessels in this
+zero-AIS clip and holds the ferry's identity through its stop→go — the gates
+document that safety. The decomposition + canaries are now the measurement the
+corroboration layer (increment 6) must improve (`false_on_suppress` ↓ while
+`tracks_on_keep` flat).
+
 ## 2026-07-03 — Stage 1b-ii detector bench gates: death-spiral guard, presence-over-classification, static→moving recovery (increments 4/5/7) [Cl-3]
 
 Three end-to-end bench gates for `imm_cv_ct_pmbm_occupancy_detector` on complete
