@@ -1,6 +1,15 @@
 # Stage 1b-i — Live static-occupancy layer (implementation plan)
 
 - **Date:** 2026-07-03
+- **Status (2026-07-03):** Layer BUILT + unit-tested + wired + measured. Result:
+  classification works and the layer is SAFE, but **birth-only suppression is
+  INERT** on all available synthetic fixtures — `suppress_hits ≈ 0`,
+  `_occupancy` ≈ byte-identical to `_land`. Root cause: within a scan births
+  precede the feed, so the pier cohort confirms before the layer classifies, and
+  `smart_birth_skip_existing` then owns the region (see eval-log 2026-07-03). The
+  effective mechanism needs the philos dense regime (unavailable here) or an
+  existence channel (deferred to 1b-ii for safety). **Direction decision pending
+  — do not treat steps 5–7 below as done.**
 - **Design:** `docs/superpowers/specs/2026-07-01-honest-static-occupancy-stage1b-design.md`
 - **North-star:** Cl-3 (`docs/algorithms/comparison-baselines.md`)
 - **Motivation carried in from the PDA promotion HOLD (2026-07-03):** the residual

@@ -8,6 +8,56 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-03 — Stage 1b-i live occupancy layer: built, safe, but birth-only suppression is INERT on all synthetic fixtures [Cl-3]
+
+Built `LiveOccupancyModel` (design 2026-07-01): a datum-stable occupancy grid
+that accumulates the PMBM per-scan (position, 1−r) feed as per-cell EWMA
+persistence and, via connected-component extent, classifies persistent-AND-
+extended structure. Wired as both the birth-suppression model
+(`setStaticObstacleModel`) and a new occupancy feed (`setLiveOccupancyFeed`,
+independent of the detection model → no λ_C coupling). New opt-in config
+`imm_cv_ct_pmbm_occupancy` = `imm_cv_ct_pmbm_land` + the layer.
+
+**Classification works.** Instrumented run (3 seeds, all sim scenarios, debug
+counters `peak_structures` / `peak_persist` / `suppress_hits`):
+
+| scenario | peak_structures | note |
+|---|---|---|
+| harbor_complete_truth / _charted_pier / _compact_dolphin | 1 | pier → structure ✓ |
+| harbor_boat_near_pier | 1 | pier classified; boat stays compact ✓ |
+| harbor_large_anchored_ship | **2** | **R3 dangerous case reproduced — the ship hull is classified as structure** |
+| shore_clutter_open / _nearshore | **0** | scattered clutter persistent (0.96) but NOT extended → extent gate correctly rejects ✓ |
+| dense_clutter | 0 | transient uniform clutter never persists ✓ |
+
+**But birth suppression never bites.** `suppress_hits ≈ 0` on every fixture; A/B
+`_occupancy` vs `_land` (3 seeds, all sims) is byte-identical on the key gates
+(harbor_complete_truth, dense_clutter, clean geometry) and moves nothing
+material elsewhere (harbor_boat_near_pier gospa_false 2326.7→2325.0, −0.07%;
+harbor_large_anchored_ship 3785→3783). **Root cause (instrumented, not guessed):**
+within a scan the order is *births → feed*, so a pier's phantom cohort is born in
+scans 1–2 **before** the layer can classify anything; those Bernoullis then
+confirm via *association* (which birth suppression cannot touch), and
+`smart_birth_skip_existing` owns the region thereafter, so no later birth ever
+queries the classified structure (`suppress_hits=0`). Birth-channel-only
+suppression is structurally unable to remove an already-confirmed cohort.
+
+**Interpretation.** The layer is correct and SAFE (off = bit-identical; boats /
+movers / uniform clutter never suppressed — the extent gate holds; no
+dense_clutter regression) but INERT on the available fixtures. The design's
+demonstrated over-count reduction (philos gospa 63→52) came from the λ_C-coupled
+`feed_clutter_map` spike — an *existence*-channel effect — which the design
+deliberately excluded from 1b-i for safety (an existence penalty near structure
+would also damp a real vessel transiting past a pier; that needs the 1b-ii shape/
+motion discriminator to be safe). The one available structured fixture (harbor)
+confirms birth-only is too weak; **philos, the design's primary suppression gate,
+is unavailable in this environment** (replay fixture absent — the replay tests
+skip). So the regime where birth-only *might* still bite (dense, churning,
+persistently-unclaimed returns) cannot be measured here.
+
+**Status: layer shipped opt-in; suppression unproven. Not promoted.** Decision on
+direction (existence-channel extension behind a flag vs. defer suppression to
+1b-ii / philos) pending. Foundation committed: 72e4a9f, 20f1614, f922011.
+
 ## 2026-07-02 — PDA soft detected-branch update (open-sea K=1 gap) [Cl-3]
 
 Closes the north-star's "open (next)": under K=1 GNN a detected PMBM Bernoulli
