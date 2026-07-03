@@ -15,6 +15,8 @@
 #include "adapters/replay/OwnshipCsvReader.hpp"
 #include "adapters/replay/PlotCsvReplayAdapter.hpp"
 #include "adapters/replay/RadarTruthCsvReader.hpp"
+#include "core/geo/Datum.hpp"
+#include "core/geo/Wgs84.hpp"
 #include "core/scenario/Truth.hpp"
 #include "core/scenario/TruthResample.hpp"
 #include "core/types/Measurement.hpp"
@@ -285,6 +287,12 @@ class AutoferryScenarioRun : public ScenarioRun {
         {SensorKind::EoIr, MeasurementModel::Bearing2D, eo, "autoferry_eo"},
         {SensorKind::EoIr, MeasurementModel::Bearing2D, ir, "autoferry_ir"},
     };
+    // Real Trondheim inner-harbour coastline (OSM/Overpass, ODbL) about the
+    // Piren datum set in generate(). Enables the land model on AutoFerry for the
+    // use_land_model configs — the real-geometry reality check for the land
+    // clutter prior and the land-aware PDA pool. Inert for non-land configs
+    // (loaded only when config.use_land_model && scen.datum is set).
+    d.coastline_geojson_path = "tests/fixtures/autoferry/trondheim_harbor.geojson";
     return d;
   }
 
@@ -315,8 +323,18 @@ class AutoferryScenarioRun : public ScenarioRun {
       // floor (~0.088 rad on env-2 empirical residual) bounds how
       // tight R can be. See eval-log entry "Cl-2 #4 close-out".
     }
-    return navtracker::replay::loadAutoferryScenario(
+    Scenario s = navtracker::replay::loadAutoferryScenario(
         std::string("data/autoferry/") + label_, label_, opts);
+    // The AutoFerry loader frames everything in the Piren local tangent plane
+    // (NED origin LLA [63.4389029083, 10.39908278, 39.923]) but leaves
+    // Scenario::datum unset, so Sweep never wires a land model here (the reason
+    // AutoFerry has been "chartless"). Set the true Piren datum so the real
+    // Trondheim-harbour coastline (descriptor().coastline_geojson_path) lines up
+    // with the ENU measurements. Inert for every config with use_land_model =
+    // false (nothing else reads scen.datum), so all standing baselines are
+    // byte-identical; it only activates the land model for the land configs.
+    s.datum = geo::Datum(geo::Geodetic{63.4389029083, 10.39908278, 39.923});
+    return s;
   }
 
   // Seed the bias estimator with the offline-calibrated EO/IR bearing
