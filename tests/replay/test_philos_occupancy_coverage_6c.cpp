@@ -80,6 +80,14 @@ bool hazardKeepClearAt(const replay_test::ScanTracks& scan,
   return false;
 }
 
+// Any CHART-CORROBORATED hazard within `radius_m` of `center` this scan?
+bool corroboratedHazardAt(const replay_test::ScanTracks& scan,
+                          const Eigen::Vector2d& center, double radius_m) {
+  for (const HazardSnapshot& h : scan.hazards)
+    if (h.corroborated && (h.center - center).norm() <= radius_m) return true;
+  return false;
+}
+
 void reportSectors(const ClipRun& run, const std::string& tag) {
   std::vector<double> w = run.sector_widths_rad;
   double mn = 1e18, mx = 0.0;
@@ -302,6 +310,64 @@ TEST(PhilosCoverageDecay6c, CloseApproachKeepMixedPresenceHeldUnderSuppressor) {
         << "coverage detector lost KEEP_MIXED presence on " << l.region_id;
   }
   std::cout << std::flush;
+}
+
+// ── chart corroboration (increment 6): confirm structure, flag departed vessels ──
+// The densified charted radar-visible structure (radar_structure_points.geojson)
+// labels each emitted live hazard chart-confirmed or not. Chart-CONFIRMED = real
+// structure (suppression justified, high operator confidence). UNcorroborated =
+// the eviction candidate (increment 8): a departed vessel that pinned a cell has
+// no chart/AIS/camera backing. This is the discriminator radar+coverage alone
+// could not provide on the loiterer (6c: swept 0/283 after t94).
+TEST(PhilosCoverageDecay6c, SunsetChartCorroborationLabelsStructureNotDepartedVessel) {
+  const ClipRun run = replay_test::runClip(
+      "sunset_cruise", "imm_cv_ct_pmbm_occupancy_detector_coverage",
+      /*load_chart_structure=*/true);
+  if (!run.valid) GTEST_SKIP() << "sunset_cruise fixtures not reachable";
+  const auto labels = replay_test::loadLabels("sunset_cruise_labels.csv");
+  ASSERT_FALSE(labels.empty());
+
+  long haz = 0, corr = 0;
+  for (const auto& s : run.history)
+    for (const HazardSnapshot& h : s.hazards) {
+      ++haz;
+      if (h.corroborated) ++corr;
+    }
+  std::cout << "\n=== 6c sunset_cruise chart corroboration (coverage+chart) ===\n"
+            << "  hazard-scans=" << haz << " chart-corroborated=" << corr
+            << " (" << (haz ? 100.0 * corr / haz : 0.0) << "%)\n";
+
+  const ExistenceLabel* loit = nullptr;
+  for (const auto& l : labels) {
+    const Eigen::Vector2d c = labelEnu(run.datum, l);
+    long on = 0, on_corr = 0;
+    for (const auto& s : run.history) {
+      if (hazardAt(s, c, l.radius_m)) ++on;
+      if (corroboratedHazardAt(s, c, l.radius_m)) ++on_corr;
+    }
+    std::cout << "  " << l.region_id << " (r=" << l.radius_m
+              << "m): hazard-scans " << on << ", chart-corroborated " << on_corr
+              << "\n";
+    if (l.region_id == "loiterer_v2") loit = &l;
+  }
+  std::cout << std::flush;
+  ASSERT_NE(loit, nullptr);
+
+  // Load-bearing invariants:
+  // (1) The mechanism fires on real data — SOME emitted structure is chart-
+  //     confirmed (the philos inner harbour has charted piers/wharves).
+  EXPECT_GT(corr, 0) << "no live hazard was chart-corroborated — chart wiring "
+                        "or densified fixture is broken";
+  // (2) The loiterer pin is NOT chart-corroborated: it is a departed vessel in
+  //     open water, not charted structure. This is exactly the departed-vs-held
+  //     discriminator — chart ABSENCE flags it as the eviction candidate.
+  const Eigen::Vector2d lc = labelEnu(run.datum, *loit);
+  long loit_corr = 0;
+  for (const auto& s : run.history)
+    if (corroboratedHazardAt(s, lc, loit->radius_m)) ++loit_corr;
+  EXPECT_EQ(loit_corr, 0)
+      << "the loiterer (a departed vessel) was chart-corroborated as structure — "
+         "false coincidence with the charted layer";
 }
 
 }  // namespace navtracker

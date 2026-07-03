@@ -136,6 +136,54 @@ TEST(LiveOccupancyModel, SuppressionIsSoftOnly) {
   EXPECT_LE(m.birthSuppression(Eigen::Vector2d(62.5, 0.0)), 0.9);
 }
 
+// A charted structure point at anchor-ENU `enu` (charts are geodetic).
+StaticObstacle chartAt(const Eigen::Vector2d& enu) {
+  StaticObstacle o;
+  o.position = anchorDatum().toGeodetic(Eigen::Vector3d(enu.x(), enu.y(), 0.0));
+  o.source_id = "chart";
+  return o;
+}
+
+// Chart corroboration (increment 6): a live-structure hazard whose centroid
+// coincides with a charted structure point is CONFIRMED. Label only — the
+// emitted hazard and its suppression are unchanged.
+TEST(LiveOccupancyModel, ChartCoincidentStructureIsCorroborated) {
+  LiveOccupancyParams p = testParams();
+  p.chart_corroboration_radius_m = 50.0;
+  LiveOccupancyModel m(anchorDatum(), p);
+  m.setChartedStructure({chartAt({75.0, 12.5})});  // on the pier centroid
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  ASSERT_EQ(m.obstacles().size(), 1u);
+  EXPECT_TRUE(m.obstacleCorroborated(0));
+  EXPECT_EQ(m.chartCorroboratedCount(), 1);
+}
+
+// A charted point far from the live structure does NOT corroborate it — the
+// uncorroborated hazard is the eviction candidate (increment 8).
+TEST(LiveOccupancyModel, ChartDistantFromStructureIsNotCorroborated) {
+  LiveOccupancyParams p = testParams();
+  p.chart_corroboration_radius_m = 50.0;
+  LiveOccupancyModel m(anchorDatum(), p);
+  m.setChartedStructure({chartAt({5000.0, 5000.0})});  // far from the pier
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  ASSERT_EQ(m.obstacles().size(), 1u);
+  EXPECT_FALSE(m.obstacleCorroborated(0));
+  EXPECT_EQ(m.chartCorroboratedCount(), 0);
+}
+
+// Inert-by-default: with no charts set, every hazard reports uncorroborated
+// and behaviour is bit-identical to the no-chart model.
+TEST(LiveOccupancyModel, NoChartsMeansNoCorroboration) {
+  LiveOccupancyModel m(anchorDatum(), testParams());
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  ASSERT_EQ(m.obstacles().size(), 1u);
+  EXPECT_FALSE(m.obstacleCorroborated(0));
+  EXPECT_EQ(m.chartCorroboratedCount(), 0);
+}
+
 // Datum recenter re-anchors: the same GEOGRAPHIC point keeps its suppression
 // even though its ENU coordinates change under the new datum.
 TEST(LiveOccupancyModel, DatumRecenterKeepsGeographicSuppression) {

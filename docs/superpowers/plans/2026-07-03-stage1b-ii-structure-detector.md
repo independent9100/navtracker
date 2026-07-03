@@ -171,8 +171,29 @@ is a config (`imm_cv_ct_pmbm_occupancy_detector`), not a new class.
      realistic <20°-span clusters. Full suite 934/934. The remaining 6c work is
      the actual clip validation (loiterer/ferry decay-out + KEEP_MIXED
      protection), now safe to run.
+   - **CHART CORROBORATION DONE (2026-07-04, jumped ahead of AIS veto per the
+     post-6c steer — chart owns the largest measured target, R4's ~49.5%).**
+     `LiveOccupancyModel::setChartedStructure` tags each emitted live hazard
+     chart-confirmed when its centroid is within `chart_corroboration_radius_m`
+     (default 100 m) of a charted structure point. LABEL ONLY (suppression/tracks
+     unchanged); feeds operator confidence + increment-8 eviction. Inert-by-
+     default (13 pre-existing model tests green). Chart source:
+     `charts/export_philos_chart_structure.py` densifies `radar_clutter.geojson`
+     to 8 m points scoped to the philos bbox → `tests/fixtures/philos/charts/
+     radar_structure_points.geojson` (15 974 pts; radar_clutter = the radar-
+     visible layer, R4's dual-layer AND was a DELETION bound, CONFIRM needs one
+     layer). **sunset_cruise: 6220/8114 (76.7%) hazard-scans chart-confirmed;
+     astern_blob 31/31 (nearest 16 m); loiterer 0/122 (nearest 134 m — the
+     departed-vessel discriminator radar couldn't provide); ferry_v1_a 0/538;
+     UNKNOWN ranks_84_95 0/955.** close_approach Charles-basin KEEP_MIXED is 277–
+     432 m from charted structure (FLOATING docks) → chart correctly ABSTAINS,
+     that region needs camera/AIS. TDD'd (3 model unit tests); 1 replay measurement
+     test (`test_philos_occupancy_coverage_6c.cpp`). Chart is the first eviction-
+     by-evidence source (increment 8). **NEXT: camera corroboration (loiterer =
+     first target; sunset_cruise centre-camera fixtures now exist), then the
+     eviction policy; AIS veto rides with increment 8.**
    - 6d TODO — docs (folds into increment 9): live-static-occupancy.md four-part +
-     learning chapter + figure for coverage-aware decay.
+     learning chapter + figure for coverage-aware decay + chart corroboration.
 7. DONE — recovery gate SCENARIO `harbor_anchored_gets_underway` (stop→go boat
    via new `addStopGoBoat` builder); gate
    `OccupancyDetectorGates.AnchoredGetsUnderwayRecovers` (truth_6 lifetime 0.972

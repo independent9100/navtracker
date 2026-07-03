@@ -31,6 +31,16 @@ Eigen::Vector2d LiveOccupancyModel::cellCenter(const Cell& c) const {
                          (c.second + 0.5) * params_.cell_size_m);
 }
 
+void LiveOccupancyModel::setChartedStructure(
+    const std::vector<StaticObstacle>& charted) {
+  charted_enu_.clear();
+  charted_enu_.reserve(charted.size());
+  for (const StaticObstacle& o : charted) {
+    const Eigen::Vector3d e = anchor_.toEnu(o.position);
+    charted_enu_.emplace_back(e.x(), e.y());
+  }
+}
+
 void LiveOccupancyModel::observe(
     const std::vector<ISensorDetectionModel::ScanObservation>& by_sensor) {
   const double a = params_.ewma_alpha;
@@ -109,6 +119,7 @@ void LiveOccupancyModel::recomputeStructure() {
   obstacles_.clear();
   obstacle_center_.clear();
   obstacle_conf_.clear();
+  obstacle_corroborated_.clear();
 
   // Effective persistence bar. In detector mode, raise it above the estimated
   // uniform-clutter background (median live-cell persistence — the clutter-map
@@ -188,6 +199,19 @@ void LiveOccupancyModel::recomputeStructure() {
     obstacles_.push_back(std::move(o));
     obstacle_center_.push_back(centroid);
     obstacle_conf_.push_back(conf);
+
+    // Chart corroboration (label only): this live hazard is CONFIRMED as
+    // structure if a charted structure point lies within the corroboration
+    // radius of its centroid. Empty chart set ⇒ never corroborated (inert).
+    bool corroborated = false;
+    const double r2 = params_.chart_corroboration_radius_m *
+                      params_.chart_corroboration_radius_m;
+    for (const Eigen::Vector2d& c : charted_enu_)
+      if ((c - centroid).squaredNorm() <= r2) {
+        corroborated = true;
+        break;
+      }
+    obstacle_corroborated_.push_back(corroborated);
   }
 }
 

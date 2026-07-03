@@ -27,6 +27,7 @@
 
 #include "adapters/land/GeoJsonCoastline.hpp"
 #include "adapters/own_ship/OwnShipProvider.hpp"
+#include "adapters/static/GeoJsonStaticObstacles.hpp"
 #include "adapters/replay/OwnshipCsvReader.hpp"
 #include "adapters/replay/PlotCsvReplayAdapter.hpp"
 #include "core/benchmark/BenchRunner.hpp"
@@ -57,6 +58,7 @@ struct HazardSnapshot {
   Eigen::Vector2d center;
   double footprint_m;
   double keep_clear_m;
+  bool corroborated = false;  // chart-confirmed (increment 6); false unless charts wired
 };
 struct ScanTracks {
   double t_unix;
@@ -123,7 +125,8 @@ inline bool fileExists(const std::string& p) {
 // Run philos clip `clip_name` (radar-only) through the tracker built from
 // `config_label`, capturing all Confirmed tracks after every scan.
 inline ClipRun runClip(const std::string& clip_name,
-                       const std::string& config_label) {
+                       const std::string& config_label,
+                       bool load_chart_structure = false) {
   ClipRun run;
   const std::string own = clipDir(clip_name) + "/ownship.csv";
   const std::string plots = clipDir(clip_name) + "/radar_plots.csv";
@@ -191,6 +194,16 @@ inline ClipRun runClip(const std::string& clip_name,
     rec.full_circle = &run.sector_full_circle;
     rec.run = &run;
     tracker.setLiveOccupancyFeed(&rec);  // transparent; records sector widths
+    // Chart corroboration (increment 6): feed the densified charted radar-visible
+    // structure so emitted live hazards can be confirmed. Label only — no effect
+    // on hazards/suppression/tracks (so occupancy-config runs stay bit-identical
+    // with load_chart_structure=false).
+    if (load_chart_structure) {
+      const std::string charts =
+          srcDir() + "/tests/fixtures/philos/charts/radar_structure_points.geojson";
+      if (fileExists(charts))
+        occ->setChartedStructure(loadStaticObstaclesGeoJson(charts));
+    }
   }
 
   benchmark::PmbmPostScanHook hook = [&](const pmbm::PmbmTracker& t,
@@ -209,10 +222,13 @@ inline ClipRun runClip(const std::string& clip_name,
     // satisfied by a hazard as well as a track, and so structure decay-out is
     // observable. Empty for non-occupancy configs.
     if (occ) {
-      for (const StaticObstacle& o : occ->obstacles()) {
-        const Eigen::Vector3d e = run.datum.toEnu(o.position);
+      const auto& obs = occ->obstacles();
+      for (std::size_t i = 0; i < obs.size(); ++i) {
+        const Eigen::Vector3d e = run.datum.toEnu(obs[i].position);
         st.hazards.push_back({Eigen::Vector2d(e.x(), e.y()),
-                              o.footprint_radius_m, o.keep_clear_radius_m});
+                              obs[i].footprint_radius_m,
+                              obs[i].keep_clear_radius_m,
+                              occ->obstacleCorroborated(i)});
       }
     }
     run.history.push_back(std::move(st));

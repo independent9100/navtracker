@@ -35,6 +35,16 @@ struct LiveOccupancyParams {
   // clutter_reject_factor × median). false ⇒ absolute bar only (1b-i behaviour).
   bool clutter_adaptive = false;
   double clutter_reject_factor = 1.5;
+  // Chart corroboration (increment 6): an emitted live-structure hazard whose
+  // centroid lies within this radius of a charted structure point is CONFIRMED
+  // as structure (label only — suppression is unchanged; the label feeds
+  // operator confidence and the increment-8 eviction-by-evidence policy: an
+  // uncorroborated pin is the eviction candidate, a corroborated one is
+  // retained). ~100 m ≈ one coarse cell, so a hazard whose ~100 m-cell centroid
+  // sits within a cell of charted structure counts as coincident (the centroid
+  // can be up to a half-diagonal off the true structure). Only active when
+  // setChartedStructure() has been called with a non-empty set.
+  double chart_corroboration_radius_m = 100.0;
 };
 
 // A datum-stable live occupancy grid that learns persistent + spatially
@@ -81,6 +91,13 @@ class LiveOccupancyModel : public IStaticObstacleModel,
     current_ = new_datum;
   }
 
+  // Chart corroboration input (increment 6): the charted STRUCTURE point cloud
+  // (piers/wharves densified to points offline — see the philos wiring). Cached
+  // in the fixed anchor frame at set time; charts are static, so no datum-sink
+  // handling is needed (anchor_ never moves). Empty ⇒ corroboration inert, all
+  // emitted hazards report uncorroborated (bit-identical to no-chart behaviour).
+  void setChartedStructure(const std::vector<StaticObstacle>& charted);
+
   // Introspection (tests / diagnostics): the most structure components ever
   // classified simultaneously, and the highest per-cell persistence ever
   // reached, across the model's lifetime. Peak (not current) because a fed
@@ -90,6 +107,21 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   // Number of birthSuppression() queries that landed in a suppressed region
   // (returned > 0). Zero ⇒ the birth path never queried classified structure.
   long suppressionHits() const { return suppression_hits_; }
+
+  // Chart-corroboration introspection (index-aligned with obstacles()). An
+  // emitted live hazard is corroborated when a charted structure point lies
+  // within params.chart_corroboration_radius_m of its centroid. Uncorroborated
+  // hazards are the eviction candidates (increment 8) — a departed vessel that
+  // pinned a cell (no chart, no AIS, no camera) reports false here.
+  bool obstacleCorroborated(std::size_t i) const {
+    return i < obstacle_corroborated_.size() && obstacle_corroborated_[i];
+  }
+  int chartCorroboratedCount() const {
+    int n = 0;
+    for (bool c : obstacle_corroborated_)
+      if (c) ++n;
+    return n;
+  }
 
  private:
   using Cell = std::pair<int, int>;
@@ -110,6 +142,8 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   std::vector<StaticObstacle> obstacles_;        // one per structure component
   std::vector<Eigen::Vector2d> obstacle_center_; // anchor-ENU centroid per hazard
   std::vector<double> obstacle_conf_;            // suppression confidence per hazard
+  std::vector<bool> obstacle_corroborated_;      // chart-confirmed? (index-aligned)
+  std::vector<Eigen::Vector2d> charted_enu_;     // charted structure pts (anchor ENU)
   int peak_structure_count_ = 0;
   double peak_persistence_ = 0.0;
   mutable long suppression_hits_ = 0;

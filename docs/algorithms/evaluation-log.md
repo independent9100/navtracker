@@ -8,6 +8,56 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-04 — Stage 1b-ii increment 6: chart corroboration — confirms structure, flags departed vessels, on real philos [Cl-3]
+
+The first corroboration source (2026-07-03 queue steer: chart before AIS, because
+chart owns the single largest measured target — R4's ~49.5% chart-confirmed
+structure mass — with S-57/ENC material already in-tree). `LiveOccupancyModel`
+gains an optional charted-structure input (`setChartedStructure`): each emitted
+live hazard whose centroid lies within `chart_corroboration_radius_m` (default
+100 m ≈ one coarse cell) of a charted structure point is CONFIRMED. **Label
+only** — suppression/hazards/tracks are unchanged; the label feeds operator
+confidence and the increment-8 eviction-by-evidence policy. Inert-by-default (no
+charts set ⇒ all uncorroborated, bit-identical — the 13 pre-existing model tests
+stay green). TDD'd (3 model unit tests: coincident→confirmed, distant→not,
+no-charts→inert).
+
+**Chart source.** `charts/export_philos_chart_structure.py` densifies
+`charts/geojson/radar_clutter.geojson` (the curated, WATLEV-filtered radar-visible
+layer) to 8 m Point features scoped to the philos bbox → `tests/fixtures/philos/
+charts/radar_structure_points.geojson` (15 974 points). The loader is Point-only
+but piers/wharves are LineString/Polygon, so densification is required (mirrors
+the R4 script). radar_clutter is the physically-apt SINGLE layer for corroboration
+(R4's dual-layer fixed_surface AND radar_clutter agreement was a conservative
+DELETION bound; CONFIRMING a classification needs only the radar-visible layer).
+
+**sunset_cruise (coverage detector + chart, 1 replay):** **6220 / 8114 hazard-scans
+(76.7%) chart-corroborated.** Per region (hazard-scans → corroborated):
+`astern_blob` (large real structure) **31 → 31 (100%)**, nearest charted
+structure 16 m; `loiterer_v2` (departed vessel) **122 → 0**, nearest 134 m;
+`ferry_v1_a` (real moving vessel) **538 → 0**; `ranks_84_95` (UNKNOWN region)
+**955 → 0**. This is the discriminator radar + coverage-aware decay could NOT
+provide (6c: the loiterer's cell swept 0/283 after t94): **chart ABSENCE cleanly
+separates confirmed structure (retain, high-confidence suppression) from
+uncorroborated pins (the departed loiterer, the ferry, the UNKNOWN group — all
+eviction / camera candidates).** The 76.7% confirmed fraction says most of what
+the detector emits as structure genuinely IS charted structure.
+
+**close_approach (Charles basin) — chart correctly ABSTAINS.** The two KEEP_MIXED
+regions are 432 m (`sailing_dock`) and 277 m (`far_bank_line`) from the nearest
+charted structure: the sailing-basin infrastructure is FLOATING (docks, moored
+dinghies), not in the radar-fixed layer, so chart corroboration confirms nothing
+there — correctly, not a miss. **Chart corroboration's reach is exactly where
+charts hold fixed structure (inner harbour); the Charles-basin KEEP_MIXED needs
+camera/AIS.** (Consistent with the loiterer: camera is the queued next source, and
+sunset_cruise now has validated centre-camera bearing fixtures.)
+
+**Verdict:** chart corroboration works and is the first evidence source that can
+drive eviction-by-evidence (increment 8's preferred fix over a time floor): a
+live hazard confirmed by chart is retained; an uncorroborated pin (loiterer,
+ferry) is the eviction candidate. Next: camera corroboration (loiterer as first
+target), then the eviction policy that consumes these labels. Full suite green.
+
 ## 2026-07-03 — Stage 1b-ii increment 6c: coverage-aware vs universal decay, validated on real philos (`sunset_cruise`, `close_approach`) [Cl-3]
 
 The coverage-aware decay mechanism (6a model + 6b producer + multi-cluster
