@@ -5886,3 +5886,52 @@ pos_rmse (single-truth position error) is the clean discriminator.
 sim fixture. The one open step before promoting `_land_pda` past opt-in is
 real-data: AutoFerry urban ships no coastline, so drape a synthetic coastline
 over those channels and re-run the land/`_land_pda`/`_wateronly` A/B.
+
+## 2026-07-03 — PDA promotion gate: REAL Trondheim coastline → HOLD (do not promote)
+
+The real-data reality check for the land-aware pool, and the promotion decision
+for `imm_cv_ct_pmbm_land_pda`. Full writeup:
+`docs/baselines/2026-07-03_promotion_decision.md`; baseline:
+`2026-07-03_promotion_autoferry_real_coast.csv`.
+
+**Real geometry, not hand-draped (deliberate).** AutoFerry was chartless because
+the loader never set `Scenario::datum` (Sweep's `scen.datum.has_value()` guard
+failed) — not merely missing a coastline. Sourced the **real Trondheim
+inner-harbour coastline from OpenStreetMap** (Overpass: natural=coastline + the
+Kanalen/Ravnkloløpet/Nidelva canals), assembled about the Piren datum
+(LLA 63.4389029083, 10.39908278), ODbL. Validated: 100% of AutoFerry ground
+truth (scenarios 2/3/13/16/17/22) falls in water. Wired the datum + coastline
+onto every AutoFerry scenario (inert for non-land configs; commit cc9741a).
+Fixture `tests/fixtures/autoferry/trondheim_harbor.geojson`, regen
+`tools/build_autoferry_coastline.py`. A hand-drawn coast at this load-bearing
+input would make the confirmation half-synthetic and could be unconsciously
+fitted to the clutter — the whole point was to let real geography adjudicate.
+
+**Result (candidate `_wateronly` = `_land_pda` + land-aware pool, vs default
+`_land`):**
+- **Urban (13/16/17/22): regression NOT closed.** pos_rmse `_land` 15.67 →
+  `_land_pda` 18.88 → `_wateronly` **17.77 (+2.10 vs land)**; gospa +0.43. The
+  land-aware pool recovers only ~⅓ of the plain-PDA regression.
+- **Open-water (2–6): win retained.** pos_rmse 13.51 → 12.74 (−0.77); gospa
+  −0.29. (`_land == adapt` here — coast far from the vessels; `_wateronly ==
+  _land_pda` — no in-gate shore returns.)
+- **Anchored (×9): flat.** gospa +0.03, lifetime −0.001.
+- **philos: flat.** `_wateronly == _land_pda` (byte-identical on dense) = 63.08
+  vs `_land` 63.13.
+
+Promotion needed all four; three pass, **urban fails → HOLD.** Root cause: much
+real urban-channel clutter is **in the water** (moored vessels, floating
+structures, near-shore-but-offshore returns, clutterPrior < 0.5) — the land mask
+cannot flag it, so land-aware pooling only removes the on-land quay share. The
+loader's own detection-table comment already flagged the urban excess as
+"persistent structured returns (shoreline, **moored vessels**)". The sim fixture
+(on-land dock clutter) was necessary but not sufficient — it proved the mechanism
+for on-land clutter; real geometry shows on-land is only part of the problem.
+
+**Decision:** `imm_cv_ct_pmbm_land_pda` / `_wateronly` **stay opt-in**;
+`imm_cv_ct_pmbm_land` remains the recommended default; the K=1 north-star item
+stays "shipped (opt-in)", not promoted. The residual in-water structured-clutter
+pull is an association/existence problem, not a land-mask one (β₀ miss term,
+confirmed-only softening, or the live static-occupancy layer / Stage 1b) — none
+promoted here. This is the sim-primary / real-reality-check split working as
+intended.

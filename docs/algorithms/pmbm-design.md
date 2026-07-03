@@ -1030,12 +1030,17 @@ scan. Result (8–10 seeds): plain PDA is dragged ashore — **pos_rmse ≈ 17�
 **≈ 8.5 m**, a paired win on **10/10 seeds**, with track lifetime 1.0 for both.
 Contract test `SyntheticClutterAB.LandAwarePoolResistsDockClutterPull`.
 
-**What to test next.** The remaining gap is real-data: AutoFerry urban ships no
-coastline, so the *measured* urban regression can only be closed by draping a
-synthetic coastline over those channels and re-running land / `_land_pda` /
-`_wateronly`. Until then, `shore_clutter_transit` is the controlled (sim-primary)
-proof, and promotion of `_land_pda` past opt-in still wants the charted-AutoFerry
-confirmation.
+**Real-data gate (2026-07-03): measured → HOLD.** The real Trondheim harbour
+coastline was sourced from OSM and wired onto AutoFerry (the loader never set
+`Scenario::datum`, the real reason it was chartless). Candidate `_wateronly` vs
+default `_land`: open-water win retained (pos_rmse −0.77), anchored/philos flat,
+but the **urban regression is not closed** (pos_rmse 15.67→17.77; the land-aware
+pool recovers only ~⅓). Real urban-channel clutter is largely **in the water**
+(moored vessels, floating structures, clutterPrior < 0.5) which a land mask
+cannot flag. So `_land_pda`/`_wateronly` **stay opt-in** and `_land` stays the
+default. The residual is an association/existence problem (β₀ miss term,
+`pda_soft_detected_branch_on_confirmed_only`, or the static-occupancy layer), not
+a land-mask one. Writeup: `docs/baselines/2026-07-03_promotion_decision.md`.
 
 ---
 
