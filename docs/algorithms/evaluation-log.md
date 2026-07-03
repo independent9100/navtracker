@@ -6404,8 +6404,23 @@ Full suite **945/945 green**, determinism green.
 absence is never SUPPRESS evidence) and circularity (labels derived from the
 same videos → detections are corroboration/mechanics only, never accuracy
 truth) are documented at the fixture (`README.md`) and in sensor-reference §3.
-`camera_bearings.csv` is gitignored like its ownship/radar siblings (regenerated
-from frames + the committed `camera_bearing_calibration.json`); the committed
-interface is the script + calibration JSON, not the CSV — a deliberate deviation
-from the ticket's "commit the CSV," consistent with the repo's derived-fixture
-convention and the skip-guarded smoke test.
+All of `tests/fixtures/` is gitignored ("never committed" — multi-GB local
+data), including the emitted CSVs, the detector script, `camera_bearing_geom.py`,
+and `camera_bearing_calibration.json` — exactly like the existing (also-local)
+`extract_section.py` / `extract_radar.py`. So the ticket's "commit the CSV" does
+not apply here; the CSV would orphan from its regeneration pipeline anyway. The
+**tracked drift-guard** is instead this log: the model pin above + the emitted-
+CSV checksums below. Ownship/radar extraction is deterministic from the bags,
+but YOLO output is only deterministic given the pinned weights + environment, so
+a future ultralytics/torch bump could silently shift detections — a mismatch
+against these checksums makes that drift loud.
+
+| Emitted fixture | rows | sha256 |
+|---|---|---|
+| `out/ais_ferry_near/camera_bearings.csv` | 1030 | `db3159b19eaf4209554b7bc25986780717e4271b9bb9a4d9d665a6d7927a8081` |
+| `out/sunset_cruise/camera_bearings.csv` | 4605 | `865eb845046a78c942b67b2c9d9fc2062eb023ce82e931a154f1d17d25a99bc6` |
+
+The only git-committed deliverables are the C++ loader
+(`adapters/replay/CameraBearingCsvReader.{hpp,cpp}`) + its tests
+(`tests/replay/test_camera_bearing_loader.cpp`) + the CMakeLists wiring; the
+skip-guarded smoke test tolerates the fixtures' absence on a fresh clone.
