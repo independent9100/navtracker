@@ -161,6 +161,34 @@ TEST(LiveOccupancyModel, IntrospectionTracksStructureAndHits) {
   EXPECT_EQ(boat.suppressionHits(), 0);
 }
 
+// RECOVERY / bounded latency (ADR 0002 amendment rule 3): a static object that
+// starts moving must stop being suppressed within a bounded number of scans, so
+// the mover can birth normally (no permanent "static" pin). At the detector's
+// low extent floor a compact anchored boat DOES classify + suppress (accepted
+// degraded mode); when its returns leave, the vacated cell must forget quickly.
+TEST(LiveOccupancyModel, VacatedCellsRecoverWithinBoundedLatency) {
+  LiveOccupancyParams p = testParams();
+  p.extended_cells_min = 1;  // detector mode: a compact boat classifies
+  LiveOccupancyModel m(anchorDatum(), p);
+  const Eigen::Vector2d spot(1012.5, 1012.5);
+  // Anchored long enough to be classified + suppressed.
+  for (int scan = 0; scan < 15; ++scan) m.observe(feed({{spot, 1.0}}, scan));
+  ASSERT_GT(m.birthSuppression(spot), 0.0) << "boat should suppress while anchored";
+
+  // It gets underway: its returns now appear at fresh, never-revisited cells
+  // (a mover never dwells). Count scans until the vacated spot stops suppressing.
+  int latency = -1;
+  for (int k = 0; k < 20; ++k) {
+    Eigen::Vector2d moving(1200.0 + 60.0 * k, 1200.0 + 60.0 * k);
+    m.observe(feed({{moving, 1.0}}, 15 + k));
+    // The mover's own current cell must never be suppressed (it never dwells).
+    EXPECT_DOUBLE_EQ(m.birthSuppression(moving), 0.0) << "a mover must never suppress";
+    if (m.birthSuppression(spot) <= 0.0) { latency = k + 1; break; }
+  }
+  ASSERT_GE(latency, 0) << "vacated spot never recovered";
+  EXPECT_LE(latency, 5) << "recovery latency " << latency << " scans exceeds bound";
+}
+
 // CONSERVATION INVARIANT (ADR 0002 amendment 2026-07-03): birth suppression at
 // a location is legal ONLY if that location is emitted as a static hazard.
 // Every query with birthSuppression > 0 must lie inside some emitted hazard's
