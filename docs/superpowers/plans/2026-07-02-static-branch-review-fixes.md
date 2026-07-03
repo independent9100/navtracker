@@ -417,3 +417,228 @@ no Sweep GOSPA slices) and scored against the labels: `tracks_on_keep=1633`,
 2.89 m/s late. Eval-log entry added. **R8.4 (observed-empty / coverage-aware
 decay) and R8.5 bookkeeping remain** — R8.4 folds into increment 6 (the corrobo-
 ration detector); R8.5's comparison-baselines philos-metric note pending.
+
+### R8.6 — `close_approach` video pass: KEEP_MIXED labels, real-data CPA fixture, density stress (added 2026-07-03)
+
+Second operator video pass (frames verified against radar/fixture geometry;
+environment identified: Charles River sailing basin, regatta-density
+dinghies). Clip: 80 s, start unix 1635536559.0, **zero AIS**, densest scene
+in the dataset (~330–550 plots per 10 s).
+
+1. **New label value `KEEP_MIXED`** (extend `ExistenceLabel` loader): region
+   contains vessels AND structure. Semantics: **presence-gated** — a track OR
+   an emitted hazard satisfies; never a strict must-be-tracks assertion; any
+   departure from the region must become a track (the coverage-aware-decay /
+   observed-empty mechanism is what detects departures). Create
+   `tests/fixtures/philos/labels/close_approach_labels.csv`:
+
+   | region | lat, lon | radius | window | label | evidence |
+   |---|---|---|---|---|---|
+   | sailing_dock (R4 ranks 1–2) | 42.35853, −71.08768 | 70 m | whole clip | KEEP_MIXED | frame t≈5 s right camera: float/dock lined with ~25 berthed dinghies + 3–4 crewed dinghies sailing beside it |
+   | far_bank_line (ex-UNKNOWN shore group) | 42.3570, −71.0837 | 80 m | whole clip | KEEP_MIXED | end-of-clip center frame: far-bank small-craft line in exactly this direction; cells persistent across recording days ⇒ fixed floats/moorings; satellite pending for dock-vs-moorings detail only |
+
+   Apply the same KEEP_MIXED semantics to the anchorage canary entries for
+   `almost_cross` / `sailboats_busy` (same region, chart-derived until their
+   own video passes).
+
+2. **Real-data CPA/collision fixture (first of its kind).** A ~4 m club
+   sailing dinghy (2 crew) closes and makes contact (or near-contact) at
+   t≈61 s (unix ≈1635536620); approach window t≈30–65 s; a second dinghy
+   crosses close ahead at the same moment. Radar plot data confirms returns
+   on the collider down to 17 m (small returns, n_cells 4–29, amp ≥74).
+   Assertions: (a) a confirmed track exists on the collider during the
+   approach; (b) `CpaEvaluator` fires `Entered` for it with usable lead time
+   before contact. This is the first real-data collision-alarm test.
+
+3. **Sensor-doc note (also corrects an earlier in-session speculation):**
+   the 15 m plot-extraction floor is a real blind zone ONLY in the final
+   seconds before contact; the radar demonstrably tracked the collider to
+   17 m. Record in `docs/sensors/sensor-reference.md` alongside the
+   intensity-≥64 threshold note. Camera-channel motivation remains
+   (identity/classification), not detection-at-range.
+
+4. **Label-scored replay for `close_approach`** exactly as done for
+   `sunset_cruise` in 9fde7ad (zero-AIS clip → run `imm_cv_ct_pmbm_land`,
+   score `tracks_on_keep` / `false_on_suppress` / `false_unlabeled` against
+   the labels). This clip is the standing **KEEP-stress benchmark**: any
+   suppression mechanism must hold `tracks_on_keep` flat here.
+
+5. **R4 accounting update (eval log, one line):** the largest in-coverage
+   UNKNOWN group reclassifies to KEEP_MIXED → the honestly-suppressible
+   ceiling shrinks below the previous ~50%; cite the frame evidence.
+
+**Coverage-descriptor decision (R8.4 amendment, decided 2026-07-03):** the
+feed's optional coverage descriptor carries **(sensor ENU, max range, azimuth
+sector)** from day one; a disc is the degenerate sector [0°, 360°). Rationale:
+interface churn is the expensive part, and disc-only coverage is wrong exactly
+on philos (per-burst sweeps ⇒ in-range-but-out-of-sector cells would decay
+wrongly, invalidating the mechanism's own validation). Wiring is staged:
+synthetics pass the full circle (bit-identical to universal decay); philos
+derives each burst's sector from that burst's plot azimuth span plus
+conservative padding (self-estimated, no configured sector, portable to
+HAXR). Under-estimated coverage is the safe error direction (no decay ⇒
+hazards persist). Order within increment 6: coverage-aware decay first (has
+real-data validation targets: loiterer cessation t≈94 and ferry-vacated cells
+in `sunset_cruise`), then AIS veto (validates in synthetics/HAXR only — all
+labeled philos clips are zero-AIS), then chart corroboration.
+
+**Shipped 2026-07-03 (R8.6 items 1/4/5):** `KEEP_MIXED` label class added to
+`core/benchmark/ExistenceLabel` (presence-gated; loader + fixture-load unit
+tests in `tests/benchmark/test_existence_label.cpp`). Fixture
+`tests/fixtures/philos/labels/close_approach_labels.csv` (2 video-verified
+KEEP_MIXED regions: `sailing_dock` = R4 ranks 1–2, `far_bank_line` = ex-UNKNOWN
+shore group). The label-scored replay harness was extracted to
+`tests/replay/PhilosLabelReplay.hpp` (shared `runClip`/`decompose`); sunset_cruise
+is bit-identical after the refactor. **close_approach KEEP-stress baseline**
+(imm_cv_ct_pmbm_land, 880 scans, `tests/replay/test_philos_close_approach_labels.cpp`):
+`tracks_on_keep = 5570`, `false_on_suppress = 0`, `false_unlabeled = 15182`; both
+KEEP_MIXED canaries COVERED (`sailing_dock` 0.14 m, `far_bank_line` 1.40 m). This
+clip is now the standing KEEP-stress benchmark. Eval-log entry + R4 ceiling
+correction added. Full suite 925/925. **Deferred (independent, do not gate the
+coverage-aware-decay work): item 2 (real-data CPA/collision fixture) + item 3
+(15 m plot-floor sensor-doc note) trail as a separate task; the
+`almost_cross`/`sailboats_busy` chart-derived anchorage canaries wait for a video
+pass confirming the anchorage is in each clip's FOV (avoided a fake gate).**
+
+### R8.7 — `ais_ferry_near` video pass: labels for THE bench scenario (added 2026-07-03)
+
+Third operator video pass, frame- and geometry-verified. Clip: 20 s, start
+unix 1667846694.0, own-ship **berthed/static** (moves ~15 m total), 23 AIS
+vessels of which exactly 1 in radar range (mmsi 367074170, the ferry the
+center camera holds). This is the bench "philos" scenario — every historical
+gospa number (63.1, the 63→52 spike, the MHT comparison) was measured here —
+and the persistent radar mass around the berth is dock structure PLUS
+berthed pleasure boats: mixed regions, not pure clutter.
+
+Create `tests/fixtures/philos/labels/ais_ferry_near_labels.csv`:
+
+| region | lat, lon | radius | window | label | evidence |
+|---|---|---|---|---|---|
+| marina_dock_line | 42.3722, −71.0545 | 120 m | whole clip | KEEP_MIXED | right camera t≈10 s: floating docks + a dozen+ berthed motor yachts, footbridge/wave attenuator; matches top persistent cells (42.3718–42.3725 band, 90–165 m, full-clip t-span). Refine the boundary from the cells when loading. |
+| left_pier | (left-camera pier; derive from cells W/SW of own-ship) | ~60 m | whole clip | SUPPRESS_STRUCTURE | operator left-camera observation: bare pier, no boats |
+| south_pier_band | 42.3666, −71.0550 | 80 m | whole clip | SUPPRESS_STRUCTURE | persistent full-clip cells at 480 m; beyond camera range — satellite double-check optional |
+| south_far_band | 42.3628, −71.0556 | 80 m | whole clip | SUPPRESS_STRUCTURE | persistent full-clip cells at ~900 m; satellite optional |
+
+Notes:
+- The AIS ferry needs NO label — it is inside the AIS truth set already.
+- Run the label-scored decomposition on this clip like the others; this
+  makes `tracks_on_keep` / `false_on_suppress` meaningful retroactively on
+  the exact scenario the north-star cites. On this clip the decomposition is
+  the difference between "suppressed pier returns" and "deleted a moored
+  yacht."
+- **Decay-test bonus:** own-ship static ⇒ coverage sectors barely move —
+  the natural "own-ship stationary" sanity case for coverage-aware decay
+  (cells outside swept sectors must not decay; marina cells accumulate
+  cleanly). Add as a cheap assertion in the decay tests.
+- Clip-level: confirms ADR 0002's re-reading of philos as a
+  clutter-rejection-while-berthed test.
+
+Video-pass status: `sunset_cruise` done (R8.1), `close_approach` done
+(R8.6), `ais_ferry_near` done (this section). Next queued: `sailboats_busy`
+(KEEP-stress cross-validation of the Charles-basin regions from a different
+recording day), then `almost_cross` / `car_carrier_near` / `ais_ferry_far`
+(the last two mainly for the 42.3583,−71.0464 in-coverage UNKNOWN, likely
+satellite-resolvable instead).
+
+**R8.6 STATUS (2026-07-03, commit 1d55d00, suite 925/925):** items 1/4/5
+SHIPPED — `KEEP_MIXED` label class (TDD), `close_approach_labels.csv` (both
+video-verified regions; column-count guard test), shared `PhilosLabelReplay`
+harness (sunset re-run bit-identical: 1633/3070/18295, canaries 0.17–3.6 m,
+stop→go id stable @2.89 m/s), close_approach KEEP-stress baseline under
+`imm_cv_ct_pmbm_land` (880 scans): **tracks_on_keep = 5570,
+false_on_suppress = 0 (no SUPPRESS regions labeled in this clip),
+false_unlabeled = 15182; both KEEP_MIXED canaries covered (0.14 m / 1.40 m)**
+— this is the standing "hold tracks_on_keep flat" gate. R4 ceiling
+correction in eval-log. Items 2 (CPA/collision fixture) + 3 (sensor-doc
+min-range note) deferred as an independent task; anchorage canaries for
+`almost_cross`/`sailboats_busy` pending FOV-confirming passes (correctly not
+asserted unverified). NEXT: R8.4 coverage-aware decay — descriptor on
+`ScanObservation` (today carries no sensor pose/coverage), populated by the
+`feed_clutter_map` producer (`PmbmTracker.cpp` ~L1664), consumed in
+`LiveOccupancyModel::observe()`; absent descriptor ⇒ universal decay
+(synthetics bit-identical); under-estimated sector = safe direction.
+
+### R8.8 — `car_carrier_near` re-extraction (broken heading) + occlusion pass (added 2026-07-03)
+
+**Data-integrity finding.** `car_carrier_near` (2020-10-22 bag) has
+`heading_deg = 0.000` constant and only 26 own-ship rows over 120 s — the
+extractor's topic lists don't match the 2020 bag layout, so it fell back to
+the sparse `/gnss` topic (26 fixes) and emitted a heading placeholder. Every
+world-projected radar return from this clip is therefore **rotated about
+own-ship by the true heading** (GPS track suggests course ≈300°, so the
+rotation is large). Integrity sweep confirms all six other clips are fine
+(dense rows, real headings). The bag itself carries everything needed:
+`/filter/positionlla` + `/sensor/gps/fix` (~60–70 Hz position) and
+`/filter/quaternion` / `/imu/data` (~60 Hz attitude → yaw).
+
+1. **Extractor fix** (`tests/fixtures/philos/extract_section.py`): add
+   position fallbacks `/filter/positionlla`, `/sensor/gps/fix` (prefer the
+   densest NavSatFix-compatible topic) and heading fallback = yaw from
+   `/filter/quaternion` (or `/imu/data`), applied when none of the named
+   heading topics exist. Guard: after extraction, assert >1 distinct heading
+   value and row rate ≥1 Hz — fail loudly instead of emitting placeholders
+   (this is the trap that silently produced a rotated clip).
+2. **Re-extract `car_carrier_near`**; expect ~7k own-ship rows with real
+   headings.
+3. **Invalidate + redo this clip's contribution to the R4 chart analysis**
+   (its cells were rotated): re-run `charts/philos_chart_coverage.py` after
+   re-extraction; re-check the in-coverage UNKNOWN at 42.3583, −71.0464,
+   which was previously supported by this clip + `ais_ferry_far` (only the
+   latter is currently valid).
+4. **Then the video/label pass** (operator + frame verification): purpose is
+   the **occlusion archetype** — a large car carrier close to own-ship
+   shadows moored vessels behind it; test data for whether coverage-aware
+   decay's sector model needs an LOS/shadow guard (don't decay cells
+   shadowed by a strong closer return) or whether shadow-induced
+   observed-empty false-fires stay negligible. Clip is in-sample (holdout
+   remains `sailboats_busy` / `almost_cross` / `ais_ferry_far`).
+5. Eval-log entry for the integrity finding + the AIS note: the 2020/2021
+   campaigns carry NO AIS at all (receiver absent) — the AIS-veto's
+   real-data validation must come from HAXR, not philos.
+
+---
+
+## R9 — Cooperative+radar readiness (pre-real-test; reviewed 2026-07-04)
+
+Context: cooperative (fleet-partner GNSS fixes, `SensorKind::Cooperative`,
+`platform_id`) + radar will be the first real deployment test. Review of the
+cooperative paths against this week's changes: core is INTACT — 28 tests
+green on the current tree (identity gate, cooperative-only retirement,
+AIS-as-cooperative activity, bus determinism); none of the week's work
+(coverage decay, labels, camera loader, pose sorted-insert) touches its
+code paths. Three items to close BEFORE the real test:
+
+1. **Latent: cooperative leaks into the occupancy layer (only when the
+   detector is ON).** Cooperative fixes are Position2D/canInitiateTrack, so
+   in `feed_clutter_map` they (a) feed as full-weight clutter when
+   unclaimed, and (b) with `estimate_coverage_sector` on, the cooperative
+   bundle self-estimates a meaningless "swept wedge" (fleet-partner
+   bearings from `sensor_position_enu`=origin) that is UNIONED into the
+   decay footprint — decay evidence over cells nothing observed:
+   over-claiming, the unsafe direction (same family as the multi-cluster
+   bug). Exposure needs occupancy detector + coverage flag both ON (both
+   default OFF today). Fix: exclude non-scanning SensorKinds (Cooperative,
+   Ais) from `cov_sensor` coverage estimation; and when the corroboration
+   veto lands, key it on Cooperative as well as AIS ("cooperative-known
+   platform must track, never suppress" — strongest possible
+   discriminator under the ADR 0002 amendment).
+
+2. **Scenario-test gap: nothing fuses Cooperative + radar end-to-end** —
+   the exact shape of the first real test. Add one scenario test: fleet
+   partner (cooperative fixes ~10 s) + radar plots on the same vessel +
+   clutter; assert (a) ONE track, not a cooperative/radar dual; (b)
+   `platform_id` carried; (c) ID stable through a cooperative dropout
+   while radar corroborates — and NO cooperative-timeout retirement in
+   that regime (verified in code: retirement sits inside the
+   no-surveillance-opportunity branch, `PmbmTracker.cpp` ~L668–695, so
+   radar coverage suppresses it — pin this with a test); (d) retirement
+   DOES fire when both channels go silent past
+   `cooperative_stale_timeout_sec`.
+
+3. **Docs: the real-test wiring recipe.** The retirement behavior in (2c)
+   depends on `use_sensor_activity` + `DeclaredSensorActivity` profiles
+   for BOTH the radar and the cooperative channel; without profiles the
+   legacy fallback behaves differently. The integration guide currently
+   notes ISensorActivity only in passing — add a cooperative-channel
+   section (fits the guide's keep-in-sync rule; hand to the guide's
+   doc-bug follow-up pass).

@@ -1,7 +1,8 @@
-# Data-Expansion TODOs (D1–D6) — 2026-07-02
+# Data-Expansion TODOs (D1–D12) — 2026-07-02 (D7–D12 added 2026-07-03)
 
-Source: review of `data/` (manifest: `data/README.md`, fetched 2026-06-04)
-against what the bench actually wires. Today the replay bench uses only
+Source: D1–D6 from review of `data/` (manifest: `data/README.md`, fetched
+2026-06-04) against what the bench actually wires. D7–D12 from an external
+sweep (2026-07-03) for free datasets/benchmarks the manifest missed. Today the replay bench uses only
 **philos** (1 of 7 extracted clips), **autoferry** (9 scenarios), and **HAXR**
 (one station-hour, `kattwyk_08`, first 40 s). Everything else (~2.3 GB) is
 fetched but unused; `pohang_radar`, `pohang_lidar`, and `smd_eo` already have
@@ -136,8 +137,155 @@ only. Revisit when a long-running deployment soak is actually needed.
 
 ---
 
+---
+
+# External candidates from the 2026-07-03 sweep (D7–D12)
+
+Context for the sweep: every real radar source we currently use (philos,
+HAXR, autoferry-radar) scores against **AIS-only truth** — non-AIS targets
+count as "false", which is the standing caveat on all real-data claims
+(and the reason `harbor_complete_truth` is the gate). D7 and D8 are the
+first candidates that break that limitation. All D7–D12 are
+**evaluate-before-extract**: dataset papers oversell; each ticket's first
+step is a license/format/truth-quality check, and the ticket dies cheaply
+if that check fails.
+
+---
+
+## D7 — MOANA: real radar with NON-AIS truth + anchored vessels [Cl-3, 1b-ii evidence; evaluate ~half day, extract ~1–2 days]
+
+**What.** Multi-radar maritime dataset (marine X-band + W-band scanning
+radar) with ground-truth object labels derived from **camera + lidar, not
+AIS**, and scenes that explicitly contain many anchored large vessels.
+Paper: arXiv 2412.03887 ("MOANA: Multi-Radar Dataset for Maritime Odometry
+and Autonomous Navigation Application").
+
+**Why.** Hits our two sorest evidence gaps at once: (1) real marine radar
+where a non-AIS target is *labelled*, not silently scored as false — the
+first real-data source where "false track" actually means false; (2) real
+radar signatures of anchored vessels, the exact object class the 1b-ii
+detector must NOT suppress (KEEP-guard material that today rests entirely
+on philos video labelling).
+
+**Do.** (1) Feasibility: license, download size, label quality/coverage,
+whether X-band plots are extractable to our `radar_plots.csv` shape.
+(2) If pass: fixture extraction + a labelled replay scenario; score the
+occupancy detector's SUPPRESS/KEEP split against the dataset's own labels
+(same decomposition as the R8 philos gates, but with real truth).
+
+**Acceptance.** Feasibility note in the eval log (go/no-go). If go: one
+fixture + one label-scored replay scenario; detector confusion numbers
+(structure vs anchored-vessel) recorded.
+
+---
+
+## D8 — R-BAD: 69 h radar berthing dataset + synced video [Cl-3 steady-state + labels; evaluate ~half day]
+
+**What.** Radar-Based Berthing-Aid Dataset: 69 hours of FMCW radar point
+clouds with timestamped synced video of ship docking operations, stated
+freely accessible. Paper: MDPI Electronics 14(20):4065 (2025).
+
+**Why.** Berthing = piers, moored vessels, near-shore structure — the
+philos regime — but at *hours* of duration instead of 20 s clips, so it
+can answer the steady-state / confirmed-cohort question (increment 8)
+on a second geography, and the synced video supports the same
+label-pass workflow we built for philos (R8) without us shooting our own
+footage.
+
+**Do.** (1) Feasibility: license, radar type/geometry vs our plot model,
+video alignment quality. (2) If pass: extract 1–2 station-hours as
+fixtures; video label pass (same method as sunset_cruise/close_approach);
+register a label-scored replay.
+
+**Acceptance.** Feasibility note (go/no-go); if go, ≥1 hour-scale fixture
++ labels + baseline in the eval log.
+
+---
+
+## D9 — DLR extended-target campaigns: overlap check [cheap curiosity; ~1 h]
+
+**What.** The DLR institute behind HAXR also publishes separate marine
+radar datasets for (multiple) extended target tracking with AIS reference
+(elib.dlr.de/129565, Sensors 2021 10.3390/s21144641; download page:
+dlr.de → Institute of Communications and Navigation → nautical systems).
+Our manifest only covers the HAXR station-hours.
+
+**Why.** Possibly distinct campaigns (different geometry/platform) at
+near-zero marginal cost — we already have their HDF5 access layer and
+loader conventions. Extended-target emphasis is also relevant to R3
+(extent-is-interim).
+
+**Do.** Ten-minute check whether these are the same files as `data/dlr/`;
+if distinct, size up and decide whether to fold into D1's extraction pass.
+
+**Acceptance.** One-line manifest note: same/distinct, and if distinct,
+fetch-or-skip decision with reason.
+
+---
+
+## D10 — Global Fishing Watch anchorages + events [replaces most of D3's mining; ~half day]
+
+**What.** Free (registration) curated global anchorage database —
+locations where ≥20 unique vessels sat stationary since 2012 — plus
+vessel-event APIs (anchorage visits, port calls).
+globalfishingwatch.org/datasets-and-code-anchorages/.
+
+**Why.** Two uses. (1) D3's goal — anchored-vessel dwell/transition/
+watch-circle statistics for the AIS-veto and corroboration design — may
+be largely pre-computed here, cheaper than mining raw MarineCadastre.
+(2) The anchorage polygons themselves are a candidate **chart-corroboration
+prior** for the 1b-ii KEEP-guard: "this water is a known anchorage →
+bias KEEP" (the exact opposite polarity of the charted-structure
+SUPPRESS prior — both feed the same corroboration seam).
+
+**Do.** Register; pull the anchorage layer for the philos/HAXR
+geographies; sanity-check the Boston 42.3585N anchorage (our video-
+verified KEEP cluster) appears; assess event-API stats vs D3's needs.
+
+**Acceptance.** Anchorage extract for ≥1 bench geography committed as a
+fixture candidate + a note on how much of D3 it renders unnecessary.
+
+---
+
+## D11 — Reeds: moving-platform radar with precision ego-truth [Stage 2 alternative to D4; park until Stage 2]
+
+**What.** Chalmers/RISE instrumented boat (Gothenburg): 360° radar, 3
+lidars, 6 cameras, fibre-optic-gyro + 3-antenna GNSS ego-truth.
+reeds.opendata.chalmers.se.
+
+**Why later.** Same role as D4 (Pohang): does the geo-referenced
+occupancy grid smear under ego-motion — but *unblocked* (documented
+conventions, precision ego pose) where Pohang has three unresolved
+conventions and no truth. When Stage 2 starts, evaluate Reeds FIRST and
+keep Pohang only if Reeds fails feasibility. Caveat: raw volumes are
+huge (GB/s-class cameras) — extract radar + ego pose only, never mirror.
+
+---
+
+## D12 — WaterScenes: truth-complete 4D radar (wrong sensor physics) [cross-check only; unscheduled]
+
+**What.** USV with automotive-style 4D mmWave radar + camera, point-level
+radar annotations (arXiv 2307.06505; waterscenes.github.io).
+
+**Why unscheduled.** Truth-complete radar — but mmWave on inland water is
+not marine nav radar; clutter/extent statistics don't transfer. Legit
+only as a logic cross-check of the detector (does SUPPRESS/KEEP behave
+sanely under a *different* radar with full truth), never for tuning.
+Revisit if we want a third independent detector sanity check after
+MOANA/R-BAD.
+
+**Camera benchmarks (MVTD, MODS, SeaDronesSee, LaRS):** noted, parked
+with D5 — they become relevant when the camera corroboration axis
+(ADR 0001 A3) opens, not before.
+
+---
+
 ## Suggested order
 
 **D1 + D2 now** (both cheap; both strengthen the M2 gate everything else
-leans on) → **D3** as a named input before R3/1b-ii design work starts →
-**D4** at Stage 2 → **D5** with ADR 0001 A3 → **D6** unscheduled.
+leans on) → **D7 + D8 feasibility checks** (half day each; first real
+radar with non-AIS truth — directly de-risks the 1b-ii promotion story)
+→ **D9** whenever someone touches `data/dlr/` next → **D10** before the
+AIS-veto/chart-corroboration design lands (it may supply the prior) →
+**D3** only for what D10 doesn't cover → **D11** at Stage 2 (before D4)
+→ **D5** with ADR 0001 A3 → **D6/D12** unscheduled.

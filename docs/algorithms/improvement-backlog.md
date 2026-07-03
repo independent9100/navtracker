@@ -589,3 +589,45 @@ and `core/pmbm/PmbmTracker.cpp` `processBatch`; example cleanup in
 
 Raised 2026-07-02 (user side-quest — "sensor data needs to be sorted" is a
 general smell that will hurt naive consumers).
+
+---
+
+## 16. Per-pose heading σ on OwnShipPose (consistency wart)
+
+**What.** `OwnShipPose` carries per-fix σ for position
+(`position_std_m`) and velocity (`velocity_std_m_per_s`) — but NOT for
+the primary `heading_true_deg`. The random heading error instead lives
+as static per-consumer config (`ArpaAdapterConfig.heading_std_deg`,
+`EoIrAdapterConfig` equivalent), while the v3 auxiliary heading fields
+(`gps_true_heading_deg`, `magnetic_heading_deg`) DO carry per-fix σ
+because bias observations need them. Found 2026-07-03 when an
+integrator asked "why is there no std deviation of heading?".
+
+**Why it matters.** (a) Inconsistent API: two heading sources carry σ,
+the one that projects every radar/EO-IR measurement doesn't. (b) The
+per-adapter config default is 0.0 ("perfect gyro") — a documented
+pitfall that exists only because the σ is detached from the pose.
+(c) Per-fix σ cannot be expressed at all: a satellite compass degrades
+with constellation geometry, a gyro during alignment is worse than
+steady-state — today both must be priced at one static worst-case
+number per adapter, or optimistically ignored.
+
+**Proposal.** Add `heading_std_deg{0.0}` to `OwnShipPose`. Consumers
+(`ArpaAdapter`, `EoIrAdapter`, measurement builders) use
+`max(pose.heading_std_deg, cfg.heading_std_deg)` — pose value when the
+nav source provides one, adapter config as the deployment-level floor,
+and the existing bias-variance composition (`sigma_heading_eff`)
+unchanged on top. `OwnShipNmeaAdapter` populates it from talker config.
+Consumer-surface change ⇒ integration-guide entry required (heading-σ
+split already has a MUST entry in the guide ticket; update it).
+
+**Test.** A TTM projected with `pose.heading_std_deg = 2°` and adapter
+config 0 gets the same cross-range σ as today's config-only path with
+2°; the max() rule asserted both ways; bit-identical when both are 0.
+
+**Lift.** Small — one field, two consumer sites, builder passthrough,
+tests. Half a day. Priority: LOW-MEDIUM (correctness of σ bookkeeping,
+no behavior change for correctly-configured deployments).
+
+Raised 2026-07-03 (integrator question; the "why don't we have a std
+deviation of heading?" wart).
