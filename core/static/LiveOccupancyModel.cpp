@@ -69,6 +69,12 @@ void LiveOccupancyModel::observe(
 
   // 5) Re-classify structure (persistent AND extended) → suppression + hazards.
   recomputeStructure();
+
+  // Introspection peaks.
+  peak_structure_count_ =
+      std::max(peak_structure_count_, static_cast<int>(obstacles_.size()));
+  for (const auto& kv : persistence_)
+    peak_persistence_ = std::max(peak_persistence_, kv.second);
 }
 
 void LiveOccupancyModel::recomputeStructure() {
@@ -154,6 +160,7 @@ double LiveOccupancyModel::birthSuppression(
       continue;                           // outside this cell's influence
     best = std::max(best, params_.suppression_max * kv.second * ramp);
   }
+  if (best > 0.0) ++suppression_hits_;
   return best;
 }
 

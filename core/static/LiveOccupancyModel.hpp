@@ -71,6 +71,16 @@ class LiveOccupancyModel : public IStaticObstacleModel,
     current_ = new_datum;
   }
 
+  // Introspection (tests / diagnostics): the most structure components ever
+  // classified simultaneously, and the highest per-cell persistence ever
+  // reached, across the model's lifetime. Peak (not current) because a fed
+  // structure that later decays would otherwise be invisible at end-of-run.
+  int peakStructureCount() const { return peak_structure_count_; }
+  double peakPersistence() const { return peak_persistence_; }
+  // Number of birthSuppression() queries that landed in a suppressed region
+  // (returned > 0). Zero ⇒ the birth path never queried classified structure.
+  long suppressionHits() const { return suppression_hits_; }
+
  private:
   using Cell = std::pair<int, int>;
 
@@ -86,6 +96,9 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   std::map<Cell, double> persistence_;      // EWMA persistence per touched cell
   std::map<Cell, double> structure_conf_;   // cell → suppression confidence
   std::vector<StaticObstacle> obstacles_;   // one per structure component
+  int peak_structure_count_ = 0;
+  double peak_persistence_ = 0.0;
+  mutable long suppression_hits_ = 0;
 };
 
 }  // namespace navtracker

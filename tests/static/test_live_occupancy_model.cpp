@@ -141,6 +141,26 @@ TEST(LiveOccupancyModel, DatumRecenterKeepsGeographicSuppression) {
   EXPECT_NEAR(s_new, s_old, 1e-6);
 }
 
+// Introspection: a fed pier is counted as one structure; querying its
+// suppressed region increments the hit counter; a boat-only feed classifies
+// no structure and a query there records no hit.
+TEST(LiveOccupancyModel, IntrospectionTracksStructureAndHits) {
+  LiveOccupancyModel m(anchorDatum(), testParams());
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(pierReturns(), scan));
+  EXPECT_EQ(m.peakStructureCount(), 1);
+  EXPECT_GT(m.peakPersistence(), testParams().persistence_bar);
+  const long before = m.suppressionHits();
+  EXPECT_GT(m.birthSuppression(Eigen::Vector2d(62.5, 0.0)), 0.0);
+  EXPECT_EQ(m.suppressionHits(), before + 1);  // the query landed in structure
+
+  LiveOccupancyModel boat(anchorDatum(), testParams());
+  for (int scan = 0; scan < 20; ++scan)
+    boat.observe(feed({boatReturn()}, scan));
+  EXPECT_EQ(boat.peakStructureCount(), 0);  // compact → never structure
+  EXPECT_DOUBLE_EQ(boat.birthSuppression(Eigen::Vector2d(1012.5, 1012.5)), 0.0);
+  EXPECT_EQ(boat.suppressionHits(), 0);
+}
+
 // Identical feed sequences produce identical suppression (determinism).
 TEST(LiveOccupancyModel, DeterministicAcrossIdenticalRuns) {
   auto run = []() {
