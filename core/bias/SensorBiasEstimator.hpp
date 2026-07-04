@@ -13,8 +13,8 @@ namespace navtracker {
 /**
  * Tuning for `SensorBiasEstimator`: the per-key KF priors, random-walk
  * process noise, publish (deterministic-apply) variance thresholds, and the
- * three observation gates (time skew, minimum range, outlier σ) shared with
- * `HeadingBiasEstimator`'s G1-G2-G3.
+ * two observation gates (minimum range, outlier σ) shared with
+ * `HeadingBiasEstimator`'s range and outlier gates.
  */
 struct SensorBiasEstimatorConfig {
   // Initial 1-sigma prior on the bias (per axis, isotropic).
@@ -34,8 +34,8 @@ struct SensorBiasEstimatorConfig {
       (0.3 * 3.14159265358979323846 / 180.0)
       * (0.3 * 3.14159265358979323846 / 180.0)};
 
-  // Observation gates (spec §3, mirrors HeadingBiasEstimator G1-G2-G3).
-  double max_time_skew_seconds{1.0};
+  // Observation gates (spec §3, mirrors HeadingBiasEstimator's range and
+  // outlier gates).
   double min_range_m{50.0};
   double outlier_sigma{5.0};
 };
@@ -107,7 +107,8 @@ class SensorBiasEstimator : public ISensorBiasProvider {
 
   /**
    * Observation entry points. Each calls predictTo for the keyed entry,
-   * applies the three gates, and (if accepted) updates the bias state.
+   * applies the two gates (minimum range, outlier σ), and (if accepted)
+   * updates the bias state.
    */
   void observe(const PositionBiasPairObservation& obs);
   void observe(const BearingBiasPairObservation& obs);
@@ -146,7 +147,6 @@ class SensorBiasEstimator : public ISensorBiasProvider {
   // Diagnostics.
   std::size_t acceptedPosObs() const { return acc_pos_; }
   std::size_t acceptedBrgObs() const { return acc_brg_; }
-  std::size_t rejectedByTime() const { return rej_time_; }
   std::size_t rejectedByRange() const { return rej_range_; }
   std::size_t rejectedByOutlier() const { return rej_outlier_; }
 
@@ -177,7 +177,6 @@ class SensorBiasEstimator : public ISensorBiasProvider {
   std::unordered_map<SensorBiasKey, BearingState> brg_;
   std::size_t acc_pos_{0};
   std::size_t acc_brg_{0};
-  std::size_t rej_time_{0};
   std::size_t rej_range_{0};
   std::size_t rej_outlier_{0};
 };

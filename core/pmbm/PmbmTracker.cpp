@@ -421,10 +421,10 @@ PmbmTracker::buildAdaptiveBirthCandidates(
         ? detection_model_->paramsFor(z).clutter_intensity
         : cfg_.clutter_intensity;
 
-    if (!canInitiateTrack(z.model)) {
-      // Bearing-only or otherwise non-initiable: never births a
-      // Bernoulli. The total intensity is still the clutter mass so
-      // assignment cells stay balanced.
+    if (!canInitiateTrack(z.model) || !isMeasurementCovariancePsd(z.covariance)) {
+      // Bearing-only, otherwise non-initiable, or malformed (empty/non-PSD
+      // covariance) measurement: never births a Bernoulli. The total
+      // intensity is still the clutter mass so assignment cells stay balanced.
       cand.rho_target = 0.0;
       cand.rho_total = lambda_z;
       cand.rho_target_unsuppressed = 0.0;
@@ -1348,7 +1348,8 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
   // Birth fixes by replacing ρ_target with an independent λ_birth.
   if (cfg_.measurement_driven_birth && !cfg_.adaptive_birth) {
     for (const auto& z : scan) {
-      if (!canInitiateTrack(z.model)) continue;
+      if (!canInitiateTrack(z.model) || !isMeasurementCovariancePsd(z.covariance))
+        continue;
 
       // Smart birth: skip when an existing high-r Bernoulli already
       // gates to this measurement. Walks every hypothesis's Bernoullis
@@ -1682,7 +1683,11 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
           claimed ? std::clamp(1.0 - claim_r[j], 0.0, 1.0) : 1.0;
       if (canInitiateTrack(scan[j].model) && scan[j].value.size() >= 2) {
         it->second.positions.emplace_back(scan[j].value(0), scan[j].value(1));
-        if (estimate_cov && cov_sensor.find(k) == cov_sensor.end())
+        // R9 item 1a: exclude non-scanning sources (AIS/Cooperative) from
+        // coverage estimation — their returns are vessel positions, not a swept
+        // arc, so a self-estimated wedge would over-claim coverage (unsafe decay).
+        if (estimate_cov && !isNonScanningSource(scan[j].sensor) &&
+            cov_sensor.find(k) == cov_sensor.end())
           cov_sensor[k] = scan[j].sensor_position_enu;
         if (weight > 0.0) {
           it->second.clutter_positions.emplace_back(scan[j].value(0),

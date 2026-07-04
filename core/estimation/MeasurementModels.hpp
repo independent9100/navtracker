@@ -31,7 +31,10 @@ inline bool canInitiateTrack(MeasurementModel model) {
 }
 
 /**
- * h(x) and H for `model` evaluated at state = [px, py, vx, vy].
+ * h(x) and H for `model` evaluated at `state`, whose first two entries are
+ * [px, py] (ENU position, m). The function is state-dimension-agnostic: H is
+ * sized to `state.size()`, so 4-state [px,py,vx,vy] and 5-state
+ * [px,py,vx,vy,ω] inputs are both valid.
  * `sensor_position_enu` is the sensor's ENU position; defaults to the origin.
  * Range/bearing and bearing-only models compute dx = px - sx, dy = py - sy so
  * that measurements are relative to the sensor rather than the ENU origin.
@@ -44,6 +47,8 @@ MeasurementPrediction predictMeasurement(
 /**
  * h(x) only, no Jacobian. Cheaper than predictMeasurement for callers
  * (e.g. particle filter) that only need the predicted measurement value.
+ * Evaluated at `state` whose first two entries are [px, py] (ENU, m);
+ * state-dimension-agnostic (4- or 5-state).
  * `sensor_position_enu` defaults to the origin; see predictMeasurement.
  */
 Eigen::VectorXd predictMeasurementValue(
@@ -52,8 +57,9 @@ Eigen::VectorXd predictMeasurementValue(
     const Eigen::Vector2d& sensor_position_enu = Eigen::Vector2d::Zero());
 
 /**
- * Measurement residual z - h(x); bearing component is angle-wrapped for
- * the RangeBearing2D model.
+ * Measurement residual z - h(x); the bearing component is angle-wrapped for
+ * both models that carry a bearing — index 1 for RangeBearing2D, index 0 for
+ * Bearing2D.
  */
 Eigen::VectorXd measurementResidual(MeasurementModel model,
                                     const Eigen::VectorXd& z,

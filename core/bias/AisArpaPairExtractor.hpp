@@ -18,7 +18,9 @@ struct AisArpaPairExtractorConfig {
   // 1-sigma isotropic AIS position uncertainty assumed when the AIS
   // measurement covariance is degenerate; used as a fallback only.
   double ais_position_std_fallback_m{10.0};
-  // 1-sigma ARPA bearing uncertainty fallback (rad).
+  // 1-sigma ARPA bearing uncertainty (rad). Applied to every ARPA pair: the
+  // TTM/TLL contribution carries no per-touch bearing σ, so this value is used
+  // directly (not just as a degenerate-covariance fallback like the AIS one).
   double arpa_bearing_std_fallback_rad{1.0 * 3.14159265358979323846 / 180.0};
 };
 

@@ -54,7 +54,7 @@ struct CrossSensorEligibilityConfig {
  * Extract position-bias pair observations from a fused-track snapshot.
  * For each track whose `recent_contributions` (within the cycle window
  * of `cycle_time`) include both an AIS Position2D contribution and at
- * least one *other* Position2D contribution (radar, lidar, ARPA), emit
+ * least one *other* Position2D contribution (ARPA TTM/TLL, lidar), emit
  * one PositionBiasPairObservation per (AIS, non-AIS) pair.
  */
 std::vector<PositionBiasPairObservation> extractPositionPairs(
@@ -90,20 +90,24 @@ std::vector<BearingBiasPairObservation> extractBearingPairs(
  *
  * For each track that (a) passes the eligibility gates in `gates`
  * (existence + position-cov), and (b) has **no AIS contribution** in
- * the cycle window, walk every ordered pair (Y, X) of positional
- * contributions whose SensorBiasKeys differ. Each ordered pair emits
- * one observation with X as the sensor under calibration and Y as the
- * anchor. Schmidt-KF cov fold: Y's contribution is debiased by the
- * current `bias_provider` and Y's published bias covariance is added
- * to R_anchor so that the estimator update sees an honest noise floor.
+ * the cycle window, emit ONE observation per positional key X, pairing
+ * X (the sensor under calibration) against its single most-trusted
+ * partner Y — the contribution whose source_id differs from X's and
+ * whose effective anchor covariance trace is smallest after the
+ * Schmidt-KF cov fold. Contributions sharing X's source_id are excluded
+ * (shared-hardware pairs like ARPA TTM+TLL are not independent anchors).
+ * Schmidt-KF cov fold: Y's contribution is debiased by the current
+ * `bias_provider` and Y's published bias covariance is added to
+ * R_anchor so that the estimator update sees an honest noise floor.
  *
- * The function intentionally emits BOTH (Y, X) and (X, Y) per unordered
- * pair — the joint coordinate descent across the two unknown biases
- * is what unsticks the underdetermined "one equation, two unknowns"
- * problem. The estimator's bias prior (zero-mean, σ = initial_pos_std)
- * breaks the symmetry by pulling each bias to zero so the descent
- * converges to the unique solution that minimises both the pair
- * residuals and the prior.
+ * Because each key is paired against exactly one partner, both
+ * directions (Y anchoring X and X anchoring Y) are emitted only in the
+ * N=2 case, where X's best partner is Y and vice versa. The joint
+ * coordinate descent across the unknown biases is what unsticks the
+ * underdetermined "one equation, two unknowns" problem. The estimator's
+ * bias prior (zero-mean, σ = initial_pos_std) breaks the symmetry by
+ * pulling each bias to zero so the descent converges to the unique
+ * solution that minimises both the pair residuals and the prior.
  *
  * `bias_provider` may be null — in that case no debiasing happens
  * (b_anchor_hat is treated as zero) and R_anchor is just Y's

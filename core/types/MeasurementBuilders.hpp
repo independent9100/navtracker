@@ -62,10 +62,11 @@ Measurement makeMeasurementFromTrueBearing(
  * Absolute ENU position (AIS-style). No pose lookup or projection — the
  * ENU position is already in the working frame. Exposes a uniform
  * construction surface so SensorDefaults composition is consistent.
- * Pass an empty 2x2 covariance (default-constructed Eigen::Matrix2d is
- * uninitialized — see implementation) when no uncertainty info is
- * available; the result is a Measurement whose covariance is empty and
- * can be filled by applyDefaultsIfEmpty.
+ * Pass `Eigen::Matrix2d::Zero()` when no uncertainty info is available: an
+ * all-zero matrix is treated as the empty/unknown sentinel (the impl tests
+ * `!covariance.isZero()`), so the result's covariance is left empty for
+ * `applyDefaultsIfEmpty` to fill. Do NOT pass a default-constructed
+ * `Eigen::Matrix2d`: it is uninitialized garbage, never reliably zero.
  */
 Measurement makeMeasurementFromEnuPosition(
     SensorKind sensor,

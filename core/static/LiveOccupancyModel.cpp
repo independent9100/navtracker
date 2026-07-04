@@ -73,6 +73,13 @@ void LiveOccupancyModel::observeCamera(const CameraObservation& frame) {
   }
 }
 
+void LiveOccupancyModel::observeVesselFix(const VesselFix& fix) {
+  // Store in the fixed anchor frame (like a charted point / camera sensor pos).
+  VesselFix f = fix;
+  f.position_enu = toAnchorEnu(fix.position_enu);
+  vessel_fixes_.push_back(f);
+}
+
 void LiveOccupancyModel::observe(
     const std::vector<ISensorDetectionModel::ScanObservation>& by_sensor) {
   const double a = params_.ewma_alpha;
@@ -143,6 +150,18 @@ void LiveOccupancyModel::observe(
       it = camera_empty_streak_.erase(it);
     else
       ++it;
+  }
+
+  // Prune stale vessel-fix vetoes (older than the recency window relative to this
+  // scan) so an AIS/cooperative feed going quiet lets the veto lapse.
+  if (!vessel_fixes_.empty() && !by_sensor.empty()) {
+    const double now = by_sensor.front().time.seconds();
+    vessel_fixes_.erase(
+        std::remove_if(vessel_fixes_.begin(), vessel_fixes_.end(),
+                       [&](const VesselFix& f) {
+                         return now - f.t_unix > params_.veto_window_s;
+                       }),
+        vessel_fixes_.end());
   }
 
   // 4b) Camera eviction pre-pass (increment ii): spend (erase) the persistence
@@ -322,6 +341,14 @@ double LiveOccupancyModel::birthSuppression(
     const Eigen::Vector2d& enu_xy) const {
   if (obstacles_.empty()) return 0.0;
   const Eigen::Vector2d q = toAnchorEnu(enu_xy);
+  // Corroboration VETO (R9 item 1b): an AIS/cooperative-known vessel must remain
+  // track-eligible — never suppress a birth within veto_radius of a recent fix.
+  // The veto only lowers suppression to 0, so the conservation invariant holds.
+  if (!vessel_fixes_.empty()) {
+    const double vr2 = params_.veto_radius_m * params_.veto_radius_m;
+    for (const VesselFix& f : vessel_fixes_)
+      if ((f.position_enu - q).squaredNorm() <= vr2) return 0.0;
+  }
   // Derived ENTIRELY from the emitted hazards: ramp 1.0 inside footprint,
   // linear to 0 at keep-clear. best > 0 ⇒ q is inside some hazard's keep-clear
   // ring ⇒ that hazard is emitted (the conservation invariant, by construction).

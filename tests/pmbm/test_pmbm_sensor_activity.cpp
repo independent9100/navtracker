@@ -1038,3 +1038,154 @@ TEST(PmbmStaleSignal, DeclaredKindOverridesSensorKindDefault) {
          "(isCooperativeSource falls back to == SensorKind::Cooperative which is false). "
          "No stale signal should fire — the generalisation is profile-gated.";
 }
+
+// ---------------------------------------------------------------------------
+// R9 item 2: end-to-end fusion of COOPERATIVE + RADAR on ONE vessel — the exact
+// shape of the first real cooperative+radar deployment test, and the coverage
+// gap the R9 review flagged (every other cooperative test seeds Bernoullis
+// directly). Asserts:
+//   (a) ONE confirmed track, not a cooperative/radar dual;
+//   (b) platform_id is carried on the track's provenance;
+//   (c) the track ID is STABLE through a cooperative dropout that lasts LONGER
+//       than cooperative_stale_timeout_sec, because radar corroborates — the
+//       cooperative-timeout retirement sits in the no-surveillance-opportunity
+//       branch (PmbmTracker.cpp ~L668–695), so an active radar suppresses it;
+//   (d) retirement DOES fire once BOTH channels go silent.
+// ---------------------------------------------------------------------------
+namespace {
+navtracker::DeclaredSensorActivity gRadarPlusCoopActivity() {
+  navtracker::DeclaredSensorActivity::ChannelProfile radar;
+  radar.kind = navtracker::ChannelKind::Surveillance;
+  radar.sensor = navtracker::SensorKind::ArpaTtm;
+  radar.duty_cycle_sec = 1.0;
+  radar.max_range_m = 10000.0;
+  radar.sector_width_rad = 6.283185307179586;
+  radar.p_D = 0.9;
+  navtracker::DeclaredSensorActivity::ChannelProfile coop;
+  coop.kind = navtracker::ChannelKind::Cooperative;
+  coop.sensor = navtracker::SensorKind::Cooperative;
+  coop.expected_report_interval_sec = 5.0;
+  return navtracker::DeclaredSensorActivity{{radar, coop}};
+}
+Measurement gRadarPlot(double t) {
+  Measurement z;
+  z.time = Timestamp::fromSeconds(t);
+  z.sensor = SensorKind::ArpaTtm;
+  z.source_id = "radar";
+  z.model = MeasurementModel::Position2D;
+  z.value = Eigen::Vector2d(0.0, 0.0);
+  z.covariance = Eigen::Matrix2d::Identity() * 4.0;
+  return z;
+}
+Measurement gCoopFix(double t) {
+  Measurement z;
+  z.time = Timestamp::fromSeconds(t);
+  z.sensor = SensorKind::Cooperative;
+  z.source_id = "fleet_partner";
+  z.model = MeasurementModel::Position2D;
+  z.value = Eigen::Vector2d(0.0, 0.0);
+  z.covariance = Eigen::Matrix2d::Identity() * 4.0;
+  z.hints.platform_id = std::optional<std::uint64_t>{7ULL};
+  return z;
+}
+long gConfirmedCount(const PmbmTracker& t) {
+  long n = 0;
+  for (const auto& tr : t.tracks())
+    if (tr.status == navtracker::TrackStatus::Confirmed) ++n;
+  return n;
+}
+const navtracker::Track* gConfirmed(const PmbmTracker& t) {
+  for (const auto& tr : t.tracks())
+    if (tr.status == navtracker::TrackStatus::Confirmed) return &tr;
+  return nullptr;
+}
+}  // namespace
+
+TEST(PmbmCooperativeRadar, FuseOneTrackStableThroughCoopDropoutRetireWhenBothSilent) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  auto activity = gRadarPlusCoopActivity();
+
+  PmbmTracker::Config c;
+  c.probability_of_detection = 0.9;
+  c.clutter_intensity = 1e-6;
+  c.survival_probability = 0.99;
+  c.adaptive_birth = true;
+  c.birth_existence_target = 0.3;
+  c.confirm_threshold = 0.5;
+  c.output_existence_floor = 0.3;
+  // The coverage/miss model is use_sensor_activity (the honest per-duty-cycle
+  // model, R9 item 3's real-test config) — NOT source_aware_misdetection. The two
+  // are ALTERNATIVE miss models: the identity gate short-circuits an empty scan as
+  // "not observable" (no matching platform_id in the scan) BEFORE the activity
+  // model runs, which would block both the surveillance miss and the cooperative
+  // retirement. use_sensor_activity is the mechanism the deployment relies on.
+  c.use_sensor_activity = true;
+  c.cooperative_stale_timeout_sec = 20.0;
+  c.r_min = 1e-3;
+  PmbmTracker tracker(ekf, c);
+  tracker.setSensorActivity(&activity);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // ---- Phase 1: BOTH channels report the same vessel (alternating scans). ----
+  // Radar on integers, cooperative on half-steps — one measurement per scan, so
+  // no two-in-one-scan competition; they gate to the same Bernoulli.
+  for (int k = 0; k < 10; ++k) {
+    tracker.predict(Timestamp::fromSeconds(k));
+    tracker.processBatch({gRadarPlot(k)});
+    tracker.predict(Timestamp::fromSeconds(k + 0.5));
+    tracker.processBatch({gCoopFix(k + 0.5)});
+  }
+  ASSERT_EQ(gConfirmedCount(tracker), 1) << "(a) coop+radar must fuse to ONE track";
+  const navtracker::Track* tr = gConfirmed(tracker);
+  ASSERT_NE(tr, nullptr);
+  const std::uint64_t vessel_track_id = tr->id.value;
+  // (b) platform_id carried on the track's provenance.
+  const bool carries_pid = std::any_of(
+      tr->recent_contributions.begin(), tr->recent_contributions.end(),
+      [](const navtracker::Track::SourceTouch& s) {
+        return s.platform_id.has_value() && *s.platform_id == 7ULL;
+      });
+  EXPECT_TRUE(carries_pid) << "(b) platform_id must be carried on the fused track";
+
+  // ---- Phase 2: cooperative DROPS; radar keeps detecting for > timeout. ------
+  // Coop last reported ~t=9.5; this runs to t=45 (35 s of coop silence, well past
+  // the 20 s cooperative_stale_timeout). The track must NOT retire — radar
+  // corroboration suppresses the cooperative-timeout branch. At t=35 (25 s of coop
+  // silence, already past the timeout) inject ONE empty scan: radar surveillance
+  // is in coverage → the miss lands in the surveillance branch, NOT the
+  // cooperative-timeout branch, so the track is NOT retired. This pins the review
+  // claim that an active radar suppresses the cooperative-timeout retirement.
+  for (int k = 10; k <= 45; ++k) {
+    if (k == 35) {
+      tracker.predict(Timestamp::fromSeconds(k));
+      tracker.processBatch({});  // radar-covered empty scan, coop long overdue
+      EXPECT_GT(gConfirmedCount(tracker), 0)
+          << "(c) radar surveillance opportunity must suppress the cooperative-"
+             "timeout retirement (coop overdue 25 s > 20 s timeout, but radar covers)";
+      continue;
+    }
+    tracker.predict(Timestamp::fromSeconds(k));
+    tracker.processBatch({gRadarPlot(k)});
+  }
+  ASSERT_EQ(gConfirmedCount(tracker), 1)
+      << "(c) track must survive a coop dropout longer than the coop timeout while "
+         "radar corroborates";
+  const navtracker::Track* tr2 = gConfirmed(tracker);
+  ASSERT_NE(tr2, nullptr);
+  EXPECT_EQ(tr2->id.value, vessel_track_id)
+      << "(c) the fused track ID must be STABLE through the cooperative dropout";
+
+  // ---- Phase 3: BOTH channels go silent (empty scans). Track must retire. ----
+  int retire_scan = -1;
+  for (int k = 46; k <= 70; ++k) {
+    tracker.predict(Timestamp::fromSeconds(k));
+    tracker.processBatch({});
+    if (gConfirmedCount(tracker) == 0) {
+      retire_scan = k;
+      break;
+    }
+  }
+  EXPECT_GE(retire_scan, 0)
+      << "(d) with BOTH channels silent, the track must eventually retire";
+}

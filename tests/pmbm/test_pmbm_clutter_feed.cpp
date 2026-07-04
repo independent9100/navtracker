@@ -247,6 +247,51 @@ TEST(PmbmOccupancyFeed, NoCoverageSectorWhenDisabled) {
       EXPECT_FALSE(obs.coverage.valid);
 }
 
+// R9 item 1a: a NON-SCANNING source (Cooperative / AIS) is a positional anchor,
+// not a swept sensor — it must NOT contribute a coverage footprint. Its returns
+// are real vessel positions, not a swept arc; self-estimating a "wedge" from them
+// and unioning it into the occupancy decay footprint over-claims coverage (decay
+// evidence over cells nothing observed — the unsafe direction). With the flag on,
+// a Cooperative bundle must carry NO valid coverage while the radar bundle does.
+TEST(PmbmOccupancyFeed, NonScanningSourceGetsNoCoverageSector) {
+  auto coopMeas = [](double x, double y, double t) {
+    Measurement m;
+    m.sensor = SensorKind::Cooperative;  // fleet-partner GNSS fix (non-scanning)
+    m.model = MeasurementModel::Position2D;
+    m.time = Timestamp::fromSeconds(t);
+    m.value = Eigen::Vector2d(x, y);
+    m.covariance = Eigen::Matrix2d::Identity() * 25.0;
+    return m;
+  };
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+  PmbmTracker::Config c = cfg();
+  c.estimate_coverage_sector = true;
+  PmbmTracker t(ekf, c);
+  SpyOccupancyFeed occ;
+  t.setLiveOccupancyFeed(&occ);
+  for (int k = 0; k < 8; ++k) {
+    t.predict(Timestamp::fromSeconds(k));
+    // Radar cluster (scanning) + a cooperative fleet-partner fix elsewhere.
+    t.processBatch({posMeas(100.0, 0.0, k), posMeas(100.0, 10.0, k),
+                    coopMeas(-500.0, 500.0, k)});
+  }
+  ASSERT_FALSE(occ.bundles.empty());
+  bool saw_radar_valid = false, saw_coop = false;
+  for (const auto& bundle : occ.bundles)
+    for (const auto& obs : bundle) {
+      if (obs.sensor == SensorKind::ArpaTtm && obs.coverage.valid)
+        saw_radar_valid = true;
+      if (obs.sensor == SensorKind::Cooperative) {
+        saw_coop = true;
+        EXPECT_FALSE(obs.coverage.valid)
+            << "cooperative (non-scanning) bundle wrongly self-estimated a sector";
+      }
+    }
+  EXPECT_TRUE(saw_radar_valid) << "radar bundle should still carry a coverage sector";
+  EXPECT_TRUE(saw_coop) << "cooperative bundle never reached the occupancy feed";
+}
+
 // Determinism: identical inputs → identical observe() call count and weights.
 TEST(PmbmClutterFeed, DeterministicFeed) {
   auto run = []() {

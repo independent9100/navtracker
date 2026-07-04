@@ -172,7 +172,8 @@ void Tracker::process(const Measurement& z_in) {
     manager_.recordHit(id);
     manager_.noteObservation(id, z.time);
     manager_.recordUpdated(id, z.time);
-  } else if (canInitiateTrack(z.model)) {
+  } else if (canInitiateTrack(z.model) &&
+             isMeasurementCovariancePsd(z.covariance)) {
     Track seed = estimator_.initiate(z);
     manager_.add(seed, z.time);
   }
@@ -308,7 +309,8 @@ void Tracker::processBatch(const std::vector<Measurement>& scan_in) {
   }
 
   for (std::size_t j = 0; j < scan.size(); ++j) {
-    if (!meas_used[j] && canInitiateTrack(scan[j].model)) {
+    if (!meas_used[j] && canInitiateTrack(scan[j].model) &&
+        isMeasurementCovariancePsd(scan[j].covariance)) {
       Track seed = estimator_.initiate(scan[j]);
       manager_.add(seed, t);
     }

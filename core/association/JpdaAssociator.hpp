@@ -45,7 +45,10 @@ class JpdaAssociator : public IDataAssociator {
   /**
    * Compute the JPDA soft-association result: per (track, measurement)
    * marginal probabilities β_jt over all feasible joint events within the
-   * gate, using `estimator` for the gate/likelihood of each pair.
+   * gate, using `estimator` for the gate/likelihood of each pair. Joint-event
+   * enumeration is capped at 1e6 events; if a cluster would exceed the cap the
+   * result degrades to a greedy mutual-exclusion assignment (β_jt → 0/1) and
+   * sets `overflow_fallback = true`.
    */
   AssociationResult associate(
       const std::vector<Track>& tracks,

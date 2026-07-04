@@ -36,13 +36,20 @@ class EkfEstimator : public IEstimator {
   /** Fold measurement `z` into the track via Jacobian-linearized update. */
   void update(Track& track, const Measurement& z) const override;
 
-  /** Create a new Tentative track seeded from a position-type measurement. */
+  /**
+   * Create a new Tentative track seeded from a position-type measurement.
+   * An empty or non-PSD measurement covariance is not used to initiate: the
+   * returned track has empty state (the "did not initiate" result). Callers
+   * must supply R (or call applyDefaultsIfEmpty) before initiating.
+   */
   Track initiate(const Measurement& z) const override;
 
   /**
    * PDAF/JPDA soft update: fold a gated cluster of measurements weighted by
    * association probabilities `betas` (and miss probability `beta_0`) into
-   * the track. `ctx` carries the associator parameters (see PdaContext).
+   * the track. `ctx` (see PdaContext) is accepted for interface parity but is
+   * unused by the single-mode EKF; only ImmEstimator consumes it (to
+   * normalize per-mode mixture likelihoods).
    */
   void softUpdate(Track& track,
                   const std::vector<Measurement>& gated_measurements,

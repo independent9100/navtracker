@@ -16,8 +16,9 @@ namespace navtracker {
  * most once. Cells with cost == +∞ are treated as forbidden.
  *
  * This is the Kuhn-Munkres algorithm implemented for rectangular cost
- * matrices (no padding required: if N > M, the surplus rows return -1).
- * Complexity is O(N · M · min(N,M)).
+ * matrices (the caller need not pad: if N > M, the surplus rows return -1).
+ * Internally the matrix is padded to a square K×K with K = max(N,M) and the
+ * Jonker-Volgenant augmenting-path loop runs in O(max(N,M)³).
  *
  * Rationale: TOMHT global hypothesis selection picks one leaf per track
  * tree subject to "each measurement used at most once across trees".

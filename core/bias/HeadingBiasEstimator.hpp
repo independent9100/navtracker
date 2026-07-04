@@ -21,7 +21,8 @@ struct HeadingBiasEstimatorConfig {
   double initial_variance_rad2{(5.0 * 3.14159265358979323846 / 180.0)
                                * (5.0 * 3.14159265358979323846 / 180.0)};
   // Random-walk process noise (rad^2/s).
-  double process_noise_var_per_sec{9.4e-11};  // ~2 deg/hr 1-sigma
+  // Random-walk PSD = (2 deg/hr)² in rad²/s; ≈0.03° 1-σ accumulated per hour.
+  double process_noise_var_per_sec{9.4e-11};
   // Gating thresholds.
   double publish_variance_threshold_rad2{(0.3 * 3.14159265358979323846 / 180.0)
                                          * (0.3 * 3.14159265358979323846 / 180.0)};
@@ -73,7 +74,7 @@ struct AisArpaPairObservation {
  * b (independent CV processes, independent associations).
  *
  * Three observability gates protect against state-error contamination
- * (predicted_state_var <= k * R), short range (range >= min_range_m),
+ * (predicted_state_var <= k * R), short range (range >= bi_min_range_m),
  * and outliers (|r| <= N * sqrt(S + P_b)). See spec
  * 2026-06-04-multi-track-bearing-bias-observer-design.md for defaults.
  */
@@ -90,7 +91,11 @@ class HeadingBiasEstimator : public IHeadingBiasProvider,
 
   /**
    * Apply one AIS+ARPA pair observation. Internally calls predictTo
-   * first, then performs a scalar KF update.
+   * first, then performs a scalar KF update. Observations whose AIS
+   * target range r_ais < 1.0 m are skipped (bearing ill-defined too near
+   * own-ship), and a cold-start-exempt outlier gate rejects the update
+   * when |r| exceeds bi_outlier_sigma·sqrt(S) once at least one prior
+   * observation has been accepted.
    */
   void observe(const AisArpaPairObservation& obs);
 

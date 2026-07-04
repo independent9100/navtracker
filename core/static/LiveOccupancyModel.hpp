@@ -79,6 +79,19 @@ struct LiveOccupancyParams {
   // STALE and must not evict now — the recency guard that makes decoupled per-cell
   // evidence safe. Only consulted when evict_camera_empty is true.
   double camera_empty_recency_window_s = 5.0;
+  // Corroboration suppression VETO (increment 6 / R9 item 1b): a birth is NEVER
+  // suppressed within this radius of a RECENT AIS/cooperative vessel fix — an
+  // AIS/cooperative-known platform must remain track-eligible (the strongest
+  // vessel discriminator under the ADR-0002 amendment: "where we CAN tell, a
+  // vessel must track, never be suppressed"). ~100 m ≈ one coarse cell, covering
+  // the vessel + fix uncertainty. Only active when observeVesselFix() is fed; the
+  // veto only REDUCES suppression to 0, so the conservation invariant is preserved.
+  double veto_radius_m = 100.0;
+  // A vessel fix vetoes only while it is within this window of the current scan
+  // time; a stale fix (the vessel's feed went quiet) is pruned, so an anchored
+  // AIS-silent vessel may fall back to the accepted static-hazard degraded mode
+  // until its next fix re-asserts the veto. Matches typical AIS/cooperative cadence.
+  double veto_window_s = 60.0;
 };
 
 /**
@@ -167,6 +180,23 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   void observeCamera(const CameraObservation& frame);
 
   /**
+   * One AIS/cooperative vessel fix (suppression veto input, R9 item 1b). Position
+   * is in the tracker's CURRENT-datum ENU (re-expressed to the anchor frame
+   * internally, like a camera sensor position); t_unix is its timestamp for the
+   * recency window. The WIRING selects which measurements are positional anchors
+   * (SensorKind::Ais / Cooperative — `isNonScanningSource`) and feeds only those,
+   * so the model stays sensor-kind agnostic. Inert until first fed.
+   */
+  struct VesselFix {
+    double t_unix{0.0};
+    Eigen::Vector2d position_enu{Eigen::Vector2d::Zero()};
+  };
+  void observeVesselFix(const VesselFix& fix);
+
+  /** Number of currently-active (unpruned, recent) vessel-fix vetoes. */
+  std::size_t vesselFixCount() const { return vessel_fixes_.size(); }
+
+  /**
    * Introspection (tests / diagnostics): the most structure components ever
    * classified simultaneously, and the highest per-cell persistence ever
    * reached, across the model's lifetime. Peak (not current) because a fed
@@ -252,6 +282,10 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   // inflate the sustained span; a matching detection erases the entry. Keyed in
   // the anchor frame like the occupancy grid.
   std::map<Cell, std::pair<double, double>> camera_empty_streak_;
+  // Recent AIS/cooperative vessel fixes (position in the anchor frame, + t_unix),
+  // each vetoing birth suppression within veto_radius_m. Pruned to veto_window_s
+  // in observe(). Empty ⇒ no veto (bit-identical to no-fix behaviour).
+  std::vector<VesselFix> vessel_fixes_;
   int peak_structure_count_ = 0;
   double peak_persistence_ = 0.0;
   mutable long suppression_hits_ = 0;

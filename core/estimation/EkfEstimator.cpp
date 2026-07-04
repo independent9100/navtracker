@@ -66,6 +66,15 @@ void EkfEstimator::update(Track& track, const Measurement& z) const {
 
 Track EkfEstimator::initiate(const Measurement& z) const {
   Track t;
+  // Empty (0x0 "no uncertainty" sentinel) or non-PSD measurement covariance
+  // cannot seed a track: reading z.covariance(0,0)… would be out of bounds on
+  // an empty matrix (assert in debug, UB in release), and a degenerate R would
+  // yield a singular birth covariance. Mirror update()'s skip semantics —
+  // return a default "did not initiate" track (empty state, no sources) so no
+  // track is born from malformed input. Callers must supply R (or call
+  // applyDefaultsIfEmpty) before initiating.
+  if (!isMeasurementCovariancePsd(z.covariance)) return t;
+
   t.last_update = z.time;
   t.status = TrackStatus::Tentative;
 

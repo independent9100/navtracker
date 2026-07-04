@@ -555,6 +555,102 @@ TEST(LiveOccupancyModel, CameraEvictionSurvivesAdaptiveBarFlicker) {
       << "eviction spent the pin — it does not re-emit when the bar falls (no blink)";
 }
 
+// SELF-HEALING (caveat 2 from the increment-ii real-data demo, now a gate): a
+// WRONG eviction of a still-present, radar-visible object is NOT a hole — it is a
+// bounded latency window. If the camera falsely reports a present vessel empty and
+// evicts it, (a) during the evicted window suppression is 0, so the object is
+// birth-eligible (a track can take over — the conservation path, gated at the
+// tracker), AND (b) its continuing radar returns re-accrue persistence so the
+// hazard re-emerges within a few scans. Over-eviction converts a present object to
+// track-eligible or re-hazards it; it never makes it invisible.
+TEST(LiveOccupancyModel, WrongEvictionOfPresentObjectSelfHeals) {
+  LiveOccupancyParams p = testParams();
+  p.camera_empty_sustain_s = 1.0;
+  p.evict_camera_empty = true;
+  LiveOccupancyModel m(anchorDatum(), p);
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  ASSERT_EQ(m.obstacles().size(), 1u);
+
+  // The camera FALSELY reports the (still-present) pier empty and matures a streak.
+  for (double t = 10.0; t <= 12.0; t += 0.5) m.observeCamera(emptyPierFrame(t));
+  m.observe(feed(returns, 13));  // eviction fires — WRONGLY (the vessel is there)
+  ASSERT_TRUE(m.obstacles().empty()) << "wrong eviction removed the present object";
+  EXPECT_DOUBLE_EQ(m.birthSuppression(Eigen::Vector2d(62.5, 12.5)), 0.0)
+      << "suppression lifted → the present object is birth-eligible (self-heal path a)";
+
+  // The radar keeps seeing it (the camera miss was transient); persistence
+  // re-accrues → the hazard re-emerges within a bounded latency (self-heal path b).
+  int latency = -1;
+  for (int k = 0; k < 8; ++k) {
+    m.observe(feed(returns, 14 + k));
+    if (!m.obstacles().empty()) {
+      latency = k + 1;
+      break;
+    }
+  }
+  ASSERT_GE(latency, 0) << "present object never re-emerged — a hole, not a latency window";
+  EXPECT_LE(latency, 5) << "re-emergence latency " << latency << " exceeds the bound";
+}
+
+// ── Corroboration suppression VETO (R9 item 1b) ──────────────────────────────
+//
+// An AIS/cooperative-known vessel must remain track-eligible: a RECENT vessel fix
+// vetoes birth suppression within veto_radius. The veto is LOCAL to the fix — the
+// rest of the structure still suppresses — and only lowers suppression to 0, so
+// the conservation invariant is preserved. The emitted hazard is unchanged
+// (presence preserved; the track takes over via the unclaimed-only feed exclusion
+// once born).
+TEST(LiveOccupancyModel, VesselFixVetoesSuppressionLocally) {
+  LiveOccupancyParams p = testParams();
+  p.veto_radius_m = 100.0;
+  p.veto_window_s = 60.0;
+  LiveOccupancyModel m(anchorDatum(), p);
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  const Eigen::Vector2d near(12.5, 12.5), far(137.5, 12.5);  // 125 m apart
+  ASSERT_GT(m.birthSuppression(near), 0.0);
+  ASSERT_GT(m.birthSuppression(far), 0.0);
+
+  m.observeVesselFix({/*t_unix=*/10.0, near});
+  EXPECT_EQ(m.vesselFixCount(), 1u);
+  EXPECT_DOUBLE_EQ(m.birthSuppression(near), 0.0)
+      << "AIS/cooperative-known vessel wrongly suppressed";
+  EXPECT_GT(m.birthSuppression(far), 0.0)
+      << "veto must be a local carve-out, not a global off-switch";
+  EXPECT_EQ(m.obstacles().size(), 1u) << "veto must not remove the hazard itself";
+}
+
+// A stale fix (the AIS/cooperative feed went quiet) is pruned past veto_window,
+// so the veto lapses and the object falls back to the accepted static-hazard
+// degraded mode until its next fix.
+TEST(LiveOccupancyModel, StaleVesselFixIsPrunedAndStopsVetoing) {
+  LiveOccupancyParams p = testParams();
+  p.veto_radius_m = 100.0;
+  p.veto_window_s = 5.0;
+  LiveOccupancyModel m(anchorDatum(), p);
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  const Eigen::Vector2d near(12.5, 12.5);
+  m.observeVesselFix({/*t_unix=*/10.0, near});
+  EXPECT_DOUBLE_EQ(m.birthSuppression(near), 0.0);  // vetoed while fresh
+  for (int scan = 11; scan < 20; ++scan) m.observe(feed(returns, scan));  // feed quiet
+  EXPECT_EQ(m.vesselFixCount(), 0u);
+  EXPECT_GT(m.birthSuppression(near), 0.0) << "stale veto must lapse";
+}
+
+// A vessel fix far from a structure must not veto it (the veto is proximity-gated).
+TEST(LiveOccupancyModel, DistantVesselFixDoesNotVeto) {
+  LiveOccupancyParams p = testParams();
+  p.veto_radius_m = 100.0;
+  LiveOccupancyModel m(anchorDatum(), p);
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  m.observeVesselFix({/*t_unix=*/10.0, Eigen::Vector2d(5000.0, 5000.0)});
+  EXPECT_GT(m.birthSuppression(Eigen::Vector2d(62.5, 12.5)), 0.0)
+      << "a distant vessel fix must not veto unrelated structure";
+}
+
 // Datum recenter re-anchors: the same GEOGRAPHIC point keeps its suppression
 // even though its ENU coordinates change under the new datum.
 TEST(LiveOccupancyModel, DatumRecenterKeepsGeographicSuppression) {

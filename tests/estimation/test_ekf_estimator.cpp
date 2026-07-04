@@ -89,6 +89,44 @@ TEST(EkfEstimator, InitiateSeedsStateFromPositionMeasurement) {
   EXPECT_DOUBLE_EQ(t.last_update.seconds(), 5.0);
 }
 
+TEST(EkfEstimator, InitiateWithEmptyCovarianceDoesNotCreateTrack) {
+  // The documented "no uncertainty" sentinel is a 0x0 covariance. initiate()
+  // must not read it out of bounds nor birth a track from it — it returns the
+  // "did not initiate" result (empty state, no contributing sources).
+  auto model = std::make_shared<ConstantVelocity2D>(1.0);
+  const EkfEstimator ekf(model, 8.0);
+  Measurement z;
+  z.time = Timestamp::fromSeconds(5.0);
+  z.model = MeasurementModel::Position2D;
+  z.source_id = "ais";
+  z.value = Eigen::Vector2d(100.0, -50.0);
+  // Measurement::covariance is a dynamic MatrixXd; the documented
+  // "no uncertainty" sentinel the builders leave behind is an empty 0x0
+  // matrix (a fixed Matrix2d can never be 0x0).
+  z.covariance = Eigen::MatrixXd();
+  ASSERT_EQ(z.covariance.size(), 0);
+  Track t;
+  ASSERT_NO_THROW(t = ekf.initiate(z));
+  EXPECT_EQ(t.state.size(), 0);
+  EXPECT_TRUE(t.contributing_sources.empty());
+}
+
+TEST(EkfEstimator, InitiateWithNonPsdCovarianceDoesNotCreateTrack) {
+  // A non-PSD covariance (negative eigenvalue) is also rejected, mirroring
+  // update()'s skip guard.
+  auto model = std::make_shared<ConstantVelocity2D>(1.0);
+  const EkfEstimator ekf(model, 8.0);
+  Measurement z;
+  z.time = Timestamp::fromSeconds(5.0);
+  z.model = MeasurementModel::Position2D;
+  z.source_id = "ais";
+  z.value = Eigen::Vector2d(100.0, -50.0);
+  z.covariance = Eigen::Matrix2d::Identity() * -1.0;
+  const Track t = ekf.initiate(z);
+  EXPECT_EQ(t.state.size(), 0);
+  EXPECT_TRUE(t.contributing_sources.empty());
+}
+
 TEST(EkfEstimator, InitiateDispatchesViaIEstimatorBaseReference) {
   auto model = std::make_shared<ConstantVelocity2D>(1.0);
   const EkfEstimator ekf(model, 5.0);

@@ -7,8 +7,10 @@
 namespace navtracker {
 
 // Rectangular Hungarian algorithm via potentials and shortest
-// augmenting paths (a.k.a. Jonker–Volgenant). Handles N rows × M cols
-// with N <= M (we pad with +∞ cols if N > M, then drop unassigned).
+// augmenting paths (a.k.a. Jonker–Volgenant). Handles N rows × M cols by
+// padding to a square K×K (K = max(N,M)) with ZERO-cost surplus cells, then
+// dropping assignments to padding columns at return. Only genuinely-infinite
+// INPUT cells are mapped to a large finite BIG_M (forbidden), never +∞.
 //
 // Implementation follows the canonical 1-indexed formulation; we keep
 // the off-by-one to minimize bugs vs published pseudocode.
