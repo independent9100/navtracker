@@ -2,7 +2,7 @@
 
 **Prerequisites:** §03 (Bayes), §04–06 (KF / EKF / UKF), §09 (IMM), §11 (gating, GNN), §12 (JPDA), §13 (clutter and detection), §14 (MHT), §15 (track lifecycle), §22 (tracker stacks compared).
 
-> **Status note (2026-06-20).** PMBM is **not yet implemented** in this repository — it is the planned Cl-3 endgame upgrade. This chapter introduces the math and the way of thinking, so you can read the design doc ([`docs/algorithms/pmbm-design.md`](../algorithms/pmbm-design.md)) and the engineering plan ([`docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md`](../superpowers/plans/2026-06-07-pmbm-integration-plan.md)) with understanding. The matplotlib figure for this chapter will be added when Phase 1 lands.
+> **Status.** PMBM is **implemented and shipped** in this repository (`core/pmbm/PmbmTracker.{hpp,cpp}`) — it is the Cl-3 endgame tracker. This chapter is the plain-English on-ramp; the equation-level reference is the design doc ([`docs/algorithms/pmbm-design.md`](../algorithms/pmbm-design.md)) and the staged history is the engineering plan ([`docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md`](../superpowers/plans/2026-06-07-pmbm-integration-plan.md)). Sections §8a/§8b below sketch the shipped Phase 7–9 refinements (adaptive birth, source-aware identity, misdetection dedup) at the concept level and point to the design doc for measured results and config flags.
 
 ---
 
@@ -202,183 +202,91 @@ flowchart LR
   R2 --> S[small initial r; Bernoulli ramps via posterior updates]
 ```
 
-**What changed under the hood** (Phase 7, 2026-06-21):
+In short: with adaptive birth, the tracker skips the measurement-driven PPP
+injection and instead gives each new Bernoulli a small existence prior from
+`λ_birth`. Its *position* still comes from the measurement; only its *existence*
+is decoupled. A small initial `r` is the correct choice — a real target ramps up
+to Confirmed over its next few detections, while a one-off clutter return never
+gets a second detection and prunes away.
 
-- `PmbmTracker::Config::adaptive_birth` (bool) and `lambda_birth` (double, units 1/area, same as λ_C).
-- When ON, `processBatch` skips the measurement-driven PPP injection entirely.
-- A new `buildAdaptiveBirthCandidates` produces one candidate per measurement: state from `estimator.initiate(z)`, `r_new = λ_birth / (λ_birth + λ_C)`. The same smart-birth-skip-existing gate (a measurement claimed by a high-`r` Bernoulli skips birth) applies here too — without it K=1 enumeration id-flaps existing tracks.
+**The refinement: keep the birth existence constant across sensors.**
 
-**What this buys us.** Measured on the 29-scenario bench (`pmbm_phase7_adapt_20260621.csv`):
+A single fixed `λ_birth` has a hidden flaw. The birth existence
+`r_new = λ_birth / (λ_birth + λ_C)` depends on the clutter density `λ_C`, which
+varies a lot between sensors (radar clutter is dense; AIS clutter is almost
+zero). So the *same* `λ_birth` produces a small, safe `r_new` on one sensor and a
+near-certain `r_new ≈ 1` on another — and a near-certain birth on an AIS or
+low-clutter radar blip emits a Confirmed track immediately. That is an
+over-counting engine.
 
-- `dense_clutter`: GOSPA 27 → 13 (−52 %). Spurious phantom tracks gone.
-- `philos` (sparse-AIS multi-vessel): GOSPA 98 → 82 (−16 %).
-- All autoferry unanchored scenarios: GOSPA −5..−32 %.
-- All autoferry **anchored** scenarios: T-GOSPA-raw −8..−60 %, id_switches typically 50+ → 1. Side benefit: when bias correction shrinks the measurement spread, existing high-`r` Bernoullis used to lose to phantom new-target rows; adaptive birth's small initial `r` lets the existing update win the assignment.
-
-**Tuning.** Probed λ_birth ∈ {1e-3, 1e-4, 1e-5} against λ_C ≈ 1e-4:
-
-- 1e-3 (`r_new ≈ 0.91`): too aggressive, philos +15 %.
-- 1e-4 (`r_new = 0.5`): borderline.
-- 1e-5 (`r_new ≈ 0.09`): the sweet spot. Small initial `r` is *correct* — real targets ramp through posterior updates over the next few detections; phantoms decay below `r_min` instead.
-
-**The remaining problem: λ_birth is mis-scaled across sensors and scenarios.**
-
-The sweet spot `λ_birth = 1e-5` was tuned at `λ_C ≈ 1e-4` (autoferry radar).
-When you switch to a different sensor or scenario where `λ_C` is much smaller,
-`r_new` changes even though `λ_birth` stays fixed:
-
-| Scenario / sensor | λ_C      | r_new = 1e-5 / (1e-5 + λ_C) |
-|-------------------|----------|------------------------------|
-| autoferry radar   | 1e-4     | 0.091 (intended)             |
-| philos radar      | 2.7e-6   | 0.79 (way too confident)     |
-| philos AIS        | 1e-9     | ≈ 1.0 (certain!)             |
-
-So on the `philos` replay, every ungated radar blip — including shore returns —
-is born with `r_new = 0.79`, *already above the 0.5 confirm threshold*, and
-immediately emits as a Confirmed track. That is the over-counting engine.
-
-**Fix: clutter-invariant birth existence (`birth_existence_target`).**
-
-The insight is that the design *intent* is `r_new = a small constant`.
-So instead of choosing an absolute `λ_birth` and hoping `λ_C` matches,
-choose the target `r* = r_new` you want and derive `λ_birth` from the live
-`λ_C` each time:
+The fix is to decide the birth existence you *want* — a small constant `r*` —
+and derive `λ_birth` from the live `λ_C` each scan so that `r_new` comes out at
+`r*` regardless of the sensor:
 
 ```
 λ_birth = (r* / (1 − r*)) · λ_C
-r_new   = λ_birth / (λ_birth + λ_C)
-        = (r*·λ_C) / (r*·λ_C + (1−r*)·λ_C)
-        = r*        ← independent of λ_C
+r_new   = λ_birth / (λ_birth + λ_C) = r*    ← independent of λ_C
 ```
 
-Setting `birth_existence_target = 0.1` means every new track starts with
-`r = 0.1`, regardless of whether `λ_C` is 1e-4 (autoferry) or 1e-9 (AIS).
-Real targets ramp to Confirmed over the next 3-4 detections; clutter returns
-don't get a second detection, so their `r` decays below `r_min` and they prune.
+Plain words: *pick "every new track starts at, say, 10 % existence" and let the
+maths back out the rate that makes that true on whatever sensor you are looking
+at.* Real targets still ramp to Confirmed over a few detections; clutter still
+prunes.
 
-Config knob: `PmbmTracker::Config::birth_existence_target` (double, default 0.0
-= legacy absolute `lambda_birth`). Set to 0.1 as the first probe value.
+**Assumption.** `λ_C` is roughly uniform across the surveillance volume (for
+per-sensor clutter maps the same formula works per measurement, using the local
+density). Where a *spatial* birth prior is actually known (radar coverage edges,
+named ports), injecting structured PPP at predict-time would beat this — adaptive
+birth is the *uniform-prior* default.
 
-Measured result on `philos` replay (Task 1, 2026-06-24):
-
-| Config                      | gospa_mean | pos_rmse_m |
-|-----------------------------|------------|------------|
-| imm_cv_ct_pmbm_adapt (base) | 82.63 m    | (mixed)    |
-| birthtarget=0.1             | **48.50 m** | 23.3 m    |
-
-−41 % gospa. The cross-reference in the algorithm doc is §3.2.2 of
-[pmbm-design.md](../algorithms/pmbm-design.md).
-
-**Assumptions.** λ_C is approximately uniform across the surveillance volume. (For per-sensor λ_C maps, the formula still works per measurement; we just need the per-sensor clutter density at the gate of evaluation.) For deployments where the spatial birth prior is *known* (e.g. radar coverage edges, named ports), an explicit `BirthModelFn` injecting structured PPP at predict-time would beat adaptive birth — Adaptive Birth is the *uniform-prior* default.
-
-**What to try next.** Sweep `birth_existence_target ∈ {0.05, 0.1, 0.2, 0.3}`
-on both philos and autoferry; choose the value that minimises philos GOSPA
-without regressing autoferry. Pair with Task 2 (misdetection dedup) for the
-full cardinality fix — `birth_existence_target` controls how many phantom
-tracks are *born*, and Task 2 controls the misdetection model so they die at
-the right rate.
+The config flags, tuning sweeps, and measured GOSPA numbers are in
+[pmbm-design.md](../algorithms/pmbm-design.md) §3.2.
 
 **Reference.** Reuter, Vo, Vo, Dietmayer, *The Labeled Multi-Bernoulli Filter*, IEEE Trans. Signal Processing 62(12), 2014. Adaptive Birth is in §IV-B; the formulation is general (LMB / PMBM / δ-GLMB all use the same trick).
 
 ---
 
-## 8a. Task 2 (2026-06-24): Correct the misdetection model
+## 8a. Getting the misdetection model right
 
-This section documents two related fixes that are now in the codebase behind
-default-off flags. Both affect how "I didn't detect this target" is counted;
-both are mathematically correct changes to the standard PMBM equations.
+Two related concepts fix how PMBM counts "I did not detect this target this
+scan." Both are corrections toward the standard PMBM equations; both matter for
+the same reason — a wrong miss count silently distorts every Bernoulli's
+existence.
 
-### Why the old model was wrong
+**One sweep = one detection opportunity.** The miss recursion (§3, Step B) needs
+the effective `p_D`: the chance the target *would* have been seen this scan. A
+naive implementation multiplies the miss probability once per *measurement* in
+the scan — so a radar rotation that produced 50 blips charges the miss penalty 50
+times, giving an effective `p_D ≈ 1 − (1 − 0.07)^50 ≈ 0.97` from a radar whose
+real `P_D` is 0.07. That is far too harsh. The correct model charges **one miss
+per sweep per sensor channel**, not one per blip — the same "one rotation = one
+chance" principle as the coverage channel (chapter 24). In code, the fix is to
+deduplicate the returns down to one opportunity per sensor channel before
+applying the miss.
 
-The misdetection recursion needs an effective `p_D` — the probability that the
-target *would have been detected* given this scan. The old code computed this
-by multiplying the miss probability across every measurement in the scan:
+**Per-vessel identity, not per-channel.** All AIS vessels share the same channel
+label ("ais"). A miss gate keyed on the *channel* would penalise vessel B just
+because vessel A happened to broadcast in this scan — as if B had failed to show
+up in a scan that was looking for it. But an AIS scan carrying only vessel A's
+report says nothing about vessel B. The fix is to key the miss gate on the
+**vessel identity** (the MMSI) carried alongside the channel: a vessel is only
+charged a miss when *its own* identity was expected and absent, never when a
+different vessel on the same channel reported.
 
-```
-survive_old = (1 − p_D_sensor) × (1 − p_D_sensor) × ... × (1 − p_D_sensor)
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-              repeated once per measurement, e.g. N=50 radar returns
-```
-
-This gave an effective `p_D ≈ 1 − (1 − 0.07)^50 ≈ 0.97` from a radar with
-P_D=0.07. Every undetected Bernoulli was hit with a near-certain "you should
-have been found" penalty 50 times per scan. Mathematically wrong; textbook says
-*one sweep = one detection opportunity*.
-
-A separate problem: all AIS vessels share `source_id = "ais"`. The
-source-aware misdetection gate would skip the miss penalty only if "ais" was
-absent from the scan. But vessel A's broadcast is still `source_id = "ais"`,
-so a scan containing only vessel A's position caused vessel B to be penalised —
-as if vessel B had failed to appear in a scan that looked for it.
-
-### Fix 2a: per-vessel identity (`source_aware_identity`)
-
-Add a `vessel_id` field (from `Measurement::hints.mmsi`) to each
-`SourceTouch` entry that is written when a measurement matches a Bernoulli.
-The source-aware gate then checks `vessel_id` instead of `source_id` when it
-is available:
-
-```
-should_misdetect(Bernoulli) =
-  for each SourceTouch in history:
-    if touch.vessel_id is set and touch.vessel_id ∈ scan_vessel_ids → YES (this vessel broadcast)
-    if touch.vessel_id not set and touch.source_id ∈ scan_source_ids → YES (channel fallback)
-  → NO (this vessel's identity not in scan)
-```
-
-Result: vessel B's Bernoulli sees "vessel 2002 not in this scan" → misdetection
-is skipped → existence unchanged. Vessel A's Bernoulli is updated normally.
-
-Config: `source_aware_identity = true` (default false = legacy channel gate).
-
-**Important**: `source_id = "ais"` is NOT changed. MHT's miss-dedup in
-`TrackTree.cpp` collapses all `"ais"` to one detection opportunity per scan,
-and changing `source_id` to be per-vessel would silently break MHT. The
-per-vessel information travels in `vessel_id` only.
-
-### Fix 2b: per-scan channel dedup (`dedup_miss_pd`)
-
-One radar sweep = one detection opportunity. Dedup by `(sensor, model,
-source_id)` before multiplying:
-
-```
-seen = {}
-for each measurement z in scan:
-  key = (z.sensor, z.model, z.source_id)
-  if key already in seen → skip (same channel, same opportunity)
-  seen.add(key)
-  survive *= (1 − pD_s)   ← counts this channel once
-```
-
-With N=5 radar returns and P_D=0.07: effective miss-P_D = 0.07, not
-1−(1−0.07)^5 ≈ 0.30. For a simultaneous AIS + radar scan: two independent
-opportunities (different sensor channels), each contributing once.
-
-Config: `dedup_miss_pd = true` (default false = legacy per-measurement loop).
-
-### Why these are behind flags (not the default)
-
-The PMBM was relying on the over-aggressive miss penalty as an unintended
-cardinality brake. Removing it without also tuning `output_existence_floor`,
-`r_min`, and `min_new_bernoulli_existence` causes phantom Bernoullis to
-accumulate. The correct approach (Task 2c) is to enable both flags together
-with explicit cardinality controls. Until that tuning campaign is done, the
-flags default to off — bit-identical to the Phase 8/9 baseline.
-
-See `pmbm-design.md` §3.1.1–3.1.3 for the equation-level detail.
+Both refinements are equation-level detail — the exact recursion, the config
+flags that gate them, and why they interact with the cardinality controls live
+in [pmbm-design.md](../algorithms/pmbm-design.md) §3.1.
 
 ---
 
 ## 9. Where this lives in the repo
 
-When PMBM lands:
-
-- `core/pipeline/PmbmTracker.{hpp,cpp}` — sibling to `MhtTracker`.
-- Reuses `core/association/Murty.{hpp,cpp}` (already shipped 2026-06-08).
+- `core/pmbm/PmbmTracker.{hpp,cpp}` — the PMBM tracker, sibling to `MhtTracker`.
+- Reuses `core/association/Murty.{hpp,cpp}` (K-best assignment).
 - Reuses `ImmEstimator` with UKF inside each Bernoulli.
-- New `core/scenario/Gospa.hpp` — GOSPA / T-GOSPA metrics for fair comparison with published PMBM benchmarks.
+- `core/scenario/Gospa.hpp` — GOSPA / T-GOSPA metrics for fair comparison with published PMBM benchmarks.
 
-The phased engineering plan is in [`docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md`](../superpowers/plans/2026-06-07-pmbm-integration-plan.md). The equation-level reference is in [`docs/algorithms/pmbm-design.md`](../algorithms/pmbm-design.md). This chapter is the on-ramp before either.
+The phased engineering history is in [`docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md`](../superpowers/plans/2026-06-07-pmbm-integration-plan.md). The equation-level reference is in [`docs/algorithms/pmbm-design.md`](../algorithms/pmbm-design.md). This chapter is the on-ramp before either.
 
 ---
 

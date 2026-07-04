@@ -7,7 +7,7 @@ Companion documents:
 
 - Design spec: [`docs/superpowers/specs/2026-06-30-pmbm-synthetic-clutter-bench-design.md`](../superpowers/specs/2026-06-30-pmbm-synthetic-clutter-bench-design.md).
 - Plain-language introduction to the land-clutter prior being tested: [learning §25 — Suppressing tracks on land](../learning/25-land-clutter-prior.md).
-- Algorithm-level reference for the prior itself: [pmbm-design.md §10](pmbm-design.md#10-land--coastline-clutter-prior).
+- Algorithm-level reference for the prior itself: [pmbm-design.md §9](pmbm-design.md#9-land--coastline-clutter-prior).
 
 This document covers the *bench infrastructure*: the parametric geometry generators and the
 stationary shore-clutter injector. It is not a new tracking algorithm.
@@ -122,7 +122,7 @@ rectangular pier of half-width `pier_width_m/2` protrudes from the shoreline
 This ENU outline is converted vertex-by-vertex to geodetic (WGS84 lat/lon) via
 `datum.toGeodetic(...)` and stored as a `LandPolygon` outer ring inside a
 `CoastlineGeometry`. The `CoastlineGeometry` computes the signed-distance ramp as
-documented in [pmbm-design.md §10.1](pmbm-design.md#101-math).
+documented in [pmbm-design.md §9.1](pmbm-design.md#91-math).
 
 **Clutter positions.** `n_clutter` points are placed at ENU y = `shore_y_m +
 0.5 · land_depth_m` (half-way into the land block — the hard-gate plateau region, where

@@ -8,6 +8,8 @@ Style: clean matplotlib, large fonts, light grid where useful.
 
 from __future__ import annotations
 import os
+import shutil
+import subprocess
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -33,6 +35,30 @@ def save(fig, name: str) -> None:
     fig.savefig(path)
     plt.close(fig)
     print(f"  → {name}")
+
+
+# Graphviz-rendered figures. matplotlib cannot reproduce a DOT graph, so these
+# PNGs are rendered from their checked-in `.dot` source via graphviz `dot`. They
+# are wired here so `generate.py` is the single "reproduce every PNG" entry
+# point — no hand-editing, per the never-edit-the-PNG rule. Requires the
+# `graphviz` package (the `dot` binary). If `dot` is missing, we warn and skip
+# rather than fail the matplotlib figures.
+DOT_FIGURES = [
+    "22-tracker-stack-alternatives.dot",
+]
+
+
+def render_dot_figures() -> None:
+    dot = shutil.which("dot")
+    if dot is None:
+        print("  ! graphviz `dot` not found — skipping .dot figures "
+              "(install graphviz to render): " + ", ".join(DOT_FIGURES))
+        return
+    for src in DOT_FIGURES:
+        src_path = os.path.join(HERE, src)
+        out_path = os.path.join(HERE, os.path.splitext(src)[0] + ".png")
+        subprocess.run([dot, "-Tpng", src_path, "-o", out_path], check=True)
+        print(f"  → {os.path.basename(out_path)} (graphviz)")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -632,7 +658,7 @@ def fig_gating_ellipse():
     fig, ax = plt.subplots(figsize=(8.5, 6))
     z_hat = np.array([0.0, 0.0])
     S = np.array([[2.0, 0.8], [0.8, 1.0]])
-    _draw_ellipse(ax, S, mu=z_hat, color="#1f3a5f", n_sigma=(2.146,))  # χ²_2 99% ≈ 9.21
+    _draw_ellipse(ax, S, mu=z_hat, color="#1f3a5f", n_sigma=(2.146,))  # 2.146² ≈ 4.605 = χ²_2 90% quantile
     ax.plot(*z_hat, marker="+", markersize=18, color="#1f3a5f", markeredgewidth=2)
     ax.text(z_hat[0] + 0.1, z_hat[1] + 0.15, r"$\hat{z}$", color="#1f3a5f", fontsize=14)
 
@@ -1280,6 +1306,99 @@ def fig_static_obstacle_zones():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 27 live occupancy grid + EWMA persistence
+# ──────────────────────────────────────────────────────────────────────────────
+
+def fig_live_occupancy():
+    """Left: a learned occupancy grid (pier = extended, boat = compact, clutter
+    = transient). Right: EWMA persistence over scans for a structure cell, a
+    passing-vessel cell, and a clutter cell."""
+    fig, (axg, axe) = plt.subplots(1, 2, figsize=(13, 5.5),
+                                   gridspec_kw={"width_ratios": [1.05, 1.0]})
+
+    # ---- Left panel: occupancy grid heatmap ----------------------------------
+    nx, ny = 10, 8
+    grid = np.zeros((ny, nx))
+    rng = np.random.default_rng(7)
+    # faint transient clutter everywhere
+    grid += rng.exponential(0.04, (ny, nx))
+    # a pier: an extended line of high-persistence cells (row 2, cols 2..6)
+    for cx in range(2, 7):
+        grid[2, cx] = 0.68 + 0.03 * rng.standard_normal()
+    # a lone anchored boat: one hot but COMPACT cell
+    grid[5, 8] = 0.72
+    grid = np.clip(grid, 0, 1)
+
+    im = axg.imshow(grid, origin="lower", cmap="YlOrRd", vmin=0, vmax=1,
+                    extent=[0, nx * 25, 0, ny * 25], aspect="equal")
+    cbar = fig.colorbar(im, ax=axg, fraction=0.046, pad=0.04)
+    cbar.set_label("persistence  p")
+
+    # Outline the emitted structure (the pier) — extended → suppressed.
+    axg.add_patch(Rectangle((2 * 25, 2 * 25), 5 * 25, 1 * 25, fill=False,
+                            edgecolor="#1f3a5f", linewidth=2.5, zorder=5))
+    axg.annotate("pier: persistent AND extended\n→ uncharted hazard (suppressed)",
+                 xy=(4.5 * 25, 3 * 25), xytext=(0.4 * 25, 6.4 * 25),
+                 color="#1f3a5f", fontsize=9.5,
+                 arrowprops=dict(arrowstyle="->", color="#1f3a5f"))
+    # Mark the anchored boat — compact → NOT suppressed.
+    axg.add_patch(Rectangle((8 * 25, 5 * 25), 25, 25, fill=False,
+                            edgecolor="#2d8659", linewidth=2.5, zorder=5))
+    axg.annotate("anchored boat: persistent\nbut COMPACT → not suppressed",
+                 xy=(8.5 * 25, 5.5 * 25), xytext=(2.3 * 25, 0.4 * 25),
+                 color="#2d8659", fontsize=9.5,
+                 arrowprops=dict(arrowstyle="->", color="#2d8659"))
+    axg.set_xlabel("East (m)")
+    axg.set_ylabel("North (m)")
+    axg.set_title("Learned occupancy grid (25 m cells)")
+
+    # ---- Right panel: EWMA persistence over scans ----------------------------
+    alpha = 0.3
+    bar = 0.5
+    n = 40
+    scans = np.arange(n)
+
+    def ewma(hits):
+        p, out = 0.0, []
+        for h in hits:
+            p = (1 - alpha) * p + alpha * h   # decay then bump (w in {0,1})
+            out.append(p)
+        return np.array(out)
+
+    # structure: fed (w=1) almost every scan
+    struct_hits = np.ones(n)
+    struct_hits[[7, 19, 28]] = 0.0
+    p_struct = ewma(struct_hits)
+    # passing vessel: fed for scans 5..9 only, then gone (decays)
+    vessel_hits = np.zeros(n)
+    vessel_hits[5:10] = 1.0
+    p_vessel = ewma(vessel_hits)
+    # clutter: sporadic single hits, never sustained
+    clutter_hits = np.zeros(n)
+    clutter_hits[[3, 12, 13, 24, 33]] = 1.0
+    p_clutter = ewma(clutter_hits)
+
+    axe.plot(scans, p_struct, color="#aa3333", linewidth=2.5,
+             label="structure cell (fed most scans)")
+    axe.plot(scans, p_vessel, color="#2d8659", linewidth=2.5,
+             label="passing vessel (fed scans 5–9, then gone)")
+    axe.plot(scans, p_clutter, color="#85bbdb", linewidth=2.2,
+             label="clutter cell (sporadic)")
+    axe.axhline(bar, color="#555", linestyle="--", linewidth=1.4)
+    axe.text(n - 0.5, bar + 0.02, r"persistence_bar = 0.5", ha="right",
+             va="bottom", fontsize=9, color="#333")
+    axe.set_xlabel("scan number")
+    axe.set_ylabel("EWMA persistence  p")
+    axe.set_title(r"Persistence fades old evidence: $p \leftarrow (1-\alpha)p + \alpha w,\ \alpha = 0.3$")
+    axe.set_ylim(0, 1.02)
+    axe.grid(True, linestyle=":", alpha=0.4)
+    axe.legend(loc="center right", fontsize=9, framealpha=0.92)
+
+    fig.subplots_adjust(wspace=0.32)
+    save(fig, "27-live-occupancy.png")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 def main():
     print("Generating figures into", HERE)
@@ -1309,6 +1428,8 @@ def main():
     fig_sensor_bias_convergence()
     fig_seeing_the_tracker()
     fig_static_obstacle_zones()
+    fig_live_occupancy()
+    render_dot_figures()
     print("done.")
 
 

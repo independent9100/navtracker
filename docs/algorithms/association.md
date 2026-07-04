@@ -3,6 +3,11 @@
 Follows the project documentation standard: Math / Assumptions / Rationale /
 Ways to improve. Cross-reference: design spec sections 7 and 11.3.
 
+See also (plain-English introductions in the learning series):
+[11 — Gating, GNN & Hungarian](../learning/11-gating-gnn-hungarian.md),
+[12 — JPDA](../learning/12-jpda.md),
+[14 — MHT](../learning/14-mht.md).
+
 ## 1. Gating (`mahalanobisDistance`)
 
 **Math.** `(ẑ,H)=h(x)`; innovation `y=z−ẑ` (bearing wrapped); innovation

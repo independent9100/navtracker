@@ -517,7 +517,7 @@ In order of expected payoff:
    (`min_new_bernoulli_existence`) can still suppress the near-zero-r clutter
    births (set `min_new_bernoulli_existence = r*/2`). The task-1 probe
    `gospa_mean` on philos: 48.50 m vs 82.63 m baseline (−41 %).
-5a. **Misdetection dedup + cardinality control bundle** (Task 2, 2026-06-24,
+6. **Misdetection dedup + cardinality control bundle** (Task 2, 2026-06-24,
    §3.1.1–3.1.3). `source_aware_identity = true` and `dedup_miss_pd = true`
    are now behind config flags (default off = bit-identical). Task 2c
    (2026-06-24) ran the full bundle (`dedup_miss_pd=true`,
@@ -537,25 +537,25 @@ In order of expected payoff:
    the next candidate fix is a tighter clutter-conditional r_min (raise
    `r_min` per-sensor when λ_C is sparse-AIS, not uniform 1e-5), or a
    PPP-coverage birth gate that suppresses births in AIS-only regions.
-6. **Poisson birth intensity spatial tuning.** First cut is uniform over
+7. **Poisson birth intensity spatial tuning.** First cut is uniform over
    local ENU patch. Real wins come from sensor-region-conditional birth —
    radar coverage edges, AIS broadcast zones, named ports. Pin a synthetic
    "fixed-birth-region" scenario to A/B uniform vs tuned.
-7. **Sensor-conditional `p_S`.** Ships pop in and out of radar coverage; a
+8. **Sensor-conditional `p_S`.** Ships pop in and out of radar coverage; a
    single `p_S` mis-handles entry/exit. Likely small effect; revisit only
    if a scenario shows track loss attributable to coastal radar geometry.
-8. **OOSM-PMBM** (Phase 5, optional). Out-of-sequence measurements
+9. **OOSM-PMBM** (Phase 5, optional). Out-of-sequence measurements
    (late-arriving AIS) handled by retrodiction. Our `ReorderBuffer` is the
    pragmatic substitute today; revisit only if buffer latency becomes a
    problem.
-9. **Cluster decomposition for Murty cost.** PMBM Murty cost matrices have
+10. **Cluster decomposition for Murty cost.** PMBM Murty cost matrices have
    the same block-sparsity that MHT cost matrices have (a target with no
    in-gate measurement is independent of the rest). Reusing the planned
    cluster decomposition for `MhtTracker` benefits both.
 
 ---
 
-## 9. Coverage / Visibility Channel (`ISensorActivity`)
+## 8. Coverage / Visibility Channel (`ISensorActivity`)
 
 *Shipped: Task 4, 2026-06-29. Port: `ports/ISensorActivity.hpp`,
 `ports/IStaleSignalSink.hpp`. Provider: `core/sensor_activity/DeclaredSensorActivity.{hpp,cpp}`.
@@ -564,7 +564,7 @@ Plain-English introduction: [learning §24](../learning/24-coverage-visibility-c
 
 ---
 
-### 9.1 Math
+### 8.1 Math
 
 The Bernoulli existence recursion after a missed detection is:
 
@@ -614,7 +614,7 @@ regardless of which hypothesis the loop processes first.
 
 ---
 
-### 9.2 Assumptions
+### 8.2 Assumptions
 
 1. **Known surveillance coverage and cadence.** Each surveillance sensor has a
    declared `max_range_m`, azimuth sector, `duty_cycle_sec`, and `p_D` in a
@@ -639,7 +639,7 @@ regardless of which hypothesis the loop processes first.
 
 ---
 
-### 9.3 Rationale
+### 8.3 Rationale
 
 **Why per-duty-cycle, not per-timestamp-batch.** Before this change, a "scan"
 was whatever measurements happened to share the same timestamp — accidental
@@ -679,7 +679,7 @@ implementation #2, behind the same `ISensorActivity` port (spec roadmap §13.1).
 
 ---
 
-### 9.4 Ways to improve / what to test next
+### 8.4 Ways to improve / what to test next
 
 **Measured result (2026-06-29; see [evaluation-log.md](evaluation-log.md) §"Task 4").**
 
@@ -749,11 +749,11 @@ used for low-p_D coastal workloads (philos-class).
 
 ---
 
-## 10. Land / Coastline Clutter Prior
+## 9. Land / Coastline Clutter Prior
 
 > Plain-language introduction: [learning §25 — Suppressing tracks on land: the coastline clutter prior](../learning/25-land-clutter-prior.md).
 
-### 10.1 Math
+### 9.1 Math
 
 **The spatial clutter prior.** At every new-target birth position `p` (ENU metres), the tracker
 queries `c = ILandModel::clutterPrior(enu_xy) ∈ [0, 1]`. The concrete implementation
@@ -806,7 +806,7 @@ scales `λ_birth` proportionally, leaving `r_new` unchanged. The land prior must
 `datum.toGeodetic(enu_xy)` and evaluates the stored polygons. Geometry is stored in its native
 geodetic frame (WGS84 lat/lon degrees) and is never reprojected to ENU.
 
-### 10.2 Assumptions
+### 9.2 Assumptions
 
 1. **Consumer-supplied coastline.** The application provides GeoJSON (WGS84, Polygon /
    MultiPolygon features) covering a reasonable radius around own-ship. The tracker does not fetch
@@ -833,7 +833,7 @@ geodetic frame (WGS84 lat/lon degrees) and is never reprojected to ENU.
    moored against a pier finer than the polygon resolution might be hard-gated at birth; this is an
    accepted residual risk bounded by keeping the gate strictly inland-only (design spec §9a).
 
-### 10.3 Rationale
+### 9.3 Rationale
 
 **Philos over-count is a spatial problem.** The Boston inner-harbor (philos) replay had card_err
 +107.9, traceable to 185 fixed, stationary radar returns at shore positions that no AIS vessel ever
@@ -843,7 +843,7 @@ remove these: at philos radar p_D = 0.07 a missed sweep barely moves existence (
 and persistent shore returns are re-detected every antenna rotation. The over-count is spatial —
 the only lever is spatial.
 
-**Suppress births, not λ_C.** As shown in §10.1 the algebra, with `birth_existence_target` active
+**Suppress births, not λ_C.** As shown in §9.1 the algebra, with `birth_existence_target` active
 `r_new` is independent of λ_C. Births must be attacked by scaling the birth intensity directly.
 
 **Geodetic storage for trivial recenter.** The ENU datum auto-recenters as own-ship moves. Storing
@@ -856,7 +856,7 @@ Vessels moored at the waterline sit in the mid-ramp (c ≈ 0.5) and can still ac
 evidence over repeated detections and confirm a track. A "re-detected every scan → override gate"
 rule is deliberately not used: shore returns are also re-detected every scan.
 
-### 10.4 Ways to improve / what to test next
+### 9.4 Ways to improve / what to test next
 
 **Measured results (2026-06-30; see [evaluation-log.md](evaluation-log.md) §"Task A — PMBM
 land/coastline clutter-prior").**
@@ -893,21 +893,21 @@ requires spatial work on the water side:
 3. **Online clutter-field learning.** Couple with the existing `ClutterMapDetectionModel` (Task 3):
    learn the spatial clutter density from observed false tracks and feed it into the birth prior.
    Complements the static coastline — catches water-side clutter the land mask cannot reach.
-4. **Coverage-occlusion (Task 4 coupling, §9).** Land between the sensor and the track should
+4. **Coverage-occlusion (Task 4 coupling, §8).** Land between the sensor and the track should
    suppress the surveillance miss penalty for the occluded sector, not just births. A
    land-occlusion query at miss-detection time would further close the near-shore gap and couple
    this module with the coverage/visibility channel.
 
 ---
 
-## 11. PDA soft detected-branch update (`use_pda_soft_detected_branch`)
+## 10. PDA soft detected-branch update (`use_pda_soft_detected_branch`)
 
 Opt-in refinement of the per-Bernoulli detection update (§3.1). Cross-ref:
 [learning ch.12 — JPDA](../learning/12-jpda.md) for the plain-English intro;
 `PmbmTracker::Config::use_pda_soft_detected_branch`, the detected branch in
 `enumerateChildren` (`core/pmbm/PmbmTracker.cpp`).
 
-### 11.1 Math
+### 10.1 Math
 
 Under K=1 the assignment gives each detected Bernoulli *i* a single winner
 measurement *l* = `bernoulli_to_meas[i]`, and the Bernoulli's posterior is the
@@ -929,7 +929,7 @@ For IMM each mode's mean/cov/probability is β-combined the same way. Only the
 (`log r + log p_D(l) + log ℓ_{i,l}`), so the mixture / Murty / birth structure is
 untouched. When `|P(i)| = 1` this is byte-identical to the hard update.
 
-### 11.2 Assumptions
+### 10.2 Assumptions
 
 1. **The gate captures the target.** β only spreads over gated measurements; a
    target return outside the χ² gate cannot rescue the state.
@@ -943,7 +943,7 @@ untouched. When `|P(i)| = 1` this is byte-identical to the hard update.
 4. **Winner-weighted hypothesis mass.** The soft update is a *state-estimation*
    refinement inside the winning hypothesis, not a re-weighting of hypotheses.
 
-### 11.3 Rationale
+### 10.3 Rationale
 
 The K=1 GNN winner-take-all mis-assigns a real open-sea track to a gate-**closer**
 clutter return and pulls the state fully onto it, so the real return leaves the
@@ -957,7 +957,7 @@ while excluding measurements owned by competing tracks, so dense multi-target
 scenes (philos) see pool ≈ {winner} and stay hard/byte-identical, avoiding the
 over-count that has repeatedly bitten this codebase.
 
-### 11.4 Ways to improve / what to test next
+### 10.4 Ways to improve / what to test next
 
 - **β₀ miss term.** Add the clutter/missed-detection weight to further damp the
   pull; measure whether it helps beyond detections-only without leaking miss mass
@@ -967,7 +967,7 @@ over-count that has repeatedly bitten this codebase.
   real-data A/B (2026-07-02) then showed the plain pool is **regime-split**:
   open-water win, anchored flat, but a mild **urban-channel regression** — the
   unclaimed-only pool admits structured **shore clutter** and pulls tracks onto
-  it. Promotion is therefore blocked pending the land-aware pool (§11.5).
+  it. Promotion is therefore blocked pending the land-aware pool (§10.5).
 - **`pda_soft_detected_branch_on_confirmed_only`.** Restricting to confirmed
   tracks is wired but unmeasured — test whether softening young births helps or
   hurts phantom control.
@@ -975,7 +975,7 @@ over-count that has repeatedly bitten this codebase.
   fully modelled only by joint association; a JPDAF marginal β would be the
   principled extension if the unclaimed-only heuristic proves too coarse.
 
-### 11.5 Land-aware pool (`pda_pool_excludes_land`)
+### 10.5 Land-aware pool (`pda_pool_excludes_land`)
 
 Opt-in refinement of the pool P(i) above, motivated directly by the AutoFerry
 real-data A/B (`docs/baselines/2026-07-02_autoferry_pda_ab.md`): the plain
@@ -1044,7 +1044,7 @@ a land-mask one. Writeup: `docs/baselines/2026-07-03_promotion_decision.md`.
 
 ---
 
-## 8. References
+## 11. References
 
 Same as [sota-roadmap.md §4](sota-roadmap.md#4-trajectory-pmbm-as-a-third-idataassociator).
 Primary: García-Fernández, Williams, Granström, Svensson 2018 (PMBM

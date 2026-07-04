@@ -8,6 +8,62 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-04 — Corroboration veto + R9 cooperative+radar readiness (one pass) [Cl-3]
+
+Packaged together because they share a seam (the `SensorKind` non-scanning
+predicate and the cooperative/AIS discriminator). Four pieces, all TDD:
+
+1. **Suppression VETO (R9 item 1b) — the fourth corroboration source.**
+   `LiveOccupancyModel::observeVesselFix` + `veto_radius_m` (100 m) /
+   `veto_window_s` (60 s). A birth is NEVER suppressed within veto_radius of a
+   RECENT AIS/cooperative vessel fix — the strongest vessel discriminator under
+   the ADR-0002 amendment ("where we CAN tell, a vessel must track"). The veto is
+   LOCAL (the rest of a structure still suppresses), only lowers suppression to 0
+   (conservation invariant preserved), and lapses when the feed goes quiet
+   (fix pruned past the window → accepted static-hazard degraded mode until the
+   next fix). The wiring selects positional anchors (`isNonScanningSource`) and
+   feeds only those, so the model stays sensor-kind agnostic. 3 unit tests
+   (local carve-out, stale-prune-lapse, distant-no-veto), each non-vacuous
+   (suppression >0 before the fix, ==0 after) and confirmed by flipping the veto
+   off → RED. Real-data validation rides with increment 8 on HAXR (philos is
+   zero-AIS — nothing to measure).
+
+2. **cov_sensor exclusion (R9 item 1a).** `isNonScanningSource` (Ids.hpp; AIS +
+   Cooperative, RemoteTrack joins at R10) now excludes non-scanning sources from
+   `PmbmTracker`'s coverage-sector self-estimation. A cooperative fix is a vessel
+   POSITION, not a swept arc; a self-estimated "wedge" from it, unioned into the
+   occupancy decay footprint, over-claims coverage (decay over cells nothing
+   observed — the unsafe direction, same family as the multi-cluster bug). Unit
+   test: cooperative bundle → no coverage sector, radar bundle → still covered.
+   Exposure was latent (needs occupancy detector + coverage flag both on).
+
+3. **Self-healing (increment-ii caveat 2, now a gate).** A WRONG camera eviction
+   of a still-present, radar-visible object is a bounded latency window, not a
+   hole: suppression lifts (birth-eligible) AND the continuing radar returns
+   re-accrue persistence so the hazard re-emerges within ≤5 scans. Over-eviction
+   converts a present object to track-eligible or re-hazards it — never invisible.
+   Converts caveat (2) from "needs Layer-2" to "bounded today".
+
+4. **Cooperative + radar fusion scenario (R9 item 2) — the coverage gap.** Nothing
+   fused these two channels end-to-end (every other cooperative test seeds
+   Bernoullis directly). New `PmbmCooperativeRadar` test: alternating coop+radar
+   on one vessel → (a) ONE confirmed track, (b) platform_id carried on provenance,
+   (c) ID STABLE through a 35 s cooperative dropout (> the 20 s
+   cooperative_stale_timeout) because radar corroborates — pinned with an in-phase
+   empty scan showing the miss lands in the surveillance branch, not the
+   cooperative-timeout branch, (d) retirement once BOTH channels go silent.
+   **FINDING (interaction the review didn't flag):** `source_aware_misdetection`
+   and `use_sensor_activity` are ALTERNATIVE miss models — combined, the identity
+   gate short-circuits an empty scan as "not observable" (no matching platform_id)
+   BEFORE the activity model runs, blocking BOTH the surveillance miss and the
+   cooperative retirement (a source-aware cooperative track would then never
+   retire). The deployment config is `use_sensor_activity` alone (R9 item 3's
+   real-test recipe); the test uses that. Not a bug in the intended config, but a
+   config-combination gotcha to document.
+
+**Deferred:** R9 item 3 (integration-guide cooperative-channel section) folds into
+the in-flight doc pass (the review already routes it there). Full suite green.
+
 ## 2026-07-04 — Stage 1b-ii increment 6: camera corroboration (ii) — eviction as BEHAVIOUR [Cl-3]
 
 Increment (i) LABELLED a camera-observed-empty cell; increment (ii) makes it act.

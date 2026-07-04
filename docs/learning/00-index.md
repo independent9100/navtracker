@@ -69,6 +69,7 @@ This matches the documentation standard in `CLAUDE.md`
 | 24 | [Coverage / Visibility Channel](24-coverage-visibility-channel.md)      | Did the sensor actually have a chance to see the target? Surveillance vs cooperative-announce. Duty-cycle misses. Comms-loss vs existence. |
 | 25 | [Suppressing tracks on land: the coastline clutter prior](25-land-clutter-prior.md) | Why shore returns cause phantom tracks. The shoreline ramp c(d). Soft suppression at the waterline; inland hard gate. Why births not λ_C. |
 | 26 | [Static obstacles: charted hazards as a vessel-birth prior](26-static-obstacles.md) | Two meanings of "static" (stopped vessel vs fixed environment). Charted obstacles: hard footprint core (birth-drop zone) + soft keep-clear ring (birth-weaken zone). Combined birth scale. Keep-clear proximity alarm (range check, not CPA). |
+| 27 | [Learning uncharted structure: the live occupancy grid](27-live-static-occupancy.md) | Learn fixed structure with no chart, from the PMBM clutter feed. Occupancy grid + EWMA persistence. Persistent AND spatially extended → uncharted hazard (a boat is compact, a pier is a line). Coverage-aware decay. Chart corroboration + camera observed-empty eviction. |
 |    | [**→ Seeing the tracker in Foxglove**](11-gating-gnn-hungarian.md#9-seeing-the-tracker-in-foxglove) *(§9 of chapter 11)* | How to read covariance ellipses, gates, association lines, and NIS plots in Lichtblick. [`figures/seeing-the-tracker.png`](figures/seeing-the-tracker.png) |
 
 ## A note on diagrams

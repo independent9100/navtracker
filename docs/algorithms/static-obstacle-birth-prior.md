@@ -266,11 +266,18 @@ CPA-to-vessel math remains in `CpaEvaluator` for the dynamic track branch.
 
 ## 4. Ways to improve / what to test next
 
-1. **Stage 1b — reframe the clutter-map primitive (open).** The `ClutterMapDetectionModel`
-   accumulates persistent spatial returns. Wiring it to emit labelled "static occupancy"
-   via dominant-hypothesis `1 − r` from PMBM (the parked design, ADR 0002 §3) turns
-   the existing code into a first live-static estimator without a new subsystem.
-   The output becomes a `StaticHazardOutput` with `is_charted = false`.
+1. **Stage 1b — reframe the clutter-map primitive (DONE).** Shipped as
+   `LiveOccupancyModel` (`core/static/LiveOccupancyModel.{hpp,cpp}`, port
+   `ports/ILiveOccupancyFeed.hpp`). It consumes the PMBM per-scan dominant-hypothesis
+   `(position, 1 − r)` clutter feed, accumulates EWMA persistence on a datum-stable
+   metric occupancy grid, classifies persistent + spatially extended components as
+   uncharted structure, and emits them as `StaticObstacle`s (`source_id =
+   "live_occupancy"`, `is_charted = false`) that drive the same `birthSuppression`
+   seam documented above — a first live-static estimator built on a dedicated feed
+   port (deliberately NOT `ClutterMapDetectionModel`, to keep the learned map off
+   the λ_C / p_D detection channel). Full reference:
+   [live-static-occupancy.md](live-static-occupancy.md). Note this is **EWMA
+   persistence**, not the Dempster-Shafer evidential grid of item 2 (still open).
 
 2. **Stage 2 — Bayesian/evidential occupancy grid.** A Dempster-Shafer / DOGMa
    (Nuss et al. IJRR 2018, arXiv:1605.02406) occupancy grid — free / occupied-static /

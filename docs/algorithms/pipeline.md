@@ -3,6 +3,10 @@
 Follows the project documentation standard: Math / Assumptions / Rationale /
 Ways to improve. Cross-reference: design spec sections 6 and 7.
 
+See also (plain-English introduction in the learning series):
+[10 — Measurements, frames & time](../learning/10-measurements-frames-time.md),
+[15 — Track lifecycle](../learning/15-track-lifecycle.md).
+
 ## 1. Reorder buffer (`ReorderBuffer`)
 
 **Math/Logic.** Track `latest = max(time pushed)`. On `push(m)`: if

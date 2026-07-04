@@ -6,7 +6,7 @@
 > Next: [Index](00-index.md).
 
 The precise algorithm reference is
-[`docs/algorithms/pmbm-design.md §9`](../algorithms/pmbm-design.md#9-coverage--visibility-channel-isensoractivity).
+[`docs/algorithms/pmbm-design.md §8`](../algorithms/pmbm-design.md#8-coverage--visibility-channel-isensoractivity).
 
 ---
 
@@ -310,7 +310,7 @@ never has to compensate for them.
 | PMBM integration (miss + stale) | `core/pmbm/PmbmTracker.cpp` |
 | Activity profiles in bench | `adapters/benchmark/ReplayScenarioRun.cpp` (duty-cycle / p_D per scenario) |
 | Unit tests | `tests/pmbm/` |
-| Algorithm reference | [`docs/algorithms/pmbm-design.md §9`](../algorithms/pmbm-design.md#9-coverage--visibility-channel-isensoractivity) |
+| Algorithm reference | [`docs/algorithms/pmbm-design.md §8`](../algorithms/pmbm-design.md#8-coverage--visibility-channel-isensoractivity) |
 
 ---
 

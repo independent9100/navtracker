@@ -225,7 +225,7 @@ administrative-boundary imprecision.
 | `core/pmbm/PmbmTracker.cpp` | `landBirthScale(mean)` helper; applied in both adaptive and legacy birth builders |
 | `tests/fixtures/philos/boston.geojson` | City-of-Boston polygon fixture used in the philos bench |
 
-Algorithm-level reference (four-section doc with equations): [pmbm-design.md §10](../algorithms/pmbm-design.md#10-land--coastline-clutter-prior).
+Algorithm-level reference (four-section doc with equations): [pmbm-design.md §9](../algorithms/pmbm-design.md#9-land--coastline-clutter-prior).
 
 ---
 

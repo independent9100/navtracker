@@ -1,5 +1,17 @@
 # 2025 SOTA Roadmap
 
+> **Point-in-time snapshot (dated 2026-06-07) — largely superseded.** The
+> "Bottom line" and top-3 future investments below (score/existence-probability
+> track lifecycle, JIPDA, VB/Schmidt-robust filtering) have since been
+> substantially delivered: the IPDA/VIMM existence-probability lifecycle is the
+> default (since 2026-06-11 — see [improvement-backlog.md](improvement-backlog.md)),
+> and the Random-Finite-Set branch is built out in
+> [pmbm-design.md](pmbm-design.md). Treat this document as the historical
+> forward-look that motivated that work, not as the current backlog. For the live
+> state of what is done vs. open, read [improvement-backlog.md](improvement-backlog.md)
+> and [pmbm-design.md](pmbm-design.md). The content below is preserved unchanged
+> for provenance.
+
 Forward-looking literature review for navtracker's algorithmic stack. Documents
 specific improvements drawn from the 2018–2025 model-based tracking literature
 (deep-learning approaches excluded) that go beyond the per-component

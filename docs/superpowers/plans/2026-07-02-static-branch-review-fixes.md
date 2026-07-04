@@ -643,6 +643,28 @@ code paths. Three items to close BEFORE the real test:
    section (fits the guide's keep-in-sync rule; hand to the guide's
    doc-bug follow-up pass).
 
+**Status (2026-07-04) — items 1 + 2 DONE (with the veto pass), item 3 deferred.**
+- **Item 1a DONE:** `isNonScanningSource` (Ids.hpp) excludes AIS/Cooperative from
+  `PmbmTracker` `cov_sensor` coverage estimation; unit test
+  `PmbmOccupancyFeed.NonScanningSourceGetsNoCoverageSector`.
+- **Item 1b DONE (the veto):** `LiveOccupancyModel::observeVesselFix` +
+  `veto_radius_m`/`veto_window_s` — a recent AIS/cooperative fix vetoes birth
+  suppression locally (conservation-safe; lapses when the feed goes quiet). 3
+  unit tests. Real-data validation rides with increment 8 (HAXR; philos zero-AIS).
+- **Item 2 DONE:** `PmbmCooperativeRadar.FuseOneTrackStableThroughCoopDropout-
+  RetireWhenBothSilent` — one track / platform_id carried / ID stable through a
+  coop dropout > timeout while radar corroborates (in-phase empty scan pins the
+  surveillance-not-cooperative branch) / retirement when both silent.
+  **Finding:** `source_aware_misdetection` + `use_sensor_activity` are ALTERNATIVE
+  miss models — combined, the identity gate short-circuits an empty scan before
+  the activity model, blocking the cooperative retirement. The deployment config
+  is `use_sensor_activity` alone (this item's item-3 recipe). Documented, not a bug.
+- **Item 3 deferred** to the in-flight integration-guide doc pass (as this ticket
+  already routes it).
+Also folded in (increment-ii caveat 2): a WRONG camera eviction of a present,
+radar-visible object self-heals — bounded latency window, not a hole (gate
+`LiveOccupancyModel.WrongEvictionOfPresentObjectSelfHeals`).
+
 ---
 
 ## R10 — Remote-track ingestion (shore/VTS feed as pseudo-measurements) [queued 2026-07-04, AFTER R9]

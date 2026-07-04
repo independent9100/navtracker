@@ -3,6 +3,10 @@
 Follows the project documentation standard: Math / Assumptions / Rationale /
 Ways to improve. Cross-reference: design spec §9 (testing).
 
+See also (plain-English introduction in the learning series):
+[20 — Tracker metrics (OSPA/GOSPA)](../learning/20-tracker-metrics.md),
+[16 — NEES & NIS](../learning/16-nees-nis.md).
+
 ## 1. Scenario types and builders
 
 **Math/Logic.** Constant-velocity straight-line truth: `pos(t) = start + v·t`.

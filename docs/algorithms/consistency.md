@@ -7,6 +7,7 @@ the bench-side aggregator (`core/benchmark/Consistency.{hpp,cpp}`)
 that land for backlog item 12.
 
 Cross-references:
+- Plain-English introduction: [16 — NEES & NIS](../learning/16-nees-nis.md)
 - Spec: `docs/superpowers/specs/2026-06-13-nees-r-calibration-design.md`
 - Backlog: `docs/algorithms/improvement-backlog.md` §12 (and the §11
   re-diagnosis that hands off to §12)

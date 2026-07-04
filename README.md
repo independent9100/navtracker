@@ -37,9 +37,11 @@ are *hints* and *attributes*, never the fusion key.
   The same code runs live on a vessel and replays recorded logs deterministically
   — same input ordering, bit-identical output.
 - Pluggable estimator and data-association strategies. The baseline is a
-  constant-velocity EKF with greedy global-nearest-neighbor; alternatives
-  (UKF, IMM, particle, JPDA, MHT, Hungarian) drop in behind the same
-  interfaces.
+  constant-velocity EKF with greedy global-nearest-neighbor; an IMM
+  estimator, an MHT tracker, and a PMBM tracker are also implemented and
+  ship behind the same interfaces (PMBM/IMM are the current defaults per
+  ADR 0002). Further alternatives (UKF, particle filter, JPDA, Hungarian)
+  drop in behind the same interfaces.
 - A scenario harness with an OSPA metric so algorithm choices are *evaluable*
   with a quantitative score, not opinion.
 - Documented math, assumptions, decision rationale, and improvement paths for
@@ -267,13 +269,19 @@ matched track as an attribute and is available as an association hint, but
 never as the fusion key. A vessel without AIS gets the same stable
 track-ID treatment as one with it.
 
+The CV-EKF + GNN path above is the baseline, not the whole tracker: an IMM
+estimator (`core/estimation/ImmEstimator.hpp`), an MHT tracker
+(`core/pipeline/MhtTracker.hpp`), and a PMBM tracker
+(`core/pmbm/PmbmTracker.hpp`) are implemented and selectable, with PMBM/IMM
+as the current defaults per ADR 0002.
+
 Every non-trivial algorithm is documented in `docs/algorithms/` with its
 math, assumptions, why-this-over-the-alternatives rationale, and a concrete
 "ways to improve / what to test next" list. The scenario harness in
 `core/scenario/` lets you swap any port-level strategy and put a number on
-the change via OSPA — that's how the deferred alternatives (UKF, IMM,
-particle filter, JPDA, MHT, MMSI-hint locking, OOSM retrodiction, …) become
-*evaluable* rather than just hypothesized.
+the change via OSPA — that's how the deferred alternatives (UKF, particle
+filter, JPDA, MMSI-hint locking, OOSM retrodiction, …) become *evaluable*
+rather than just hypothesized.
 
 ## Known limitations
 
@@ -299,6 +307,6 @@ particle filter, JPDA, MHT, MMSI-hint locking, OOSM retrodiction, …) become
 ```bash
 conan install . --build=missing --output-folder=build/ -s build_type=Release
 cmake --preset conan-release
-cmake --build build/Release --target navtracker_tests
-ctest --test-dir build/Release --output-on-failure
+cmake --build build --target navtracker_tests
+ctest --test-dir build --output-on-failure
 ```

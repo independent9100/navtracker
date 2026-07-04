@@ -4,7 +4,12 @@ Most PNGs in this directory are produced by `generate.py`
 (matplotlib). A small number of comparison / structure diagrams
 are generated from `.dot` files via graphviz — currently
 [`22-tracker-stack-alternatives.dot`](22-tracker-stack-alternatives.dot).
-Re-render those with `dot -Tpng <name>.dot -o <name>.png`.
+Running `generate.py` renders those too (via its `render_dot_figures()`
+step, which shells out to the `dot` binary — see `DOT_FIGURES`), so a
+single `generate.py` run reproduces *every* PNG in this directory.
+To re-render a `.dot` by hand: `dot -Tpng <name>.dot -o <name>.png`.
+If `dot` is not installed, `generate.py` warns and skips the `.dot`
+figures but still produces all matplotlib ones.
 
 **Do not edit the PNGs by hand** — change the source script or
 `.dot` file and re-render.

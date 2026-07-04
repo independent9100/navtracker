@@ -4,6 +4,14 @@ Baseline state estimation for navtracker. Follows the project documentation
 standard: Math / Assumptions / Rationale / Ways to improve. Cross-reference:
 design spec section 11.
 
+See also (plain-English introductions in the learning series):
+[04 — Kalman filter](../learning/04-kalman-filter.md),
+[05 — Extended KF](../learning/05-extended-kalman-filter.md),
+[06 — Unscented KF](../learning/06-unscented-kalman-filter.md),
+[07 — Particle filter](../learning/07-particle-filter.md),
+[08 — Motion models](../learning/08-motion-models.md),
+[09 — IMM](../learning/09-imm.md).
+
 ## 1. Constant-velocity motion model (`ConstantVelocity2D`)
 
 **Math.** State `x = [px, py, vx, vy]ᵀ` in ENU (m, m/s).

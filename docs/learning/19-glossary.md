@@ -85,10 +85,12 @@
 | PDA      | Probabilistic Data Association (single-target JPDA)             | 12            |
 | PDAF     | PDA Filter (PDA + KF update)                                    | 12            |
 | PF       | Particle Filter                                                 | 07            |
-| PMBM     | Poisson Multi-Bernoulli Mixture (RFS-style filter)              | 14            |
+| MBM      | Multi-Bernoulli Mixture (the "detected targets" half of PMBM)   | 23            |
+| PMBM     | Poisson Multi-Bernoulli Mixture (RFS-style filter)              | 23            |
+| PPP      | Poisson Point Process (the "undetected targets" half of PMBM)   | 23            |
 | PSD      | Power Spectral Density                                          | 08            |
 | RBPF     | Rao-Blackwellised Particle Filter                               | 07            |
-| RFS      | Random Finite Set                                               | 14            |
+| RFS      | Random Finite Set                                               | 23            |
 | Reg.bias | Inter-sensor registration bias (per-sensor mounting offset)     | 21            |
 | RTS      | Rauch-Tung-Striebel smoother                                    | 05            |
 | SNR      | Signal-to-Noise Ratio                                           | 05            |
@@ -158,6 +160,11 @@
   hypothesis history.
 - **"global hypothesis"** — MHT term: the joint assignment of
   measurements to track-tree leaves across all targets.
+- **"Bernoulli component"** — in PMBM, one possible *detected* target:
+  a pair `(r, f(x))` of an existence probability `r ∈ [0,1]` and a
+  state density `f(x)`. A set of these is a Multi-Bernoulli; a weighted
+  mixture of such sets is the MBM. Contrasted with the PPP, which holds
+  the *undetected* targets. Chapter 23.
 - **"birth gate"** — the gating step before initiating a new
   track from an unassociated measurement.
 - **"score"** — log-likelihood-ratio accumulated over a track's

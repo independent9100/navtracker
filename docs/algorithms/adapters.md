@@ -4,6 +4,10 @@ Follows the project documentation standard: Math / Assumptions / Rationale /
 Ways to improve. Cross-reference: design spec section 5,
 `docs/sensors/sensor-reference.md`.
 
+See also (plain-English introductions in the learning series):
+[10 — Measurements, frames & time](../learning/10-measurements-frames-time.md),
+[21 — Sensor registration bias](../learning/21-sensor-registration-bias.md).
+
 ## 1. Polar → ENU projection (`projectRangeBearingToEnu`)
 
 **Math.** `east = own.east + r·sin β`, `north = own.north + r·cos β`.

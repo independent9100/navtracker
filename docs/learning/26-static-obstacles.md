@@ -258,12 +258,14 @@ correct and simpler primitive for a fixed hazard. This also keeps the
 static-obstacle output distinct from the vessel-track CPA output so consumers
 know which signal they are reading.
 
-**Learn the obstacles from the radar (no chart).**
-This is Stage 1b / Stage 2 (not yet built). Learning static occupancy from the
-radar requires accumulating persistent-return evidence over many scans and
-building an occupancy grid. The charted input is cheaper: it gives correct
-positions immediately with no learning latency. Stage 2 extends this to
-**uncharted** hazards once the live learning pipeline is built.
+**Learn the obstacles from the radar (no chart) instead of using a chart.**
+Learning static occupancy from the radar (Stage 1b, now shipped as the
+`LiveOccupancyModel` — [chapter 27](27-live-static-occupancy.md)) accumulates
+persistent-return evidence over many scans and needs a learning latency before a
+structure classifies. The charted input is cheaper and instant: it gives correct
+positions immediately with no latency. The two are **complementary, not
+either-or** — the chart covers what is surveyed, the live grid catches the
+**uncharted** structure the chart missed.
 
 ---
 
@@ -295,12 +297,15 @@ Stage 1 (this chapter) uses only **charted** hazards. A chart is never complete.
 Uncharted objects — a sunken container, a disconnected pipeline, a temporary
 construction barge — are not on any chart.
 
-Stage 1b (open) will reframe the existing clutter-map primitive: the PMBM tracker
-already tracks how likely each spatial cell is to produce unclaimed returns (the
-dominant-hypothesis `1 − r` labeling design). Routing that accumulated evidence
-into an explicit **static-occupancy output** (a `StaticHazardOutput` with
-`is_charted = false`) gives the first live-learned hazard layer — without a full
-occupancy grid.
+Stage 1b (**shipped**) reframes the existing clutter-map primitive: the PMBM
+tracker already tracks how likely each spatial cell is to produce unclaimed
+returns (the dominant-hypothesis `1 − r` labeling design). Routing that
+accumulated evidence into a live **occupancy grid** learns persistent AND
+spatially extended structure (piers, breakwaters) and emits it as an uncharted
+`StaticObstacle` — feeding the *same* soft birth suppression this chapter
+describes. This is the `LiveOccupancyModel`, and it has its own learning chapter:
+[27 — Learning uncharted structure: the live occupancy grid](27-live-static-occupancy.md)
+(algorithm reference: [`live-static-occupancy.md`](../algorithms/live-static-occupancy.md)).
 
 Stage 2 (future) is a proper Dempster-Shafer occupancy grid: each cell carries
 a mass for "free", "static-occupied", "dynamic-occupied", and "unknown". The
