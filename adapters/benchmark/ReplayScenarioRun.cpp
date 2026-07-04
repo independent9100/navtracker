@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -191,22 +192,35 @@ class PhilosScenarioRun : public ScenarioRun {
   TruthSource truth_source_{TruthSource::AisOnly};
 };
 
+// Env override with a default, for the increment-8 HAXR occupancy A/B: point the
+// scenario at a decimated per-station CSV without recompiling. Empty/unset env
+// reproduces the original kattwyk_08_t40 fixture.
+std::string haxrEnv(const char* var, const char* def) {
+  const char* v = std::getenv(var);
+  return (v != nullptr && *v != '\0') ? std::string(v) : std::string(def);
+}
+
 class HaxrScenarioRun : public ScenarioRun {
  public:
   ScenarioDescriptor descriptor() const override {
+    // Label stays "haxr" (the bench --with-haxr gate and test_replay_scenario_run
+    // key on it); per-station runs are distinguished by the bench --run-id.
     return {"haxr", /*is_multi_seed=*/false, /*seed_count=*/1};
   }
 
   Scenario generate(std::uint64_t /*seed*/) override {
-    if (!fileExists(kHaxrPlotsCsv) || !fileExists(kHaxrAisCsv) ||
-        !fileExists(kHaxrStationsCsv)) {
+    const std::string plots_csv = haxrEnv("HAXR_PLOTS_CSV", kHaxrPlotsCsv);
+    const std::string ais_csv = haxrEnv("HAXR_AIS_CSV", kHaxrAisCsv);
+    const std::string stations_csv = haxrEnv("HAXR_STATIONS_CSV", kHaxrStationsCsv);
+    const std::string station = haxrEnv("HAXR_STATION", "kattwyk");
+    if (!fileExists(plots_csv.c_str()) || !fileExists(ais_csv.c_str()) ||
+        !fileExists(stations_csv.c_str())) {
       return {};
     }
-    const auto stations = navtracker::replay::loadStations(kHaxrStationsCsv);
+    const auto stations = navtracker::replay::loadStations(stations_csv);
     auto plots = navtracker::replay::loadPlotCsv(
-        kHaxrPlotsCsv, stations, SensorKind::ArpaTtm, "kattwyk");
-    auto truth = navtracker::replay::loadHaxrTruth(
-        kHaxrAisCsv, "kattwyk", stations);
+        plots_csv, stations, SensorKind::ArpaTtm, station);
+    auto truth = navtracker::replay::loadHaxrTruth(ais_csv, station, stations);
 
     Scenario s;
     s.measurements = std::move(plots);  // loadPlotCsv already sorts by time
@@ -219,6 +233,13 @@ class HaxrScenarioRun : public ScenarioRun {
               [](const TruthSample& a, const TruthSample& b) {
                 return a.time < b.time;
               });
+    // Nominal fixed anchor. HAXR is a LOCAL METRE frame (stations.csv is
+    // x_m/y_m — no geodetic origin), so the datum's lat/lon is only a label; it
+    // exists so the Stage-1b LiveOccupancyModel / land / obstacle wiring (gated
+    // on scen.datum.has_value(), Sweep.cpp) activates on HAXR. Never used for
+    // recenter (fixed datum per run). Without this the occupancy A/B is a no-op:
+    // the ON arm would be bit-identical to OFF because the model is never wired.
+    s.datum = geo::Datum(geo::Geodetic{53.53, 9.95, 0.0});  // Hamburg port, nominal
     return s;
   }
 };

@@ -44,6 +44,26 @@ TEST(ReplayScenarioRun, GenerateReturnsNonEmpty) {
   if (!any_real) GTEST_SKIP() << "replay fixtures not reachable from cwd";
 }
 
+// The Stage-1b occupancy / land / static-obstacle models wire in the bench
+// Sweep ONLY when scen.datum.has_value() (Sweep.cpp). HAXR is a local metre
+// frame with no geodetic origin, so HaxrScenarioRun must supply a NOMINAL fixed
+// anchor datum — otherwise imm_cv_ct_pmbm_occupancy is silently bit-identical to
+// its base on HAXR (the occupancy layer never runs) and the increment-8 A/B is a
+// no-op. Guard that the HAXR scenario carries a datum whenever its fixtures are
+// reachable. (Skips under ctest cwd=build/, like the other replay tests.)
+TEST(ReplayScenarioRun, HaxrScenarioCarriesDatumSoOccupancyWires) {
+  std::unique_ptr<ScenarioRun> haxr;
+  for (auto& s : defaultReplayScenarios())
+    if (s->descriptor().label == "haxr") haxr = std::move(s);
+  ASSERT_TRUE(haxr);
+  const auto scen = haxr->generate(0);
+  if (scen.measurements.empty())
+    GTEST_SKIP() << "HAXR fixtures not reachable from cwd";
+  EXPECT_TRUE(scen.datum.has_value())
+      << "HAXR scenario has no datum — the Stage-1b occupancy layer will not "
+         "wire, making the occupancy A/B a silent no-op";
+}
+
 // End-to-end harness regression on real data: AutoFerry scenario2 carries
 // two ground-truth targets whose per-target timestamps used to fragment
 // every evaluation step to cardinality 1, pegging OSPA near the 500 m
