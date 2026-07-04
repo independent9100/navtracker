@@ -642,3 +642,65 @@ code paths. Three items to close BEFORE the real test:
    notes ISensorActivity only in passing — add a cooperative-channel
    section (fits the guide's keep-in-sync rule; hand to the guide's
    doc-bug follow-up pass).
+
+---
+
+## R10 — Remote-track ingestion (shore/VTS feed as pseudo-measurements) [queued 2026-07-04, AFTER R9]
+
+Context: target deployment sensor suite is (1) remote station sending
+TRACKS, (2) cooperative vessels sending their own positions, (3) camera —
+possibly with a distance sensor, (4) radar, (5) AIS. Items 2–5 are
+supported today (camera+distance = the existing range/bearing path via
+`makeMeasurementFromRelativeBearing` with `SensorKind::EoIr` — no new work,
+just a guide note). Item 1 is the gap this ticket closes. Stance (design
+spec §13, same as ARPA from day one): another tracker's output is a
+**pseudo-measurement** — filtered, correlated, someone else's lifecycle
+artifacts — never an independent observation.
+
+**Do.**
+1. `SensorKind::RemoteTrack` — so sensor defaults, activity profiles, and
+   the occupancy exclusions key on it. MUST be excluded from
+   `cov_sensor` coverage estimation and treated like Cooperative/Ais in
+   the R9 item-1 fix (a shore feed is a non-scanning source; its
+   "coverage wedge" would be meaningless — same over-claiming trap).
+2. Small adapter (`adapters/remote_track/`): remote track update →
+   `Position2D` (or `PositionVelocity2D`; velocity opt-in, extra
+   suspicion) with:
+   - **R inflation** (config, default ×2–3 on the remote system's stated
+     covariance; pessimistic default when none stated);
+   - **rate thinning** (config max update rate per remote track id —
+     consecutive filtered outputs are correlated, not independent);
+   - `hints.sensor_track_id` = remote track id (per-source scope — one
+     `source_id` per remote STATION, so multi-station feeds stay
+     disjoint); `hints.mmsi` passed through when the remote system
+     carries it.
+3. **Circular-AIS rule documented where the adapter is documented:** if
+   raw AIS and an AIS-fusing shore feed are both wired, the same
+   transmission arrives twice — pick one path per vessel or inflate for
+   the correlation. This is a deployment decision the adapter cannot make
+   silently; it warns (log/diagnostic) when both channels carry the same
+   MMSI.
+4. `DeclaredSensorActivity` profile: surveillance channel with the remote
+   station's coverage area, so miss-math knows where the feed should see.
+   Registration-bias machinery (backlog #9/#13) applies per source_id for
+   fixed alignment errors — verify wiring, don't rebuild.
+5. Tests: adapter unit tests + ONE fusion scenario shaped like the real
+   deployment — remote tracks + radar + AIS (+ cooperative) on the same
+   vessel: single track, no dual from the remote feed, ID stable when the
+   remote feed drops or swaps its own ids, R9-style no-retirement while
+   radar corroborates.
+6. Integration-guide entry (keep-in-sync rule applies): when to use it,
+   the three pseudo-measurement rules, the circular-AIS warning, and the
+   camera-with-distance pointer (range/bearing path, not a new sensor
+   kind).
+
+**Explicitly NOT in scope:** covariance intersection / measurement
+decorrelation (proper track-to-track fusion). Deferred per spec §13 with
+a measured trigger: revisit when a real shore feed shows bias/overconfidence
+that R-inflation + thinning cannot price (NEES/consistency check on the
+fusion scenario is the detector for this).
+
+**Acceptance.** SensorKind + adapter + exclusions + warning shipped;
+fusion scenario green; NEES sanity on the scenario recorded in the
+eval-log; guide entry present (drift-guard will enforce the config
+struct); north-star row updated.
