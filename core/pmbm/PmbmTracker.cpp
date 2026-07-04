@@ -6,6 +6,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <stdexcept>
 #include <tuple>
 #include <utility>
 
@@ -176,7 +177,23 @@ PmbmTracker::PmbmTracker(const IEstimator& estimator, Config cfg,
                          BirthModelFn birth_model)
     : estimator_(estimator),
       cfg_(cfg),
-      birth_model_(std::move(birth_model)) {}
+      birth_model_(std::move(birth_model)) {
+  // Fail-loud (R9): source_aware_misdetection and use_sensor_activity are
+  // ALTERNATIVE miss models and MUST NOT be combined. With both on, the identity
+  // gate marks an empty scan "not observable" and short-circuits BEFORE the
+  // activity model, silently blocking the cooperative stale-timeout retirement —
+  // a never-retiring ghost track. Refuse the combination rather than document it
+  // (the R8.8 lesson: don't let bad config misbehave quietly).
+  if (cfg_.source_aware_misdetection && cfg_.use_sensor_activity) {
+    throw std::invalid_argument(
+        "PmbmTracker: source_aware_misdetection and use_sensor_activity are "
+        "alternative miss models and cannot be combined — the identity gate "
+        "short-circuits the activity model on empty scans, silently blocking the "
+        "cooperative stale-timeout retirement (never-retiring ghost track). Use "
+        "use_sensor_activity alone (the honest per-duty-cycle coverage model). See "
+        "R9 in docs/superpowers/plans/2026-07-02-static-branch-review-fixes.md.");
+  }
+}
 
 void PmbmTracker::predict(Timestamp to) {
   if (!has_current_time_) {

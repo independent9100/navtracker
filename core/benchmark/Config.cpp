@@ -1067,6 +1067,13 @@ std::vector<Config> defaultConfigs() {
       cfg.lambda_birth = 1e-5;             // ignored when birth_existence_target > 0
       // Coverage path: honest surveillance miss via ISensorActivity.
       cfg.use_sensor_activity = true;
+      // use_sensor_activity OWNS the miss/retirement signal here, so the inherited
+      // source_aware_misdetection identity gate MUST be off (R9): with both on, the
+      // identity gate short-circuits an empty scan as "not observable" BEFORE the
+      // activity model, silently blocking the cooperative stale-timeout retirement
+      // this config depends on (see cooperative_stale_timeout_sec below). The two
+      // are alternative miss models — the PmbmTracker constructor now refuses both.
+      cfg.source_aware_misdetection = false;
       // Retire the idle-halflife hack: the honest coverage model owns the
       // surveillance-absence signal; idle_halflife would double-count.
       cfg.idle_halflife_sec = 0.0;
@@ -1122,6 +1129,9 @@ std::vector<Config> defaultConfigs() {
       cfg.output_existence_floor = 0.1;
       cfg.lambda_birth = 1e-5;
       cfg.use_sensor_activity = true;
+      cfg.source_aware_misdetection = false;  // R9: coverage model owns the miss
+                                              // signal; identity gate would block
+                                              // the cooperative retirement below.
       cfg.idle_halflife_sec = 0.0;
       cfg.dedup_miss_pd = false;
       cfg.cooperative_stale_timeout_sec = 120.0;

@@ -58,8 +58,24 @@ predicate and the cooperative/AIS discriminator). Four pieces, all TDD:
    BEFORE the activity model runs, blocking BOTH the surveillance miss and the
    cooperative retirement (a source-aware cooperative track would then never
    retire). The deployment config is `use_sensor_activity` alone (R9 item 3's
-   real-test recipe); the test uses that. Not a bug in the intended config, but a
-   config-combination gotcha to document.
+   real-test recipe); the test uses that.
+
+**Follow-up (2026-07-04, folded into the front of R10): the gotcha is now
+IMPOSSIBLE, not documented.** A documented gotcha rots; the failure it hides is a
+silently-immortal cooperative track (errs safe, but a permanent phantom vessel
+teaches operators to distrust the display). Following the R8.8 refuse-bad-input
+lesson, the `PmbmTracker` constructor now THROWS `std::invalid_argument` when both
+flags are set, naming the reason and the recipe (2 guard tests: reject-both /
+accept-either-alone). **The guard surfaced a real latent bug it was meant to
+catch:** `imm_cv_ct_pmbm_coverage` and `imm_cv_ct_pmbm_coverage_land` were
+themselves setting BOTH — they inherit `source_aware_misdetection=true` from
+`makePmbmConfig()` and add `use_sensor_activity=true`, so the inherited identity
+gate was silently defeating the cooperative stale-timeout retirement their OWN
+comment demands ("cooperative/AIS-only tracks must be retired by stale timeout or
+cardinality grows"). Fixed both to `use_sensor_activity` alone; the coverage A/B
+gate (`SyntheticClutterAB.LandModelRemovesShoreOverCountKeepsRealTargets`) stays
+green. If someone genuinely needs both composed, the constructor is where they now
+discover the short-circuit and fix the composition consciously.
 
 **Deferred:** R9 item 3 (integration-guide cooperative-channel section) folds into
 the in-flight doc pass (the review already routes it there). Full suite green.

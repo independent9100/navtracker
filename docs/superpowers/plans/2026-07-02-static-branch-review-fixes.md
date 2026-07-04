@@ -658,7 +658,12 @@ code paths. Three items to close BEFORE the real test:
   **Finding:** `source_aware_misdetection` + `use_sensor_activity` are ALTERNATIVE
   miss models — combined, the identity gate short-circuits an empty scan before
   the activity model, blocking the cooperative retirement. The deployment config
-  is `use_sensor_activity` alone (this item's item-3 recipe). Documented, not a bug.
+  is `use_sensor_activity` alone (this item's item-3 recipe). **NOW ENFORCED (front
+  of R10):** the `PmbmTracker` constructor throws on the combination (R8.8 fail-loud
+  lesson; 2 guard tests). The guard caught a real latent bug — `imm_cv_ct_pmbm_-
+  coverage[_land]` were themselves setting both (inherited `source_aware_misdetection`
+  + `use_sensor_activity`), silently defeating the cooperative retirement their own
+  comment demands; fixed both to `use_sensor_activity` alone, coverage A/B gate green.
 - **Item 3 deferred** to the in-flight integration-guide doc pass (as this ticket
   already routes it).
 Also folded in (increment-ii caveat 2): a WRONG camera eviction of a present,

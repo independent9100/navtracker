@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 
 #include <Eigen/Core>
 
@@ -1188,4 +1189,40 @@ TEST(PmbmCooperativeRadar, FuseOneTrackStableThroughCoopDropoutRetireWhenBothSil
   }
   EXPECT_GE(retire_scan, 0)
       << "(d) with BOTH channels silent, the track must eventually retire";
+}
+
+// ---------------------------------------------------------------------------
+// R9 finding promoted from documented to IMPOSSIBLE (fail-loud, the R8.8
+// refuse-bad-input lesson): source_aware_misdetection and use_sensor_activity are
+// ALTERNATIVE miss models. Combined, the identity gate short-circuits an empty
+// scan as "not observable" (no matching platform_id) BEFORE the activity model
+// runs, silently blocking the cooperative stale-timeout retirement — a
+// never-retiring ghost track (errs safe, but a permanent phantom vessel on the
+// display teaches operators to distrust the output). The constructor REFUSES the
+// combination with the reason + the recipe, so the gotcha is a construction-time
+// error, not tribal knowledge that rots.
+// ---------------------------------------------------------------------------
+TEST(PmbmConfigGuard, RejectsSourceAwareMisdetectionWithSensorActivity) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  PmbmTracker::Config c;
+  c.source_aware_misdetection = true;
+  c.use_sensor_activity = true;
+  EXPECT_THROW(PmbmTracker(ekf, c), std::invalid_argument);
+}
+
+// Either miss model ALONE is accepted — the two supported configurations.
+TEST(PmbmConfigGuard, EitherMissModelAloneIsAccepted) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  {
+    PmbmTracker::Config c;
+    c.source_aware_misdetection = true;  // identity-gate model alone
+    EXPECT_NO_THROW(PmbmTracker(ekf, c));
+  }
+  {
+    PmbmTracker::Config c;
+    c.use_sensor_activity = true;  // activity-coverage model alone
+    EXPECT_NO_THROW(PmbmTracker(ekf, c));
+  }
 }
