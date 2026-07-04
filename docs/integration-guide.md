@@ -295,6 +295,81 @@ corroboration-only, with *absence* treated as evidence). It is a replay/fixture
 loader — **out of scope** for live wiring (see the scope note in the intro) — but
 it is the canonical example of building bearing-only measurements by hand.
 
+### You have another tracker's output (shore / VTS remote tracks)
+
+Your input is a **remote surveillance station's own track list** — a shore radar
+or VTS feed that ships *filtered tracks*, not raw detections. Treat every such
+track as a **pseudo-measurement** (design spec §13): someone else's filtered,
+correlated, lifecycle-managed estimate — **never an independent observation**.
+The same stance the library takes for ARPA TTM applies here, made explicit.
+
+Use `RemoteTrackAdapter` (`adapters/remote_track/RemoteTrackAdapter.hpp`): feed it
+a `RemoteTrackReport` per remote update, `poll()` for `SensorKind::RemoteTrack`
+`Position2D` measurements in your datum frame.
+
+```cpp
+RemoteTrackAdapter remote(datum);               // defaults below
+RemoteTrackReport r;
+r.time = t; r.remote_track_id = 42;             // the remote station's own id
+r.lat_deg = ...; r.lon_deg = ...;
+r.position_covariance = stated_R;               // m², or leave zero if none stated
+r.mmsi = 211000123u;                            // when the feed carries identity
+r.source_id = "vts_hamburg";                    // ONE per remote STATION
+remote.ingest(r);
+tracker.processBatch(remote.poll());
+```
+
+Three rules the adapter enforces, because a filtered track is not a raw fix:
+
+1. **R-inflation.** The remote system's stated covariance is multiplied by
+   `r_inflation_factor` (a scalar on the covariance *matrix*/variance; default
+   **×3**) to price the correlation/overconfidence of a filtered output. When the
+   feed states **no** covariance, a pessimistic absolute default is used instead
+   (`default_position_std_m`, default **50 m** — looser than AIS's 30 m; also in
+   `pessimisticSensorDefaults().remote_track_position`). Never both.
+2. **Rate thinning.** Consecutive filtered outputs for one remote track are
+   correlated, not independent, so at most one update per `min_update_interval_s`
+   (default **2 s**, per `(source_id, remote_track_id)`) is emitted; the rest are
+   dropped (`thinnedCount()`).
+3. **Identity as a hint, never the key.** `remote_track_id` → `hints.sensor_track_id`
+   (scoped to the station's `source_id`; the remote may reuse/swap it), and `mmsi`
+   is passed through. The fusion key stays the library's own `track_id` — a remote
+   id-swap does **not** split the fused track.
+
+**Defaults are blind.** ×3 / 50 m / 2 s were chosen with no deployment numbers,
+biased to the safe direction (over-inflation only wastes a little of the feed's
+precision; under-inflation is the dangerous direction). Replace them with the
+shore feed's real numbers when known — all config, no code. The consistency
+tripwire is a **NEES check** on a fusion scenario: if the fused estimate goes
+overconfident, R-inflation has stopped being enough and you need proper
+track-to-track fusion (covariance intersection) — deliberately **out of scope**
+today (spec §13), to be revisited only when a real feed shows it.
+
+**Velocity is opt-in and extra-suspicious.** By default velocity fields are
+ignored (`accept_velocity{false}`) and every measurement is `Position2D` — a
+shore feed's velocity is its smoothed derivative of positions it also sends, the
+classic double-counting trap (see below). Enable `accept_velocity` only if you
+have vetted the feed's velocity as genuinely independent.
+
+**Circular-AIS guard.** If you wire raw AIS *and* an AIS-fusing shore feed, the
+same transmission arrives twice. The adapter cannot pick a path silently, so it
+surfaces the overlap: `remote.circularAisMmsis(raw_ais_mmsis)` returns the MMSIs
+carried on both channels. Non-empty → dedupe (one path per vessel) or inflate for
+the correlation; this is a deployment decision.
+
+**A camera with a rangefinder is NOT a remote track.** A camera plus a distance
+sensor gives you range + true/relative bearing — use the range+bearing path
+(`makeMeasurementFromRelativeBearing` with `SensorKind::EoIr`), not this adapter.
+RemoteTrack is only for another *tracker's* output.
+
+RemoteTrack is a **non-scanning source** (`isNonScanningSource`): its point
+reports are excluded from occupancy coverage-sector self-estimation (a filtered
+track is not a swept arc), and it is strong vessel-evidence for the corroboration
+suppression veto (§7). A remote *station* may still carry a **declared**
+surveillance coverage area via `DeclaredSensorActivity` (§5/§8) — that is you
+telling the tracker where the feed sees, which is different from the tracker
+inferring a wedge from point reports (the thing excluded).
+
 ### Your sensor gives no uncertainty at all
 
 Leave `covariance` empty and apply per-(sensor, model) defaults
@@ -308,13 +383,14 @@ applyDefaultsIfEmpty(m, defaults);
 `applyDefaultsIfEmpty` fills the covariance only if it is empty, and sets
 `covariance_is_default = true` as a diagnostic when it does
 (`core/types/SensorDefaults.cpp`). The `pessimisticSensorDefaults()` values
-(`core/types/SensorDefaults.cpp`) are deliberately conservative and cover six
+(`core/types/SensorDefaults.cpp`) are deliberately conservative and cover seven
 (sensor, model) pairs:
 
 | sensor + model | default 1-σ |
 |---|---|
 | `Ais` + `Position2D` | 30 m position |
 | `Cooperative` + `Position2D` | 10 m position |
+| `RemoteTrack` + `Position2D` | 50 m position |
 | `ArpaTll` + `Position2D` | 50 m position |
 | `ArpaTtm` + `RangeBearing2D` | 75 m range, 1.5° bearing |
 | `EoIr` + `RangeBearing2D` | 50 m range, 1.0° bearing |
@@ -721,6 +797,7 @@ or three fields most worth reviewing. (`core/benchmark/` sweep configs and the
 | `OwnShipNmeaAdapterConfig` | `adapters/own_ship/OwnShipNmeaAdapter.hpp` | Own-ship NMEA parsing: GPS noise, velocity source, heading sources | `uere_m{5.0}`, `gps_heading_talkers{}`, `prefer_rmc_velocity{true}` |
 | `ArpaAdapterConfig` | `adapters/arpa/ArpaAdapter.hpp` | Radar TTM/TLL → measurements | `heading_std_deg{0.0}`, `position_std_m{50.0}`, `bearing_std_deg{1.0}` |
 | `EoIrAdapterConfig` | `adapters/eoir/EoIrAdapter.hpp` | EO/IR camera heading σ | `heading_std_deg{0.0}` |
+| `RemoteTrackAdapterConfig` | `adapters/remote_track/RemoteTrackAdapter.hpp` | Shore/VTS remote track → pseudo-measurement (R-inflation, rate thinning, velocity opt-in) | `r_inflation_factor{3.0}`, `min_update_interval_s{2.0}`, `default_position_std_m{50.0}`, `accept_velocity{false}` |
 | `CpaEvaluatorConfig` | `core/collision/CpaEvaluator.hpp` | Collision-risk thresholds + hysteresis | `d_threshold_m{500.0}`, `enter_probability{0.5}`, `exit_probability{0.3}` |
 | `StaticHazardEvaluatorConfig` | `core/collision/StaticHazardEvaluator.hpp` | Keep-clear-ring alerts | `exit_hysteresis{1.1}`, `emit_updates{false}` |
 | `HeadingBiasEstimatorConfig` | `core/bias/HeadingBiasEstimator.hpp` | Gyro-bias KF tuning + per-kind gates | `initial_variance_rad2` (5°)², `cog_min_sog_mps{3.0}`, `bi_min_range_m{50.0}` |

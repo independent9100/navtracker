@@ -33,6 +33,9 @@ struct SensorDefaults {
   PerSensorCov eoir_range_bearing;
   PerSensorCov eoir_bearing_only;
   PerSensorCov cooperative_position;  // fleet-partner GNSS fix
+  // Shore/VTS remote track (R10) with no stated covariance. Position-only; the
+  // opt-in velocity default lives on RemoteTrackAdapterConfig, not here.
+  PerSensorCov remote_track_position;
 
   /**
    * Build the fallback R matrix for the given (sensor, model) pair, laid

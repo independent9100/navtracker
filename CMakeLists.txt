@@ -92,6 +92,7 @@ add_library(navtracker_nmea
   adapters/arpa/ArpaAdapter.cpp
   adapters/eoir/EoIrAdapter.cpp
   adapters/own_ship/OwnShipNmeaAdapter.cpp
+  adapters/remote_track/RemoteTrackAdapter.cpp
 )
 target_include_directories(navtracker_nmea PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_nmea PUBLIC navtracker_core Eigen3::Eigen)
@@ -225,6 +226,7 @@ add_executable(navtracker_tests
   tests/pmbm/test_pmbm_scenario.cpp
   tests/pmbm/test_pmbm_phase8.cpp
   tests/pmbm/test_pmbm_sensor_activity.cpp
+  tests/pmbm/test_pmbm_remote_track_fusion.cpp
   tests/pmbm/test_pmbm_land_model.cpp
   tests/pmbm/test_pmbm_static_obstacle.cpp
   tests/pmbm/test_pmbm_clutter_feed.cpp
@@ -239,6 +241,7 @@ add_executable(navtracker_tests
   tests/adapters/util/test_nmea.cpp
   tests/adapters/util/test_edge_validation.cpp
   tests/adapters/ais/test_ais_adapter.cpp
+  tests/adapters/remote_track/test_remote_track_adapter.cpp
   tests/adapters/own_ship/test_own_ship_nmea.cpp
   tests/adapters/own_ship/test_own_ship_nmea_multi_heading.cpp
   tests/adapters/own_ship/test_own_ship_nmea_bias_dispatch.cpp

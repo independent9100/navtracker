@@ -8,6 +8,52 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-04 — R10: remote-track ingestion (shore/VTS pseudo-measurements) [Cl-3]
+
+Closes the last gap in the target deployment suite (remote station sends TRACKS).
+Stance = design spec §13: another tracker's output is a **pseudo-measurement**,
+never an independent observation. All TDD; full suite green (see below).
+
+**Shipped.** (1) `SensorKind::RemoteTrack` appended (last enumerator; serialized
+values unshifted) + folded into `isNonScanningSource` (excluded from cov_sensor
+self-estimation like AIS/Cooperative — a filtered track is not a swept arc). (2)
+`RemoteTrackAdapter` (`adapters/remote_track/`): report → ENU `Position2D`
+(`PositionVelocity2D` when velocity opt-in, default OFF/extra-suspicious), with
+R-inflation (×3 default on stated covariance; 50 m pessimistic default when none
+stated — never both), rate thinning (1 update / 2 s per `(source_id,
+remote_track_id)`), `sensor_track_id`+`mmsi` hints, and a `circularAisMmsis()`
+guard that surfaces MMSIs double-counted across a raw-AIS + AIS-fusing-shore
+wiring. 12 adapter unit tests. (3) Latent hazard fixed fail-loud: `SkewProfile`
+per-kind array was sized `8` (== old enumerator count) and indexed by `[]`; a 9th
+kind was silent OOB. Now sized `9` + bounds-checked `.at()` (R8.8 lesson — throw,
+don't corrupt). (4) Config guard (front of R10) already shipped in the prior pass.
+
+**Fusion scenario (the acceptance test).** `PmbmRemoteTrackFusion`: remote +
+radar + AIS + cooperative on ONE vessel, remote driven through the real adapter
+(dogfooded), miss model `use_sensor_activity` alone (guard-compliant). Asserts:
+ONE confirmed track (no dual from the remote feed); the RemoteTrack touch is on
+its provenance (remote fused in, not spawned); **ID stable across a remote
+id-swap** (100→200 — external id is a hint, invariant 5); ID stable across a
+remote **dropout** while radar corroborates (R9-style no-retirement).
+
+**NEES sanity (the R-inflation tripwire), recorded:** mean position NEES =
+**1.79** over 46 samples (2 DOF, ideal E[NEES]=2). The ×3-inflated remote channel
+fused with a truthful radar leaves the estimate **consistent, not overconfident**
+— R-inflation is sufficient at this scenario's fidelity. This is the detector for
+"inflation stopped being enough" (→ covariance intersection, deferred per §13):
+if this NEES climbs well above 2 on a real feed, revisit. Definitionally distinct
+from a gate — recorded as a consistency observation.
+
+**Debugging note (honest).** First cut of the fusion test made TWO confirmed
+tracks for one vessel — a moving target + noise seeding a second cross-hypothesis
+Bernoulli. Root cause was my *stripped test config* (bare `adaptive_birth`, no
+smart-birth-skip), not the tracker: the production recipe uses
+`measurement_driven_birth` + `smart_birth_skip_existing` (Reuter 2014 — don't
+birth at a measurement an existing high-r Bernoulli already explains). Aligning
+the test config to the real recipe (not tuning a threshold to pass) collapsed it
+to one track. Lesson logged: fusion scenario configs must be
+production-representative, not minimal.
+
 ## 2026-07-04 — Corroboration veto + R9 cooperative+radar readiness (one pass) [Cl-3]
 
 Packaged together because they share a seam (the `SensorKind` non-scanning
@@ -76,6 +122,19 @@ cardinality grows"). Fixed both to `use_sensor_activity` alone; the coverage A/B
 gate (`SyntheticClutterAB.LandModelRemovesShoreOverCountKeepsRealTargets`) stays
 green. If someone genuinely needs both composed, the constructor is where they now
 discover the short-circuit and fix the composition consciously.
+
+**Baseline-contamination check (2026-07-04, due diligence): NO recorded baseline
+was contaminated.** The defeated retirement can only change output where a
+`coverage*` config met an identity-known (cooperative/AIS) track whose feed goes
+silent long enough to trip the stale timeout. Auditing every `imm_cv_ct_pmbm_
+coverage[_land]` row in this log: (1) the philos real-replay rows are zero-AIS /
+zero-cooperative, so the identity gate never engages and no retirement is ever
+attempted; (2) every synthetic scenario baselined under these configs
+(`shore_clutter_open/nearshore`, the geometry breadth set) runs ≤ 60 s
+(`linearSeconds(1,40)`, convoy 60 s), but `cooperative_stale_timeout_sec = 120`,
+so the retirement branch is **unreachable within the scenario horizon** — the
+flag combination cannot alter the output. The 2026-06-30 and 2026-07-02 coverage
+numbers therefore stand as recorded; no re-baseline or annotation needed.
 
 **Deferred:** R9 item 3 (integration-guide cooperative-channel section) folds into
 the in-flight doc pass (the review already routes it there). Full suite green.

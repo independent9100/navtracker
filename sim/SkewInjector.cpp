@@ -17,6 +17,9 @@ SkewProfile defaultMaritimeSkewProfile() {
   p.at(SensorKind::OwnShip) = {0.00, 0.02};
   p.at(SensorKind::Lidar)   = {0.00, 0.00};
   p.at(SensorKind::Cooperative) = {0.10, 0.05};  // typical fleet-link latency
+  // Shore/VTS relay: another station's tracker output, forwarded over a network
+  // link — the largest latency envelope of any channel (aggregation + relay).
+  p.at(SensorKind::RemoteTrack) = {0.75, 0.30};
   return p;
 }
 

@@ -13,10 +13,16 @@ namespace navtracker {
 // Index by SensorKind cast to size_t.
 struct SkewProfile {
   struct Entry { double lag_s{0.0}; double jitter_s{0.0}; };
-  std::array<Entry, 8> by_kind{};  // size matches SensorKind enumerator count.
+  // Size matches the SensorKind enumerator count (…, Cooperative, RemoteTrack).
+  // Grow this in step whenever a kind is appended. std::array::at() below is
+  // deliberately bounds-CHECKED so a missed resize throws std::out_of_range
+  // (fail-loud) instead of silently reading out of bounds (R8.8 lesson).
+  std::array<Entry, 9> by_kind{};
 
-  Entry& at(SensorKind k) { return by_kind[static_cast<std::size_t>(k)]; }
-  const Entry& at(SensorKind k) const { return by_kind[static_cast<std::size_t>(k)]; }
+  Entry& at(SensorKind k) { return by_kind.at(static_cast<std::size_t>(k)); }
+  const Entry& at(SensorKind k) const {
+    return by_kind.at(static_cast<std::size_t>(k));
+  }
 };
 
 // Realistic maritime defaults — see spec §3.2.

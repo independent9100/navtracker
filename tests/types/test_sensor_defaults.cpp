@@ -25,6 +25,28 @@ TEST(SensorDefaultsTest, PessimisticFactoryMatchesSpecValues) {
                    1.5 * kDeg2Rad);
 }
 
+// R10: a shore/VTS remote track that arrives with NO stated covariance falls
+// back to a pessimistic absolute default — deliberately looser than AIS (30 m)
+// because a pseudo-measurement is another tracker's unverified estimate.
+TEST(SensorDefaultsTest, RemoteTrackPessimisticDefault) {
+  const SensorDefaults d = pessimisticSensorDefaults();
+  EXPECT_DOUBLE_EQ(d.remote_track_position.sigma_pos_m, 50.0);
+
+  const auto cov =
+      d.covarianceFor(SensorKind::RemoteTrack, MeasurementModel::Position2D);
+  ASSERT_EQ(cov.rows(), 2);
+  ASSERT_EQ(cov.cols(), 2);
+  EXPECT_DOUBLE_EQ(cov(0, 0), 2500.0);  // 50^2
+  EXPECT_DOUBLE_EQ(cov(1, 1), 2500.0);
+
+  Measurement m;
+  m.sensor = SensorKind::RemoteTrack;
+  m.model = MeasurementModel::Position2D;
+  applyDefaultsIfEmpty(m, d);
+  EXPECT_TRUE(m.covariance_is_default);
+  EXPECT_DOUBLE_EQ(m.covariance(0, 0), 2500.0);
+}
+
 TEST(SensorDefaultsTest, CovarianceForReturnsCorrectShape) {
   const SensorDefaults d = pessimisticSensorDefaults();
   const auto ais_cov = d.covarianceFor(SensorKind::Ais,

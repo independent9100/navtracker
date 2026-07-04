@@ -672,7 +672,19 @@ radar-visible object self-heals — bounded latency window, not a hole (gate
 
 ---
 
-## R10 — Remote-track ingestion (shore/VTS feed as pseudo-measurements) [queued 2026-07-04, AFTER R9]
+## R10 — Remote-track ingestion (shore/VTS feed as pseudo-measurements) [SHIPPED 2026-07-04]
+
+**STATUS — SHIPPED 2026-07-04.** All "Do" items complete except the two
+deliberately-generic ones (verified, not rebuilt): `SensorKind::RemoteTrack` +
+`isNonScanningSource`; `RemoteTrackAdapter` (R-inflation ×3 default / 50 m
+pessimistic default, rate thinning 1/2 s, velocity opt-in OFF, `sensor_track_id`
++`mmsi` hints, `circularAisMmsis()` guard, 12 unit tests); latent `SkewProfile`
+OOB fixed fail-loud (array 8→9 + `.at()`); fusion scenario `PmbmRemoteTrackFusion`
+(one track, remote fused in, ID stable through id-swap + dropout); **NEES 1.79**
+(2 DOF) recorded — covariance-intersection trigger un-tripped. Registration-bias
+is per-source_id and generic (verified, not rebuilt). Guide §3 + learning §17.3.1
++ eval-log + north-star updated. Acceptance met. The original spec follows.
+
 
 Context: target deployment sensor suite is (1) remote station sending
 TRACKS, (2) cooperative vessels sending their own positions, (3) camera —

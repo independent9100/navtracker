@@ -32,6 +32,8 @@ Eigen::MatrixXd SensorDefaults::covarianceFor(SensorKind sensor,
     return pos2D(ais_position.sigma_pos_m);
   if (sensor == SensorKind::Cooperative && model == MeasurementModel::Position2D)
     return pos2D(cooperative_position.sigma_pos_m);
+  if (sensor == SensorKind::RemoteTrack && model == MeasurementModel::Position2D)
+    return pos2D(remote_track_position.sigma_pos_m);
   if (sensor == SensorKind::ArpaTll && model == MeasurementModel::Position2D)
     return pos2D(arpa_tll_position.sigma_pos_m);
   if (sensor == SensorKind::ArpaTtm && model == MeasurementModel::RangeBearing2D)
@@ -53,6 +55,11 @@ SensorDefaults pessimisticSensorDefaults() {
   // chain and partners often run DGPS/RTK — but still pessimistic
   // enough for consumer-grade receivers without RTK.
   d.cooperative_position.sigma_pos_m      = 10.0;
+  // Shore/VTS pseudo-track with no stated covariance: looser than AIS — it is
+  // another tracker's filtered estimate, correlated and possibly biased. The
+  // adapter's R-inflation applies on STATED covariance; this is the fallback
+  // for the no-covariance case (never both).
+  d.remote_track_position.sigma_pos_m     = 50.0;
   d.arpa_tll_position.sigma_pos_m         = 50.0;
   d.arpa_ttm_range_bearing.sigma_range_m   = 75.0;
   d.arpa_ttm_range_bearing.sigma_bearing_rad = 1.5 * kDeg2Rad;

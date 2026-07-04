@@ -109,3 +109,33 @@ TEST(SkewInjector, EmptyInputYieldsEmptyOutput) {
   const auto out = applySkew({}, p, /*seed=*/0);
   EXPECT_TRUE(out.empty());
 }
+
+// R10: RemoteTrack is the last (highest-index) enumerator. SkewProfile sizes a
+// per-kind array from the enumerator count; if that array is not grown in step,
+// SkewProfile::at(RemoteTrack) indexes out of bounds. This exercises index 8 by
+// keying a large constant lag on RemoteTrack and confirming a RemoteTrack
+// measurement is deferred to the end — impossible to pass unless the array
+// covers RemoteTrack.
+TEST(SkewInjector, RemoteTrackIsIndexableAndReorders) {
+  SkewProfile p;
+  p.at(SensorKind::RemoteTrack) = {5.0, 0.0};  // big constant lag, no jitter
+  std::vector<Measurement> in = {make(0.0, SensorKind::RemoteTrack),
+                                 make(1.0, SensorKind::Ais),
+                                 make(2.0, SensorKind::Ais)};
+  const auto out = applySkew(in, p, /*seed=*/3);
+  ASSERT_EQ(out.size(), 3u);
+  // The two AIS (lag 0) keep their truth times up front; the lagged RemoteTrack
+  // (arrival 0+5=5) sorts last but its truth timestamp is preserved.
+  EXPECT_EQ(out[0].sensor, SensorKind::Ais);
+  EXPECT_EQ(out[1].sensor, SensorKind::Ais);
+  EXPECT_EQ(out[2].sensor, SensorKind::RemoteTrack);
+  EXPECT_DOUBLE_EQ(out[2].time.seconds(), 0.0);
+}
+
+TEST(SkewInjector, DefaultProfileCoversRemoteTrack) {
+  const auto p = defaultMaritimeSkewProfile();
+  // Addressable without throwing; a shore/VTS relay carries meaningful latency.
+  const auto& e = p.at(SensorKind::RemoteTrack);
+  EXPECT_GE(e.lag_s, 0.0);
+  EXPECT_GE(e.jitter_s, 0.0);
+}

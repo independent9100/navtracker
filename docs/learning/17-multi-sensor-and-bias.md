@@ -110,6 +110,59 @@ is only a tiebreaker hint.
 This is a deliberate architecture decision. See CLAUDE.md
 "Stable track identity".
 
+### 3.1 The opposite case: pseudo-measurements
+
+AIS is a **good** witness because it is *independent*: the
+target's own GPS, a fresh source of information we don't already
+have. But some inputs only *look* like new witnesses. The clearest
+example is **another tracker's output** — a shore radar or VTS
+station that sends you finished *tracks*, not raw blips.
+
+Why is that different from a real sensor? Because a track is
+already the *answer* to a tracking problem someone else solved. It
+has been smoothed, associated, and filtered. If you feed it to your
+tracker as if it were a raw measurement, two things go wrong:
+
+- **It is not fresh evidence.** A shore feed's *velocity* is just
+  its own smoothed guess from the positions it already sent you.
+  Feeding both the positions and the velocity is like asking the
+  same person twice and counting it as two opinions. The filter
+  then thinks two witnesses agreed, and becomes **overconfident** —
+  it shrinks its uncertainty too far, its gates get too small, and
+  it starts missing real associations.
+- **It is correlated with itself over time.** Consecutive outputs
+  of a filter are not independent samples; each one carries the
+  memory of the last. Ten updates a second is not ten independent
+  looks.
+
+So we call another tracker's output a **pseudo-measurement** and
+treat it with suspicion. Two cheap, honest defences (no fancy
+maths):
+
+1. **Inflate the noise (`R`).** Multiply the stated covariance by a
+   factor (default ×3) — tell our filter "trust this less than it
+   claims". Being *too* careful only wastes a little precision;
+   being *not careful enough* is the dangerous direction, so we err
+   pessimistic.
+2. **Thin the rate.** Keep at most one update every couple of
+   seconds per remote track, so we don't mistake a filter repeating
+   itself for many independent looks.
+
+The proper cure (called *track-to-track fusion* / *covariance
+intersection*) is more work and we have deliberately **not** built
+it yet — inflate-and-thin is enough until a real feed proves
+otherwise. The tell that it is no longer enough is a **NEES** check
+(chapter 18): if the fused track's error is consistently larger
+than the filter's claimed uncertainty, the pseudo-measurement is
+making us overconfident and it is time for the real cure.
+
+This is the same wariness we apply to ARPA's own speed/course
+fields (chapter 2.2) — the radar computing a derivative of blips it
+already handed us. The rule is one sentence: **before feeding any
+value, ask whether it is new information or your own data coming
+back smoothed.** Consumer-side wiring: integration-guide §3
+("another tracker's output").
+
 > The heading bias is **one** type of bias the heterogeneous
 > sensor stack must deal with. There is a second layer:
 > per-sensor mounting offsets that remain after heading bias is
