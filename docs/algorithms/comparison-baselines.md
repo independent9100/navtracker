@@ -425,7 +425,7 @@ when they do is the prevention mechanism.
 - **Cl-1 paper.** Helgesen, Vasstein, Brekke, Stahl, *Heterogeneous
   multi-sensor tracking for an autonomous surface vehicle in a
   littoral environment*, Ocean Engineering 252 (2022) 111168. Local
-  PDF: `1-s2.0-S0029801822005753-main.pdf`. Dataset:
+  PDF: `docs/references/S0029801822005753-helgesen-2022-heterogeneous-multisensor-littoral.pdf`. Dataset:
   https://autoferry.github.io/sensor_fusion_dataset/.
 - **Cl-2 deployment references.** Bar-Shalom, *Estimation with
   Applications to Tracking and Navigation* (2001), *Tracking and Data

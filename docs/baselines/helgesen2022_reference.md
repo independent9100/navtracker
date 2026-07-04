@@ -4,6 +4,7 @@ Helgesen, Vasstein, Brekke, Stahl, "Heterogeneous multi-sensor tracking
 for an autonomous surface vehicle in a littoral environment",
 *Ocean Engineering* 252 (2022) 111168.
 [ScienceDirect (paywalled)](https://www.sciencedirect.com/science/article/pii/S0029801822005753).
+Local PDF: `docs/references/S0029801822005753-helgesen-2022-heterogeneous-multisensor-littoral.pdf`.
 
 Dataset: <https://github.com/Autoferry/sensor_fusion_dataset>.
 
