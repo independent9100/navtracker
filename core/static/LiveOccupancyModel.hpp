@@ -14,9 +14,11 @@
 
 namespace navtracker {
 
-// Tuning for the live occupancy/structure layer. Defaults chosen so a single
-// anchored boat's watch circle never qualifies as structure (extent gate) while
-// a pier/breakwater does. See docs/algorithms/live-static-occupancy.md.
+/**
+ * Tuning for the live occupancy/structure layer. Defaults chosen so a single
+ * anchored boat's watch circle never qualifies as structure (extent gate) while
+ * a pier/breakwater does. See docs/algorithms/live-static-occupancy.md.
+ */
 struct LiveOccupancyParams {
   double cell_size_m = 25.0;      // metric grid resolution
   double ewma_alpha = 0.3;        // persistence EWMA rate (per fed scan)
@@ -45,80 +47,146 @@ struct LiveOccupancyParams {
   // can be up to a half-diagonal off the true structure). Only active when
   // setChartedStructure() has been called with a non-empty set.
   double chart_corroboration_radius_m = 100.0;
+  // Camera corroboration (increment 6, camera): an occupied cell is flagged
+  // "camera-observed-empty" once it has been continuously observed-empty by a
+  // live camera frame — IN the frame's field of view, no detection within the
+  // frame's match tolerance of the cell's bearing — for at least this long. The
+  // sustain guards against a single dropped detection; absence is evidence only
+  // when the camera was actually looking (the coverage-aware-decay principle in
+  // the camera modality). A flagged, chart-UNconfirmed hazard is the increment-8
+  // eviction candidate (a departed vessel). Only active when observeCamera() is
+  // fed; label only (suppression/hazards unchanged).
+  double camera_empty_sustain_s = 2.0;
 };
 
-// A datum-stable live occupancy grid that learns persistent + spatially
-// extended structure (piers, breakwaters, shoreline) from the PMBM per-scan
-// (position, 1 − r) feed and suppresses vessel births there — and ONLY there.
-// Compact persistent regions (an anchored boat's watch circle) and transient
-// uniform clutter are never suppressed. See the Stage 1b-i design.
-//
-// Two faces on one object:
-//   * IStaticObstacleModel  — birthSuppression()/obstacles(): the birth-channel
-//     suppression + hazard output, wired via PmbmTracker::setStaticObstacleModel.
-//   * ILiveOccupancyFeed    — observe(): the per-scan accumulation feed, wired
-//     via PmbmTracker::setLiveOccupancyFeed. Deliberately NOT a detection model
-//     → the learned map never touches λ_C / p_D (Stage 1b design requirement).
-//
-// Frame: the grid is anchored to a fixed datum (construction). Incoming ENU
-// (about the tracker's *current* datum) is transformed to the anchor frame at
-// accumulate/query time; IDatumChangeSink updates the current-datum transform on
-// recenter, so persistence stays attached to geography (mirrors CoastlineModel /
-// StaticObstacleModel). A single fixed datum (the bench) ⇒ identity transform.
-//
-// Pure: no I/O, no wall-clock, no RNG. Deterministic (ordered maps + key-sorted
-// connected-component labeling).
+/**
+ * A datum-stable live occupancy grid that learns persistent + spatially
+ * extended structure (piers, breakwaters, shoreline) from the PMBM per-scan
+ * (position, 1 − r) feed and suppresses vessel births there — and ONLY there.
+ * Compact persistent regions (an anchored boat's watch circle) and transient
+ * uniform clutter are never suppressed. See the Stage 1b-i design.
+ *
+ * Two faces on one object:
+ *   * IStaticObstacleModel  — birthSuppression()/obstacles(): the birth-channel
+ *     suppression + hazard output, wired via PmbmTracker::setStaticObstacleModel.
+ *   * ILiveOccupancyFeed    — observe(): the per-scan accumulation feed, wired
+ *     via PmbmTracker::setLiveOccupancyFeed. Deliberately NOT a detection model
+ *     → the learned map never touches λ_C / p_D (Stage 1b design requirement).
+ *
+ * Frame: the grid is anchored to a fixed datum (construction). Incoming ENU
+ * (about the tracker's *current* datum) is transformed to the anchor frame at
+ * accumulate/query time; IDatumChangeSink updates the current-datum transform on
+ * recenter, so persistence stays attached to geography (mirrors CoastlineModel /
+ * StaticObstacleModel). A single fixed datum (the bench) ⇒ identity transform.
+ *
+ * Pure: no I/O, no wall-clock, no RNG. Deterministic (ordered maps + key-sorted
+ * connected-component labeling).
+ */
 class LiveOccupancyModel : public IStaticObstacleModel,
                            public ILiveOccupancyFeed,
                            public IDatumChangeSink {
  public:
+  /** Anchor the grid to a fixed datum; `current_` tracks the tracker's datum. */
   explicit LiveOccupancyModel(geo::Datum anchor, LiveOccupancyParams params = {})
       : anchor_(anchor), current_(anchor), params_(params) {}
 
-  // ILiveOccupancyFeed: accumulate one scan's clutter-labeled returns.
+  /** ILiveOccupancyFeed: accumulate one scan's clutter-labeled returns. */
   void observe(const std::vector<ISensorDetectionModel::ScanObservation>&
                    by_sensor) override;
 
-  // IStaticObstacleModel: soft birth suppression, structure-only.
+  /** IStaticObstacleModel: soft birth suppression, structure-only. */
   double birthSuppression(const Eigen::Vector2d& enu_xy) const override;
+  /** The structure hazards learned so far (index-aligned with corroboration). */
   const std::vector<StaticObstacle>& obstacles() const override {
     return obstacles_;
   }
 
-  // IDatumChangeSink: re-anchor the ENU↔anchor transform (grid data untouched).
+  /** IDatumChangeSink: re-anchor the ENU↔anchor transform (grid data untouched). */
   void onDatumRecentered(const geo::Datum& /*old_datum*/,
                          const geo::Datum& new_datum) override {
     current_ = new_datum;
   }
 
-  // Chart corroboration input (increment 6): the charted STRUCTURE point cloud
-  // (piers/wharves densified to points offline — see the philos wiring). Cached
-  // in the fixed anchor frame at set time; charts are static, so no datum-sink
-  // handling is needed (anchor_ never moves). Empty ⇒ corroboration inert, all
-  // emitted hazards report uncorroborated (bit-identical to no-chart behaviour).
+  /**
+   * Chart corroboration input (increment 6): the charted STRUCTURE point cloud
+   * (piers/wharves densified to points offline — see the philos wiring). Cached
+   * in the fixed anchor frame at set time; charts are static, so no datum-sink
+   * handling is needed (anchor_ never moves). Empty ⇒ corroboration inert, all
+   * emitted hazards report uncorroborated (bit-identical to no-chart behaviour).
+   */
   void setChartedStructure(const std::vector<StaticObstacle>& charted);
 
-  // Introspection (tests / diagnostics): the most structure components ever
-  // classified simultaneously, and the highest per-cell persistence ever
-  // reached, across the model's lifetime. Peak (not current) because a fed
-  // structure that later decays would otherwise be invisible at end-of-run.
+  // One LIVE camera frame's evidence, grouped by timestamp (a frame present in
+  // the feed produced >= 1 detection, so it IS live — the frame-live guard of
+  // the absence-asymmetry rule). Bearings are absolute ENU "math" bearings
+  // (atan2(dN, dE)), the same convention CameraBearingCsvReader emits;
+  // fov_center_rad is the camera optical axis in that convention and
+  // fov_half_width_rad its half-HFOV. sensor_enu is own-ship in the tracker's
+  // current datum (re-expressed to the anchor frame internally).
+  struct CameraObservation {
+    double t_unix{0.0};
+    Eigen::Vector2d sensor_enu{Eigen::Vector2d::Zero()};
+    std::vector<double> detection_bearings_rad;  // absolute ENU math bearings
+    double fov_center_rad{0.0};
+    double fov_half_width_rad{0.0};
+    double match_tolerance_rad{0.0};
+  };
+
+  /**
+   * Camera corroboration feed (increment 6): advance each occupied cell's
+   * observed-empty streak from one live camera frame. A cell IN the FOV with no
+   * detection within tolerance of its bearing extends its streak; a matching
+   * detection resets it (something is there); a cell OUT of the FOV is left
+   * untouched (not observed — never evidence of absence). Consumed through this
+   * dedicated API, NOT the clutter feed (the occupancy/coverage path is
+   * untouched; bearing-only camera measurements cannot pollute it). Inert until
+   * first called.
+   */
+  void observeCamera(const CameraObservation& frame);
+
+  /**
+   * Introspection (tests / diagnostics): the most structure components ever
+   * classified simultaneously, and the highest per-cell persistence ever
+   * reached, across the model's lifetime. Peak (not current) because a fed
+   * structure that later decays would otherwise be invisible at end-of-run.
+   */
   int peakStructureCount() const { return peak_structure_count_; }
   double peakPersistence() const { return peak_persistence_; }
-  // Number of birthSuppression() queries that landed in a suppressed region
-  // (returned > 0). Zero ⇒ the birth path never queried classified structure.
+  /**
+   * Number of birthSuppression() queries that landed in a suppressed region
+   * (returned > 0). Zero ⇒ the birth path never queried classified structure.
+   */
   long suppressionHits() const { return suppression_hits_; }
 
-  // Chart-corroboration introspection (index-aligned with obstacles()). An
-  // emitted live hazard is corroborated when a charted structure point lies
-  // within params.chart_corroboration_radius_m of its centroid. Uncorroborated
-  // hazards are the eviction candidates (increment 8) — a departed vessel that
-  // pinned a cell (no chart, no AIS, no camera) reports false here.
+  /**
+   * Chart-corroboration introspection (index-aligned with obstacles()). An
+   * emitted live hazard is corroborated when a charted structure point lies
+   * within params.chart_corroboration_radius_m of its centroid. Uncorroborated
+   * hazards are the eviction candidates (increment 8) — a departed vessel that
+   * pinned a cell (no chart, no AIS, no camera) reports false here.
+   */
   bool obstacleCorroborated(std::size_t i) const {
     return i < obstacle_corroborated_.size() && obstacle_corroborated_[i];
   }
   int chartCorroboratedCount() const {
     int n = 0;
     for (bool c : obstacle_corroborated_)
+      if (c) ++n;
+    return n;
+  }
+
+  /**
+   * Camera-observed-empty introspection (index-aligned with obstacles()). True
+   * once the hazard's centroid cell has been continuously camera-observed-empty
+   * for >= camera_empty_sustain_s. A flagged, chart-UNconfirmed hazard is the
+   * departed-vessel eviction candidate (increment 8).
+   */
+  bool obstacleCameraObservedEmpty(std::size_t i) const {
+    return i < obstacle_camera_empty_.size() && obstacle_camera_empty_[i];
+  }
+  int cameraObservedEmptyCount() const {
+    int n = 0;
+    for (bool c : obstacle_camera_empty_)
       if (c) ++n;
     return n;
   }
@@ -144,6 +212,14 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   std::vector<double> obstacle_conf_;            // suppression confidence per hazard
   std::vector<bool> obstacle_corroborated_;      // chart-confirmed? (index-aligned)
   std::vector<Eigen::Vector2d> charted_enu_;     // charted structure pts (anchor ENU)
+  std::vector<bool> obstacle_camera_empty_;      // camera-observed-empty? (index-aligned)
+  // Per-cell camera observed-empty streak: (start, last) unix times of the
+  // current unbroken streak of in-FOV, no-detection observations. Absent ⇒ not
+  // currently observed-empty (just seen, or never observed). Out-of-FOV frames
+  // are neutral (neither extend `last` nor reset), so an unobserved gap cannot
+  // inflate the sustained span; a matching detection erases the entry. Keyed in
+  // the anchor frame like the occupancy grid.
+  std::map<Cell, std::pair<double, double>> camera_empty_streak_;
   int peak_structure_count_ = 0;
   double peak_persistence_ = 0.0;
   mutable long suppression_hits_ = 0;

@@ -189,11 +189,32 @@ is a config (`imm_cv_ct_pmbm_occupancy_detector`), not a new class.
      432 m from charted structure (FLOATING docks) → chart correctly ABSTAINS,
      that region needs camera/AIS. TDD'd (3 model unit tests); 1 replay measurement
      test (`test_philos_occupancy_coverage_6c.cpp`). Chart is the first eviction-
-     by-evidence source (increment 8). **NEXT: camera corroboration (loiterer =
-     first target; sunset_cruise centre-camera fixtures now exist), then the
-     eviction policy; AIS veto rides with increment 8.**
+     by-evidence source (increment 8).
+   - **CAMERA CORROBORATION (i) DONE (2026-07-04, label-only).**
+     `LiveOccupancyModel::observeCamera` (dedicated API, NOT the clutter feed)
+     advances a per-cell observed-empty streak (in-FOV + live frame + no detection
+     within tolerance of the cell bearing → extend; matching detection → reset;
+     out-of-FOV → untouched). A hazard whose centroid cell is observed-empty ≥
+     `camera_empty_sustain_s` (2 s) is flagged. Label only; inert until fed.
+     TDD'd (3 model unit tests). **FOV gate FIRST (the "before designing"
+     check): loiterer 100% (1537/1537) in center ~±22° FOV after t94; its bearing
+     0 detections within ±10° over t100–120 (20 s) — camera viable on this clip.
+     Result:** ferry_v1_a (vacated outbound berth) 538→41 = the clean demo (real
+     vessel that moved, stale pin marked departed); loiterer 122→1 (flagged t118);
+     astern_blob (out of FOV) 31→0 (unobserved, held by chart). All camera-flagged
+     cells chart-UNconfirmed → eviction candidates. **Honest caveat:** the
+     loiterer's low count is NOT a camera limit (its bearing is cleanly empty) —
+     its *hazard* is intermittent post-departure (adaptive-bar flicker on the
+     frozen-persistence cell), rarely coexisting with the matured streak; the
+     ferry berth (stable held cell) is the robust demo. **NEXT: increment (ii) —
+     eviction as behavior (behind config), demo on loiterer/ferry, GATE on a
+     SYNTHETIC scenario (departing static object + persistent structure + bearing
+     sensor: departed-evicts / structure-holds / camera-blind-never-evicts /
+     tracks_on_keep flat), with evidence precedence chart-confirmed→hold >
+     camera-empty→evict; eviction lifting suppression is conservation-safe by
+     construction (assert it). Then AIS veto rides with increment 8.**
    - 6d TODO — docs (folds into increment 9): live-static-occupancy.md four-part +
-     learning chapter + figure for coverage-aware decay + chart corroboration.
+     learning chapter + figure for coverage-aware decay + chart + camera.
 7. DONE — recovery gate SCENARIO `harbor_anchored_gets_underway` (stop→go boat
    via new `addStopGoBoat` builder); gate
    `OccupancyDetectorGates.AnchoredGetsUnderwayRecovers` (truth_6 lifetime 0.972

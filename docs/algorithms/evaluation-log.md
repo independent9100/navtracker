@@ -8,6 +8,56 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-04 — Stage 1b-ii increment 6: camera corroboration (i) — observed-empty flags vacated cells radar+chart could not resolve [Cl-3]
+
+The second corroboration source (increment 6, label-only stage), and the one that
+supplies the AFFIRMATIVE "it's gone" verdict radar and chart cannot. Uses the
+camera bearing fixtures (commit 2f0261c). `LiveOccupancyModel::observeCamera`
+consumes live camera frames through a dedicated API (NOT the clutter feed —
+bearing-only measurements cannot pollute the occupancy/coverage path) and
+advances a per-cell observed-empty streak: a cell IN the frame's FOV with no
+detection within tolerance of its bearing extends the streak; a matching
+detection resets it; a cell OUT of the FOV is untouched (unobserved ≠ evidence of
+absence — the coverage-aware-decay principle in the camera modality). A hazard
+whose centroid cell has been observed-empty ≥ `camera_empty_sustain_s` (2 s) is
+flagged. Label only; inert until fed (the 13 pre-existing model tests stay green).
+TDD'd (3 model unit tests: sustained-empty→flag, detection-at-bearing→reset,
+out-of-FOV→never).
+
+**FOV gate FIRST (2026-07-03 steer — "before designing anything").** Geometry vs
+`sunset_cruise` ownship: the loiterer cell's hull-relative bearing is −12° to
+−18° throughout the post-t94 window — **100% (1537/1537) inside the center
+camera's ~±22° FOV**, so the camera IS looking (unlike chart on the Charles
+basin). Empirically its bearing goes clean: center detections within ±10° of the
+loiterer bearing drop 1568 (pre-t94) → 90 (post), and all 90 are in t94–99.5 (the
+vessel lingering ~5 s in-frame after its radar returns cease); **t100–120 is 0
+detections over 20 s** while other objects (the +20–25° cluster) keep the frame
+live. The ferry does not mask it (it swings to −72°, exiting into the left
+camera). Gate PASSES: camera corroboration is viable on this clip.
+
+**Result (coverage detector + chart + camera, 1 replay).** Camera-observed-empty
+per region (hazard-scans → camera-empty): `ferry_v1_a` (the ferry's OUTBOUND
+berth, vacated after its t≈98 move to ferry_v1_b) **538 → 41** — the clean
+demonstration: a real vessel that moved, its stale pin correctly marked departed;
+`loiterer_v2` **122 → 1** (flagged at t118); `astern_blob` (out of the center
+FOV) **31 → 0** — correctly never flagged (unobserved, held by chart 31/31
+instead). Every camera-flagged cell is chart-UNconfirmed → the eviction
+candidates.
+
+**Honest caveat on the loiterer (its bearing IS cleanly empty — the low count is
+not a camera limit).** The loiterer's camera-empty count is 1, not the many
+expected, because its *hazard* is intermittent after departure: coverage-aware
+decay freezes its persistence (radar never re-sweeps it, 0/283), but the detector's
+adaptive bar (median-of-live-cells) flickers the frozen cell in and out of the
+structure set, so the hazard rarely coexists with the matured 2 s empty-streak
+(it does at t118 → flagged). The camera signal itself is clean (0 detections in
+±10° for 20 s); the vacated ferry berth, whose held cell stays a stable hazard,
+is the robust demonstration of the identical mechanism. Increment (ii) eviction
+will consume these labels; its clean demonstration + promotion gate go on a
+SYNTHETIC scenario (departing static object + persistent structure + bearing
+sensor), per the circularity rule — the loiterer/ferry are the real-data demo,
+not the gate.
+
 ## 2026-07-04 — Stage 1b-ii increment 6: chart corroboration — confirms structure, flags departed vessels, on real philos [Cl-3]
 
 The first corroboration source (2026-07-03 queue steer: chart before AIS, because

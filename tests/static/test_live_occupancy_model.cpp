@@ -184,6 +184,73 @@ TEST(LiveOccupancyModel, NoChartsMeansNoCorroboration) {
   EXPECT_EQ(m.chartCorroboratedCount(), 0);
 }
 
+// A live camera frame looking toward the pier, with a detection elsewhere in
+// the FOV (frame live) but none at the pier bearing.
+LiveOccupancyModel::CameraObservation emptyPierFrame(double t) {
+  LiveOccupancyModel::CameraObservation f;
+  f.t_unix = t;
+  f.sensor_enu = Eigen::Vector2d(0.0, 0.0);
+  f.fov_center_rad = 0.165;        // toward the pier centroid (~9.5 deg)
+  f.fov_half_width_rad = 0.4;      // ~23 deg half-HFOV
+  f.match_tolerance_rad = 0.05;
+  f.detection_bearings_rad = {0.5};  // live, but away from any pier cell
+  return f;
+}
+
+// Camera corroboration (increment 6): a hazard whose cell is continuously
+// camera-observed-empty (in FOV, live frame, no detection at its bearing) for
+// >= the sustain window is flagged — the departed-vessel signal.
+TEST(LiveOccupancyModel, CameraObservedEmptyFlagsSustainedEmptyCell) {
+  LiveOccupancyParams p = testParams();
+  p.camera_empty_sustain_s = 1.0;
+  LiveOccupancyModel m(anchorDatum(), p);
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  ASSERT_EQ(m.obstacles().size(), 1u);
+  ASSERT_FALSE(m.obstacleCameraObservedEmpty(0));  // no camera fed yet
+
+  for (double t = 100.0; t <= 102.0; t += 0.5) m.observeCamera(emptyPierFrame(t));
+  m.observe(feed(returns, 103));  // recompute reads the streak, flags the hazard
+  ASSERT_EQ(m.obstacles().size(), 1u);
+  EXPECT_TRUE(m.obstacleCameraObservedEmpty(0));
+  EXPECT_EQ(m.cameraObservedEmptyCount(), 1);
+}
+
+// A detection AT the hazard's bearing resets the streak — something IS there, so
+// it is not observed-empty.
+TEST(LiveOccupancyModel, CameraDetectionAtBearingKeepsHazardUnflagged) {
+  LiveOccupancyParams p = testParams();
+  p.camera_empty_sustain_s = 1.0;
+  LiveOccupancyModel m(anchorDatum(), p);
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  for (double t = 100.0; t <= 102.0; t += 0.5) {
+    auto f = emptyPierFrame(t);
+    // Pier centroid cell (3,0) centre (87.5,12.5) has bearing atan2(12.5,87.5).
+    f.detection_bearings_rad = {std::atan2(12.5, 87.5)};
+    m.observeCamera(f);
+  }
+  m.observe(feed(returns, 103));
+  EXPECT_FALSE(m.obstacleCameraObservedEmpty(0));
+}
+
+// A hazard OUTSIDE the camera FOV is never flagged — absence there is not
+// evidence of absence (the coverage-aware-decay principle, camera modality).
+TEST(LiveOccupancyModel, CameraOutOfFovNeverFlags) {
+  LiveOccupancyParams p = testParams();
+  p.camera_empty_sustain_s = 1.0;
+  LiveOccupancyModel m(anchorDatum(), p);
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  for (double t = 100.0; t <= 102.0; t += 0.5) {
+    auto f = emptyPierFrame(t);
+    f.fov_center_rad = 2.5;  // pointing away; the pier is out of FOV
+    m.observeCamera(f);
+  }
+  m.observe(feed(returns, 103));
+  EXPECT_FALSE(m.obstacleCameraObservedEmpty(0));
+}
+
 // Datum recenter re-anchors: the same GEOGRAPHIC point keeps its suppression
 // even though its ENU coordinates change under the new datum.
 TEST(LiveOccupancyModel, DatumRecenterKeepsGeographicSuppression) {

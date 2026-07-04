@@ -41,6 +41,38 @@ void LiveOccupancyModel::setChartedStructure(
   }
 }
 
+void LiveOccupancyModel::observeCamera(const CameraObservation& frame) {
+  constexpr double kTwoPi = 6.283185307179586476925287;
+  // Own-ship in the grid's anchor frame; cell centres are already anchor ENU, so
+  // bearings are computed consistently (exact for a fixed datum).
+  const Eigen::Vector2d sensor = toAnchorEnu(frame.sensor_enu);
+  for (const auto& kv : persistence_) {
+    const Eigen::Vector2d d = cellCenter(kv.first) - sensor;
+    const double brg = std::atan2(d.y(), d.x());  // absolute ENU math bearing
+    // In this frame's FOV? Absence outside it is never evidence of absence.
+    if (std::abs(std::remainder(brg - frame.fov_center_rad, kTwoPi)) >
+        frame.fov_half_width_rad)
+      continue;
+    // A detection within tolerance of the cell bearing ⇒ something is there.
+    bool matched = false;
+    for (double db : frame.detection_bearings_rad)
+      if (std::abs(std::remainder(brg - db, kTwoPi)) <=
+          frame.match_tolerance_rad) {
+        matched = true;
+        break;
+      }
+    auto it = camera_empty_streak_.find(kv.first);
+    if (matched) {
+      if (it != camera_empty_streak_.end()) camera_empty_streak_.erase(it);
+    } else if (it == camera_empty_streak_.end()) {
+      camera_empty_streak_.emplace(kv.first,
+                                   std::make_pair(frame.t_unix, frame.t_unix));
+    } else {
+      it->second.second = frame.t_unix;  // extend the observed-empty streak
+    }
+  }
+}
+
 void LiveOccupancyModel::observe(
     const std::vector<ISensorDetectionModel::ScanObservation>& by_sensor) {
   const double a = params_.ewma_alpha;
@@ -104,6 +136,14 @@ void LiveOccupancyModel::observe(
     else
       ++it;
   }
+  // Drop camera streaks for cells that no longer exist (bound memory).
+  for (auto it = camera_empty_streak_.begin();
+       it != camera_empty_streak_.end();) {
+    if (persistence_.find(it->first) == persistence_.end())
+      it = camera_empty_streak_.erase(it);
+    else
+      ++it;
+  }
 
   // 5) Re-classify structure (persistent AND extended) → suppression + hazards.
   recomputeStructure();
@@ -120,6 +160,7 @@ void LiveOccupancyModel::recomputeStructure() {
   obstacle_center_.clear();
   obstacle_conf_.clear();
   obstacle_corroborated_.clear();
+  obstacle_camera_empty_.clear();
 
   // Effective persistence bar. In detector mode, raise it above the estimated
   // uniform-clutter background (median live-cell persistence — the clutter-map
@@ -212,6 +253,15 @@ void LiveOccupancyModel::recomputeStructure() {
         break;
       }
     obstacle_corroborated_.push_back(corroborated);
+
+    // Camera-observed-empty (label): the centroid cell has been continuously
+    // camera-observed-empty for at least the sustain window.
+    bool cam_empty = false;
+    const auto cit = camera_empty_streak_.find(cellOf(centroid));
+    if (cit != camera_empty_streak_.end() &&
+        (cit->second.second - cit->second.first) >= params_.camera_empty_sustain_s)
+      cam_empty = true;
+    obstacle_camera_empty_.push_back(cam_empty);
   }
 }
 

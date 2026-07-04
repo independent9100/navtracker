@@ -27,6 +27,7 @@
 
 #include "adapters/land/GeoJsonCoastline.hpp"
 #include "adapters/own_ship/OwnShipProvider.hpp"
+#include "adapters/replay/CameraBearingCsvReader.hpp"
 #include "adapters/static/GeoJsonStaticObstacles.hpp"
 #include "adapters/replay/OwnshipCsvReader.hpp"
 #include "adapters/replay/PlotCsvReplayAdapter.hpp"
@@ -58,7 +59,8 @@ struct HazardSnapshot {
   Eigen::Vector2d center;
   double footprint_m;
   double keep_clear_m;
-  bool corroborated = false;  // chart-confirmed (increment 6); false unless charts wired
+  bool corroborated = false;   // chart-confirmed (increment 6); false unless charts wired
+  bool camera_empty = false;   // camera-observed-empty; false unless camera wired
 };
 struct ScanTracks {
   double t_unix;
@@ -124,9 +126,44 @@ inline bool fileExists(const std::string& p) {
 
 // Run philos clip `clip_name` (radar-only) through the tracker built from
 // `config_label`, capturing all Confirmed tracks after every scan.
+// Group loaded camera bearing-Measurements (sorted by time) into per-timestamp
+// live CameraObservation frames. FOV = the center camera (~48° HFOV, optical
+// axis on the bow → fov_center = the bow's absolute ENU math bearing); match
+// tolerance ≈ 3σ at the fixture's σ≈3.5°. A conservative half-FOV (< the
+// empirical ~23° envelope) under-claims observability (the safe direction).
+inline std::vector<LiveOccupancyModel::CameraObservation> buildCameraFrames(
+    const std::vector<Measurement>& cam, const OwnShipProvider& provider) {
+  constexpr double kPi = 3.14159265358979323846;
+  constexpr double kDeg2Rad = kPi / 180.0;
+  constexpr double kHalfFovRad = 22.0 * kDeg2Rad;
+  constexpr double kMatchTolRad = 10.0 * kDeg2Rad;
+  std::vector<LiveOccupancyModel::CameraObservation> frames;
+  std::size_t i = 0;
+  while (i < cam.size()) {
+    LiveOccupancyModel::CameraObservation f;
+    f.t_unix = cam[i].time.seconds();
+    f.sensor_enu = cam[i].sensor_position_enu;
+    f.fov_half_width_rad = kHalfFovRad;
+    f.match_tolerance_rad = kMatchTolRad;
+    const auto pose = provider.poseAtOrBefore(cam[i].time);
+    f.fov_center_rad =
+        pose ? (kPi / 2.0 - pose->heading_true_deg * kDeg2Rad) : 0.0;
+    std::size_t j = i;
+    while (j < cam.size() && cam[j].time.seconds() == f.t_unix) {
+      if (cam[j].value.size() >= 1)
+        f.detection_bearings_rad.push_back(cam[j].value(0));
+      ++j;
+    }
+    frames.push_back(std::move(f));
+    i = j;
+  }
+  return frames;
+}
+
 inline ClipRun runClip(const std::string& clip_name,
                        const std::string& config_label,
-                       bool load_chart_structure = false) {
+                       bool load_chart_structure = false,
+                       bool load_camera = false) {
   ClipRun run;
   const std::string own = clipDir(clip_name) + "/ownship.csv";
   const std::string plots = clipDir(clip_name) + "/radar_plots.csv";
@@ -205,9 +242,26 @@ inline ClipRun runClip(const std::string& clip_name,
         occ->setChartedStructure(loadStaticObstaclesGeoJson(charts));
     }
   }
+  // Camera-observed-empty feed (increment 6): the frames are fed in the post-scan
+  // hook in time order (streak advances per antenna scan; the resulting hazard
+  // flag lags by at most one scan — negligible vs the sustain window).
+  std::vector<LiveOccupancyModel::CameraObservation> cam_frames;
+  std::size_t cam_cursor = 0;
+  if (load_camera && occ) {
+    const std::string campath = clipDir(clip_name) + "/camera_bearings.csv";
+    if (fileExists(campath))
+      cam_frames = buildCameraFrames(
+          navtracker::replay::loadCameraBearingsCsv(campath, provider), provider);
+  }
 
   benchmark::PmbmPostScanHook hook = [&](const pmbm::PmbmTracker& t,
                                          Timestamp scan_t) {
+    // Advance the camera-observed-empty streak with every frame up to this scan.
+    if (occ && load_camera)
+      while (cam_cursor < cam_frames.size() &&
+             cam_frames[cam_cursor].t_unix <= scan_t.seconds())
+        occ->observeCamera(cam_frames[cam_cursor++]);
+
     ScanTracks st;
     st.t_unix = scan_t.seconds();
     for (const Track& tr : t.tracks()) {
@@ -228,7 +282,8 @@ inline ClipRun runClip(const std::string& clip_name,
         st.hazards.push_back({Eigen::Vector2d(e.x(), e.y()),
                               obs[i].footprint_radius_m,
                               obs[i].keep_clear_radius_m,
-                              occ->obstacleCorroborated(i)});
+                              occ->obstacleCorroborated(i),
+                              occ->obstacleCameraObservedEmpty(i)});
       }
     }
     run.history.push_back(std::move(st));

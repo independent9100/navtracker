@@ -87,6 +87,13 @@ bool corroboratedHazardAt(const replay_test::ScanTracks& scan,
     if (h.corroborated && (h.center - center).norm() <= radius_m) return true;
   return false;
 }
+// Any CAMERA-OBSERVED-EMPTY hazard within `radius_m` of `center` this scan?
+bool cameraEmptyHazardAt(const replay_test::ScanTracks& scan,
+                         const Eigen::Vector2d& center, double radius_m) {
+  for (const HazardSnapshot& h : scan.hazards)
+    if (h.camera_empty && (h.center - center).norm() <= radius_m) return true;
+  return false;
+}
 
 void reportSectors(const ClipRun& run, const std::string& tag) {
   std::vector<double> w = run.sector_widths_rad;
@@ -368,6 +375,113 @@ TEST(PhilosCoverageDecay6c, SunsetChartCorroborationLabelsStructureNotDepartedVe
   EXPECT_EQ(loit_corr, 0)
       << "the loiterer (a departed vessel) was chart-corroborated as structure — "
          "false coincidence with the charted layer";
+}
+
+// ── camera corroboration (increment 6, camera): observed-empty flags VACATED ──
+// ── cells that chart + radar could not resolve. ──
+// Coverage detector + chart + camera on sunset_cruise. Camera-observed-empty
+// flags cells the camera watches (in-FOV, live frame) with no detection at their
+// bearing, sustained. Findings (eval-log): `ferry_v1_a` — the ferry's OUTBOUND
+// berth, vacated after its t≈98 transition to ferry_v1_b — is the clean
+// demonstration (flagged on many scans; a real vessel that MOVED, its stale pin
+// correctly marked departed). The loiterer IS flagged (its bearing is cleanly
+// empty after t100 — 0 detections within ±10°) but only where its post-departure
+// hazard, made intermittent by the adaptive-bar flicker, coincides with the
+// matured empty-streak. astern_blob ("astern of own-ship", out of the center
+// FOV) is NEVER flagged — absence there is unobserved, not evidence (the
+// coverage-aware principle in the camera modality). Every camera-flagged cell
+// here is chart-UNconfirmed: the departed-vessel eviction candidates.
+TEST(PhilosCoverageDecay6c, SunsetCameraObservedEmptyFlagsVacatedCells) {
+  const ClipRun run = replay_test::runClip(
+      "sunset_cruise", "imm_cv_ct_pmbm_occupancy_detector_coverage",
+      /*load_chart_structure=*/true, /*load_camera=*/true);
+  if (!run.valid) GTEST_SKIP() << "sunset_cruise fixtures not reachable";
+  const auto labels = replay_test::loadLabels("sunset_cruise_labels.csv");
+  ASSERT_FALSE(labels.empty());
+
+  long haz = 0, cam_empty = 0;
+  for (const auto& s : run.history)
+    for (const HazardSnapshot& h : s.hazards) {
+      ++haz;
+      if (h.camera_empty) ++cam_empty;
+    }
+  std::cout << "\n=== 6c sunset_cruise camera corroboration (coverage+chart+camera) ==="
+            << "\n  hazard-scans=" << haz << " camera-observed-empty=" << cam_empty
+            << "\n";
+
+  const ExistenceLabel* loit = nullptr;
+  const ExistenceLabel* astern = nullptr;
+  for (const auto& l : labels) {
+    const Eigen::Vector2d c = labelEnu(run.datum, l);
+    long on = 0, corr = 0, cam = 0;
+    for (const auto& s : run.history) {
+      if (hazardAt(s, c, l.radius_m)) ++on;
+      if (corroboratedHazardAt(s, c, l.radius_m)) ++corr;
+      if (cameraEmptyHazardAt(s, c, l.radius_m)) ++cam;
+    }
+    std::cout << "  " << l.region_id << ": hazard-scans " << on
+              << ", chart-corroborated " << corr << ", camera-observed-empty "
+              << cam << "\n";
+    if (l.region_id == "loiterer_v2") loit = &l;
+    if (l.region_id == "astern_blob") astern = &l;
+  }
+  // Diagnostic: loiterer hazard presence vs camera-empty over the departure
+  // window (are hazard-scans and the clean camera-empty window overlapping?).
+  {
+    const Eigen::Vector2d lc = labelEnu(run.datum, *loit);
+    std::cout << "  loiterer timeline [rel_t: H=hazard C=camera_empty]:";
+    int shown = 0;
+    for (const auto& s : run.history) {
+      const double rel = s.t_unix - run.clip_start_unix;
+      if (rel < 92.0 || rel > 120.0) continue;
+      const bool h = hazardAt(s, lc, loit->radius_m);
+      const bool c = cameraEmptyHazardAt(s, lc, loit->radius_m);
+      if (h && (shown++ % 8 == 0))
+        std::cout << " " << (int)rel << (c ? ":HC" : ":H");
+    }
+    std::cout << "\n";
+  }
+  std::cout << std::flush;
+  ASSERT_NE(loit, nullptr);
+  ASSERT_NE(astern, nullptr);
+
+  auto countCam = [&](const ExistenceLabel& l) {
+    const Eigen::Vector2d c = labelEnu(run.datum, l);
+    long n = 0;
+    for (const auto& s : run.history)
+      if (cameraEmptyHazardAt(s, c, l.radius_m)) ++n;
+    return n;
+  };
+  auto countCorr = [&](const ExistenceLabel& l) {
+    const Eigen::Vector2d c = labelEnu(run.datum, l);
+    long n = 0;
+    for (const auto& s : run.history)
+      if (corroboratedHazardAt(s, c, l.radius_m)) ++n;
+    return n;
+  };
+
+  const ExistenceLabel* ferry_a = nullptr;
+  for (const auto& l : labels)
+    if (l.region_id == "ferry_v1_a") ferry_a = &l;
+  ASSERT_NE(ferry_a, nullptr);
+
+  // (1) The mechanism fires on real philos — the ferry's VACATED outbound berth
+  //     (a real vessel that moved to ferry_v1_b) is robustly camera-observed-empty.
+  EXPECT_GT(countCam(*ferry_a), 5)
+      << "the vacated ferry berth was not camera-observed-empty — camera wiring "
+         "or FOV gate broken";
+  // (2) The loiterer's cleanly-empty bearing IS caught where its (intermittent)
+  //     post-departure hazard coincides with the matured empty-streak.
+  EXPECT_GT(countCam(*loit), 0)
+      << "the loiterer was never camera-observed-empty";
+  // (3) Every camera-flagged cell here is chart-UNconfirmed → the eviction
+  //     candidates (departed vessels, not charted structure).
+  EXPECT_EQ(countCorr(*loit), 0) << "loiterer unexpectedly chart-corroborated";
+  EXPECT_EQ(countCorr(*ferry_a), 0) << "vacated ferry berth chart-corroborated";
+  // (4) astern_blob is OUT of the center FOV → never camera-flagged (absence
+  //     unobserved is not evidence); it is held by chart (31/31) instead.
+  EXPECT_EQ(countCam(*astern), 0)
+      << "astern_blob (out of center FOV) was camera-flagged — FOV gate leaked";
 }
 
 }  // namespace navtracker
