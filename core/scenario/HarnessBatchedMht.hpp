@@ -5,8 +5,10 @@
 
 namespace navtracker {
 
-// Same contract as runScenarioBatched, but drives MhtTracker instead of
-// the standard Tracker.
+/**
+ * Same contract as runScenarioBatched, but drives MhtTracker instead of
+ * the standard Tracker.
+ */
 ScenarioResult runScenarioBatchedMht(const Scenario& scenario,
                                      MhtTracker& tracker,
                                      double ospa_cutoff);

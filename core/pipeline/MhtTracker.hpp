@@ -21,30 +21,33 @@ namespace geo {
 class Datum;
 }
 
-// Track-oriented MHT (TOMHT). Per scan:
-//   1. Branch each tree's leaves on every gated measurement + missed-detection.
-//   2. Prune K_local-worst leaves per tree.
-//   3. Merge near-duplicate leaves within each tree by Bhattacharyya distance.
-//   4. Prune N-scan-old branches (trunk merging).
-//   5. Spawn new trees for measurements that gated to no tree.
-//   6. Drop trees whose best-leaf score falls below score_delete_threshold.
-//   7. Solve the global hypothesis (Hungarian K=1): pick one leaf per tree
-//      so that no scan measurement is consumed by more than one tree.
-//   8. Apply M-of-N confirmation gate: emit only trees with at least
-//      `confirm_hits_needed` hits in the last `confirm_hits_window` nodes.
-//   9. Materialize one Track per surviving tree (state from selected leaf,
-//      id from tree's externalId) into `tracks_` for downstream consumers.
-//
-// Track identity is stable: each tree gets a fresh monotonic id at spawn
-// time; ids are never reused across the MhtTracker's lifetime. The
-// Tentative/Confirmed status of an emitted Track reflects the M-of-N gate.
-//
-// References:
-//   - Blackman & Popoli (1999), Modern Tracking Systems ch. 16
-//   - Blackman (2004), IEEE AES Mag 19(1) §III–§V
-//   - Kuhn (1955) / Munkres (1957) for the assignment solver
+/**
+ * Track-oriented MHT (TOMHT). Per scan:
+ *   1. Branch each tree's leaves on every gated measurement + missed-detection.
+ *   2. Prune K_local-worst leaves per tree.
+ *   3. Merge near-duplicate leaves within each tree by Bhattacharyya distance.
+ *   4. Prune N-scan-old branches (trunk merging).
+ *   5. Spawn new trees for measurements that gated to no tree.
+ *   6. Drop trees whose best-leaf score falls below score_delete_threshold.
+ *   7. Solve the global hypothesis (Hungarian K=1): pick one leaf per tree
+ *      so that no scan measurement is consumed by more than one tree.
+ *   8. Apply M-of-N confirmation gate: emit only trees with at least
+ *      `confirm_hits_needed` hits in the last `confirm_hits_window` nodes.
+ *   9. Materialize one Track per surviving tree (state from selected leaf,
+ *      id from tree's externalId) into `tracks_` for downstream consumers.
+ *
+ * Track identity is stable: each tree gets a fresh monotonic id at spawn
+ * time; ids are never reused across the MhtTracker's lifetime. The
+ * Tentative/Confirmed status of an emitted Track reflects the M-of-N gate.
+ *
+ * References:
+ *   - Blackman & Popoli (1999), Modern Tracking Systems ch. 16
+ *   - Blackman (2004), IEEE AES Mag 19(1) §III–§V
+ *   - Kuhn (1955) / Munkres (1957) for the assignment solver
+ */
 class MhtTracker {
  public:
+  /** Tunable knobs for the TOMHT pipeline (detection, pruning, confirmation, IPDA/VIMM). */
   struct Config {
     // Default per-sensor detection parameters. These populate the
     // "default" entry of the ISensorDetectionModel constructed when the
@@ -238,75 +241,92 @@ class MhtTracker {
     double gate_recapture_max_scale = 8.0;
   };
 
-  // `detection_model` supplies per-sensor (P_D, λ_C) for branch scoring.
-  // Null (default) installs a FixedSensorDetectionModel whose single
-  // "default" entry is built from cfg.{probability_of_detection,
-  // clutter_density} — bit-identical to the previous global behaviour.
-  // Inject a FixedSensorDetectionModel with a per-(SensorKind,
-  // MeasurementModel) table for the textbook multi-sensor case, or an
-  // AdaptiveSensorDetectionModel for per-sensor online λ_C.
+  /**
+   * `detection_model` supplies per-sensor (P_D, λ_C) for branch scoring.
+   * Null (default) installs a FixedSensorDetectionModel whose single
+   * "default" entry is built from cfg.{probability_of_detection,
+   * clutter_density} — bit-identical to the previous global behaviour.
+   * Inject a FixedSensorDetectionModel with a per-(SensorKind,
+   * MeasurementModel) table for the textbook multi-sensor case, or an
+   * AdaptiveSensorDetectionModel for per-sensor online λ_C.
+   */
   MhtTracker(const IEstimator& estimator, Config cfg,
              std::shared_ptr<ISensorDetectionModel> detection_model = nullptr);
 
+  /** Ingest one scan (measurements sharing a timestamp group) and run the full TOMHT cycle. */
   void processBatch(const std::vector<Measurement>& scan);
 
-  // Optional. When non-null, every surviving tree whose chosen leaf is
-  // a HIT (took a measurement this scan) emits one InnovationEvent
-  // computed from the parent leaf's state re-predicted to scan_time —
-  // bit-exact reproduction of the pre-update state TrackTree::branch()
-  // applied estimator.update against. Pruned alternative branches emit
-  // nothing — we want the innovation of the filter the world saw.
+  /**
+   * Optional. When non-null, every surviving tree whose chosen leaf is
+   * a HIT (took a measurement this scan) emits one InnovationEvent
+   * computed from the parent leaf's state re-predicted to scan_time —
+   * bit-exact reproduction of the pre-update state TrackTree::branch()
+   * applied estimator.update against. Pruned alternative branches emit
+   * nothing — we want the innovation of the filter the world saw.
+   */
   void setInnovationSink(IInnovationSink* sink) { innov_sink_ = sink; }
 
-  // Optional. When non-null, every incoming measurement in a scan is
-  // corrected by the provider's per-(sensor, source_id) published bias
-  // before MHT processing. Null = pre-bias behavior; bit-identical to
-  // legacy. See Tracker::setSensorBiasProvider for the same contract.
+  /**
+   * Optional. When non-null, every incoming measurement in a scan is
+   * corrected by the provider's per-(sensor, source_id) published bias
+   * before MHT processing. Null = pre-bias behavior; bit-identical to
+   * legacy. See Tracker::setSensorBiasProvider for the same contract.
+   */
   void setSensorBiasProvider(const ISensorBiasProvider* provider) {
     bias_provider_ = provider;
   }
 
-  // Re-express all internal hypothesis state from `old_datum`'s ENU frame
-  // into `new_datum`'s. MhtTracker keeps authoritative kinematics in its
-  // own per-tree nodes (not a TrackManager), so the TrackManager-based
-  // shiftTracksOnDatumChange cannot reach it; wire an IDatumChangeSink
-  // that calls this instead when running the MHT pipeline with
-  // OwnShipProvider auto-recenter. Each node's (state, covariance, IMM
-  // means/covariances) is shifted via shiftStateOnDatumChange; the
-  // transient per-tree contribution history (≤2 s window, bias-extraction
-  // only) is cleared rather than shifted. No-op when no consumer wires it.
+  /**
+   * Re-express all internal hypothesis state from `old_datum`'s ENU frame
+   * into `new_datum`'s. MhtTracker keeps authoritative kinematics in its
+   * own per-tree nodes (not a TrackManager), so the TrackManager-based
+   * shiftTracksOnDatumChange cannot reach it; wire an IDatumChangeSink
+   * that calls this instead when running the MHT pipeline with
+   * OwnShipProvider auto-recenter. Each node's (state, covariance, IMM
+   * means/covariances) is shifted via shiftStateOnDatumChange; the
+   * transient per-tree contribution history (≤2 s window, bias-extraction
+   * only) is cleared rather than shifted. No-op when no consumer wires it.
+   */
   void onDatumRecentered(const geo::Datum& old_datum,
                          const geo::Datum& new_datum);
 
+  /** Aggregated Track views emitted this scan (one per surviving, gated tree). */
   const std::vector<Track>& tracks() const { return tracks_; }
+  /** Number of live hypothesis trees currently held. */
   std::size_t treeCount() const { return trees_.size(); }
 
-  // Detection model in use. Exposed for diagnostics / tests (e.g. to
-  // inspect per-sensor λ_C from an AdaptiveSensorDetectionModel).
+  /**
+   * Detection model in use. Exposed for diagnostics / tests (e.g. to
+   * inspect per-sensor λ_C from an AdaptiveSensorDetectionModel).
+   */
   const ISensorDetectionModel& detectionModel() const {
     return *detection_model_;
   }
 
-  // Scans dropped by the stale-input guard (reject_stale_measurements).
+  /** Scans dropped by the stale-input guard (reject_stale_measurements). */
   std::size_t staleDropped() const { return stale_dropped_; }
 
-  // Cumulative count of chosen hit leaves that consumed a SHARED
-  // (ambiguity-exempted) bearing — 0 unless share_ambiguous_bearings.
-  // Diagnostic: how often the identity-free bearing path engages.
+  /**
+   * Cumulative count of chosen hit leaves that consumed a SHARED
+   * (ambiguity-exempted) bearing — 0 unless share_ambiguous_bearings.
+   * Diagnostic: how often the identity-free bearing path engages.
+   */
   std::size_t sharedBearingAssignments() const {
     return shared_bearing_assignments_;
   }
 
-  // One-shot diagnostic, sticky once set: ≥2 distinct (SensorKind,
-  // MeasurementModel) keys have been processed while running on the
-  // auto-installed single-default detection model — i.e. every sensor
-  // shares one (P_D, λ_C) despite different rates and λ_C *units*
-  // (m⁻² vs rad⁻¹), which is dimensionally wrong and the exact
-  // misconfiguration behind the pre-fix AutoFerry collapse. The
-  // composition root should read this and inject a per-sensor
-  // FixedSensorDetectionModel table. Never set when a model was
-  // injected (even a single-default one — that is then a stated
-  // choice, not an accident).
+  /**
+   * One-shot diagnostic, sticky once set: ≥2 distinct (SensorKind,
+   * MeasurementModel) keys have been processed while running on the
+   * auto-installed single-default detection model — i.e. every sensor
+   * shares one (P_D, λ_C) despite different rates and λ_C *units*
+   * (m⁻² vs rad⁻¹), which is dimensionally wrong and the exact
+   * misconfiguration behind the pre-fix AutoFerry collapse. The
+   * composition root should read this and inject a per-sensor
+   * FixedSensorDetectionModel table. Never set when a model was
+   * injected (even a single-default one — that is then a stated
+   * choice, not an accident).
+   */
   bool defaultDetectionModelWarning() const {
     return default_detection_warning_;
   }

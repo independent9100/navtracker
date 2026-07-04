@@ -11,7 +11,7 @@
 
 namespace navtracker {
 
-// Opportunistic identity cues from a sensor; never the fusion key.
+/** Opportunistic identity cues from a sensor; never the fusion key. */
 struct AssociationHints {
   std::optional<std::uint32_t> mmsi;
   // The emitting sensor's own track/target number (e.g. ARPA TTM/TLL target
@@ -26,9 +26,11 @@ struct AssociationHints {
   std::optional<std::uint64_t> platform_id;
 };
 
-// Normalized sensor output consumed by the tracker. `value` and `covariance`
-// (R) are laid out according to `model`; e.g. Position2D -> [east, north] in
-// the working ENU frame with a 2x2 R.
+/**
+ * Normalized sensor output consumed by the tracker. `value` and `covariance`
+ * (R) are laid out according to `model`; e.g. Position2D -> [east, north] in
+ * the working ENU frame with a 2x2 R.
+ */
 struct Measurement {
   Timestamp time;
   SensorKind sensor{SensorKind::Unknown};
@@ -54,6 +56,7 @@ struct Measurement {
   // behaves identically regardless of this flag.
   bool covariance_is_default{false};
 
+  /** Dimensionality of `value` (the measurement vector length). */
   int dim() const { return static_cast<int>(value.size()); }
 };
 

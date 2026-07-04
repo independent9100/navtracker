@@ -14,16 +14,18 @@
 namespace navtracker {
 namespace benchmark {
 
-// One per-sensor detection-model entry a scenario can declare about its
-// environment: P_D, λ_C in the sensor's measurement-space units, and an
-// optional coverage radius / azimuth sector (inside DetectionParams).
-// See ISensorDetectionModel for unit rules.
-//
-// `source_id` (optional, last so existing aggregate initialisers stay
-// valid): non-empty entries calibrate one physical sensor unit by
-// Measurement::source_id — two units sharing a SensorKind (EO and IR
-// cameras are both SensorKind::EoIr) get independent (P_D, λ_C). Empty
-// = kind-wide entry; sources without an exact match fall back to it.
+/**
+ * One per-sensor detection-model entry a scenario can declare about its
+ * environment: P_D, λ_C in the sensor's measurement-space units, and an
+ * optional coverage radius / azimuth sector (inside DetectionParams).
+ * See ISensorDetectionModel for unit rules.
+ *
+ * `source_id` (optional, last so existing aggregate initialisers stay
+ * valid): non-empty entries calibrate one physical sensor unit by
+ * Measurement::source_id — two units sharing a SensorKind (EO and IR
+ * cameras are both SensorKind::EoIr) get independent (P_D, λ_C). Empty
+ * = kind-wide entry; sources without an exact match fall back to it.
+ */
 struct SensorDetectionEntry {
   SensorKind sensor;
   MeasurementModel model;
@@ -31,6 +33,13 @@ struct SensorDetectionEntry {
   std::string source_id;
 };
 
+/**
+ * Static declaration of a benchmark scenario's environment: its label, seed
+ * count, clutter model (legacy scalar `clutter_density` or the per-sensor
+ * `detection_table`), and optional GeoJSON coastline / static-obstacle
+ * fixtures. The sweep reads this to wire land / obstacle / detection models
+ * before running the scenario.
+ */
 struct ScenarioDescriptor {
   std::string label;
   bool is_multi_seed{false};
@@ -69,38 +78,48 @@ struct ScenarioDescriptor {
   std::string static_obstacles_geojson_path;
 };
 
-// Port: produces a Scenario (measurements + truth) for a given seed.
-// Replays ignore the seed; synthetics use it for noise realisation.
+/**
+ * Port: produces a Scenario (measurements + truth) for a given seed.
+ * Replays ignore the seed; synthetics use it for noise realisation.
+ */
 class ScenarioRun {
  public:
   virtual ~ScenarioRun() = default;
+  /** Static description of this scenario's environment. */
   virtual ScenarioDescriptor descriptor() const = 0;
+  /** Produce the scenario's measurements + truth for the given `seed`. */
   virtual Scenario generate(std::uint64_t seed) = 0;
 
-  // Optional hook: seed per-scenario knowledge into the sensor-bias
-  // estimator before any measurements are processed. Used by replay
-  // scenarios with known offline calibration (e.g. AutoFerry env-2
-  // cameras carry a documented 5-7° EO/IR bearing offset). Default is
-  // no-op so synthetic and unprepared scenarios behave exactly as
-  // before. Called once per (config × scenario × seed) cell, just
-  // after the estimator is constructed.
+  /**
+   * Optional hook: seed per-scenario knowledge into the sensor-bias
+   * estimator before any measurements are processed. Used by replay
+   * scenarios with known offline calibration (e.g. AutoFerry env-2
+   * cameras carry a documented 5-7° EO/IR bearing offset). Default is
+   * no-op so synthetic and unprepared scenarios behave exactly as
+   * before. Called once per (config × scenario × seed) cell, just
+   * after the estimator is constructed.
+   */
   virtual void seedSensorBiasEstimator(SensorBiasEstimator& /*est*/) const {}
 
-  // Optional in-memory coastline for synthetic scenarios. Default = none, so
-  // every existing scenario is untouched. When present AND config.use_land_model
-  // AND Scenario.datum is set, Sweep builds a CoastlineModel from this geometry
-  // (in preference to coastline_geojson_path) so the synthetic land mask that
-  // seeds the shore clutter also drives the land model. Real-data replay
-  // scenarios leave this null and keep using coastline_geojson_path.
+  /**
+   * Optional in-memory coastline for synthetic scenarios. Default = none, so
+   * every existing scenario is untouched. When present AND config.use_land_model
+   * AND Scenario.datum is set, Sweep builds a CoastlineModel from this geometry
+   * (in preference to coastline_geojson_path) so the synthetic land mask that
+   * seeds the shore clutter also drives the land model. Real-data replay
+   * scenarios leave this null and keep using coastline_geojson_path.
+   */
   virtual std::optional<CoastlineGeometry> syntheticCoastline() const {
     return std::nullopt;
   }
 
-  // Optional in-memory charted obstacles for synthetic scenarios. Default =
-  // none (every existing scenario untouched). When present AND
-  // config.use_static_obstacle_model AND Scenario.datum is set, Sweep builds a
-  // StaticObstacleModel from these (in preference to
-  // static_obstacles_geojson_path).
+  /**
+   * Optional in-memory charted obstacles for synthetic scenarios. Default =
+   * none (every existing scenario untouched). When present AND
+   * config.use_static_obstacle_model AND Scenario.datum is set, Sweep builds a
+   * StaticObstacleModel from these (in preference to
+   * static_obstacles_geojson_path).
+   */
   virtual std::optional<std::vector<StaticObstacle>> syntheticObstacles() const {
     return std::nullopt;
   }

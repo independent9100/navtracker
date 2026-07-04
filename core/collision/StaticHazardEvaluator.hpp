@@ -12,6 +12,8 @@
 
 namespace navtracker {
 
+/** Tuning for `StaticHazardEvaluator`: the exit-hysteresis multiplier on the
+ *  keep-clear radius and whether per-cycle Updated events are emitted. */
 struct StaticHazardEvaluatorConfig {
   // Exit when distance exceeds keep_clear * exit_hysteresis (> 1.0), so a
   // vessel loitering at the boundary does not flap Entered/Exited.
@@ -20,10 +22,12 @@ struct StaticHazardEvaluatorConfig {
   bool emit_updates = false;
 };
 
-// Emits static-hazard proximity events per (own-ship × charted-obstacle) with
-// hysteresis. Static geometry: distance from own-ship to obstacle centre vs
-// the obstacle's keep-clear radius. Mirrors CpaEvaluator's per-pair state +
-// hysteresis, minus the trajectory/CPA math.
+/**
+ * Emits static-hazard proximity events per (own-ship × charted-obstacle) with
+ * hysteresis. Static geometry: distance from own-ship to obstacle centre vs
+ * the obstacle's keep-clear radius. Mirrors CpaEvaluator's per-pair state +
+ * hysteresis, minus the trajectory/CPA math.
+ */
 class StaticHazardEvaluator {
  public:
   using Config = StaticHazardEvaluatorConfig;
@@ -32,10 +36,13 @@ class StaticHazardEvaluator {
                                  Config cfg = {})
       : model_(model), cfg_(cfg) {}
 
+  /** Register the sink that receives static-hazard events; null = no emission. */
   void setSink(IStaticHazardSink* s) { sink_ = s; }
 
-  // Evaluate all obstacles against the current own-ship ENU position (metres,
-  // in `datum`'s frame). Fires Entered/Exited/Updated with hysteresis.
+  /**
+   * Evaluate all obstacles against the current own-ship ENU position (metres,
+   * in `datum`'s frame). Fires Entered/Exited/Updated with hysteresis.
+   */
   void evaluate(const Eigen::Vector2d& own_ship_enu, const geo::Datum& datum,
                 Timestamp t);
 

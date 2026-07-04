@@ -13,6 +13,11 @@
 
 namespace navtracker {
 
+/**
+ * Ground-truth state of one target at one instant: its 2-D ENU position and
+ * velocity tagged with a stable `truth_id`. The reference against which the
+ * harness scores tracks.
+ */
 struct TruthSample {
   Timestamp time;
   std::uint64_t truth_id{0};
@@ -20,6 +25,11 @@ struct TruthSample {
   Eigen::Vector2d velocity{Eigen::Vector2d::Zero()};
 };
 
+/**
+ * A complete replay/synthetic scenario: the time-ordered `measurements` fed to
+ * the tracker plus the `truth` samples used for scoring, and an optional ENU
+ * `datum` when the scenario was projected from geodetic coordinates.
+ */
 struct Scenario {
   std::vector<Measurement> measurements;
   std::vector<TruthSample> truth;
@@ -31,13 +41,13 @@ struct Scenario {
   std::optional<geo::Datum> datum;
 };
 
-// Snapshot of a single track at a particular processing step.
+/** Snapshot of a single track at a particular processing step. */
 struct TrackSnapshot {
   TrackId id;
   Eigen::Vector2d position;
 };
 
-// What the harness observed at one processing step.
+/** What the harness observed at one processing step. */
 struct ScenarioStep {
   Timestamp time;
   std::vector<Eigen::Vector2d> truth;

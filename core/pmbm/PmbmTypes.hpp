@@ -9,48 +9,52 @@
 #include "core/types/Timestamp.hpp"
 #include "core/types/Track.hpp"
 
-// Data structures for the Poisson Multi-Bernoulli Mixture (PMBM) filter.
-// Header-only at this stage — the types are POD-like value semantics
-// containers used by PmbmTracker and tested in isolation.
-//
-// See docs/algorithms/pmbm-design.md for the math and
-// docs/learning/23-pmbm.md for the intuition. The plain-English
-// recap:
-//
-//   PPP (Poisson Point Process) — a Gaussian-mixture intensity over
-//   single-target state space representing targets that *may* exist but
-//   have not been detected yet. New Bernoullis are born from this when a
-//   measurement falls on PPP mass.
-//
-//   Bernoulli — one possible detected target. (r, mean, covariance) with
-//   r ∈ [0,1] the existence probability.
-//
-//   GlobalHypothesis — one complete "who is who" interpretation of the
-//   measurement history. Carries a weight and the Bernoullis that exist
-//   under this interpretation.
-//
-//   PmbmDensity — the full posterior: the PPP plus the weighted mixture
-//   of GlobalHypotheses (MBM).
+/**
+ * Data structures for the Poisson Multi-Bernoulli Mixture (PMBM) filter.
+ * Header-only at this stage — the types are POD-like value semantics
+ * containers used by PmbmTracker and tested in isolation.
+ *
+ * See docs/algorithms/pmbm-design.md for the math and
+ * docs/learning/23-pmbm.md for the intuition. The plain-English
+ * recap:
+ *
+ *   PPP (Poisson Point Process) — a Gaussian-mixture intensity over
+ *   single-target state space representing targets that *may* exist but
+ *   have not been detected yet. New Bernoullis are born from this when a
+ *   measurement falls on PPP mass.
+ *
+ *   Bernoulli — one possible detected target. (r, mean, covariance) with
+ *   r ∈ [0,1] the existence probability.
+ *
+ *   GlobalHypothesis — one complete "who is who" interpretation of the
+ *   measurement history. Carries a weight and the Bernoullis that exist
+ *   under this interpretation.
+ *
+ *   PmbmDensity — the full posterior: the PPP plus the weighted mixture
+ *   of GlobalHypotheses (MBM).
+ */
 
 namespace navtracker::pmbm {
 
-// One point along a Bernoulli's trajectory (TPMBM, Phase 4).
-//
-// In standard PMBM each Bernoulli carries only the *current* state
-// `(mean, covariance)` as a single-target density. Trajectory-PMBM
-// (García-Fernández, Williams, Granström, Svensson 2020,
-// arXiv:1912.08718) extends this so each Bernoulli carries the
-// posterior over the *entire* trajectory from birth to now —
-// concretely a vector of `TrajectoryPoint` recording the
-// (smoothed-or-filtered) state at each scan the Bernoulli was alive.
-//
-// Phase 4 incremental: forward-pass filter trajectory (no smoothing
-// yet). The state recorded here is the post-update state at each
-// observation, or the predicted state on misdetection scans. RTS
-// smoothing back through the trajectory is the next increment
-// (Phase 4(B)). Doesn't change the per-scan tracking math but
-// (a) gives ITrackSink consumers the full track history on
-// `onTrackDeleted` and (b) is the necessary scaffold for smoothing.
+/**
+ * One point along a Bernoulli's trajectory (TPMBM, Phase 4).
+ *
+ * In standard PMBM each Bernoulli carries only the *current* state
+ * `(mean, covariance)` as a single-target density. Trajectory-PMBM
+ * (García-Fernández, Williams, Granström, Svensson 2020,
+ * arXiv:1912.08718) extends this so each Bernoulli carries the
+ * posterior over the *entire* trajectory from birth to now —
+ * concretely a vector of `TrajectoryPoint` recording the
+ * (smoothed-or-filtered) state at each scan the Bernoulli was alive.
+ *
+ * Phase 4 incremental: forward-pass filter trajectory (no smoothing
+ * yet). The state recorded here is the post-update state at each
+ * observation, or the predicted state on misdetection scans. RTS
+ * smoothing back through the trajectory is the next increment
+ * (Phase 4(B)). Doesn't change the per-scan tracking math but
+ * (a) gives ITrackSink consumers the full track history on
+ * `onTrackDeleted` and (b) is the necessary scaffold for smoothing.
+ */
 struct TrajectoryPoint {
   Timestamp time;
   Eigen::VectorXd state;        // n_state (post-update at this scan)
@@ -70,63 +74,69 @@ struct TrajectoryPoint {
   Eigen::MatrixXd predicted_covariance;
 };
 
-// Backward Rauch-Tung-Striebel smoother over a trajectory.
-//
-// **Math.** Starting from the final point (smoothed = filtered),
-// walk backward k = T-1 .. 0:
-//   G_k = P_filt_k · F_k^T · P_pred_{k+1}^{-1}
-//   x_smooth_k = x_filt_k + G_k · (x_smooth_{k+1} − x_pred_{k+1})
-//   P_smooth_k = P_filt_k + G_k · (P_smooth_{k+1} − P_pred_{k+1}) · G_k^T
-// where x_pred_{k+1} / P_pred_{k+1} come from TrajectoryPoint at
-// k+1's `predicted_*` fields.
-//
-// **Assumption (this implementation).** F_k derived from dt under
-// constant-velocity layout (px, py, vx, vy[, ω]): identity on
-// velocity (and ω), position += dt · velocity. Exact for CV2D /
-// CV5 motion; approximate for CT (ω-coupled position update lost).
-// The earlier F=I cut shipped 2026-06-21 measured catastrophically
-// bad on anchored autoferry (smoother copied the end position back
-// through history when measurements were tight); CV-F restores the
-// position-velocity coupling that anchors the smoother to actual
-// motion. Refinement: extend IEstimator with `transitionMatrix`
-// so per-mode F mixes through IMM, instead of using the CV
-// fall-back across all modes.
-//
-// **Rationale.** RTS only helps PAST states (k < T). The
-// current-scan filter estimate at T is already optimal, so per-
-// scan GOSPA is unchanged. The win comes through T-GOSPA, which
-// integrates trajectory error across all k — there RTS smoothing
-// of past points reduces accumulated error.
-//
-// **Ways to improve.** Add `transitionMatrix` to IEstimator, then
-// pass the per-step F through the smoother. IMM-aware smoothing
-// (per-mode RTS then mode mixing) is a further refinement.
-//
-// In-place modification of `trajectory`. No-op when fewer than 2
-// points (nothing to smooth).
+/**
+ * Backward Rauch-Tung-Striebel smoother over a trajectory.
+ *
+ * **Math.** Starting from the final point (smoothed = filtered),
+ * walk backward k = T-1 .. 0:
+ *   G_k = P_filt_k · F_k^T · P_pred_{k+1}^{-1}
+ *   x_smooth_k = x_filt_k + G_k · (x_smooth_{k+1} − x_pred_{k+1})
+ *   P_smooth_k = P_filt_k + G_k · (P_smooth_{k+1} − P_pred_{k+1}) · G_k^T
+ * where x_pred_{k+1} / P_pred_{k+1} come from TrajectoryPoint at
+ * k+1's `predicted_*` fields.
+ *
+ * **Assumption (this implementation).** F_k derived from dt under
+ * constant-velocity layout (px, py, vx, vy[, ω]): identity on
+ * velocity (and ω), position += dt · velocity. Exact for CV2D /
+ * CV5 motion; approximate for CT (ω-coupled position update lost).
+ * The earlier F=I cut shipped 2026-06-21 measured catastrophically
+ * bad on anchored autoferry (smoother copied the end position back
+ * through history when measurements were tight); CV-F restores the
+ * position-velocity coupling that anchors the smoother to actual
+ * motion. Refinement: extend IEstimator with `transitionMatrix`
+ * so per-mode F mixes through IMM, instead of using the CV
+ * fall-back across all modes.
+ *
+ * **Rationale.** RTS only helps PAST states (k < T). The
+ * current-scan filter estimate at T is already optimal, so per-
+ * scan GOSPA is unchanged. The win comes through T-GOSPA, which
+ * integrates trajectory error across all k — there RTS smoothing
+ * of past points reduces accumulated error.
+ *
+ * **Ways to improve.** Add `transitionMatrix` to IEstimator, then
+ * pass the per-step F through the smoother. IMM-aware smoothing
+ * (per-mode RTS then mode mixing) is a further refinement.
+ *
+ * In-place modification of `trajectory`. No-op when fewer than 2
+ * points (nothing to smooth).
+ */
 void rtsSmoothTrajectory(std::vector<TrajectoryPoint>& trajectory);
 
-// Stable identifier for a Bernoulli component across hypotheses and
-// scans. Two Bernoullis in different global hypotheses with the same id
-// refer to the *same* target — they are alternative state distributions
-// for that target conditional on different association histories. Ids
-// are minted by the tracker; never reused. Track output aggregation
-// (TrackOutput) keys on this id.
-//
-// Distinct from TrackId because PMBM may suppress a Bernoulli (existence
-// → 0) before a TrackId is ever assigned, and conversely an aggregated
-// TrackId may correspond to several Bernoullis-of-the-same-id across
-// hypotheses. The mapping is one TrackId ↔ one BernoulliId, finalised
-// at output time.
+/**
+ * Stable identifier for a Bernoulli component across hypotheses and
+ * scans. Two Bernoullis in different global hypotheses with the same id
+ * refer to the *same* target — they are alternative state distributions
+ * for that target conditional on different association histories. Ids
+ * are minted by the tracker; never reused. Track output aggregation
+ * (TrackOutput) keys on this id.
+ *
+ * Distinct from TrackId because PMBM may suppress a Bernoulli (existence
+ * → 0) before a TrackId is ever assigned, and conversely an aggregated
+ * TrackId may correspond to several Bernoullis-of-the-same-id across
+ * hypotheses. The mapping is one TrackId ↔ one BernoulliId, finalised
+ * at output time.
+ */
 using BernoulliId = std::uint64_t;
 constexpr BernoulliId kInvalidBernoulliId = 0;
 
-// One Gaussian component of the PPP intensity λ^u(x). The full PPP is
-// λ^u(x) = Σ_i weight_i · 𝒩(x; mean_i, covariance_i).
-//
-// `weight` is an intensity, not a probability — it can sum to > 1
-// across components. It represents the expected number of undetected
-// targets per unit state-space volume contributed by this component.
+/**
+ * One Gaussian component of the PPP intensity λ^u(x). The full PPP is
+ * λ^u(x) = Σ_i weight_i · 𝒩(x; mean_i, covariance_i).
+ *
+ * `weight` is an intensity, not a probability — it can sum to > 1
+ * across components. It represents the expected number of undetected
+ * targets per unit state-space volume contributed by this component.
+ */
 struct PoissonComponent {
   double weight{0.0};
   Eigen::VectorXd mean;        // n_state
@@ -148,12 +158,14 @@ struct PoissonComponent {
   double mass() const noexcept { return weight; }
 };
 
-// One Bernoulli component — a single possible detected target.
-//
-// Existence probability r ∈ [0,1]. State density is Gaussian
-// 𝒩(x; mean, covariance) at this stage (Phase 1, GM-PMBM). Phase 2
-// upgrades this to an IMM mixture (one mean/cov per motion mode + mode
-// probabilities) — to be added when Phase 2 lands.
+/**
+ * One Bernoulli component — a single possible detected target.
+ *
+ * Existence probability r ∈ [0,1]. State density is Gaussian
+ * 𝒩(x; mean, covariance) at this stage (Phase 1, GM-PMBM). Phase 2
+ * upgrades this to an IMM mixture (one mean/cov per motion mode + mode
+ * probabilities) — to be added when Phase 2 lands.
+ */
 struct Bernoulli {
   BernoulliId id{kInvalidBernoulliId};
   double existence_probability{0.0};  // r ∈ [0,1]
@@ -210,14 +222,16 @@ struct Bernoulli {
   }
 };
 
-// One complete scan-consistent assignment of measurement history to
-// targets. Mixture weight is the Bayesian posterior probability of this
-// interpretation; the MBM is the weighted sum across all stored
-// GlobalHypotheses (weights summing to 1 after normalisation).
-//
-// The Bernoullis are kept in a flat vector; ids are unique within a
-// hypothesis (each target appears at most once). Across hypotheses, the
-// same id may appear with different `(r, mean, covariance)`.
+/**
+ * One complete scan-consistent assignment of measurement history to
+ * targets. Mixture weight is the Bayesian posterior probability of this
+ * interpretation; the MBM is the weighted sum across all stored
+ * GlobalHypotheses (weights summing to 1 after normalisation).
+ *
+ * The Bernoullis are kept in a flat vector; ids are unique within a
+ * hypothesis (each target appears at most once). Across hypotheses, the
+ * same id may appear with different `(r, mean, covariance)`.
+ */
 struct GlobalHypothesis {
   double weight{0.0};                 // mixture weight w^j, [0,1]
   double log_weight{                  // unnormalised log weight,
@@ -251,11 +265,13 @@ struct GlobalHypothesis {
 // PmbmTracker.cpp follows the doc's "gradual migration" plan.
 // ---------------------------------------------------------------------------
 
-// One single-target hypothesis of a Track — MATLAB `tracks{i}.meanB{j}`.
-// Multiple TrackHypothesis under a Track ≡ "same target's state under
-// different association histories". Carries the same kinematic and
-// trajectory fields as the legacy Bernoulli, minus the id (lives one
-// level up on Track).
+/**
+ * One single-target hypothesis of a Track — MATLAB `tracks{i}.meanB{j}`.
+ * Multiple TrackHypothesis under a Track ≡ "same target's state under
+ * different association histories". Carries the same kinematic and
+ * trajectory fields as the legacy Bernoulli, minus the id (lives one
+ * level up on Track).
+ */
 struct TrackHypothesis {
   double existence_probability{0.0};
   Eigen::VectorXd mean;
@@ -267,28 +283,32 @@ struct TrackHypothesis {
   std::vector<TrajectoryPoint> trajectory;
 };
 
-// One persistent track — MATLAB `tracks{i}`. Carries the stable
-// BernoulliId (id-stability invariant: never reused after birth), the
-// scan-time birth timestamp, and the per-track single-target
-// hypothesis list `hypotheses[j]`.
-//
-// Named `PmbmTrack` (not `Track`) to avoid collision with
-// `navtracker::Track` — the existing kinematic track value type used
-// across the codebase for IEstimator interop and TrackOutput emission.
-// The two are intentionally different: `navtracker::Track` is one
-// observable state, `pmbm::PmbmTrack` is a stable identity carrying a
-// list of state hypotheses.
+/**
+ * One persistent track — MATLAB `tracks{i}`. Carries the stable
+ * BernoulliId (id-stability invariant: never reused after birth), the
+ * scan-time birth timestamp, and the per-track single-target
+ * hypothesis list `hypotheses[j]`.
+ *
+ * Named `PmbmTrack` (not `Track`) to avoid collision with
+ * `navtracker::Track` — the existing kinematic track value type used
+ * across the codebase for IEstimator interop and TrackOutput emission.
+ * The two are intentionally different: `navtracker::Track` is one
+ * observable state, `pmbm::PmbmTrack` is a stable identity carrying a
+ * list of state hypotheses.
+ */
 struct PmbmTrack {
   BernoulliId id{kInvalidBernoulliId};
   Timestamp birth_time{};
   std::vector<TrackHypothesis> hypotheses;
 };
 
-// One global hypothesis under the per-track structure — MATLAB
-// `globHyp(p, :)`. `hyp_index[i] = j` means "this global hypothesis
-// selects hypothesis `j` of track `i`"; `j = kAbsent` means "track `i`
-// is absent in this global hypothesis". Tracks are indexed by position
-// in `PmbmDensity::tracks`.
+/**
+ * One global hypothesis under the per-track structure — MATLAB
+ * `globHyp(p, :)`. `hyp_index[i] = j` means "this global hypothesis
+ * selects hypothesis `j` of track `i`"; `j = kAbsent` means "track `i`
+ * is absent in this global hypothesis". Tracks are indexed by position
+ * in `PmbmDensity::tracks`.
+ */
 struct TrackedGlobalHypothesis {
   static constexpr int kAbsent = -1;
   double weight{0.0};
@@ -296,17 +316,19 @@ struct TrackedGlobalHypothesis {
   std::vector<int> hyp_index;  // one entry per Track in PmbmDensity::tracks
 };
 
-// The full PMBM posterior: PPP (undetected) plus a mixture (MBM) of
-// global hypotheses (detected). The two parts evolve under the same
-// Bayesian recursion (PmbmTracker::predict, PmbmTracker::update) but
-// are stored separately because they have very different shapes —
-// PPP is a flat Gaussian mixture, MBM is a *mixture of multi-Bernoulli
-// sets*.
-//
-// Phase 9 transitional layout: legacy `mbm` (flat `GlobalHypothesis`)
-// stays authoritative; `tracks` + `tracked_mbm` are populated only
-// under `Config::use_per_track_hypotheses`. The two views must agree
-// when both are populated (verified by an invariant check in tests).
+/**
+ * The full PMBM posterior: PPP (undetected) plus a mixture (MBM) of
+ * global hypotheses (detected). The two parts evolve under the same
+ * Bayesian recursion (PmbmTracker::predict, PmbmTracker::update) but
+ * are stored separately because they have very different shapes —
+ * PPP is a flat Gaussian mixture, MBM is a *mixture of multi-Bernoulli
+ * sets*.
+ *
+ * Phase 9 transitional layout: legacy `mbm` (flat `GlobalHypothesis`)
+ * stays authoritative; `tracks` + `tracked_mbm` are populated only
+ * under `Config::use_per_track_hypotheses`. The two views must agree
+ * when both are populated (verified by an invariant check in tests).
+ */
 struct PmbmDensity {
   std::vector<PoissonComponent> ppp;
   std::vector<GlobalHypothesis> mbm;
@@ -340,47 +362,50 @@ struct PmbmDensity {
   }
 };
 
-// Phase 9 view-builder. Derives `tracks` + `tracked_mbm` from the
-// flat `mbm` view. Pure derivation — no behavioral change. Used by
-// the gradual-migration plan to flip the flag without rewriting
-// enumerateChildren in one go.
-//
-// **Algorithm**.
-//   1. Walk all `mbm[p].bernoullis` and collect unique BernoulliIds in
-//      first-seen order. Each id becomes one `tracks[i]` entry; its
-//      `birth_time` is the minimum `last_update` seen across hypotheses
-//      where it first appears (acts as a stable lower bound; the real
-//      birth time will live on `PmbmTrack` after S2).
-//   2. For each global hypothesis p and each Bernoulli b in it, append
-//      one `TrackHypothesis` to `tracks[b.id].hypotheses` carrying
-//      (r, mean, cov, imm_*, last_update, trajectory) copied verbatim.
-//      Record the resulting `(track_idx, hyp_idx)` in
-//      `tracked_mbm[p].hyp_index[track_idx] = hyp_idx`.
-//   3. For tracks absent from p, `hyp_index[track_idx] = kAbsent`.
-//
-// Result invariants (verified by unit test):
-//   - `tracked_mbm.size() == mbm.size()` and matching `weight` /
-//     `log_weight`.
-//   - For each (p, i, j) with `tracked_mbm[p].hyp_index[i] = j`,
-//     `tracks[i].hypotheses[j]` matches the corresponding Bernoulli in
-//     `mbm[p].bernoullis` (modulo id, which lives on `tracks[i]`).
-//   - The set of Bernoulli ids across all hypotheses equals the set of
-//     `tracks[i].id`.
-//
-// Idempotent: clears `tracks` + `tracked_mbm` before rebuilding.
+/**
+ * Phase 9 view-builder. Derives `tracks` + `tracked_mbm` from the
+ * flat `mbm` view. Pure derivation — no behavioral change. Used by
+ * the gradual-migration plan to flip the flag without rewriting
+ * enumerateChildren in one go.
+ *
+ * **Algorithm**.
+ *   1. Walk all `mbm[p].bernoullis` and collect unique BernoulliIds in
+ *      first-seen order. Each id becomes one `tracks[i]` entry; its
+ *      `birth_time` is the minimum `last_update` seen across hypotheses
+ *      where it first appears (acts as a stable lower bound; the real
+ *      birth time will live on `PmbmTrack` after S2).
+ *   2. For each global hypothesis p and each Bernoulli b in it, append
+ *      one `TrackHypothesis` to `tracks[b.id].hypotheses` carrying
+ *      (r, mean, cov, imm_*, last_update, trajectory) copied verbatim.
+ *      Record the resulting `(track_idx, hyp_idx)` in
+ *      `tracked_mbm[p].hyp_index[track_idx] = hyp_idx`.
+ *   3. For tracks absent from p, `hyp_index[track_idx] = kAbsent`.
+ *
+ * Result invariants (verified by unit test):
+ *   - `tracked_mbm.size() == mbm.size()` and matching `weight` /
+ *     `log_weight`.
+ *   - For each (p, i, j) with `tracked_mbm[p].hyp_index[i] = j`,
+ *     `tracks[i].hypotheses[j]` matches the corresponding Bernoulli in
+ *     `mbm[p].bernoullis` (modulo id, which lives on `tracks[i]`).
+ *   - The set of Bernoulli ids across all hypotheses equals the set of
+ *     `tracks[i].id`.
+ *
+ * Idempotent: clears `tracks` + `tracked_mbm` before rebuilding.
+ */
 void rebuildPerTrackViewFromFlat(PmbmDensity& density);
 
-// IEstimator interop. The repository's IEstimator interface operates on
-// Track values; PMBM stores Bernoullis and PoissonComponents as smaller
-// value types. These adapters round-trip the kinematic state so the
-// existing predict/update/initiate/logLikelihood implementations work
-// unchanged inside the PMBM pipeline.
-//
-// last_update on Bernoulli matches Track's semantics: it is the filter
-// time, advanced by predict and update alike. Phase 2 (IMM-per-Bernoulli)
-// will extend these adapters to round-trip imm_means/imm_covariances/
-// imm_mode_probabilities — the underlying fields already exist on Track.
-
+/**
+ * IEstimator interop. The repository's IEstimator interface operates on
+ * Track values; PMBM stores Bernoullis and PoissonComponents as smaller
+ * value types. These adapters round-trip the kinematic state so the
+ * existing predict/update/initiate/logLikelihood implementations work
+ * unchanged inside the PMBM pipeline.
+ *
+ * last_update on Bernoulli matches Track's semantics: it is the filter
+ * time, advanced by predict and update alike. Phase 2 (IMM-per-Bernoulli)
+ * will extend these adapters to round-trip imm_means/imm_covariances/
+ * imm_mode_probabilities — the underlying fields already exist on Track.
+ */
 inline Track toTrack(const Bernoulli& b) {
   Track t;
   t.state = b.mean;

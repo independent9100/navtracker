@@ -13,36 +13,52 @@ namespace navtracker {
 
 class IEstimator;  // fwd
 
-// Owns the active track set, allocates stable TrackIds, and runs the M-of-N
-// lifecycle state machine. IDs are monotonic and never reused. The cycle that
-// drives hits/misses (predict/associate/update) lives in the pipeline.
+/**
+ * Owns the active track set, allocates stable TrackIds, and runs the M-of-N
+ * lifecycle state machine. IDs are monotonic and never reused. The cycle that
+ * drives hits/misses (predict/associate/update) lives in the pipeline.
+ */
 class TrackManager {
  public:
+  /**
+   * Construct with the M-of-N lifecycle thresholds: `confirm_hits` hits
+   * promote a Tentative track to Confirmed; `delete_misses` consecutive
+   * misses delete it.
+   */
   TrackManager(int confirm_hits, int delete_misses);
 
-  // Register a new Tentative track; assigns and returns a fresh stable id.
+  /** Register a new Tentative track; assigns and returns a fresh stable id. */
   TrackId add(const Track& track,
               Timestamp first_observation = Timestamp{});
 
+  /** Record a detection hit for track `id`, advancing its confirmation counter. */
   void recordHit(TrackId id);
+  /** Record a missed detection for track `id`, advancing its deletion counter. */
   void recordMiss(TrackId id);
 
+  /** Stamp the most recent observation time for track `id`. */
   void noteObservation(TrackId id, Timestamp t);
+  /** Time of the last recorded observation for track `id`. */
   Timestamp lastObservation(TrackId id) const;
 
-  // Advance every active track to `to` via the estimator.
+  /** Advance every active track to `to` via the estimator. */
   void predictAll(const IEstimator& estimator, Timestamp to);
 
-  // Optional lifecycle event sink. Null = no-op (today's behavior).
+  /** Optional lifecycle event sink. Null = no-op (today's behavior). */
   void setTrackSink(ITrackSink* sink) { sink_ = sink; }
 
-  // Notify the sink (if any) that a track's kinematic state has changed.
-  // Called by Tracker after a successful estimator.update. Pure event
-  // fire — no state mutation here.
+  /**
+   * Notify the sink (if any) that a track's kinematic state has changed.
+   * Called by Tracker after a successful estimator.update. Pure event
+   * fire — no state mutation here.
+   */
   void recordUpdated(TrackId id, Timestamp t);
 
+  /** Read-only view of the active track set (iteration order is stable). */
   const std::vector<Track>& tracks() const { return tracks_; }
+  /** Mutable view of the active track set (pipeline predict/update path). */
   std::vector<Track>& mutableTracks() { return tracks_; }
+  /** Number of active tracks. */
   std::size_t size() const { return tracks_.size(); }
 
  private:

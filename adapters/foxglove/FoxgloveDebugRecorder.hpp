@@ -1,13 +1,3 @@
-// FoxgloveDebugRecorder — offline MCAP debug recorder for the navtracker
-// fusion pipeline.  Implements ITrackSnapshotSink / ITrackSink /
-// IInnovationSink / ICollisionRiskSink / IDatumChangeSink and two
-// input-side taps (recordMeasurement, recordOwnShip).  Open the output
-// .mcap in Lichtblick or Foxglove Studio for a scrubbable spatial view
-// of tracks, detections, gates, associations, NIS, bias, and CPA.
-//
-// Usage and channel table: docs/debug-visualization.md
-// How to read covariance vs gate ellipses, association lines, and NIS
-// plots: docs/learning/11-gating-gnn-hungarian.md §9
 #pragma once
 #include <memory>
 #include <string>
@@ -25,6 +15,8 @@
 
 namespace navtracker::foxglove {
 
+/** Tuning knobs for the debug recorder's visual output (ellipse scale,
+ *  gate threshold, entity lifetime). */
 struct RecorderConfig {
   double ellipse_k = 2.0;       // confidence multiplier for covariance ellipses
   double gate_gamma = 0.0;      // chi-square gate threshold; 0 disables /gates ellipses
@@ -32,33 +24,59 @@ struct RecorderConfig {
                                      // >0 auto-expires stale entities (clean "now" view)
 };
 
+/**
+ * FoxgloveDebugRecorder — offline MCAP debug recorder for the navtracker
+ * fusion pipeline.  Implements ITrackSnapshotSink / ITrackSink /
+ * IInnovationSink / ICollisionRiskSink / IDatumChangeSink and two
+ * input-side taps (recordMeasurement, recordOwnShip).  Open the output
+ * .mcap in Lichtblick or Foxglove Studio for a scrubbable spatial view
+ * of tracks, detections, gates, associations, NIS, bias, and CPA.
+ *
+ * Usage and channel table: docs/debug-visualization.md
+ * How to read covariance vs gate ellipses, association lines, and NIS
+ * plots: docs/learning/11-gating-gnn-hungarian.md §9
+ */
 class FoxgloveDebugRecorder final
     : public ITrackSnapshotSink, public ITrackSink, public IInnovationSink,
       public ICollisionRiskSink, public IDatumChangeSink {
  public:
+  /** Open `path` for writing; entities are placed in the ENU frame anchored
+   *  at `datum`. Optional `bias` provider is sampled for the /bias diagnostic
+   *  channel. `cfg` tunes ellipse/gate/lifetime rendering. */
   FoxgloveDebugRecorder(const std::string& path, const geo::Datum& datum,
                         const ISensorBiasProvider* bias = nullptr,
                         RecorderConfig cfg = {});
   ~FoxgloveDebugRecorder() override;
 
   // Input-side taps (called from app composition root).
+  /** Record an incoming sensor measurement (detection marker + gate/wedge). */
   void recordMeasurement(const Measurement& m);
+  /** Record an own-ship pose (position track + heading). */
   void recordOwnShip(const OwnShipPose& pose);
 
   // ITrackSnapshotSink
+  /** Write the current set of tracks as a SceneUpdate at time `now`. */
   void onTracks(const std::vector<Track>& tracks, Timestamp now) override;
   // ITrackSink
+  /** Log a track-initiation lifecycle event. */
   void onTrackInitiated(const TrackLifecycleEvent& e) override;
+  /** Log a track-confirmation lifecycle event. */
   void onTrackConfirmed(const TrackLifecycleEvent& e) override;
+  /** Log a track-update lifecycle event. */
   void onTrackUpdated(const TrackLifecycleEvent& e) override;
+  /** Log a track-deletion lifecycle event. */
   void onTrackDeleted(const TrackLifecycleEvent& e) override;
   // IInnovationSink
+  /** Record a per-update innovation (NIS plot + cached S for /gates). */
   void onInnovation(const InnovationEvent& e) override;
   // ICollisionRiskSink
+  /** Record a CPA collision-risk event (Entered/Exited/Updated). */
   void onCollisionRisk(const CollisionRiskEvent& e) override;
   // IDatumChangeSink
+  /** React to a datum recenter; logs the shift for downstream frame context. */
   void onDatumRecentered(const geo::Datum& old_d, const geo::Datum& new_d) override;
 
+  /** Flush and close the underlying MCAP writer. */
   void close();
 
  private:

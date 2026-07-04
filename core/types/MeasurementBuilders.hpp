@@ -12,23 +12,25 @@
 
 namespace navtracker {
 
-// Range + RELATIVE bearing (the radar / EO-IR / sonar common case).
-// Looks up the most recent OwnShipPose with pose.time <= t via
-// `provider.poseAtOrBefore(t)`, adds own-ship heading to the relative
-// bearing, and projects to ENU Position2D via projectRangeBearingToEnu.
-// Composes own-ship GPS position uncertainty from the looked-up pose.
-// sigma_heading is 0 by design: this builder models range + bearing +
-// GPS-position uncertainty only. Heading (gyro/compass) σ is folded into
-// bearing_std_rad upstream by the adapters that wire a HeadingBiasEstimator
-// (ArpaAdapter / EoIrAdapter); callers off that path should pre-inflate
-// bearing_std_rad by their σ_heading.
-//
-// If no pose at-or-before t is available, returns a Measurement with
-// empty value/covariance and `covariance_is_default == false`; callers
-// should drop or buffer these (the situation indicates the sensor
-// arrived before any GPS fix).
-//
-// All angles in radians. Range in meters.
+/**
+ * Range + RELATIVE bearing (the radar / EO-IR / sonar common case).
+ * Looks up the most recent OwnShipPose with pose.time <= t via
+ * `provider.poseAtOrBefore(t)`, adds own-ship heading to the relative
+ * bearing, and projects to ENU Position2D via projectRangeBearingToEnu.
+ * Composes own-ship GPS position uncertainty from the looked-up pose.
+ * sigma_heading is 0 by design: this builder models range + bearing +
+ * GPS-position uncertainty only. Heading (gyro/compass) σ is folded into
+ * bearing_std_rad upstream by the adapters that wire a HeadingBiasEstimator
+ * (ArpaAdapter / EoIrAdapter); callers off that path should pre-inflate
+ * bearing_std_rad by their σ_heading.
+ *
+ * If no pose at-or-before t is available, returns a Measurement with
+ * empty value/covariance and `covariance_is_default == false`; callers
+ * should drop or buffer these (the situation indicates the sensor
+ * arrived before any GPS fix).
+ *
+ * All angles in radians. Range in meters.
+ */
 Measurement makeMeasurementFromRelativeBearing(
     SensorKind sensor,
     std::string source_id,
@@ -40,9 +42,11 @@ Measurement makeMeasurementFromRelativeBearing(
     const OwnShipProvider& provider,
     AssociationHints hints = {});
 
-// Range + TRUE bearing (already-projected, world-frame). Useful when the
-// sensor pipeline pre-computes true bearings outside this library.
-// Otherwise identical to the relative-bearing variant.
+/**
+ * Range + TRUE bearing (already-projected, world-frame). Useful when the
+ * sensor pipeline pre-computes true bearings outside this library.
+ * Otherwise identical to the relative-bearing variant.
+ */
 Measurement makeMeasurementFromTrueBearing(
     SensorKind sensor,
     std::string source_id,
@@ -54,13 +58,15 @@ Measurement makeMeasurementFromTrueBearing(
     const OwnShipProvider& provider,
     AssociationHints hints = {});
 
-// Absolute ENU position (AIS-style). No pose lookup or projection — the
-// ENU position is already in the working frame. Exposes a uniform
-// construction surface so SensorDefaults composition is consistent.
-// Pass an empty 2x2 covariance (default-constructed Eigen::Matrix2d is
-// uninitialized — see implementation) when no uncertainty info is
-// available; the result is a Measurement whose covariance is empty and
-// can be filled by applyDefaultsIfEmpty.
+/**
+ * Absolute ENU position (AIS-style). No pose lookup or projection — the
+ * ENU position is already in the working frame. Exposes a uniform
+ * construction surface so SensorDefaults composition is consistent.
+ * Pass an empty 2x2 covariance (default-constructed Eigen::Matrix2d is
+ * uninitialized — see implementation) when no uncertainty info is
+ * available; the result is a Measurement whose covariance is empty and
+ * can be filled by applyDefaultsIfEmpty.
+ */
 Measurement makeMeasurementFromEnuPosition(
     SensorKind sensor,
     std::string source_id,

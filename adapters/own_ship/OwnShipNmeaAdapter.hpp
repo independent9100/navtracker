@@ -18,25 +18,27 @@ namespace navtracker {
 
 class HeadingBiasEstimator;
 
-// Config for OwnShipNmeaAdapter. UERE (User Equivalent Range Error) is the
-// per-satellite ranging error used to derive a horizontal position sigma from
-// the GGA HDOP: sigma_pos = HDOP * uere_m. Default 5 m matches the
-// commonly-cited consumer-GPS value.
-//
-// When enable_adaptive_uere is true, the adapter additionally runs a
-// UereEstimator over GGA-derived local-meter offsets (equirectangular
-// projection about the first fix). When the estimator publishes, its sigma
-// overrides the HDOP * uere_m static path; otherwise the static path applies.
-//
-// Velocity fields:
-//   sigma_sog_m_per_s, sigma_cog_deg     — assumed RMC noise floors used to
-//                                          derive sigma_v from a parsed RMC.
-//   prefer_rmc_velocity                  — when an RMC is fresh, use it over
-//                                          the GGA-derived estimator.
-//   rmc_stale_seconds                    — RMC older than this falls back to
-//                                          the estimator on the next GGA.
-//   enable_velocity_estimator            — feed GGAs into OwnShipVelocityEstimator
-//                                          as a fallback when RMC is absent/stale.
+/**
+ * Config for OwnShipNmeaAdapter. UERE (User Equivalent Range Error) is the
+ * per-satellite ranging error used to derive a horizontal position sigma from
+ * the GGA HDOP: sigma_pos = HDOP * uere_m. Default 5 m matches the
+ * commonly-cited consumer-GPS value.
+ *
+ * When enable_adaptive_uere is true, the adapter additionally runs a
+ * UereEstimator over GGA-derived local-meter offsets (equirectangular
+ * projection about the first fix). When the estimator publishes, its sigma
+ * overrides the HDOP * uere_m static path; otherwise the static path applies.
+ *
+ * Velocity fields:
+ *   sigma_sog_m_per_s, sigma_cog_deg     — assumed RMC noise floors used to
+ *                                          derive sigma_v from a parsed RMC.
+ *   prefer_rmc_velocity                  — when an RMC is fresh, use it over
+ *                                          the GGA-derived estimator.
+ *   rmc_stale_seconds                    — RMC older than this falls back to
+ *                                          the estimator on the next GGA.
+ *   enable_velocity_estimator            — feed GGAs into OwnShipVelocityEstimator
+ *                                          as a fallback when RMC is absent/stale.
+ */
 struct OwnShipNmeaAdapterConfig {
   double uere_m{5.0};
   bool enable_adaptive_uere{false};
@@ -58,27 +60,36 @@ struct OwnShipNmeaAdapterConfig {
   double gyro_max_age_s{2.0};
 };
 
-// Parses NMEA 0183 GGA (position) and HDT (true heading) into OwnShipPose
-// updates on the supplied OwnShipProvider. The caller supplies a full
-// Timestamp per ingest.
+/**
+ * Parses NMEA 0183 GGA (position) and HDT (true heading) into OwnShipPose
+ * updates on the supplied OwnShipProvider. The caller supplies a full
+ * Timestamp per ingest. This is an optional edge adapter for consumers
+ * whose own-ship input is NMEA strings; consumers with parsed fixes can
+ * drive OwnShipProvider::update directly.
+ */
 class OwnShipNmeaAdapter {
  public:
   explicit OwnShipNmeaAdapter(OwnShipProvider& provider,
                               OwnShipNmeaAdapterConfig cfg = {});
 
+  /** Parse one NMEA line stamped `t`; returns true if it produced a pose. */
   bool ingest(std::string_view line, Timestamp t);
 
-  // Sim hook: sets a sticky position uncertainty applied to subsequently
-  // published poses. Used by sim paths that don't emit GGA HDOP. For GGA
-  // messages that carry a positive HDOP, the HDOP-derived sigma
-  // (HDOP * uere_m) takes precedence for that message; the sticky value
-  // is only used as a fallback (e.g. when HDOP is empty or non-positive,
-  // and for non-GGA messages).
+  /**
+   * Sim hook: sets a sticky position uncertainty applied to subsequently
+   * published poses. Used by sim paths that don't emit GGA HDOP. For GGA
+   * messages that carry a positive HDOP, the HDOP-derived sigma
+   * (HDOP * uere_m) takes precedence for that message; the sticky value
+   * is only used as a fallback (e.g. when HDOP is empty or non-positive,
+   * and for non-GGA messages).
+   */
   void setPositionStd(double sigma_m);
 
-  // Optional. When non-null, the adapter dispatches the appropriate
-  // HeadingBiasEstimator::observe(...) overload for each parsed
-  // HDG / GPS-talker HDT / RMC.
+  /**
+   * Optional. When non-null, the adapter dispatches the appropriate
+   * HeadingBiasEstimator::observe(...) overload for each parsed
+   * HDG / GPS-talker HDT / RMC.
+   */
   void setHeadingBiasEstimator(HeadingBiasEstimator* estimator) {
     bias_estimator_ = estimator;
   }

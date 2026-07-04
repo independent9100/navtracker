@@ -6,12 +6,19 @@
 
 namespace navtracker {
 
-// Static, deterministic implementation of ISensorActivity (decision §9a:
-// declared profile behind the exchangeable port). An adaptive learned
-// provider is a future implementation of the same ISensorActivity
-// interface (spec roadmap §13.1).
+/**
+ * Static, deterministic implementation of ISensorActivity (decision §9a:
+ * declared profile behind the exchangeable port). An adaptive learned
+ * provider is a future implementation of the same ISensorActivity
+ * interface (spec roadmap §13.1).
+ */
 class DeclaredSensorActivity : public ISensorActivity {
  public:
+  /**
+   * Declared per-channel coverage profile. A surveillance channel is described
+   * by its duty cycle, max range, sector geometry, and detection probability; a
+   * cooperative channel (e.g. AIS) by its expected report interval.
+   */
   struct ChannelProfile {
     ChannelKind kind{ChannelKind::Surveillance};
     SensorKind sensor{SensorKind::Unknown};
@@ -28,14 +35,21 @@ class DeclaredSensorActivity : public ISensorActivity {
   explicit DeclaredSensorActivity(std::vector<ChannelProfile> profiles)
       : profiles_(std::move(profiles)) {}
 
+  /**
+   * ISensorActivity: evaluate whether the declared profiles should have
+   * detected/reported a track at track_pos_enu over the (last_checked, now]
+   * interval — the "miss opportunity" used to weigh a non-detection.
+   */
   MissOpportunity evaluate(const Eigen::Vector2d& track_pos_enu,
                            std::optional<std::uint32_t> mmsi,
                            std::optional<std::uint64_t> platform_id,
                            Timestamp last_checked,
                            Timestamp now) const override;
 
-  // Return the ChannelKind of the first profile whose sensor field matches,
-  // or std::nullopt when no profile covers that sensor.
+  /**
+   * Return the ChannelKind of the first profile whose sensor field matches,
+   * or std::nullopt when no profile covers that sensor.
+   */
   std::optional<ChannelKind> channelKindFor(SensorKind sensor) const override;
 
  private:

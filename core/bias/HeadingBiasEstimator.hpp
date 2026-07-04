@@ -11,6 +11,10 @@
 
 namespace navtracker {
 
+/** Tuning for `HeadingBiasEstimator`: the initial bias prior, random-walk
+ *  process noise, publish/staleness thresholds, the bearing-innovation gates
+ *  (G1 range / G2 state-variance dominance / G3 outlier), and the
+ *  multi-heading-source gate budgets. */
 struct HeadingBiasEstimatorConfig {
   // Initial estimate and variance (rad, rad^2).
   double initial_bias_rad{0.0};
@@ -36,10 +40,12 @@ struct HeadingBiasEstimatorConfig {
   double mhs_outlier_sigma{5.0};
 };
 
-// One pair observation: AIS-derived target position and ARPA-derived
-// bearing-projected target position relative to the same own-ship
-// origin at the same cycle. The estimator computes the angular
-// disagreement and uses it as a scalar measurement of b.
+/**
+ * One pair observation: AIS-derived target position and ARPA-derived
+ * bearing-projected target position relative to the same own-ship
+ * origin at the same cycle. The estimator computes the angular
+ * disagreement and uses it as a scalar measurement of b.
+ */
 struct AisArpaPairObservation {
   Timestamp time;
   Eigen::Vector2d own_position_enu;
@@ -53,52 +59,62 @@ struct AisArpaPairObservation {
   double own_position_std_m{0.0};
 };
 
-// === v2 observation kind (bearing innovations from Tracker) ===
-//
-// The estimator also implements IBearingInnovationSink. When wired into a
-// Tracker, every successful hard-match update on Bearing2D or
-// RangeBearing2D produces a scalar measurement
-//   r ~ N(b, S),   S = H·P·Hᵀ + R
-// of the heading bias b, where (β̂, H, P) come from the PRE-update
-// predicted track state and R is the measurement noise. Sequentially
-// fusing innovations from independent tracks is mathematically correct
-// because the projected state errors are conditionally independent given
-// b (independent CV processes, independent associations).
-//
-// Three observability gates protect against state-error contamination
-// (predicted_state_var <= k * R), short range (range >= min_range_m),
-// and outliers (|r| <= N * sqrt(S + P_b)). See spec
-// 2026-06-04-multi-track-bearing-bias-observer-design.md for defaults.
+/**
+ * Scalar Kalman filter on a single gyro heading-bias state `b` with
+ * random-walk dynamics, fed by any subset of five observation kinds. Also
+ * implements IBearingInnovationSink (v2): when wired into a Tracker, every
+ * successful hard-match update on Bearing2D or RangeBearing2D produces a
+ * scalar measurement
+ *   r ~ N(b, S),   S = H·P·Hᵀ + R
+ * of the heading bias b, where (β̂, H, P) come from the PRE-update
+ * predicted track state and R is the measurement noise. Sequentially
+ * fusing innovations from independent tracks is mathematically correct
+ * because the projected state errors are conditionally independent given
+ * b (independent CV processes, independent associations).
+ *
+ * Three observability gates protect against state-error contamination
+ * (predicted_state_var <= k * R), short range (range >= min_range_m),
+ * and outliers (|r| <= N * sqrt(S + P_b)). See spec
+ * 2026-06-04-multi-track-bearing-bias-observer-design.md for defaults.
+ */
 class HeadingBiasEstimator : public IHeadingBiasProvider,
                              public IBearingInnovationSink {
  public:
   explicit HeadingBiasEstimator(HeadingBiasEstimatorConfig cfg = {});
 
-  // Time-only predict step. Safe to call repeatedly; idempotent if
-  // `to` does not advance.
+  /**
+   * Time-only predict step. Safe to call repeatedly; idempotent if
+   * `to` does not advance.
+   */
   void predictTo(Timestamp to);
 
-  // Apply one AIS+ARPA pair observation. Internally calls predictTo
-  // first, then performs a scalar KF update.
+  /**
+   * Apply one AIS+ARPA pair observation. Internally calls predictTo
+   * first, then performs a scalar KF update.
+   */
   void observe(const AisArpaPairObservation& obs);
 
-  // Apply one bearing-domain innovation produced by the Tracker.
-  // Predicts to obs.time, then applies the three observability gates
-  // (range / state-variance-dominance / outlier). If all gates pass,
-  // performs a scalar KF update on b with measurement r ~ N(b, S).
+  /**
+   * Apply one bearing-domain innovation produced by the Tracker.
+   * Predicts to obs.time, then applies the three observability gates
+   * (range / state-variance-dominance / outlier). If all gates pass,
+   * performs a scalar KF update on b with measurement r ~ N(b, S).
+   */
   void observe(const BearingInnovation& obs);
 
-  // IHeadingBiasProvider
+  /** IHeadingBiasProvider: the current published bias estimate. */
   HeadingBiasEstimate current() const override;
 
-  // IBearingInnovationSink — dispatches to observe(BearingInnovation).
+  /** IBearingInnovationSink — dispatches to observe(BearingInnovation). */
   void onBearingInnovation(const BearingInnovation& obs) override {
     observe(obs);
   }
 
-  // Multi-heading-source observation kinds. Each is a scalar KF update
-  // on the same bias state b. See spec 2026-06-04-multi-heading-sources
-  // for math, gates, defaults.
+  /**
+   * Multi-heading-source observation kinds. Each is a scalar KF update
+   * on the same bias state b. See spec 2026-06-04-multi-heading-sources
+   * for math, gates, defaults.
+   */
   void observe(const GyroVsGpsHeadingObservation& obs);
   void observe(const GyroVsGpsCogObservation& obs);
   void observe(const GyroVsMagneticObservation& obs);

@@ -11,9 +11,11 @@
 
 namespace navtracker {
 
-// Primary key of a per-sensor bias estimator: (sensor class, source_id).
-// EO and IR cameras share SensorKind::EoIr but have distinct source_ids,
-// so two cameras of the same kind get two independent estimators.
+/**
+ * Primary key of a per-sensor bias estimator: (sensor class, source_id).
+ * EO and IR cameras share SensorKind::EoIr but have distinct source_ids,
+ * so two cameras of the same kind get two independent estimators.
+ */
 struct SensorBiasKey {
   SensorKind sensor{SensorKind::Unknown};
   std::string source_id;
@@ -27,17 +29,19 @@ struct SensorBiasKey {
   }
 };
 
-// Position-bias snapshot (in ENU metres, applied to Position2D /
-// RangeBearing2D measurements). `is_published` is false when the
-// estimator has not converged below its publish threshold; consumers
-// treat that as "use b = 0" (pre-estimator behaviour).
+/**
+ * Position-bias snapshot (in ENU metres, applied to Position2D /
+ * RangeBearing2D measurements). `is_published` is false when the
+ * estimator has not converged below its publish threshold; consumers
+ * treat that as "use b = 0" (pre-estimator behaviour).
+ */
 struct PositionBiasEstimate {
   Eigen::Vector2d bias_enu_m{Eigen::Vector2d::Zero()};
   Eigen::Matrix2d covariance_m2{Eigen::Matrix2d::Zero()};
   bool is_published{false};
 };
 
-// Bearing-bias snapshot (added to a camera's reported bearing, rad).
+/** Bearing-bias snapshot (added to a camera's reported bearing, rad). */
 struct BearingBiasEstimate {
   double bias_rad{0.0};
   double variance_rad2{0.0};
@@ -60,17 +64,23 @@ struct hash<navtracker::SensorBiasKey> {
 
 namespace navtracker {
 
-// Read-only port. Adapters / Tracker query the current published
-// estimate; null providers return zero / not-published.
+/**
+ * Read-only port. Adapters / Tracker query the current published
+ * estimate; null providers return zero / not-published.
+ */
 class ISensorBiasProvider {
  public:
   virtual ~ISensorBiasProvider() = default;
+  /** Current published position bias for `key` (zero/not-published if none). */
   virtual PositionBiasEstimate positionBias(const SensorBiasKey& key) const = 0;
+  /** Current published bearing bias for `key` (zero/not-published if none). */
   virtual BearingBiasEstimate bearingBias(const SensorBiasKey& key) const = 0;
 };
 
-// Sentinel implementation: always returns zero, not-published. The
-// default for callers that do not wire an estimator.
+/**
+ * Sentinel implementation: always returns zero, not-published. The
+ * default for callers that do not wire an estimator.
+ */
 class NullBiasProvider : public ISensorBiasProvider {
  public:
   PositionBiasEstimate positionBias(const SensorBiasKey&) const override {
@@ -81,22 +91,26 @@ class NullBiasProvider : public ISensorBiasProvider {
   }
 };
 
-// Static lookup of known biases. For deployments where the
-// per-sensor mounting offsets are known from calibration
-// documentation (e.g., factory survey, plan drawings) and the user
-// wants them applied immediately without waiting for the online
-// SensorBiasEstimator to converge — or instead of running it. Each
-// configured entry is published immediately; unknown keys return
-// not-published (zero correction, matches NullBiasProvider).
-//
-// Use directly via Tracker::setSensorBiasProvider; or combine with a
-// SensorBiasEstimator by seeding the estimator's prior, if the
-// intent is "known starting point, refine with observations".
+/**
+ * Static lookup of known biases. For deployments where the
+ * per-sensor mounting offsets are known from calibration
+ * documentation (e.g., factory survey, plan drawings) and the user
+ * wants them applied immediately without waiting for the online
+ * SensorBiasEstimator to converge — or instead of running it. Each
+ * configured entry is published immediately; unknown keys return
+ * not-published (zero correction, matches NullBiasProvider).
+ *
+ * Use directly via Tracker::setSensorBiasProvider; or combine with a
+ * SensorBiasEstimator by seeding the estimator's prior, if the
+ * intent is "known starting point, refine with observations".
+ */
 class FixedSensorBiasProvider : public ISensorBiasProvider {
  public:
-  // Set / overwrite a per-key position bias. Covariance defaults to
-  // 1 cm² isotropic (very tight) — the user is asserting they know
-  // the offset.
+  /**
+   * Set / overwrite a per-key position bias. Covariance defaults to
+   * 1 cm² isotropic (very tight) — the user is asserting they know
+   * the offset.
+   */
   void setPositionBias(const SensorBiasKey& key,
                        const Eigen::Vector2d& bias_enu_m,
                        const Eigen::Matrix2d& covariance_m2 =

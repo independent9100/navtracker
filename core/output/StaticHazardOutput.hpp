@@ -9,10 +9,12 @@
 
 namespace navtracker {
 
-// Drainable output for one static hazard (pull-style, parallel to
-// TrackOutput). Position is geodetic — obstacles are charted in WGS84, so no
-// datum rotation is needed (unlike a kinematic track). is_charted separates
-// Stage-1 chart hazards from Stage-2 live-detected occupancy.
+/**
+ * Drainable output for one static hazard (pull-style, parallel to
+ * TrackOutput). Position is geodetic — obstacles are charted in WGS84, so no
+ * datum rotation is needed (unlike a kinematic track). is_charted separates
+ * Stage-1 chart hazards from Stage-2 live-detected occupancy.
+ */
 struct StaticHazardOutput {
   std::uint64_t hazard_id{0};
   geo::Geodetic position{};
@@ -28,15 +30,19 @@ struct StaticHazardOutput {
   std::string source_id;
 };
 
-// Deterministic stable id from an obstacle's charted position + category, plus
-// source_id when non-empty (so co-located ENC records with different sources
-// get distinct ids). Order-independent (not a list index); session-scoped, not
-// a database primary key. Rounds lat/lon to ~1 m before hashing so numeric
-// jitter does not change the id.
+/**
+ * Deterministic stable id from an obstacle's charted position + category, plus
+ * source_id when non-empty (so co-located ENC records with different sources
+ * get distinct ids). Order-independent (not a list index); session-scoped, not
+ * a database primary key. Rounds lat/lon to ~1 m before hashing so numeric
+ * jitter does not change the id.
+ */
 std::uint64_t staticHazardId(const StaticObstacle& obs);
 
-// Build a StaticHazardOutput from a charted obstacle (attributes verbatim,
-// id via staticHazardId, is_charted = true).
+/**
+ * Build a StaticHazardOutput from a charted obstacle (attributes verbatim,
+ * id via staticHazardId, is_charted = true).
+ */
 StaticHazardOutput toStaticHazardOutput(const StaticObstacle& obs);
 
 }  // namespace navtracker

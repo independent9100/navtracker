@@ -5,8 +5,10 @@
 
 namespace navtracker {
 
-// Squared Mahalanobis distance between a measurement and a track's predicted
-// measurement: d2 = y^T S^-1 y, with S = H P H^T + R.
+/**
+ * Squared Mahalanobis distance between a measurement and a track's predicted
+ * measurement: d2 = y^T S^-1 y, with S = H P H^T + R.
+ */
 double mahalanobisDistance(const Track& track, const Measurement& z);
 
 }  // namespace navtracker

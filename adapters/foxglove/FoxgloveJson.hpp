@@ -8,31 +8,37 @@
 
 namespace navtracker::foxglove {
 
+/** A Foxglove time value as `{sec, nsec}`. */
 nlohmann::json timeJson(Timestamp t);                       // {sec,nsec}
 
-// A SceneUpdate "lines" primitive (type 0 = LINE_STRIP) of one polyline.
+/** A SceneUpdate "lines" primitive (type 0 = LINE_STRIP) of one polyline. */
 nlohmann::json lineEntity(const std::string& id, const std::vector<Pt>& pts,
                           const Rgba& color, double thickness = 1.0);
-// A SceneUpdate "texts" label at a point.
+/** A SceneUpdate "texts" label at a point. */
 nlohmann::json textEntity(const std::string& id, const Pt& at,
                           const std::string& text, const Rgba& color);
-// A SceneUpdate "arrows" primitive from a->b.
+/** A SceneUpdate "arrows" primitive from a->b. */
 nlohmann::json arrowEntity(const std::string& id, const Pt& a, const Pt& b,
                            const Rgba& color);
 
-// Wrap a list of entity json objects into a SceneUpdate message at time t.
-// Stamp `t` onto each entity and wrap into a SceneUpdate. When
-// lifetime_sec > 0 each entity is given that lifetime (Foxglove auto-expires
-// it that long after `t`), so the 3D panel shows recent state rather than the
-// whole accumulated history. lifetime_sec == 0 means "persist" (default).
+/**
+ * Wrap a list of entity json objects into a SceneUpdate message at time t.
+ * Stamp `t` onto each entity and wrap into a SceneUpdate. When
+ * lifetime_sec > 0 each entity is given that lifetime (Foxglove auto-expires
+ * it that long after `t`), so the 3D panel shows recent state rather than the
+ * whole accumulated history. lifetime_sec == 0 means "persist" (default).
+ */
 nlohmann::json sceneUpdate(Timestamp t, const std::vector<nlohmann::json>& entities,
                            double lifetime_sec = 0.0);
 
+/** A foxglove.LocationFix message (lat/lon in degrees, 3x3 covariance row-major). */
 nlohmann::json locationFix(Timestamp t, double lat_deg, double lon_deg,
                            const std::array<double, 9>& cov_row_major);
+/** A foxglove.FrameTransform message (parent->child translation + yaw). */
 nlohmann::json frameTransform(Timestamp t, const std::string& parent,
                               const std::string& child,
                               double tx, double ty, double tz, double yaw_rad);
+/** A foxglove.Log message at severity `level` from source `name`. */
 nlohmann::json logMsg(Timestamp t, int level, const std::string& name,
                       const std::string& message);
 

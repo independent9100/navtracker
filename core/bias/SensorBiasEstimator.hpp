@@ -10,6 +10,12 @@
 
 namespace navtracker {
 
+/**
+ * Tuning for `SensorBiasEstimator`: the per-key KF priors, random-walk
+ * process noise, publish (deterministic-apply) variance thresholds, and the
+ * three observation gates (time skew, minimum range, outlier σ) shared with
+ * `HeadingBiasEstimator`'s G1-G2-G3.
+ */
 struct SensorBiasEstimatorConfig {
   // Initial 1-sigma prior on the bias (per axis, isotropic).
   double initial_pos_std_m{5.0};
@@ -34,19 +40,21 @@ struct SensorBiasEstimatorConfig {
   double outlier_sigma{5.0};
 };
 
-// One paired observation for a position-bias estimator. z_sensor and
-// z_anchor are both target-position measurements in the common ENU
-// frame (z_anchor from AIS, z_sensor from the biased radar/lidar).
-// Their disagreement is a direct 2D measurement of b. Range gate
-// uses target-relative range from own_position_enu.
-//
-// `is_anchor_source = true` (default) means z_anchor came from an
-// independent absolute-position source (AIS, RTK-GNSS truth-anchor).
-// `is_anchor_source = false` means z_anchor was a *cross-sensor*
-// position contribution from another sensor whose own bias is being
-// jointly estimated (item 13). The estimator keeps the state update
-// either way but only counts anchored observations toward
-// "anchor_obs_count", which gates publish — see SensorBiasEstimator.
+/**
+ * One paired observation for a position-bias estimator. z_sensor and
+ * z_anchor are both target-position measurements in the common ENU
+ * frame (z_anchor from AIS, z_sensor from the biased radar/lidar).
+ * Their disagreement is a direct 2D measurement of b. Range gate
+ * uses target-relative range from own_position_enu.
+ *
+ * `is_anchor_source = true` (default) means z_anchor came from an
+ * independent absolute-position source (AIS, RTK-GNSS truth-anchor).
+ * `is_anchor_source = false` means z_anchor was a *cross-sensor*
+ * position contribution from another sensor whose own bias is being
+ * jointly estimated (item 13). The estimator keeps the state update
+ * either way but only counts anchored observations toward
+ * "anchor_obs_count", which gates publish — see SensorBiasEstimator.
+ */
 struct PositionBiasPairObservation {
   Timestamp time;
   SensorBiasKey key;
@@ -64,13 +72,15 @@ struct PositionBiasPairObservation {
   bool is_anchor_source{true};
 };
 
-// One paired observation for a bearing-bias estimator. anchor_pos_enu
-// is the anchor-reported target position; sensor_pos_enu is the
-// camera's mounting position; alpha_observed is the bearing the
-// camera reported. The bias b enters as α_predicted = atan2(anchor−
-// sensor) + b, so r = wrap(α_obs − α_predicted) is a scalar
-// measurement of b. See PositionBiasPairObservation for the meaning
-// of is_anchor_source — same gating logic applies.
+/**
+ * One paired observation for a bearing-bias estimator. anchor_pos_enu
+ * is the anchor-reported target position; sensor_pos_enu is the
+ * camera's mounting position; alpha_observed is the bearing the
+ * camera reported. The bias b enters as α_predicted = atan2(anchor−
+ * sensor) + b, so r = wrap(α_obs − α_predicted) is a scalar
+ * measurement of b. See PositionBiasPairObservation for the meaning
+ * of is_anchor_source — same gating logic applies.
+ */
 struct BearingBiasPairObservation {
   Timestamp time;
   SensorBiasKey key;
@@ -83,46 +93,54 @@ struct BearingBiasPairObservation {
   bool is_anchor_source{true};
 };
 
-// Per-(sensor, source_id) bias estimator. Each key has its own KF;
-// position and bearing biases are independent state vectors. Behaves
-// as ISensorBiasProvider once any observation has updated a given key.
+/**
+ * Per-(sensor, source_id) bias estimator. Each key has its own KF;
+ * position and bearing biases are independent state vectors. Behaves
+ * as ISensorBiasProvider once any observation has updated a given key.
+ */
 class SensorBiasEstimator : public ISensorBiasProvider {
  public:
   explicit SensorBiasEstimator(SensorBiasEstimatorConfig cfg = {});
 
-  // Idempotent if `to` does not advance any key.
+  /** Advance every keyed state to `to`. Idempotent if `to` does not advance any key. */
   void predictTo(Timestamp to);
 
-  // Observation entry points. Each calls predictTo for the keyed entry,
-  // applies the three gates, and (if accepted) updates the bias state.
+  /**
+   * Observation entry points. Each calls predictTo for the keyed entry,
+   * applies the three gates, and (if accepted) updates the bias state.
+   */
   void observe(const PositionBiasPairObservation& obs);
   void observe(const BearingBiasPairObservation& obs);
 
-  // Seed a per-key prior from external knowledge (calibration
-  // documentation, factory survey, plan drawings). Subsequent
-  // observations continue to refine it via the KF update path.
-  //
-  // The seed alone does NOT make the estimate publish (since
-  // 2026-06-19 anchor-gating): publish requires at least one
-  // anchor-source observation, since a seed is the operator's
-  // hypothesis and can be wrong for the current deployment, and
-  // we don't want a wrong hypothesis silently shifting every
-  // measurement (sc13_anchored regression diagnosis). Pass
-  // `treat_as_anchored = true` if the caller intends the seed to
-  // count as the first anchor observation — i.e. the value came
-  // from a trusted external calibration step that should publish
-  // immediately. Default false preserves the safer "refine first"
-  // behaviour.
+  /**
+   * Seed a per-key prior from external knowledge (calibration
+   * documentation, factory survey, plan drawings). Subsequent
+   * observations continue to refine it via the KF update path.
+   *
+   * The seed alone does NOT make the estimate publish (since
+   * 2026-06-19 anchor-gating): publish requires at least one
+   * anchor-source observation, since a seed is the operator's
+   * hypothesis and can be wrong for the current deployment, and
+   * we don't want a wrong hypothesis silently shifting every
+   * measurement (sc13_anchored regression diagnosis). Pass
+   * `treat_as_anchored = true` if the caller intends the seed to
+   * count as the first anchor observation — i.e. the value came
+   * from a trusted external calibration step that should publish
+   * immediately. Default false preserves the safer "refine first"
+   * behaviour.
+   */
   void setKnownPositionBias(const SensorBiasKey& key,
                             const Eigen::Vector2d& bias_enu_m,
                             const Eigen::Matrix2d& covariance_m2,
                             bool treat_as_anchored = false);
+  /** Bearing-bias counterpart of setKnownPositionBias; same anchor-gating semantics. */
   void setKnownBearingBias(const SensorBiasKey& key, double bias_rad,
                            double variance_rad2,
                            bool treat_as_anchored = false);
 
-  // ISensorBiasProvider
+  /** ISensorBiasProvider: published position bias for `key` (see positionBias impl). */
   PositionBiasEstimate positionBias(const SensorBiasKey& key) const override;
+  /** ISensorBiasProvider: published bearing bias for `key`. */
   BearingBiasEstimate bearingBias(const SensorBiasKey& key) const override;
 
   // Diagnostics.

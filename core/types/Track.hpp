@@ -13,8 +13,10 @@
 
 namespace navtracker {
 
-// Fused, non-kinematic attributes. Every field is optional: a non-cooperative
-// target without AIS still has a valid Track keyed by TrackId.
+/**
+ * Fused, non-kinematic attributes. Every field is optional: a non-cooperative
+ * target without AIS still has a valid Track keyed by TrackId.
+ */
 struct TrackAttributes {
   std::optional<std::uint32_t> mmsi;
   std::optional<std::string> name;
@@ -23,8 +25,10 @@ struct TrackAttributes {
   std::optional<double> beam_m;
 };
 
-// The authoritative fused track. Kinematic state/covariance are populated by
-// the estimator (later plan); this defines the carrier type.
+/**
+ * The authoritative fused track. Kinematic state/covariance are populated by
+ * the estimator (later plan); this defines the carrier type.
+ */
 struct Track {
   TrackId id;
   Timestamp last_update;
@@ -49,9 +53,11 @@ struct Track {
   std::vector<Eigen::MatrixXd> imm_covariances;
   Eigen::VectorXd imm_mode_probabilities;
 
-  // Per-cycle provenance for downstream components (e.g. bias estimator).
-  // Populated by Tracker when a measurement updates this track. Consumers
-  // read after a cycle completes; they are responsible for clearing.
+  /**
+   * Per-cycle provenance for downstream components (e.g. bias estimator).
+   * Populated by Tracker when a measurement updates this track. Consumers
+   * read after a cycle completes; they are responsible for clearing.
+   */
   struct SourceTouch {
     SensorKind sensor{SensorKind::Unknown};
     std::string source_id;

@@ -37,6 +37,13 @@
 
 namespace navtracker::replay {
 
+/**
+ * Knobs controlling how loadAutoferryScenario turns the AutoFerry dataset
+ * into a Scenario: which sensor kinds to emit, the per-sensor measurement
+ * noise used to synthesize covariance (the dataset ships no per-point R),
+ * and whether to inject a synthetic truth-derived AIS anchor for bias
+ * estimation. Defaults sit at the env-1 empirical σ values (see fields).
+ */
 struct AutoferryLoadOptions {
   // Lidar/Radar (active, range-bearing → position) measurements are always
   // emitted as Position2D. IR/EO bearings are off by default: a lone
@@ -78,10 +85,12 @@ struct AutoferryLoadOptions {
   double truth_anchor_std_m = 5.0;
 };
 
-// Load one AutoFerry scenario directory (e.g. data/autoferry/scenario2).
-// `label` is the bare scenario name ("scenario2") used to form filenames.
-// Returns an empty Scenario (no measurements) when the JSON files are
-// absent or unparseable, so callers can skip gracefully.
+/**
+ * Load one AutoFerry scenario directory (e.g. data/autoferry/scenario2).
+ * `label` is the bare scenario name ("scenario2") used to form filenames.
+ * Returns an empty Scenario (no measurements) when the JSON files are
+ * absent or unparseable, so callers can skip gracefully.
+ */
 Scenario loadAutoferryScenario(const std::string& dir,
                                const std::string& label,
                                const AutoferryLoadOptions& opts = {});

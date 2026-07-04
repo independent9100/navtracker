@@ -20,30 +20,39 @@
 #include "ports/IStaleSignalSink.hpp"
 #include "ports/ITrackSink.hpp"
 
-// Poisson Multi-Bernoulli Mixture (PMBM) tracker. Sibling to MhtTracker,
-// implementing the same multi-target tracking goal via the Random Finite
-// Set (RFS) formulation rather than a hypothesis tree.
-//
-// See:
-//   docs/algorithms/pmbm-design.md   — equation-level reference
-//   docs/learning/23-pmbm.md         — plain-English introduction
-//   docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md
-//                                    — phased engineering plan
-//
-// Phase 1 (this file): GM-PMBM. Per-Bernoulli single-target density is a
-// single Gaussian; estimator is whatever the caller injects (typically
-// EKF or UKF). The standard point-target model is assumed (one
-// measurement per target per scan, Poisson clutter, Poisson birth).
-//
-// Phase 2 swaps the per-Bernoulli density to an IMM mixture by
-// extending the Bernoulli adapter to round-trip the imm_* fields on
-// Track. Phase 3 (TPMBM) extends each Bernoulli with a trajectory
-// (state history); structure unchanged otherwise.
+/**
+ * Poisson Multi-Bernoulli Mixture (PMBM) tracker. Sibling to MhtTracker,
+ * implementing the same multi-target tracking goal via the Random Finite
+ * Set (RFS) formulation rather than a hypothesis tree.
+ *
+ * See:
+ *   docs/algorithms/pmbm-design.md   — equation-level reference
+ *   docs/learning/23-pmbm.md         — plain-English introduction
+ *   docs/superpowers/plans/2026-06-07-pmbm-integration-plan.md
+ *                                    — phased engineering plan
+ *
+ * Phase 1 (this file): GM-PMBM. Per-Bernoulli single-target density is a
+ * single Gaussian; estimator is whatever the caller injects (typically
+ * EKF or UKF). The standard point-target model is assumed (one
+ * measurement per target per scan, Poisson clutter, Poisson birth).
+ *
+ * Phase 2 swaps the per-Bernoulli density to an IMM mixture by
+ * extending the Bernoulli adapter to round-trip the imm_* fields on
+ * Track. Phase 3 (TPMBM) extends each Bernoulli with a trajectory
+ * (state history); structure unchanged otherwise.
+ */
 
 namespace navtracker::pmbm {
 
+/**
+ * PMBM multi-target tracker (see the file-level overview above for the
+ * RFS formulation and phase roadmap). Consume via processBatch() +
+ * tracks(); the internal PMBM density is the authoritative multi-target
+ * posterior.
+ */
 class PmbmTracker {
  public:
+  /** Tunable knobs for the PMBM pipeline (birth, detection, pruning, lifecycle, land/obstacle priors). */
   struct Config {
     // Per-scan target survival probability p_S. Applied multiplicatively
     // to every Bernoulli's existence probability and every PPP
@@ -571,160 +580,197 @@ class PmbmTracker {
     double coverage_cluster_gap_rad = 0.349;
   };
 
-  // Birth intensity callback. Called once per predict() (after the
-  // survival decay), supplying the new filter time and the elapsed dt.
-  // Returns PPP components to add to the current PPP intensity. Empty
-  // (default-constructed std::function) installs a no-birth model — the
-  // tracker still runs but no new targets can ever appear. Useful for
-  // closed-set tests; real deployments must supply a model.
+  /**
+   * Birth intensity callback. Called once per predict() (after the
+   * survival decay), supplying the new filter time and the elapsed dt.
+   * Returns PPP components to add to the current PPP intensity. Empty
+   * (default-constructed std::function) installs a no-birth model — the
+   * tracker still runs but no new targets can ever appear. Useful for
+   * closed-set tests; real deployments must supply a model.
+   */
   using BirthModelFn =
       std::function<std::vector<PoissonComponent>(Timestamp, double)>;
 
+  /**
+   * Construct with the injected `estimator` (per-Bernoulli predict/update),
+   * a `cfg`, and an optional explicit `birth_model` PPP source (empty =
+   * no-birth unless measurement-driven / adaptive birth is enabled in cfg).
+   */
   PmbmTracker(const IEstimator& estimator, Config cfg,
               BirthModelFn birth_model = {});
 
-  // Advance the PPP intensity, every Bernoulli in every global
-  // hypothesis, and the filter time to `to`. Birth intensity (per the
-  // BirthModelFn) is added after the survival decay.
-  //
-  // The first call after construction initialises the filter time from
-  // `to` (dt = 0; birth model is called with dt = 0 to allow seeding an
-  // initial PPP); subsequent calls compute dt from the previous filter
-  // time. Calls with `to` ≤ currentTime() advance the clock only (no
-  // propagation, no birth) — matches the MhtTracker stale-input
-  // convention without raising.
+  /**
+   * Advance the PPP intensity, every Bernoulli in every global
+   * hypothesis, and the filter time to `to`. Birth intensity (per the
+   * BirthModelFn) is added after the survival decay.
+   *
+   * The first call after construction initialises the filter time from
+   * `to` (dt = 0; birth model is called with dt = 0 to allow seeding an
+   * initial PPP); subsequent calls compute dt from the previous filter
+   * time. Calls with `to` ≤ currentTime() advance the clock only (no
+   * propagation, no birth) — matches the MhtTracker stale-input
+   * convention without raising.
+   */
   void predict(Timestamp to);
 
-  // Ingest one scan of measurements. Predicts to scan_time (the max
-  // timestamp in `scan`, or current time for empty), then applies the
-  // PMBM update step:
-  //
-  //   1. New-target candidates from PPP per measurement (§3.2)
-  //   2. PPP decay by (1−P_D) (§3.3)
-  //   3. Per hypothesis: per-Bernoulli per-measurement update +
-  //      misdetection (§3.1); cost matrix (§3.4); Murty K-best
-  //      enumeration → child global hypotheses
-  //   4. Mixture pruning (§3.5)
-  //
-  // Empty `scan` is a no-op apart from the predict.
+  /**
+   * Ingest one scan of measurements. Predicts to scan_time (the max
+   * timestamp in `scan`, or current time for empty), then applies the
+   * PMBM update step:
+   *
+   *   1. New-target candidates from PPP per measurement (§3.2)
+   *   2. PPP decay by (1−P_D) (§3.3)
+   *   3. Per hypothesis: per-Bernoulli per-measurement update +
+   *      misdetection (§3.1); cost matrix (§3.4); Murty K-best
+   *      enumeration → child global hypotheses
+   *   4. Mixture pruning (§3.5)
+   *
+   * Empty `scan` is a no-op apart from the predict.
+   */
   void processBatch(const std::vector<Measurement>& scan);
 
+  /** The current PMBM density (PPP intensity + Multi-Bernoulli Mixture). */
   const PmbmDensity& density() const noexcept { return density_; }
+  /** Current filter time (only meaningful once hasCurrentTime()). */
   Timestamp currentTime() const noexcept { return current_time_; }
+  /** True once the filter time has been initialised by the first predict/processBatch. */
   bool hasCurrentTime() const noexcept { return has_current_time_; }
+  /** The configuration this tracker was constructed with. */
   const Config& config() const noexcept { return cfg_; }
 
-  // Test / introspection hooks.
+  /** Test / introspection hooks. */
   PmbmDensity& mutableDensityForTesting() { return density_; }
 
-  // Optional. When non-null, every incoming measurement in
-  // processBatch is corrected by the provider's per-(sensor,
-  // source_id) published bias before reaching the PMBM update (same
-  // contract as MhtTracker::setSensorBiasProvider / Tracker::
-  // setSensorBiasProvider). Null = bit-identical to legacy.
+  /**
+   * Optional. When non-null, every incoming measurement in
+   * processBatch is corrected by the provider's per-(sensor,
+   * source_id) published bias before reaching the PMBM update (same
+   * contract as MhtTracker::setSensorBiasProvider / Tracker::
+   * setSensorBiasProvider). Null = bit-identical to legacy.
+   */
   void setSensorBiasProvider(const ISensorBiasProvider* provider) {
     bias_provider_ = provider;
   }
 
-  // Optional. Push-based lifecycle observer (Phase 4(B)). After each
-  // processBatch the tracker computes the diff between the prior-scan
-  // emitted track set and the current refreshed aggregated_tracks_,
-  // firing onTrackInitiated (new Tentative), onTrackConfirmed
-  // (new Confirmed OR Tentative→Confirmed transition), onTrackUpdated
-  // (every track present this scan), and onTrackDeleted (id present
-  // prior, absent now — pruned below output_existence_floor). When
-  // null = pull-only mode (legacy, bit-identical to Phase 4(A)).
-  // Trajectory (TPMBM) is accessible via trajectoryFor(id) within
-  // any of these callbacks — the call site holds the dominant
-  // hypothesis until the next predict.
+  /**
+   * Optional. Push-based lifecycle observer (Phase 4(B)). After each
+   * processBatch the tracker computes the diff between the prior-scan
+   * emitted track set and the current refreshed aggregated_tracks_,
+   * firing onTrackInitiated (new Tentative), onTrackConfirmed
+   * (new Confirmed OR Tentative→Confirmed transition), onTrackUpdated
+   * (every track present this scan), and onTrackDeleted (id present
+   * prior, absent now — pruned below output_existence_floor). When
+   * null = pull-only mode (legacy, bit-identical to Phase 4(A)).
+   * Trajectory (TPMBM) is accessible via trajectoryFor(id) within
+   * any of these callbacks — the call site holds the dominant
+   * hypothesis until the next predict.
+   */
   void setTrackSink(ITrackSink* sink) { track_sink_ = sink; }
 
-  // Task 6: optional cooperative stale-signal sink. When non-null, fires
-  // onTrackStale(id, now) once per scan per track whose cooperative own-
-  // identity report is overdue (spec §9c: "we lost comms"). MUST NOT be
-  // wired to anything that reduces existence — pure notification only.
+  /**
+   * Task 6: optional cooperative stale-signal sink. When non-null, fires
+   * onTrackStale(id, now) once per scan per track whose cooperative own-
+   * identity report is overdue (spec §9c: "we lost comms"). MUST NOT be
+   * wired to anything that reduces existence — pure notification only.
+   */
   void setStaleSignalSink(IStaleSignalSink* s) { stale_sink_ = s; }
 
-  // Per-sensor detection model. When set, the cost matrix, new-target
-  // birth weight, and misdetection recursion use the per-(sensor,
-  // model, source_id) (P_D, λ_C) and per-coverage missDetectionProb
-  // instead of the Config-level scalars. The scenario's per-sensor
-  // table is the textbook formulation for multi-sensor PMBM
-  // (García-Fernández 2018 §IV-A); without it, λ_C and P_D are
-  // dimensionally inconsistent across sensors of different MeasurementModels.
-  // Null = fall back to Config::probability_of_detection /
-  // ::clutter_intensity (single-sensor-equivalent behaviour).
+  /**
+   * Per-sensor detection model. When set, the cost matrix, new-target
+   * birth weight, and misdetection recursion use the per-(sensor,
+   * model, source_id) (P_D, λ_C) and per-coverage missDetectionProb
+   * instead of the Config-level scalars. The scenario's per-sensor
+   * table is the textbook formulation for multi-sensor PMBM
+   * (García-Fernández 2018 §IV-A); without it, λ_C and P_D are
+   * dimensionally inconsistent across sensors of different MeasurementModels.
+   * Null = fall back to Config::probability_of_detection /
+   * ::clutter_intensity (single-sensor-equivalent behaviour).
+   */
   void setSensorDetectionModel(std::shared_ptr<ISensorDetectionModel> m) {
     detection_model_ = std::move(m);
   }
 
-  // Task 4: optional sensor-activity port. When null (default) the tracker
-  // behaves exactly as before Task 4 (bit-identical). When set and
-  // cfg_.use_sensor_activity == true, the misdetection step consults the
-  // port to distinguish genuine surveillance misses from idle intervals.
+  /**
+   * Task 4: optional sensor-activity port. When null (default) the tracker
+   * behaves exactly as before Task 4 (bit-identical). When set and
+   * cfg_.use_sensor_activity == true, the misdetection step consults the
+   * port to distinguish genuine surveillance misses from idle intervals.
+   */
   void setSensorActivity(const ISensorActivity* a) { sensor_activity_ = a; }
 
-  // Task A: optional land/coastline clutter prior. When null (default) or
-  // cfg_.use_land_model == false, behaviour is bit-identical to today's.
-  // When set and use_land_model = true, the adaptive-birth intensity is
-  // scaled by (1 − clutterPrior(birth_pos)) for each candidate.
+  /**
+   * Task A: optional land/coastline clutter prior. When null (default) or
+   * cfg_.use_land_model == false, behaviour is bit-identical to today's.
+   * When set and use_land_model = true, the adaptive-birth intensity is
+   * scaled by (1 − clutterPrior(birth_pos)) for each candidate.
+   */
   void setLandModel(const ILandModel* m) { land_model_ = m; }
 
-  // Stage 1 (ADR 0002): optional charted static-obstacle prior. Null (default)
-  // or use_static_obstacle_model == false → bit-identical to today's.
+  /**
+   * Stage 1 (ADR 0002): optional charted static-obstacle prior. Null (default)
+   * or use_static_obstacle_model == false → bit-identical to today's.
+   */
   void setStaticObstacleModel(const IStaticObstacleModel* m) {
     obstacle_model_ = m;
   }
 
-  // Stage 1b: optional live occupancy/structure sink. When set, the per-scan
-  // clutter-labeled feed (the same (position, 1 − r) bundle the feed_clutter_map
-  // producer builds) is ALSO handed to this sink so it can learn persistent
-  // extended structure. Independent of the detection model → NO λ_C coupling.
-  // Null (default) → bit-identical to today's (the producer builds/feeds nothing
-  // unless feed_clutter_map is on). The sink typically also implements
-  // IStaticObstacleModel and is wired via setStaticObstacleModel to close the
-  // loop (learned structure → birth suppression).
+  /**
+   * Stage 1b: optional live occupancy/structure sink. When set, the per-scan
+   * clutter-labeled feed (the same (position, 1 − r) bundle the feed_clutter_map
+   * producer builds) is ALSO handed to this sink so it can learn persistent
+   * extended structure. Independent of the detection model → NO λ_C coupling.
+   * Null (default) → bit-identical to today's (the producer builds/feeds nothing
+   * unless feed_clutter_map is on). The sink typically also implements
+   * IStaticObstacleModel and is wired via setStaticObstacleModel to close the
+   * loop (learned structure → birth suppression).
+   */
   void setLiveOccupancyFeed(ILiveOccupancyFeed* f) { occupancy_feed_ = f; }
 
-  // Next Bernoulli id that will be minted (introspection / tests).
+  /** Next Bernoulli id that will be minted (introspection / tests). */
   BernoulliId nextBernoulliId() const noexcept { return next_bernoulli_id_; }
 
-  // TPMBM (Phase 4) — forward-pass trajectory for a given Bernoulli
-  // id. Walks the MBM, finds the highest-weight global hypothesis
-  // containing that id, returns its trajectory. Empty when (a) the
-  // id is not present in any hypothesis, (b) trajectory_window_scans
-  // is 0 (TPMBM disabled), or (c) the Bernoulli has not yet been
-  // observed (e.g. just-created seed). One-stop accessor for
-  // consumers that want trajectory output without subscribing to
-  // every hypothesis.
+  /**
+   * TPMBM (Phase 4) — forward-pass trajectory for a given Bernoulli
+   * id. Walks the MBM, finds the highest-weight global hypothesis
+   * containing that id, returns its trajectory. Empty when (a) the
+   * id is not present in any hypothesis, (b) trajectory_window_scans
+   * is 0 (TPMBM disabled), or (c) the Bernoulli has not yet been
+   * observed (e.g. just-created seed). One-stop accessor for
+   * consumers that want trajectory output without subscribing to
+   * every hypothesis.
+   */
   std::vector<TrajectoryPoint> trajectoryFor(BernoulliId id) const;
 
-  // Drain + RTS-smooth all currently-live Bernoulli trajectories from
-  // the dominant global hypothesis. For each Bernoulli still in the
-  // MBM, copies its trajectory and applies rtsSmoothTrajectory in
-  // place. Returns the smoothed trajectories keyed by Bernoulli id.
-  //
-  // Used by the bench to compute T-GOSPA on smoothed trajectories
-  // (Phase 6 measurement). Does NOT include Bernoullis already pruned
-  // mid-scenario; for those, the per-scan filtered state already lives
-  // in BenchResult.steps so the raw T-GOSPA still picks them up.
-  //
-  // Empty when TPMBM is disabled (trajectory_window_scans == 0) or no
-  // hypotheses exist.
+  /**
+   * Drain + RTS-smooth all currently-live Bernoulli trajectories from
+   * the dominant global hypothesis. For each Bernoulli still in the
+   * MBM, copies its trajectory and applies rtsSmoothTrajectory in
+   * place. Returns the smoothed trajectories keyed by Bernoulli id.
+   *
+   * Used by the bench to compute T-GOSPA on smoothed trajectories
+   * (Phase 6 measurement). Does NOT include Bernoullis already pruned
+   * mid-scenario; for those, the per-scan filtered state already lives
+   * in BenchResult.steps so the raw T-GOSPA still picks them up.
+   *
+   * Empty when TPMBM is disabled (trajectory_window_scans == 0) or no
+   * hypotheses exist.
+   */
   std::map<BernoulliId, std::vector<TrajectoryPoint>>
       collectSmoothedTrajectories() const;
 
-  // Aggregated single-Track view of the MBM, one entry per unique
-  // Bernoulli id (§3.6 of pmbm-design.md):
-  //   P(exists | id) = Σ_{j: id ∈ j} w^j · r^{j,id}
-  //   mean(id)       = (1 / P(exists)) · Σ w^j · r^{j,id} · μ^{j,id}
-  //   cov(id)        = (1 / P(exists)) · Σ w^j · r^{j,id} · (P^{j,id} +
-  //                                                          dd')
-  // with d = μ^{j,id} − mean(id). Status = Confirmed iff
-  // P(exists) ≥ confirm_threshold; tracks with P(exists) <
-  // output_existence_floor are omitted entirely. TrackId.value reuses
-  // the Bernoulli id so external consumers see a stable, non-reusable
-  // identifier across scans.
+  /**
+   * Aggregated single-Track view of the MBM, one entry per unique
+   * Bernoulli id (§3.6 of pmbm-design.md):
+   *   P(exists | id) = Σ_{j: id ∈ j} w^j · r^{j,id}
+   *   mean(id)       = (1 / P(exists)) · Σ w^j · r^{j,id} · μ^{j,id}
+   *   cov(id)        = (1 / P(exists)) · Σ w^j · r^{j,id} · (P^{j,id} +
+   *                                                          dd')
+   * with d = μ^{j,id} − mean(id). Status = Confirmed iff
+   * P(exists) ≥ confirm_threshold; tracks with P(exists) <
+   * output_existence_floor are omitted entirely. TrackId.value reuses
+   * the Bernoulli id so external consumers see a stable, non-reusable
+   * identifier across scans.
+   */
   const std::vector<Track>& tracks() const;
 
  private:

@@ -15,7 +15,7 @@
 
 namespace navtracker {
 
-// Tuning for the spatial clutter map (see class doc below).
+/** Tuning for the spatial clutter map (see class doc below). */
 struct ClutterMapParams {
   // ENU grid pitch for position-space maps (Position2D /
   // PositionVelocity2D). Cell area = cell_size_m².
@@ -51,91 +51,109 @@ struct ClutterMapParams {
   double max_ratio{64.0};
 };
 
-// Spatially varying clutter intensity — a decorator over a fixed
-// per-sensor detection table (backlog item 5).
-//
-// ## Math
-// Per (SensorKind, MeasurementModel) the model keeps a sparse grid of
-// cells; each cell c holds an EWMA estimate r_c of "clutter evidence
-// per scan landing in c" plus the time of its last touch:
-//
-//   touch at time t with weighted count n = Σ_j w_j over returns in c:
-//     w   = 1 − exp(−(t − t_last)/τ)        (first touch: Δt = prior_dt_s)
-//     r_c ← (1 − w)·r_c + w·n,   t_last ← t
-//
-// Per-return clutter weights w_j come from the producer (MhtTracker
-// labels them from the chosen global hypothesis: w_j = 1 − r of the
-// claiming track or this-scan birth, 1.0 when unclaimed; an empty
-// weight vector means binary labels at 1.0 each). A cell is touched on
-// every scan in which ANY return lands in it: returns claimed by
-// confident tracks contribute ≈ 0, dragging the cell toward zero —
-// evidence the sensor surveys the area and its returns are targets,
-// not clutter. Cells never receiving returns are never created and
-// read back as the table baseline (prior; absence of evidence is not
-// evidence of absence).
-//
-// Query (the virtual paramsFor(Measurement) override):
-//   λ_c        = r_c / A          (A = cell_size² m², or cell width rad)
-//   λ(z)       = interpolation of λ_c at z's position — bilinear over
-//                the 4 surrounding cell centers (position maps), linear
-//                over the 2 adjacent centers with ±π wraparound
-//                (bearing maps); absent cells contribute the baseline.
-//   λ_resolved = clamp(λ(z), baseline·min_ratio, baseline·max_ratio)
-// P_D, max_range_m, and sector fields always come from the wrapped
-// table (source-keyed lookups included); only clutter_intensity is
-// position-resolved.
-//
-// Map spaces: Position2D / PositionVelocity2D → 2-D ENU grid (λ in
-// m⁻²); Bearing2D → 1-D circular azimuth grid in absolute ENU azimuth
-// (λ in rad⁻¹). RangeBearing2D ((m·rad)⁻¹) has no map yet and passes
-// through.
-//
-// ## Assumptions
-// - "1 − existence of the claiming hypothesis" is a usable clutter
-//   weight. Persistent structure that births its own clutter track is
-//   discounted only by that track's (low) existence, so the signal
-//   survives; but a *real* target tracked at low existence (coasting
-//   under occlusion, or trackless because bearings can't initiate) is
-//   charged as clutter too — this is what keeps the bearing map unsafe
-//   (see enable_bearing_map).
-// - Clutter fields move slowly relative to τ (shorelines do; rain
-//   squalls marginal).
-// - Bearing clutter is usefully indexed by absolute azimuth from
-//   ownship — valid while ownship moves slowly relative to τ.
-//
-// ## Rationale
-// Both real datasets (AutoFerry urban channel, philos Boston harbour)
-// show the same failure: clutter is persistent *structured* shoreline
-// return, not uniform Poisson, and feeding its ML-fitted rate into the
-// uniform-λ score collapsed true-track lifetime (measured, evaluation
-// log 2026-06-11). A clutter map keeps the calibrated baseline where
-// nothing has been learned and raises λ only where false returns
-// actually recur — the standard clutter-map CFAR idea transplanted to
-// the MHT score. A decorator (vs a new table type) keeps the fixed
-// path bit-identical when unwrapped and the hot path untouched: the
-// score already calls paramsFor(z).
-//
-// ## Ways to improve / what to test next
-// - Use global-hypothesis association (not the birth-gate proxy) to
-//   label clutter; would catch position-sensor shoreline structure.
-// - Per-source maps (EO vs IR) once per-source clutter measurably
-//   differs; currently kind-wide like the backlog specifies.
-// - Range–bearing product space map for RangeBearing2D sensors.
-// - Forgetting toward the prior for cells unvisited ≫ τ (currently
-//   they keep their last estimate — persistent map memory).
+/**
+ * Spatially varying clutter intensity — a decorator over a fixed
+ * per-sensor detection table (backlog item 5).
+ *
+ * ## Math
+ * Per (SensorKind, MeasurementModel) the model keeps a sparse grid of
+ * cells; each cell c holds an EWMA estimate r_c of "clutter evidence
+ * per scan landing in c" plus the time of its last touch:
+ *
+ *   touch at time t with weighted count n = Σ_j w_j over returns in c:
+ *     w   = 1 − exp(−(t − t_last)/τ)        (first touch: Δt = prior_dt_s)
+ *     r_c ← (1 − w)·r_c + w·n,   t_last ← t
+ *
+ * Per-return clutter weights w_j come from the producer (MhtTracker
+ * labels them from the chosen global hypothesis: w_j = 1 − r of the
+ * claiming track or this-scan birth, 1.0 when unclaimed; an empty
+ * weight vector means binary labels at 1.0 each). A cell is touched on
+ * every scan in which ANY return lands in it: returns claimed by
+ * confident tracks contribute ≈ 0, dragging the cell toward zero —
+ * evidence the sensor surveys the area and its returns are targets,
+ * not clutter. Cells never receiving returns are never created and
+ * read back as the table baseline (prior; absence of evidence is not
+ * evidence of absence).
+ *
+ * Query (the virtual paramsFor(Measurement) override):
+ *   λ_c        = r_c / A          (A = cell_size² m², or cell width rad)
+ *   λ(z)       = interpolation of λ_c at z's position — bilinear over
+ *                the 4 surrounding cell centers (position maps), linear
+ *                over the 2 adjacent centers with ±π wraparound
+ *                (bearing maps); absent cells contribute the baseline.
+ *   λ_resolved = clamp(λ(z), baseline·min_ratio, baseline·max_ratio)
+ * P_D, max_range_m, and sector fields always come from the wrapped
+ * table (source-keyed lookups included); only clutter_intensity is
+ * position-resolved.
+ *
+ * Map spaces: Position2D / PositionVelocity2D → 2-D ENU grid (λ in
+ * m⁻²); Bearing2D → 1-D circular azimuth grid in absolute ENU azimuth
+ * (λ in rad⁻¹). RangeBearing2D ((m·rad)⁻¹) has no map yet and passes
+ * through.
+ *
+ * ## Assumptions
+ * - "1 − existence of the claiming hypothesis" is a usable clutter
+ *   weight. Persistent structure that births its own clutter track is
+ *   discounted only by that track's (low) existence, so the signal
+ *   survives; but a *real* target tracked at low existence (coasting
+ *   under occlusion, or trackless because bearings can't initiate) is
+ *   charged as clutter too — this is what keeps the bearing map unsafe
+ *   (see enable_bearing_map).
+ * - Clutter fields move slowly relative to τ (shorelines do; rain
+ *   squalls marginal).
+ * - Bearing clutter is usefully indexed by absolute azimuth from
+ *   ownship — valid while ownship moves slowly relative to τ.
+ *
+ * ## Rationale
+ * Both real datasets (AutoFerry urban channel, philos Boston harbour)
+ * show the same failure: clutter is persistent *structured* shoreline
+ * return, not uniform Poisson, and feeding its ML-fitted rate into the
+ * uniform-λ score collapsed true-track lifetime (measured, evaluation
+ * log 2026-06-11). A clutter map keeps the calibrated baseline where
+ * nothing has been learned and raises λ only where false returns
+ * actually recur — the standard clutter-map CFAR idea transplanted to
+ * the MHT score. A decorator (vs a new table type) keeps the fixed
+ * path bit-identical when unwrapped and the hot path untouched: the
+ * score already calls paramsFor(z).
+ *
+ * ## Ways to improve / what to test next
+ * - Use global-hypothesis association (not the birth-gate proxy) to
+ *   label clutter; would catch position-sensor shoreline structure.
+ * - Per-source maps (EO vs IR) once per-source clutter measurably
+ *   differs; currently kind-wide like the backlog specifies.
+ * - Range–bearing product space map for RangeBearing2D sensors.
+ * - Forgetting toward the prior for cells unvisited ≫ τ (currently
+ *   they keep their last estimate — persistent map memory).
+ */
 class ClutterMapSensorDetectionModel : public ISensorDetectionModel {
  public:
+  /**
+   * Wrap `inner` (the fixed per-sensor table that supplies the baseline
+   * λ, P_D, and coverage) with a spatial clutter map tuned by `params`.
+   */
   explicit ClutterMapSensorDetectionModel(
       std::shared_ptr<ISensorDetectionModel> inner,
       ClutterMapParams params = {});
 
   using ISensorDetectionModel::paramsFor;
+  /** Kind-wide params — delegates straight to the wrapped table (no map). */
   DetectionParams paramsFor(SensorKind sensor,
                             MeasurementModel model) const override;
+  /** Source-keyed params — delegates straight to the wrapped table (no map). */
   DetectionParams paramsFor(SensorKind sensor, MeasurementModel model,
                             const std::string& source_id) const override;
+  /**
+   * Position-resolved params for measurement `z`: the wrapped table's
+   * entry with `clutter_intensity` replaced by the map-interpolated,
+   * ratio-clamped λ(z). See the class Math section.
+   */
   DetectionParams paramsFor(const Measurement& z) const override;
 
+  /**
+   * Fold one scan's per-sensor observations into the EWMA cells. Touches
+   * every cell that received a return this scan, updating r_c with the
+   * producer's per-return clutter weights (see class Math).
+   */
   void observe(const std::vector<ScanObservation>& by_sensor) override;
 
  private:

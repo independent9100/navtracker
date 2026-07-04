@@ -10,17 +10,19 @@
 
 namespace navtracker {
 
-// Populate the ENU position + 2D covariance fields of a SourceTouch
-// from a Measurement, projecting (range, bearing) into ENU when the
-// measurement model carries no direct ENU coordinates. Used by
-// Tracker / MhtTracker so the provenance side-channel (consumed by
-// AisArpaPairExtractor and SensorBiasPairExtractor) is non-empty
-// regardless of the measurement model.
-//
-// Bearing2D is left at (0,0) — no observable range, no ENU position
-// the touch can carry. Consumers that handle bearings (the heading-
-// bias estimator's bearing variant) read the bearing from the
-// measurement directly, not from the touch.
+/**
+ * Populate the ENU position + 2D covariance fields of a SourceTouch
+ * from a Measurement, projecting (range, bearing) into ENU when the
+ * measurement model carries no direct ENU coordinates. Used by
+ * Tracker / MhtTracker so the provenance side-channel (consumed by
+ * AisArpaPairExtractor and SensorBiasPairExtractor) is non-empty
+ * regardless of the measurement model.
+ *
+ * Bearing2D is left at (0,0) — no observable range, no ENU position
+ * the touch can carry. Consumers that handle bearings (the heading-
+ * bias estimator's bearing variant) read the bearing from the
+ * measurement directly, not from the touch.
+ */
 inline void fillSourceTouchEnu(Track::SourceTouch& touch,
                                const Measurement& z) {
   switch (z.model) {

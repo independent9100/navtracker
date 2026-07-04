@@ -13,6 +13,7 @@
 
 namespace navtracker {
 
+/** Tuning for StaticObstacleModel's soft keep-clear ramp. */
 struct StaticObstacleParams {
   // Max soft suppression at the outer edge of the footprint. MUST be strictly
   // below the tracker's static_obstacle_hard_gate (default 0.95) so the
@@ -21,18 +22,21 @@ struct StaticObstacleParams {
   double soft_max = 0.9;
 };
 
-// Concrete static-obstacle model: holds charted obstacles (geodetic) + the
-// working datum, precomputing their ENU positions for fast proximity queries.
-// birthSuppression is a soft ramp c(d) over distance d to the nearest obstacle:
-//   d <= R_hard            -> 1.0                              (footprint core)
-//   R_hard < d <= R_soft   -> soft_max*(R_soft-d)/(R_soft-R_hard)  (buffer ramp)
-//   d > R_soft             -> 0.0                              (clear water)
-// with R_hard = footprint_radius_m + position_uncertainty_m and
-//      R_soft  = max(keep_clear_radius_m, R_hard).
-// Pure: no I/O, no wall-clock, no RNG. Mirrors CoastlineModel. On datum
-// recenter the ENU cache is rebuilt (deterministic).
+/**
+ * Concrete static-obstacle model: holds charted obstacles (geodetic) + the
+ * working datum, precomputing their ENU positions for fast proximity queries.
+ * birthSuppression is a soft ramp c(d) over distance d to the nearest obstacle:
+ *   d <= R_hard            -> 1.0                              (footprint core)
+ *   R_hard < d <= R_soft   -> soft_max*(R_soft-d)/(R_soft-R_hard)  (buffer ramp)
+ *   d > R_soft             -> 0.0                              (clear water)
+ * with R_hard = footprint_radius_m + position_uncertainty_m and
+ *      R_soft  = max(keep_clear_radius_m, R_hard).
+ * Pure: no I/O, no wall-clock, no RNG. Mirrors CoastlineModel. On datum
+ * recenter the ENU cache is rebuilt (deterministic).
+ */
 class StaticObstacleModel : public IStaticObstacleModel, public IDatumChangeSink {
  public:
+  /** Take the charted obstacles + working datum; cap soft_max and cache ENU. */
   StaticObstacleModel(std::vector<StaticObstacle> obstacles, geo::Datum datum,
                       StaticObstacleParams params = {})
       : obstacles_(std::move(obstacles)), datum_(datum), params_(params) {
@@ -49,6 +53,7 @@ class StaticObstacleModel : public IStaticObstacleModel, public IDatumChangeSink
     rebuildEnu();
   }
 
+  /** Soft keep-clear ramp c(d) at `enu_xy`; max over all obstacles (see class doc). */
   double birthSuppression(const Eigen::Vector2d& enu_xy) const override {
     double c = 0.0;
     for (std::size_t i = 0; i < enu_.size(); ++i) {
@@ -69,10 +74,12 @@ class StaticObstacleModel : public IStaticObstacleModel, public IDatumChangeSink
     return c;
   }
 
+  /** The charted obstacles this model exposes as hazards. */
   const std::vector<StaticObstacle>& obstacles() const override {
     return obstacles_;
   }
 
+  /** IDatumChangeSink: adopt the new datum and rebuild the ENU cache. */
   void onDatumRecentered(const geo::Datum& /*old_datum*/,
                          const geo::Datum& new_datum) override {
     datum_ = new_datum;

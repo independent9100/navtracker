@@ -14,21 +14,23 @@
 
 namespace navtracker {
 
-// Detection-model parameters for one sensor: probability of detection
-// and spatial clutter intensity. λ_C is expressed in the *measurement-
-// space* units appropriate for the sensor's MeasurementModel:
-//
-//   Position2D       → m^-2     (2-d ENU position)
-//   PositionVelocity → m^-2     (PV measurements; clutter still over the
-//                                 2-d position fold)
-//   RangeBearing2D   → (m·rad)^-1
-//   Bearing2D        → rad^-1
-//
-// This is the textbook formulation: the MHT/JIPDA branch score
-//   s = log P_D + log p(z | x) − log λ_C
-// is only dimensionally consistent if λ_C and p(z|x) share units; and
-// p(z|x) lives in the measurement's natural space. A single global
-// scalar λ_C therefore cannot be correct across mixed sensors.
+/**
+ * Detection-model parameters for one sensor: probability of detection
+ * and spatial clutter intensity. λ_C is expressed in the *measurement-
+ * space* units appropriate for the sensor's MeasurementModel:
+ *
+ *   Position2D       → m^-2     (2-d ENU position)
+ *   PositionVelocity → m^-2     (PV measurements; clutter still over the
+ *                                 2-d position fold)
+ *   RangeBearing2D   → (m·rad)^-1
+ *   Bearing2D        → rad^-1
+ *
+ * This is the textbook formulation: the MHT/JIPDA branch score
+ *   s = log P_D + log p(z | x) − log λ_C
+ * is only dimensionally consistent if λ_C and p(z|x) share units; and
+ * p(z|x) lives in the measurement's natural space. A single global
+ * scalar λ_C therefore cannot be correct across mixed sensors.
+ */
 struct DetectionParams {
   double probability_of_detection;
   double clutter_intensity;
@@ -66,56 +68,66 @@ struct DetectionParams {
   double gate_threshold{0.0};
 };
 
-// Per-sensor detection model. Strategy: at every per-measurement score
-// step the tracker asks `paramsFor(z)` to get the (P_D, λ_C) pair for
-// *this* sensor in *this* sensor's units. Online variants update from
-// the per-scan outcome via `observe(...)`.
-//
-// Rationale: this is the multi-sensor JIPDA / PMBM port. It subsumes the
-// earlier single-sensor IClutterModel:
-//  - FixedSensorDetectionModel(defaults) reproduces a single-sensor
-//    constant λ_C.
-//  - FixedSensorDetectionModel with a per-(sensor,model) table is the
-//    correct multi-sensor formulation.
-//  - AdaptiveSensorDetectionModel runs a per-bucket EWMA — no more
-//    cross-sensor pollution (a noisy camera doesn't lift the radar
-//    estimate).
+/**
+ * Per-sensor detection model. Strategy: at every per-measurement score
+ * step the tracker asks `paramsFor(z)` to get the (P_D, λ_C) pair for
+ * *this* sensor in *this* sensor's units. Online variants update from
+ * the per-scan outcome via `observe(...)`.
+ *
+ * Rationale: this is the multi-sensor JIPDA / PMBM port. It subsumes the
+ * earlier single-sensor IClutterModel:
+ *  - FixedSensorDetectionModel(defaults) reproduces a single-sensor
+ *    constant λ_C.
+ *  - FixedSensorDetectionModel with a per-(sensor,model) table is the
+ *    correct multi-sensor formulation.
+ *  - AdaptiveSensorDetectionModel runs a per-bucket EWMA — no more
+ *    cross-sensor pollution (a noisy camera doesn't lift the radar
+ *    estimate).
+ */
 class ISensorDetectionModel {
  public:
   virtual ~ISensorDetectionModel() = default;
 
-  // Lookup (P_D, λ_C) for one (sensor, model) key. MUST be O(1) —
-  // called once per (leaf, gated-measurement) pair inside
-  // TrackTree::branch, and once per distinct scan sensor for the miss
-  // branch.
+  /**
+   * Lookup (P_D, λ_C) for one (sensor, model) key. MUST be O(1) —
+   * called once per (leaf, gated-measurement) pair inside
+   * TrackTree::branch, and once per distinct scan sensor for the miss
+   * branch.
+   */
   virtual DetectionParams paramsFor(SensorKind sensor,
                                     MeasurementModel model) const = 0;
 
-  // Source-aware lookup. Two physical sensors can share a SensorKind
-  // (EO and IR cameras are both SensorKind::EoIr) yet have very
-  // different (P_D, λ_C); Measurement::source_id distinguishes them.
-  // Default: ignore the source and fall back to the kind-wide entry —
-  // models without per-source calibration behave exactly as before.
+  /**
+   * Source-aware lookup. Two physical sensors can share a SensorKind
+   * (EO and IR cameras are both SensorKind::EoIr) yet have very
+   * different (P_D, λ_C); Measurement::source_id distinguishes them.
+   * Default: ignore the source and fall back to the kind-wide entry —
+   * models without per-source calibration behave exactly as before.
+   */
   virtual DetectionParams paramsFor(SensorKind sensor, MeasurementModel model,
                                     const std::string& /*source_id*/) const {
     return paramsFor(sensor, model);
   }
 
-  // Measurement-resolved lookup — the hot-path entry point used by the
-  // per-(leaf, measurement) score step. Virtual so spatially-varying
-  // models can resolve λ_C *at the measurement's position* (clutter
-  // map, backlog item 5); the default ignores position and reproduces
-  // the (sensor, model, source) table lookup exactly.
+  /**
+   * Measurement-resolved lookup — the hot-path entry point used by the
+   * per-(leaf, measurement) score step. Virtual so spatially-varying
+   * models can resolve λ_C *at the measurement's position* (clutter
+   * map, backlog item 5); the default ignores position and reproduces
+   * the (sensor, model, source) table lookup exactly.
+   */
   virtual DetectionParams paramsFor(const Measurement& z) const {
     return paramsFor(z.sensor, z.model, z.source_id);
   }
 
-  // Detection probability for the MISS branch: "could this sensor have
-  // detected a target at track_pos_enu at all?". Coverage-conditioned:
-  // 0 beyond the entry's max_range_m about the sensor position or
-  // outside its azimuth sector, the table P_D inside. log(1 − 0) = 0 —
-  // an out-of-coverage scan charges no miss penalty and leaves IPDA
-  // existence untouched.
+  /**
+   * Detection probability for the MISS branch: "could this sensor have
+   * detected a target at track_pos_enu at all?". Coverage-conditioned:
+   * 0 beyond the entry's max_range_m about the sensor position or
+   * outside its azimuth sector, the table P_D inside. log(1 − 0) = 0 —
+   * an out-of-coverage scan charges no miss penalty and leaves IPDA
+   * existence untouched.
+   */
   double missDetectionProbability(SensorKind sensor, MeasurementModel model,
                                   const Eigen::Vector2d& track_pos_enu,
                                   const Eigen::Vector2d& sensor_pos_enu,
@@ -133,19 +145,21 @@ class ISensorDetectionModel {
     return p.probability_of_detection;
   }
 
-  // Per-scan coverage footprint of the sensor that produced a bundle, for
-  // COVERAGE-AWARE occupancy decay (R8.4 / Stage 1b-ii): a live-occupancy cell
-  // forgets only when it was OBSERVABLE (inside this footprint) and returned
-  // empty — absence of returns where the sensor did not look is not evidence of
-  // vacancy. `valid == false` (the default) ⇒ full coverage assumed, i.e.
-  // universal decay, i.e. the legacy behaviour — bit-identical for synthetic /
-  // unwired feeds that supply no footprint. A disc is the degenerate full-circle
-  // sector (`sector_width_rad == kFullCircleRad`). Same angle/range convention as
-  // DetectionParams: ENU math azimuth (atan2(dy,dx), CCW from east); the
-  // footprint is expressed in the feed's ENU frame (the consumer re-expresses it
-  // in its own frame; angles are datum-relative — exact for a fixed datum).
-  // Under-estimated coverage is the SAFE error direction (no decay ⇒ hazards
-  // persist longer, never the reverse).
+  /**
+   * Per-scan coverage footprint of the sensor that produced a bundle, for
+   * COVERAGE-AWARE occupancy decay (R8.4 / Stage 1b-ii): a live-occupancy cell
+   * forgets only when it was OBSERVABLE (inside this footprint) and returned
+   * empty — absence of returns where the sensor did not look is not evidence of
+   * vacancy. `valid == false` (the default) ⇒ full coverage assumed, i.e.
+   * universal decay, i.e. the legacy behaviour — bit-identical for synthetic /
+   * unwired feeds that supply no footprint. A disc is the degenerate full-circle
+   * sector (`sector_width_rad == kFullCircleRad`). Same angle/range convention as
+   * DetectionParams: ENU math azimuth (atan2(dy,dx), CCW from east); the
+   * footprint is expressed in the feed's ENU frame (the consumer re-expresses it
+   * in its own frame; angles are datum-relative — exact for a fixed datum).
+   * Under-estimated coverage is the SAFE error direction (no decay ⇒ hazards
+   * persist longer, never the reverse).
+   */
   struct CoverageSector {
     bool valid{false};
     Eigen::Vector2d sensor_enu{Eigen::Vector2d::Zero()};
@@ -153,7 +167,7 @@ class ISensorDetectionModel {
     double sector_center_rad{0.0};
     double sector_width_rad{DetectionParams::kFullCircleRad};
 
-    // Is ENU point `p` (SAME frame as `sensor_enu`) inside the footprint?
+    /** Is ENU point `p` (SAME frame as `sensor_enu`) inside the footprint? */
     bool covers(const Eigen::Vector2d& p) const {
       const Eigen::Vector2d d = p - sensor_enu;
       if (d.norm() > max_range_m) return false;
@@ -166,23 +180,25 @@ class ISensorDetectionModel {
       return true;
     }
 
-    // Self-estimate a coverage footprint from the returns a sensor produced this
-    // scan (the same self-estimation pattern as the clutter-adaptive bar — no
-    // configured sector, portable across datasets). The swept sector is the arc
-    // of the largest CONTIGUOUS cluster of return bearings about `sensor`,
-    // widened by `az_pad_rad`; range = the farthest return IN that cluster,
-    // scaled by (1 + `range_pad_frac`).
-    //
-    // Clustering matters: a physical burst sweeps only a small arc, so return
-    // bearings separated by more than `cluster_gap_rad` are SEPARATE echo
-    // clusters that merely share one timestamp (measured on philos: 5–17 % of
-    // bursts are multi-cluster with 80–169° internal gaps). Claiming the unswept
-    // arc BETWEEN clusters as observed would decay cells the sensor never looked
-    // at — over-claiming, the unsafe direction. Keeping only the largest cluster
-    // (others are credited by their own narrower bursts) UNDER-estimates coverage
-    // instead, the safe direction: cells outside the estimate don't decay, so
-    // hazards persist rather than being wrongly forgotten. Empty ⇒ invalid
-    // (valid=false ⇒ the consumer assumes full coverage).
+    /**
+     * Self-estimate a coverage footprint from the returns a sensor produced this
+     * scan (the same self-estimation pattern as the clutter-adaptive bar — no
+     * configured sector, portable across datasets). The swept sector is the arc
+     * of the largest CONTIGUOUS cluster of return bearings about `sensor`,
+     * widened by `az_pad_rad`; range = the farthest return IN that cluster,
+     * scaled by (1 + `range_pad_frac`).
+     *
+     * Clustering matters: a physical burst sweeps only a small arc, so return
+     * bearings separated by more than `cluster_gap_rad` are SEPARATE echo
+     * clusters that merely share one timestamp (measured on philos: 5–17 % of
+     * bursts are multi-cluster with 80–169° internal gaps). Claiming the unswept
+     * arc BETWEEN clusters as observed would decay cells the sensor never looked
+     * at — over-claiming, the unsafe direction. Keeping only the largest cluster
+     * (others are credited by their own narrower bursts) UNDER-estimates coverage
+     * instead, the safe direction: cells outside the estimate don't decay, so
+     * hazards persist rather than being wrongly forgotten. Empty ⇒ invalid
+     * (valid=false ⇒ the consumer assumes full coverage).
+     */
     static CoverageSector fromReturns(
         const Eigen::Vector2d& sensor,
         const std::vector<Eigen::Vector2d>& points, double az_pad_rad = 0.0,
@@ -266,10 +282,12 @@ class ISensorDetectionModel {
     }
   };
 
-  // One bucket of post-scan evidence, partitioned by (sensor, model).
-  // The trailing fields (time, clutter_*, bearings, coverage) feed spatial
-  // clutter / occupancy estimators; they are additive so existing aggregate
-  // initialisers `{sensor, model, n, positions}` stay valid.
+  /**
+   * One bucket of post-scan evidence, partitioned by (sensor, model).
+   * The trailing fields (time, clutter_*, bearings, coverage) feed spatial
+   * clutter / occupancy estimators; they are additive so existing aggregate
+   * initialisers `{sensor, model, n, positions}` stay valid.
+   */
   struct ScanObservation {
     SensorKind sensor;
     MeasurementModel model;
@@ -296,7 +314,7 @@ class ISensorDetectionModel {
     CoverageSector coverage;
   };
 
-  // Feed the scan outcome for adaptation. Fixed models ignore.
+  /** Feed the scan outcome for adaptation. Fixed models ignore. */
   virtual void observe(const std::vector<ScanObservation>& by_sensor) = 0;
 };
 

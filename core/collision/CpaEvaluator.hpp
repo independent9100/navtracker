@@ -13,6 +13,9 @@ namespace navtracker {
 class TrackManager;
 class OwnShipProvider;
 
+/** Tuning for `CpaEvaluator`: the collision-alarm distance, the enter/exit
+ *  probability hysteresis band, and whether Tentative tracks and per-cycle
+ *  Updated events participate. */
 struct CpaEvaluatorConfig {
   double d_threshold_m{500.0};
   double enter_probability{0.5};
@@ -21,32 +24,39 @@ struct CpaEvaluatorConfig {
   bool   emit_updates{false};
 };
 
-// Walks own-ship × each risk-eligible track (Confirmed or Coasting by
-// default; Tentative too when evaluate_tentative) at every evaluate(t)
-// call, computes CPA with uncertainty, and emits CollisionRiskEvents on
-// per-pair Entered/Exited transitions (with hysteresis), plus optional
-// Updated events when configured. See spec
-// 2026-06-04-track-and-collision-risk-sinks-design.md §5.
-//
-// Assumptions:
-//   1. provider.latest() returns the most recent own-ship pose.
-//   2. Track ids never reused after deletion (matches TrackManager
-//      invariant).
+/**
+ * Walks own-ship × each risk-eligible track (Confirmed or Coasting by
+ * default; Tentative too when evaluate_tentative) at every evaluate(t)
+ * call, computes CPA with uncertainty, and emits CollisionRiskEvents on
+ * per-pair Entered/Exited transitions (with hysteresis), plus optional
+ * Updated events when configured. See spec
+ * 2026-06-04-track-and-collision-risk-sinks-design.md §5.
+ *
+ * Assumptions:
+ *   1. provider.latest() returns the most recent own-ship pose.
+ *   2. Track ids never reused after deletion (matches TrackManager
+ *      invariant).
+ */
 class CpaEvaluator {
  public:
   CpaEvaluator(const TrackManager& manager,
                const OwnShipProvider& provider,
                CpaEvaluatorConfig cfg = {});
 
+  /** Register the sink that receives CollisionRiskEvents; null = no emission. */
   void setSink(ICollisionRiskSink* sink) { sink_ = sink; }
 
-  // Run one evaluation pass. No-op if no own-ship pose is available.
+  /** Run one evaluation pass. No-op if no own-ship pose is available. */
   void evaluate(Timestamp t);
 
   // Diagnostics.
+  /** Count of Entered transitions emitted so far. */
   std::size_t entered() const { return n_entered_; }
+  /** Count of Exited transitions emitted so far. */
   std::size_t exited()  const { return n_exited_; }
+  /** Count of Updated events emitted so far. */
   std::size_t updated() const { return n_updated_; }
+  /** Number of (own-ship × track) pairs currently inside the risk band. */
   std::size_t riskyPairs() const { return state_.size(); }
 
  private:
