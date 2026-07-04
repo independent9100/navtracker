@@ -541,6 +541,23 @@ structure. It wears three faces: `IStaticObstacleModel` (birth suppression),
 `IDatumChangeSink`. Its `LiveOccupancyParams` (`LiveOccupancyModel.hpp:20`) has
 grid/EWMA/persistence knobs.
 
+Two optional **corroboration inputs** discriminate real structure from a departed
+vessel that pinned a cell:
+
+- `setChartedStructure(points)` — a charted structure point cloud (piers/wharves
+  densified to points). An emitted hazard within `chart_corroboration_radius_m`
+  (default 100 m) of a charted point is labelled *corroborated* and is held
+  regardless of the camera (evidence precedence).
+- `observeCamera(frame)` — one live camera frame (own-ship ENU, absolute-bearing
+  detections, FOV, match tolerance). A structure cell the camera watches (in FOV,
+  live frame) with no detection at its bearing for `camera_empty_sustain_s`
+  (default 2 s) is *camera-observed-empty*. This is label-only by default. Setting
+  `evict_camera_empty = true` promotes it to **behaviour**: a camera-observed-empty,
+  chart-UNconfirmed cell whose streak is still recent (`camera_empty_recency_window_s`,
+  default 5 s) is EVICTED — its persistence is spent so the frozen pin cannot
+  re-emit. Eviction is conservation-safe (suppression is re-derived from the
+  post-eviction hazard set) and inert until `observeCamera` is fed.
+
 > **Maturity.** This detector is under active development — its design of record
 > and remaining increments are in
 > `docs/superpowers/plans/2026-07-03-stage1b-ii-structure-detector.md` (and the

@@ -8,6 +8,72 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-04 — Stage 1b-ii increment 6: camera corroboration (ii) — eviction as BEHAVIOUR [Cl-3]
+
+Increment (i) LABELLED a camera-observed-empty cell; increment (ii) makes it act.
+New `LiveOccupancyParams.evict_camera_empty` (default false) + `camera_empty_
+recency_window_s` (default 5 s). Eviction is a pre-pass in `observe()`: a structure
+cell whose per-cell observed-empty streak is matured (≥ sustain) AND recent (last
+frame within the window of the scan time) AND whose component is chart-UNconfirmed
+has its persistence **spent (erased)**, not merely its hazard dropped. The erase is
+load-bearing: coverage-aware decay FREEZES an unobserved departed pin (returns cease
+while the cell is outside the swept sector), so dropping only the hazard lets the
+frozen persistence re-emit it next scan — a blinker. Evidence is keyed by CELL and
+accrues while the cell is off-stage, so eviction fires the instant a flickering cell
+re-enters (fixing the increment-i loiterer coincidence). Evidence precedence:
+chart-confirmed → held regardless of camera. Conservation-safe **by construction**:
+suppression is re-derived from the post-eviction hazard set, so lifting it can only
+free a birth, never orphan one. (Refactor: extracted `structureComponents()`, shared
+by recompute + the eviction pre-pass.)
+
+**Synthetic PROMOTION GATE** (`test_live_occupancy_model.cpp`; correctness lives
+here, per the circularity rule — the philos clips have no truth). 6 eviction unit
+tests (departed-evicts + no-blink, chart-held, keyed-by-cell fires on re-entry,
+recency ignores stale, off-is-inert, blind-region-spared) plus 2 scenario gates:
+- `EvictionSceneDepartedEvictsHeldStructuresStayFlat` — three co-present frozen
+  structures (departed/uncharted, chart-held, camera-blind), eviction A/B. Departed
+  suppression → **exactly 0** (departed-evicts + conservation); both held structures
+  **byte-identical** on vs off (= *tracks_on_keep flat*, and proves no cross-talk).
+- `CameraEvictionSurvivesAdaptiveBarFlicker` — the loiterer pathology as a
+  DETERMINISTIC regression: a frozen pin blinks out of the structure set as the
+  clutter-adaptive bar rises with the live-cell median, matures its streak
+  off-stage, and is evicted on re-entry (proven non-vacuous — flipping the flag off
+  makes the pin re-emerge when the bar falls → RED).
+
+**Real-data DEMO** (sunset_cruise, coverage+chart+camera, eviction A/B;
+`test_philos_occupancy_coverage_6c.cpp`). Total hazard-scans **8114 → 7722** (−392,
+−4.8 %). Per region (before/after the departure time):
+- `ferry_v1_a` (the ferry's OUTBOUND berth, vacated after its t≈98 move): **after
+  t98 180 → 42** — the clean departed-evicts (a real vessel that moved, its vacated
+  berth camera-observed-empty). The robust demo.
+- `loiterer_v2`: **before t100 121 → 121** (retained — the vessel is still present,
+  the camera sees detections at its bearing, the streak resets, so it is correctly
+  NOT evicted); after t100 1 → 0.
+- `astern_blob` (chart-confirmed, 16 m): **31 → 31** held (evidence precedence).
+
+**Honest caveats (Layer-2 / truth questions, recorded not hidden):**
+1. The loiterer is NOT the real-data eviction demo. In this config it is not a
+   persistent post-departure phantom — the adaptive bar fades it (off has just 1
+   hazard-scan after t100), so there is essentially nothing to evict there. Its
+   pathology (frozen pin flickering under the adaptive bar) is proven on the
+   SYNTHETIC flicker gate instead. This corrects the increment-(i) framing that
+   the loiterer's 1/122 flag was a coincidence to be fixed — 121/122 of its
+   hazard-scans are *before* departure, where non-eviction is correct.
+2. Eviction also removed ~145 `ferry_v1_a` hazards BEFORE the move (t<98, 358 → 213),
+   where the camera intermittently saw the docked berth empty for ≥ sustain. Whether
+   that is correct (the ferry is tracked elsewhere / the berth pin is already
+   phantom) or over-eviction of a present-but-unseen vessel needs kinematic truth —
+   a Layer-2 measurement. The 2 s sustain guards single misses, not a multi-second
+   detection gap on a docked vessel.
+
+**Deferred:** no bench `Config` arm — the bench Sweep does not feed camera to the
+occupancy model (observeCamera is wired only in the replay harness), so a bench
+evict arm would be inert; it lands when camera enters the Sweep for the Layer-2
+HAXR-hours A/B (increment 8). Backlog (own small fix): a frozen cell blinking in/out
+of the structure set as the adaptive-bar median moves = hazards blinking in operator
+output regardless of camera → fix with hysteresis on structure-set membership
+(enter/exit thresholds, the CpaEvaluator pattern). Full suite green.
+
 ## 2026-07-04 — Stage 1b-ii increment 6: camera corroboration (i) — observed-empty flags vacated cells radar+chart could not resolve [Cl-3]
 
 The second corroboration source (increment 6, label-only stage), and the one that

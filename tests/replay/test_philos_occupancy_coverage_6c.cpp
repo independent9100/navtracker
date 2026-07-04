@@ -484,4 +484,119 @@ TEST(PhilosCoverageDecay6c, SunsetCameraObservedEmptyFlagsVacatedCells) {
       << "astern_blob (out of center FOV) was camera-flagged — FOV gate leaked";
 }
 
+// ── increment (ii): camera EVICTION as BEHAVIOUR — real-data DEMO (A/B) ──
+// Coverage detector + chart + camera on sunset_cruise, eviction OFF vs ON (the
+// only variable). Ground truth from the labels + 6c measurements: the loiterer
+// (rank202, returns cease ~t94, uncharted, 134 m from charted structure) and the
+// ferry's vacated OUTBOUND berth (ferry_v1_a, uncharted, camera-observed-empty)
+// are DEPARTED vessels that coverage-aware decay + chart could NOT clear (swept
+// 0/283; chart abstains). Camera eviction, keyed by cell, spends their frozen
+// pins — including the loiterer, whose intermittent (adaptive-bar-flicker) hazard
+// under-flagged the label-only increment (i) but is caught here on re-entry.
+// astern_blob is chart-CONFIRMED (16 m, 31/31) → HELD regardless of camera
+// (evidence precedence). This is a DEMONSTRATION on real data; promotion gates on
+// the synthetic model scenario (LiveOccupancyModel.EvictionScene* + adaptive-bar
+// flicker), per the circularity rule.
+TEST(PhilosCoverageDecay6c, SunsetCameraEvictionRemovesDepartedPinsHoldsChartStructure) {
+  const ClipRun off = replay_test::runClip(
+      "sunset_cruise", "imm_cv_ct_pmbm_occupancy_detector_coverage",
+      /*load_chart_structure=*/true, /*load_camera=*/true, /*evict_camera=*/false);
+  if (!off.valid) GTEST_SKIP() << "sunset_cruise fixtures not reachable";
+  const ClipRun on = replay_test::runClip(
+      "sunset_cruise", "imm_cv_ct_pmbm_occupancy_detector_coverage",
+      /*load_chart_structure=*/true, /*load_camera=*/true, /*evict_camera=*/true);
+  ASSERT_TRUE(on.valid);
+  const auto labels = replay_test::loadLabels("sunset_cruise_labels.csv");
+  ASSERT_FALSE(labels.empty());
+
+  auto totalHaz = [](const ClipRun& r) {
+    long n = 0;
+    for (const auto& s : r.history) n += static_cast<long>(s.hazards.size());
+    return n;
+  };
+  auto hazAt = [&](const ClipRun& r, const ExistenceLabel& l) {
+    const Eigen::Vector2d c = labelEnu(r.datum, l);
+    long n = 0;
+    for (const auto& s : r.history)
+      if (hazardAt(s, c, l.radius_m)) ++n;
+    return n;
+  };
+
+  const ExistenceLabel *loit = nullptr, *ferry = nullptr, *astern = nullptr;
+  for (const auto& l : labels) {
+    if (l.region_id == "loiterer_v2") loit = &l;
+    if (l.region_id == "ferry_v1_a") ferry = &l;
+    if (l.region_id == "astern_blob") astern = &l;
+  }
+  ASSERT_NE(loit, nullptr);
+  ASSERT_NE(ferry, nullptr);
+  ASSERT_NE(astern, nullptr);
+
+  const long haz_off = totalHaz(off), haz_on = totalHaz(on);
+  const long loit_off = hazAt(off, *loit), loit_on = hazAt(on, *loit);
+  const long ferry_off = hazAt(off, *ferry), ferry_on = hazAt(on, *ferry);
+  const long astern_off = hazAt(off, *astern), astern_on = hazAt(on, *astern);
+  std::cout
+      << "\n=== increment(ii) sunset_cruise camera EVICTION A/B (coverage+chart+camera) ==="
+      << "\n  total hazard-scans:                off=" << haz_off << " on=" << haz_on
+      << "\n  loiterer_v2  (uncharted, departed): off=" << loit_off << " on=" << loit_on
+      << "\n  ferry_v1_a   (uncharted, vacated) : off=" << ferry_off << " on=" << ferry_on
+      << "\n  astern_blob  (chart-confirmed)    : off=" << astern_off << " on=" << astern_on
+      << "\n" << std::flush;
+
+  // Hazard-scans in a region, split at a departure time `t_dep` into
+  // {before, after}. The AFTER window is the departed/vacated phantom (camera
+  // sees it empty → the eviction target); the BEFORE window is the vessel still
+  // present (camera sees detections → correctly NOT evicted).
+  auto splitAt = [&](const ClipRun& r, const ExistenceLabel& l, double t_dep) {
+    const Eigen::Vector2d c = labelEnu(r.datum, l);
+    std::pair<long, long> pp{0, 0};
+    for (const auto& s : r.history) {
+      if (!hazardAt(s, c, l.radius_m)) continue;
+      ((s.t_unix - r.clip_start_unix) < t_dep ? pp.first : pp.second)++;
+    }
+    return pp;
+  };
+  const auto loit_off_pp = splitAt(off, *loit, 100.0);   // loiterer clean-empty at t100
+  const auto loit_on_pp = splitAt(on, *loit, 100.0);
+  const auto ferry_off_pp = splitAt(off, *ferry, 98.0);  // ferry vacates berth-a at t98
+  const auto ferry_on_pp = splitAt(on, *ferry, 98.0);
+  std::cout
+      << "  loiterer   before/after t100:  off=" << loit_off_pp.first << "/"
+      << loit_off_pp.second << "  on=" << loit_on_pp.first << "/" << loit_on_pp.second
+      << "\n  ferry_v1_a before/after t98:   off=" << ferry_off_pp.first << "/"
+      << ferry_off_pp.second << "  on=" << ferry_on_pp.first << "/" << ferry_on_pp.second
+      << "\n" << std::flush;
+
+  // What this DEMONSTRATES on real data (correctness is gated on the synthetic
+  // model scenario, per the circularity rule — this clip has no truth):
+  //
+  // (1) Eviction removes real phantom mass overall (392 hazard-scans here).
+  EXPECT_LT(haz_on, haz_off) << "eviction removed no hazard mass";
+  // (2) The clean departed-evicts: the ferry's OUTBOUND berth AFTER it vacates
+  //     (t≥98) — a real vessel that moved, now camera-observed-empty — is
+  //     materially cleared (180 → 42 here). This is the robust real-data demo.
+  EXPECT_LT(ferry_on_pp.second, ferry_off_pp.second)
+      << "vacated ferry berth (post-move phantom) not reduced by eviction";
+  // (3) Eviction RESPECTS a present vessel: the loiterer's BEFORE-departure
+  //     hazards (vessel still there, camera sees detections at its bearing → the
+  //     streak resets → never matured) are retained, not wrongly evicted.
+  EXPECT_GE(loit_on_pp.first, loit_off_pp.first)
+      << "eviction wrongly removed hazards while the vessel was still present";
+  // (4) Chart-confirmed structure is HELD regardless of camera (evidence
+  //     precedence) — astern_blob is untouched (31 → 31 here).
+  EXPECT_GE(astern_on, astern_off) << "chart-confirmed astern_blob wrongly evicted";
+  EXPECT_GT(astern_on, 0);
+
+  // HONEST caveats recorded for the eval-log (Layer-2 / truth questions):
+  //  • The loiterer is NOT a persistent post-departure phantom in this config —
+  //    the adaptive bar fades it (off has just 1 hazard-scan after t100), so
+  //    there is almost nothing for eviction to remove there; the SYNTHETIC
+  //    flicker gate carries the loiterer pathology instead.
+  //  • Eviction also removed ~145 ferry hazards BEFORE the move (t<98), where the
+  //    camera intermittently saw the docked berth empty. Whether that is correct
+  //    (ferry tracked, or the berth pin is already phantom) or over-eviction of a
+  //    present-but-unseen vessel needs kinematic truth — a Layer-2 measurement.
+}
+
 }  // namespace navtracker

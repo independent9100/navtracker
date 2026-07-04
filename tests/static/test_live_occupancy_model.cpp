@@ -5,6 +5,7 @@
 #include "core/static/LiveOccupancyModel.hpp"
 
 #include <cmath>
+#include <memory>
 #include <vector>
 
 #include <Eigen/Core>
@@ -249,6 +250,309 @@ TEST(LiveOccupancyModel, CameraOutOfFovNeverFlags) {
   }
   m.observe(feed(returns, 103));
   EXPECT_FALSE(m.obstacleCameraObservedEmpty(0));
+}
+
+// ── Increment (ii): camera EVICTION as behaviour ────────────────────────────
+//
+// A departed vessel leaves a FROZEN pin — its radar returns cease and coverage-
+// aware decay holds the persistence (the cell is outside the swept sector, so
+// radar cannot clear it; the 6c corroboration wall). Camera-observed-empty +
+// chart-UNconfirmed EVICTS it: the cell's accumulated persistence is SPENT
+// (erased), so the frozen evidence cannot re-emit it. Eviction OFF (increment i)
+// leaves the frozen pin in place. Conservation-safe: the previously-suppressed
+// location's birthSuppression drops to exactly 0 (a birth there is now free).
+TEST(LiveOccupancyModel, CameraEvictionRemovesFrozenDepartedPin) {
+  auto build = [](bool evict) {
+    LiveOccupancyParams p = testParams();
+    p.camera_empty_sustain_s = 1.0;
+    p.evict_camera_empty = evict;
+    auto m = std::make_unique<LiveOccupancyModel>(anchorDatum(), p);
+    auto returns = pierReturns();
+    for (int scan = 0; scan < 10; ++scan) m->observe(feed(returns, scan));
+    // Returns cease; the pier is now OUT of coverage every scan (a distant sweep)
+    // → coverage-aware decay freezes it (the departed-vessel pin radar can't clear).
+    const auto away = disc(Eigen::Vector2d(5000.0, 5000.0), 500.0);
+    for (int scan = 10; scan < 15; ++scan)
+      m->observe(feedCov({{Eigen::Vector2d(5000.0, 5000.0), 1.0}}, scan, away));
+    return m;
+  };
+
+  // Baseline (eviction off): the frozen pin persists — the corroboration wall.
+  auto off = build(false);
+  ASSERT_GT(off->birthSuppression(Eigen::Vector2d(62.5, 0.0)), 0.0);
+
+  // Eviction on: camera observes the pier bearing empty (matured), then one more
+  // frozen scan runs the eviction pre-pass and spends the refuted persistence.
+  auto on = build(true);
+  ASSERT_GT(on->birthSuppression(Eigen::Vector2d(62.5, 0.0)), 0.0);
+  for (double t = 15.0; t <= 17.0; t += 0.5) on->observeCamera(emptyPierFrame(t));
+  const auto away = disc(Eigen::Vector2d(5000.0, 5000.0), 500.0);
+  on->observe(feedCov({{Eigen::Vector2d(5000.0, 5000.0), 1.0}}, 17.5, away));
+  EXPECT_TRUE(on->obstacles().empty()) << "frozen departed pin evicted by camera";
+  EXPECT_DOUBLE_EQ(on->birthSuppression(Eigen::Vector2d(62.5, 0.0)), 0.0);
+
+  // No blink: a further frozen scan does NOT re-emit (persistence was spent, not
+  // just the hazard dropped — coverage-aware freeze cannot resurrect it).
+  on->observe(feedCov({{Eigen::Vector2d(5000.0, 5000.0), 1.0}}, 18.0, away));
+  EXPECT_TRUE(on->obstacles().empty()) << "evicted pin must not re-emit (no blink)";
+}
+
+// Evidence precedence: a chart-CONFIRMED component is HELD regardless of camera
+// (chart-confirmed → hold > camera-empty → evict). The same frozen, camera-empty
+// pier that Test-above evicts is retained here because a charted point coincides.
+TEST(LiveOccupancyModel, ChartConfirmedStructureHeldAgainstCameraEviction) {
+  LiveOccupancyParams p = testParams();
+  p.camera_empty_sustain_s = 1.0;
+  p.evict_camera_empty = true;
+  p.chart_corroboration_radius_m = 50.0;
+  LiveOccupancyModel m(anchorDatum(), p);
+  m.setChartedStructure({chartAt({75.0, 12.5})});  // on the pier centroid
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  const auto away = disc(Eigen::Vector2d(5000.0, 5000.0), 500.0);
+  for (int scan = 10; scan < 15; ++scan)
+    m.observe(feedCov({{Eigen::Vector2d(5000.0, 5000.0), 1.0}}, scan, away));
+  for (double t = 15.0; t <= 17.0; t += 0.5) m.observeCamera(emptyPierFrame(t));
+  m.observe(feedCov({{Eigen::Vector2d(5000.0, 5000.0), 1.0}}, 17.5, away));
+  ASSERT_EQ(m.obstacles().size(), 1u)
+      << "chart-confirmed structure held regardless of camera";
+  EXPECT_TRUE(m.obstacleCorroborated(0));
+  EXPECT_GT(m.birthSuppression(Eigen::Vector2d(62.5, 0.0)), 0.0);
+}
+
+// THE DECOUPLING GUARANTEE (the increment-ii design steer): camera-empty evidence
+// is keyed by CELL and accrues even while the cell is NOT in the structure set;
+// eviction fires the instant a flickering cell RE-ENTERS structure while holding
+// matured, recent evidence. (Increment i only reported the flag when the cell
+// happened to be emitted — the loiterer's coincidence requirement. Here the pier
+// leaves structure, matures its evidence off-stage, and is evicted on re-entry.)
+TEST(LiveOccupancyModel, CameraEvictionKeyedByCellFiresOnStructureReentry) {
+  LiveOccupancyParams p = testParams();
+  p.camera_empty_sustain_s = 1.0;
+  p.evict_camera_empty = true;
+  LiveOccupancyModel m(anchorDatum(), p);
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  ASSERT_EQ(m.obstacles().size(), 1u);
+
+  // The pier drops OUT of the structure set: observed-empty scans (coverage
+  // covers it) decay it below the bar. Meanwhile the camera keeps observing its
+  // bearing empty — evidence accrues per cell though nothing is emitted.
+  const auto cover = disc(Eigen::Vector2d(0.0, 0.0), 5000.0);  // covers the pier
+  for (double t = 10.0; t <= 12.0; t += 1.0) {
+    m.observe(feedCov({{Eigen::Vector2d(300.0, 300.0), 1.0}}, t, cover));
+    m.observeCamera(emptyPierFrame(t));
+  }
+  ASSERT_TRUE(m.obstacles().empty()) << "pier decayed below the bar — not structure now";
+
+  // The pier RE-ENTERS the structure set (returns resume). Eviction must fire on
+  // re-entry using the evidence matured while it was off-stage — NOT re-emit it.
+  m.observe(feed(returns, 13));
+  EXPECT_TRUE(m.obstacles().empty())
+      << "re-entered cell evicted on the spot from matured off-stage evidence";
+}
+
+// A stale streak (the camera stopped looking long ago) must NOT evict — evidence
+// has a recency window. Guards a real vessel that re-pins a cell the camera
+// observed empty in the distant past.
+TEST(LiveOccupancyModel, CameraEvictionIgnoresStaleEvidence) {
+  LiveOccupancyParams p = testParams();
+  p.camera_empty_sustain_s = 1.0;
+  p.camera_empty_recency_window_s = 5.0;
+  p.evict_camera_empty = true;
+  LiveOccupancyModel m(anchorDatum(), p);
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  // Mature the streak early (t = 10..12).
+  for (double t = 10.0; t <= 12.0; t += 0.5) m.observeCamera(emptyPierFrame(t));
+  // Time passes with the pier kept alive by returns but NO further camera obs.
+  // The scan clock advances far beyond the streak's last frame (12) → stale.
+  for (int scan = 30; scan < 40; ++scan) m.observe(feed(returns, scan));
+  EXPECT_EQ(m.obstacles().size(), 1u) << "stale evidence must not evict";
+  EXPECT_GT(m.birthSuppression(Eigen::Vector2d(62.5, 0.0)), 0.0);
+}
+
+// Eviction is OFF by default: matured camera-empty on an uncharted hazard FLAGS
+// it (increment i) but does NOT remove it. The config flag is the sole switch.
+TEST(LiveOccupancyModel, CameraEvictionOffKeepsFlaggedHazard) {
+  LiveOccupancyParams p = testParams();
+  p.camera_empty_sustain_s = 1.0;  // evict_camera_empty stays false (default)
+  LiveOccupancyModel m(anchorDatum(), p);
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  for (double t = 10.0; t <= 12.0; t += 0.5) m.observeCamera(emptyPierFrame(t));
+  m.observe(feed(returns, 13));
+  ASSERT_EQ(m.obstacles().size(), 1u) << "label-only: hazard remains when eviction off";
+  EXPECT_TRUE(m.obstacleCameraObservedEmpty(0)) << "still flagged";
+  EXPECT_GT(m.birthSuppression(Eigen::Vector2d(62.5, 0.0)), 0.0);
+}
+
+// A hazard the camera never looks at (out of FOV) is NEVER evicted — absence
+// outside the FOV is not evidence of absence (the camera-blind-region guarantee,
+// the eviction analogue of CameraOutOfFovNeverFlags).
+TEST(LiveOccupancyModel, CameraEvictionSparesBlindRegion) {
+  LiveOccupancyParams p = testParams();
+  p.camera_empty_sustain_s = 1.0;
+  p.evict_camera_empty = true;
+  LiveOccupancyModel m(anchorDatum(), p);
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  for (double t = 10.0; t <= 12.0; t += 0.5) {
+    auto f = emptyPierFrame(t);
+    f.fov_center_rad = 2.5;  // looking away — the pier is out of FOV
+    m.observeCamera(f);
+  }
+  m.observe(feed(returns, 13));
+  EXPECT_EQ(m.obstacles().size(), 1u) << "camera-blind hazard must never evict";
+  EXPECT_GT(m.birthSuppression(Eigen::Vector2d(62.5, 0.0)), 0.0);
+}
+
+// A six-cell pier starting at (x0, y) along +x (25 m cells).
+std::vector<std::pair<Eigen::Vector2d, double>> pierAt(double x0, double y) {
+  std::vector<std::pair<Eigen::Vector2d, double>> r;
+  for (int k = 0; k < 6; ++k) r.emplace_back(Eigen::Vector2d(x0 + 25.0 * k, y), 1.0);
+  return r;
+}
+
+// A live camera frame aimed at `bearing` (rad, ENU math), narrow FOV, with a
+// live detection half a radian away (so the frame is live but the aimed cell is
+// observed empty).
+LiveOccupancyModel::CameraObservation emptyFrameToward(double t, double bearing) {
+  LiveOccupancyModel::CameraObservation f;
+  f.t_unix = t;
+  f.sensor_enu = Eigen::Vector2d(0.0, 0.0);
+  f.fov_center_rad = bearing;
+  f.fov_half_width_rad = 0.3;
+  f.match_tolerance_rad = 0.05;
+  f.detection_bearings_rad = {bearing + 0.5};  // live, away from the aimed cell
+  return f;
+}
+
+// ── Increment (ii) PROMOTION GATE (synthetic scenario) ───────────────────────
+//
+// The circularity rule: the mechanism is DEMONSTRATED on real philos (the ferry/
+// loiterer replay), but PROMOTION gates on synthetic truth. This mini-world holds
+// three frozen structures at once — a departed vessel (uncharted, camera sees its
+// bearing empty), a chart-confirmed structure (camera also sees empty), and a
+// camera-blind structure (out of the FOV) — and toggles eviction. Ground truth:
+// ONLY the departed vessel should lose its pin. The two held structures'
+// suppression must be BYTE-IDENTICAL with eviction on vs off ("tracks_on_keep
+// flat"); the departed vessel's suppression must lift to exactly 0 (departed-
+// evicts + conservation-safe). Co-presence also proves no cross-talk: evicting
+// one structure does not disturb the others.
+TEST(LiveOccupancyModel, EvictionSceneDepartedEvictsHeldStructuresStayFlat) {
+  auto runScene = [](bool evict) {
+    LiveOccupancyParams p = testParams();  // extent_min 4, bar 0.5, non-adaptive
+    p.camera_empty_sustain_s = 1.0;
+    p.chart_corroboration_radius_m = 50.0;
+    p.evict_camera_empty = evict;
+    auto m = std::make_unique<LiveOccupancyModel>(anchorDatum(), p);
+    m->setChartedStructure({chartAt({2075.0, 12.5})});  // on held_charted centroid
+
+    auto all = pierAt(12.5, 0.0);                        // departed   (bearing ~0, in FOV)
+    for (const auto& r : pierAt(2012.5, 0.0)) all.push_back(r);   // held_charted (in FOV)
+    for (const auto& r : pierAt(12.5, 300.0)) all.push_back(r);   // held_blind  (65–88°, out of FOV)
+    for (int s = 0; s < 10; ++s) m->observe(feed(all, s));
+
+    // Returns cease; a distant sweep covers none of them → all three FREEZE
+    // (coverage-aware decay holds them — the corroboration wall).
+    const auto away = disc(Eigen::Vector2d(10000.0, 10000.0), 500.0);
+    for (int s = 10; s < 15; ++s)
+      m->observe(feedCov({{Eigen::Vector2d(10000.0, 10000.0), 1.0}}, s, away));
+    // The camera observes the bearing-0 corridor empty (departed + held_charted
+    // are in FOV; held_blind is not). Matures the per-cell streaks.
+    for (double t = 15.0; t <= 17.0; t += 0.5) m->observeCamera(emptyPierFrame(t));
+    m->observe(feedCov({{Eigen::Vector2d(10000.0, 10000.0), 1.0}}, 17.5, away));
+    return m;
+  };
+
+  const Eigen::Vector2d q_departed(62.5, 12.5);    // inside departed
+  const Eigen::Vector2d q_charted(2075.0, 12.5);   // inside held_charted
+  const Eigen::Vector2d q_blind(62.5, 312.5);      // inside held_blind
+
+  auto off = runScene(false);
+  ASSERT_EQ(off->obstacles().size(), 3u) << "all three frozen structures held (baseline)";
+  ASSERT_GT(off->birthSuppression(q_departed), 0.0);
+  ASSERT_GT(off->birthSuppression(q_charted), 0.0);
+  ASSERT_GT(off->birthSuppression(q_blind), 0.0);
+
+  auto on = runScene(true);
+  EXPECT_EQ(on->obstacles().size(), 2u) << "only the departed vessel is evicted";
+  // departed-evicts + conservation: the pin lifts to exactly 0 (a birth is free).
+  EXPECT_DOUBLE_EQ(on->birthSuppression(q_departed), 0.0);
+  // tracks_on_keep flat: the held structures are byte-identical to eviction-off.
+  EXPECT_DOUBLE_EQ(on->birthSuppression(q_charted), off->birthSuppression(q_charted))
+      << "chart-confirmed structure held identically (evidence precedence)";
+  EXPECT_DOUBLE_EQ(on->birthSuppression(q_blind), off->birthSuppression(q_blind))
+      << "camera-blind structure held identically (absence outside FOV isn't absence)";
+}
+
+// The FLICKER regression (the increment-i finding, now a deterministic gate): a
+// frozen departed pin blinks in and out of the structure set as the clutter-
+// ADAPTIVE bar moves with the live-cell population. Eviction must fire on
+// re-entry from evidence matured while the cell was off-stage — the exact
+// pathology that made the loiterer under-flag under label-only increment (i).
+//
+// Construction: the pin (frozen) and two companion cells all sit at ~0.9, so the
+// median (hence the adaptive bar) starts ABOVE the pin → the pin is OUT of the
+// structure set (a busy scene suppresses it). The camera matures its observed-
+// empty streak while it is off-stage. Then the companions decay (the scene
+// quiets) → the bar falls below the pin → the pin RE-ENTERS structure — and
+// eviction spends it on that re-entry, so the phantom is killed before it can
+// suppress a single birth.
+TEST(LiveOccupancyModel, CameraEvictionSurvivesAdaptiveBarFlicker) {
+  LiveOccupancyParams p;
+  p.cell_size_m = 25.0;
+  p.ewma_alpha = 0.3;
+  p.persistence_bar = 0.1;        // low floor; the adaptive bar dominates
+  p.extended_cells_min = 1;       // detector: a single cell classifies
+  p.suppression_max = 0.9;
+  p.suppression_radius_m = 25.0;
+  p.clutter_adaptive = true;      // bar = max(0.1, 1.5×median) — moves with the pop
+  p.clutter_reject_factor = 1.5;
+  p.camera_empty_sustain_s = 1.0;
+  p.evict_camera_empty = true;
+  p.camera_empty_recency_window_s = 100.0;  // isolate the flicker variable
+  LiveOccupancyModel m(anchorDatum(), p);
+
+  const Eigen::Vector2d departed(1012.5, 1012.5);  // bearing 0.785 (45°), in FOV
+  const double brg = std::atan2(departed.y(), departed.x());
+  // Companion high cells OUT of the camera FOV (negative quadrant) whose decay
+  // lowers the median/bar. Low cells (fed weight 0.3) keep a floor population.
+  const Eigen::Vector2d compA(-1012.5, -1012.5), compB(-1037.5, -1012.5);
+  const Eigen::Vector2d lowA(-1062.5, -1012.5), lowB(-1087.5, -1012.5);
+  // Coverage over the negative-quadrant cells only → the departed pin is out of
+  // coverage every scan (frozen: its returns have ceased).
+  const auto negCover = disc(Eigen::Vector2d(-1050.0, -1012.5), 300.0);
+
+  // 1) Build the pin AND the companions to ~0.9. With three ~0.9 cells the median
+  //    is 0.9 → bar 1.35 → NOTHING classifies (the pin is suppressed out of a busy
+  //    scene). departed is merely present in persistence, frozen.
+  double t = 0.0;
+  for (int s = 0; s < 10; ++s, t += 1.0)
+    m.observe(feed({{departed, 1.0}, {compA, 1.0}, {compB, 1.0}}, t));
+  ASSERT_TRUE(m.obstacles().empty()) << "busy scene: high bar suppresses the pin (OUT)";
+
+  // 2) Mature the camera streak on the pin while it is OFF-STAGE (not structure).
+  m.observeCamera(emptyFrameToward(10.0, brg));
+  m.observeCamera(emptyFrameToward(11.0, brg));  // span 1.0 ≥ sustain → matured
+
+  // 3) The scene quiets: the companions decay (in coverage, no longer fed) while
+  //    the pin stays frozen out of coverage. As the median falls, the bar drops
+  //    below the pin → it RE-ENTERS structure — and eviction spends it on that
+  //    re-entry, so it never emits a hazard.
+  for (int s = 0; s < 12; ++s, t += 1.0) {
+    m.observe(feedCov({{lowA, 0.3}, {lowB, 0.3}}, t, negCover));
+    m.observeCamera(emptyFrameToward(t, brg));
+  }
+
+  // 4) Prove the pin was EVICTED (persistence spent), not merely below the bar:
+  //    drive the bar to its floor with the pin still frozen out of coverage. A
+  //    pin still holding 0.9 would re-emit as a hazard; an evicted one stays gone.
+  for (int s = 0; s < 3; ++s, t += 1.0)
+    m.observe(feedCov({{lowA, 0.3}, {lowB, 0.3}}, t, negCover));
+  EXPECT_DOUBLE_EQ(m.birthSuppression(departed), 0.0)
+      << "eviction spent the pin — it does not re-emit when the bar falls (no blink)";
 }
 
 // Datum recenter re-anchors: the same GEOGRAPHIC point keeps its suppression

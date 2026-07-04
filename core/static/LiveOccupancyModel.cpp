@@ -145,6 +145,13 @@ void LiveOccupancyModel::observe(
       ++it;
   }
 
+  // 4b) Camera eviction pre-pass (increment ii): spend (erase) the persistence
+  //     of any structure cell the camera has refuted, so recompute below cannot
+  //     re-emit it. now = this scan's time (recency test). Off/unwired ⇒ skipped,
+  //     so behaviour is bit-identical to the label-only increment.
+  if (params_.evict_camera_empty && !by_sensor.empty())
+    evictCameraRefutedCells(by_sensor.front().time.seconds());
+
   // 5) Re-classify structure (persistent AND extended) → suppression + hazards.
   recomputeStructure();
 
@@ -155,13 +162,8 @@ void LiveOccupancyModel::observe(
     peak_persistence_ = std::max(peak_persistence_, kv.second);
 }
 
-void LiveOccupancyModel::recomputeStructure() {
-  obstacles_.clear();
-  obstacle_center_.clear();
-  obstacle_conf_.clear();
-  obstacle_corroborated_.clear();
-  obstacle_camera_empty_.clear();
-
+std::vector<std::vector<LiveOccupancyModel::Cell>>
+LiveOccupancyModel::structureComponents() const {
   // Effective persistence bar. In detector mode, raise it above the estimated
   // uniform-clutter background (median live-cell persistence — the clutter-map
   // feed is clutter-dominated) so dense clutter is rejected relative to its own
@@ -182,6 +184,7 @@ void LiveOccupancyModel::recomputeStructure() {
   for (const auto& kv : persistence_)
     if (kv.second >= bar) persistent.emplace(kv);
 
+  std::vector<std::vector<Cell>> components;
   std::map<Cell, bool> visited;
   for (const auto& seed : persistent) {
     if (visited[seed.first]) continue;
@@ -205,10 +208,60 @@ void LiveOccupancyModel::recomputeStructure() {
         }
       }
     }
+    if (static_cast<int>(component.size()) >= params_.extended_cells_min)
+      components.push_back(std::move(component));  // extended → structure
+    // compact → a boat / small feature → never suppressed (dropped here)
+  }
+  return components;
+}
 
-    if (static_cast<int>(component.size()) < params_.extended_cells_min)
-      continue;  // compact → a boat / small feature → never suppressed
+void LiveOccupancyModel::evictCameraRefutedCells(double now_s) {
+  if (camera_empty_streak_.empty()) return;
+  const double r2 = params_.chart_corroboration_radius_m *
+                    params_.chart_corroboration_radius_m;
+  std::vector<Cell> evict;
+  for (const auto& component : structureComponents()) {
+    // Evidence precedence: a chart-confirmed component is HELD regardless of the
+    // camera (same centroid test as the emitted-hazard chart label).
+    Eigen::Vector2d centroid = Eigen::Vector2d::Zero();
+    for (const Cell& c : component) centroid += cellCenter(c);
+    centroid /= static_cast<double>(component.size());
+    bool corroborated = false;
+    for (const Eigen::Vector2d& cp : charted_enu_)
+      if ((cp - centroid).squaredNorm() <= r2) {
+        corroborated = true;
+        break;
+      }
+    if (corroborated) continue;
+    // Keyed by CELL: a cell whose observed-empty streak is matured (span ≥
+    // sustain) AND recent (last frame within the window of now) is spent — a
+    // departed vessel the camera has confirmed empty. Erased below, so the
+    // frozen persistence cannot re-emit it (no blink) and it restarts from
+    // fresh returns.
+    for (const Cell& c : component) {
+      const auto it = camera_empty_streak_.find(c);
+      if (it == camera_empty_streak_.end()) continue;
+      const double span = it->second.second - it->second.first;
+      const double staleness = now_s - it->second.second;
+      if (span >= params_.camera_empty_sustain_s &&
+          staleness <= params_.camera_empty_recency_window_s)
+        evict.push_back(c);
+    }
+  }
+  for (const Cell& c : evict) {
+    persistence_.erase(c);
+    camera_empty_streak_.erase(c);
+  }
+}
 
+void LiveOccupancyModel::recomputeStructure() {
+  obstacles_.clear();
+  obstacle_center_.clear();
+  obstacle_conf_.clear();
+  obstacle_corroborated_.clear();
+  obstacle_camera_empty_.clear();
+
+  for (const auto& component : structureComponents()) {
     // Structure component → ONE synthesized live (uncharted) hazard whose
     // footprint COVERS every cell in the component, so the birth suppression
     // derived from it (below) can never exceed the emitted hazard's keep-clear
@@ -218,7 +271,7 @@ void LiveOccupancyModel::recomputeStructure() {
     double conf = 0.0;
     for (const Cell& c : component) {
       centroid += cellCenter(c);
-      conf = std::max(conf, std::min(1.0, persistent.at(c)));
+      conf = std::max(conf, std::min(1.0, persistence_.at(c)));  // ≥ bar
     }
     centroid /= static_cast<double>(component.size());
 

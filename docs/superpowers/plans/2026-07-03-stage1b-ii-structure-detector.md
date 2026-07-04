@@ -206,13 +206,49 @@ is a config (`imm_cv_ct_pmbm_occupancy_detector`), not a new class.
      loiterer's low count is NOT a camera limit (its bearing is cleanly empty) —
      its *hazard* is intermittent post-departure (adaptive-bar flicker on the
      frozen-persistence cell), rarely coexisting with the matured streak; the
-     ferry berth (stable held cell) is the robust demo. **NEXT: increment (ii) —
-     eviction as behavior (behind config), demo on loiterer/ferry, GATE on a
-     SYNTHETIC scenario (departing static object + persistent structure + bearing
-     sensor: departed-evicts / structure-holds / camera-blind-never-evicts /
-     tracks_on_keep flat), with evidence precedence chart-confirmed→hold >
-     camera-empty→evict; eviction lifting suppression is conservation-safe by
-     construction (assert it). Then AIS veto rides with increment 8.**
+     ferry berth (stable held cell) is the robust demo.
+   - **CAMERA CORROBORATION (ii) DONE (2026-07-04, eviction as BEHAVIOUR).**
+     New `LiveOccupancyParams.evict_camera_empty` (default false) + `camera_empty_
+     recency_window_s` (default 5 s). Eviction is a pre-pass in `observe()`: a
+     structure cell whose per-cell observed-empty streak is matured (≥ sustain)
+     AND recent (last frame within the window of the scan time) AND whose component
+     is chart-UNconfirmed has its persistence SPENT (erased), not just its hazard
+     dropped — because coverage-aware decay FREEZES an unobserved departed pin, and
+     dropping only the hazard would let the frozen persistence re-emit it (a
+     blinker). Evidence is keyed by CELL and accrues while the cell is off-stage, so
+     eviction fires the instant a flickering cell re-enters — fixing the increment-i
+     loiterer coincidence. Evidence precedence: chart-confirmed → hold regardless.
+     Conservation-safe by construction (suppression re-derived from post-eviction
+     persistence). Refactor: extracted `structureComponents()` (shared by recompute
+     + eviction). **Synthetic PROMOTION GATE** (`test_live_occupancy_model.cpp`,
+     6 eviction unit tests + 2 scenario gates): `EvictionSceneDepartedEvictsHeld-
+     StructuresStayFlat` (3 co-present frozen structures — departed/chart-held/
+     camera-blind — eviction A/B: departed→0, both held BYTE-IDENTICAL = tracks_on_
+     keep flat) and `CameraEvictionSurvivesAdaptiveBarFlicker` (the loiterer
+     pathology as a deterministic regression — pin blinks out via the adaptive bar,
+     matures off-stage, evicts on re-entry; proven non-vacuous by flipping the flag
+     → RED). **Real-data DEMO** (`test_philos_occupancy_coverage_6c.cpp`:
+     `SunsetCameraEvictionRemovesDepartedPinsHoldsChartStructure`) — sunset_cruise
+     coverage+chart+camera, eviction A/B: total hazard-scans 8114→7722; the ferry's
+     vacated OUTBOUND berth (post-t98 phantom) 180→42 = the clean departed-evicts;
+     the loiterer's BEFORE-departure hazards retained 121→121 (vessel present, camera
+     sees it — correctly not evicted); chart-confirmed astern_blob held 31→31.
+     **Honest correction to the increment-i framing:** the loiterer is NOT a
+     persistent post-departure phantom in this config (adaptive bar fades it — off
+     has 1 hazard-scan after t100), so its 1/122 flag was mostly CORRECT (121 are
+     pre-departure); the SYNTHETIC flicker gate carries its pathology. Logged caveat:
+     eviction also removed ~145 ferry hazards pre-move (camera saw the docked berth
+     empty ≥ sustain) — correct-vs-over-eviction needs kinematic truth (Layer-2).
+     **Deferred (increment 8 / Layer-2):**
+     no bench `Config` arm — the bench Sweep does not feed camera to the occupancy
+     model (observeCamera is wired only in the replay harness), so a bench evict arm
+     would be inert; it lands when camera enters the Sweep for the HAXR-hours A/B.
+     **Backlog item (own small fix, not needed for this gate):** a frozen-
+     persistence cell blinks in/out of the structure set as the clutter-adaptive
+     live-cell median moves → hazards blink in operator output regardless of camera;
+     fix = hysteresis on structure-set membership (enter/exit thresholds, the
+     CpaEvaluator pattern). Kept separately fixable. **NEXT: AIS veto rides with
+     increment 8.**
    - 6d TODO — docs (folds into increment 9): live-static-occupancy.md four-part +
      learning chapter + figure for coverage-aware decay + chart + camera.
 7. DONE — recovery gate SCENARIO `harbor_anchored_gets_underway` (stop→go boat

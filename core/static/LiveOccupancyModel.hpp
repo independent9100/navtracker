@@ -57,6 +57,28 @@ struct LiveOccupancyParams {
   // eviction candidate (a departed vessel). Only active when observeCamera() is
   // fed; label only (suppression/hazards unchanged).
   double camera_empty_sustain_s = 2.0;
+  // Camera EVICTION as behaviour (increment ii). When true, a structure cell
+  // that is camera-observed-empty (its per-cell streak matured AND still recent,
+  // below) and is NOT chart-confirmed is EVICTED: its accumulated persistence is
+  // SPENT (erased), not merely its hazard dropped. This matters because coverage-
+  // aware decay FREEZES the persistence of an unobserved cell (a departed
+  // vessel's radar returns cease while the cell is outside the swept sector — the
+  // 6c corroboration wall); dropping the hazard alone would let that frozen
+  // persistence re-emit it next scan (a blinker), so eviction erases it and the
+  // cell starts over from fresh returns. Evidence is keyed by CELL and accrues
+  // even while the cell is NOT emitted, so eviction fires the instant a flickering
+  // cell re-enters the structure set. Evidence precedence: a chart-confirmed
+  // component is HELD regardless of camera. Conservation-safe by construction —
+  // suppression is re-derived from the post-eviction persistence, so lifting it
+  // can only free a birth, never orphan one. Default false ⇒ increment-(i) label-
+  // only behaviour, bit-identical.
+  bool evict_camera_empty = false;
+  // A camera-empty streak evicts only if its most recent observed-empty frame is
+  // within this window of the current scan time. A streak from long ago (the
+  // camera stopped looking, or a real vessel has since re-pinned the cell) is
+  // STALE and must not evict now — the recency guard that makes decoupled per-cell
+  // evidence safe. Only consulted when evict_camera_empty is true.
+  double camera_empty_recency_window_s = 5.0;
 };
 
 /**
@@ -197,7 +219,17 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   Eigen::Vector2d toAnchorEnu(const Eigen::Vector2d& enu_current) const;
   Cell cellOf(const Eigen::Vector2d& anchor_enu) const;
   Eigen::Vector2d cellCenter(const Cell& c) const;
+  // Persistent + extended structure components (effective bar + 4-connected flood
+  // fill), each a key-sorted cell list. Shared by recomputeStructure() (emit) and
+  // evictCameraRefutedCells() (the eviction pre-pass), so the bar/connectivity
+  // definition lives in exactly one place.
+  std::vector<std::vector<Cell>> structureComponents() const;
   void recomputeStructure();
+  // Increment-ii eviction pre-pass: spend (erase) the persistence of structure
+  // cells the camera has refuted (matured + recent observed-empty streak) in
+  // chart-UNconfirmed components, so recomputeStructure() below cannot re-emit
+  // them. `now_s` is the current scan time for the recency test.
+  void evictCameraRefutedCells(double now_s);
 
   geo::Datum anchor_;   // fixed grid frame
   geo::Datum current_;  // tracker's current datum (== anchor_ until a recenter)

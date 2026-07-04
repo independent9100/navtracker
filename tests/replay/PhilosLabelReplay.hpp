@@ -163,7 +163,7 @@ inline std::vector<LiveOccupancyModel::CameraObservation> buildCameraFrames(
 inline ClipRun runClip(const std::string& clip_name,
                        const std::string& config_label,
                        bool load_chart_structure = false,
-                       bool load_camera = false) {
+                       bool load_camera = false, bool evict_camera = false) {
   ClipRun run;
   const std::string own = clipDir(clip_name) + "/ownship.csv";
   const std::string plots = clipDir(clip_name) + "/radar_plots.csv";
@@ -224,6 +224,10 @@ inline ClipRun runClip(const std::string& clip_name,
   if (c->use_live_occupancy_model) {
     auto op = c->live_occupancy_params.value_or(LiveOccupancyParams{});
     if (c->occupancy_adaptive_clutter_bar) op.clutter_adaptive = true;
+    // Increment-ii camera eviction (real-data DEMO only — promotion gates on the
+    // synthetic model scenario). When on, a camera-observed-empty, chart-UNconfirmed
+    // structure cell is spent; chart-confirmed cells are held (evidence precedence).
+    if (evict_camera) op.evict_camera_empty = true;
     occ = std::make_shared<LiveOccupancyModel>(*scen.datum, op);
     tracker.setStaticObstacleModel(occ.get());
     rec.inner = occ.get();
