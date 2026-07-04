@@ -780,6 +780,15 @@ One-liners, each linking to where it is explained above.
   birth priors and diagnostics are fine; recurring measurements are not.
   (AIS SOG/COG is the exception — the target's own GPS is an independent
   witness.) → §3.
+- **COG wired as heading on a slow or stationary ship** — GPS course-over-ground
+  is *derived from motion*; at SOG ≈ 0 it is driven by meter-level GPS jitter
+  and can point anywhere, jumping scan to scan. If `heading_true_deg` comes
+  from COG, every relative-bearing sensor (radar TTM, camera) rotates with the
+  jumps and targets smear in arcs around own-ship — worst exactly when moored
+  or at anchor. Use a real heading source (gyro, dual-antenna GPS heading,
+  magnetic); only fall back to COG above a firm SOG threshold (the bias
+  estimator's own COG observation is SOG- and turn-rate-gated for this exact
+  reason — copy that discipline). → §5.
 - **Treating MMSI / ARPA target id as the fusion key** — external identifiers are
   *hints* (`AssociationHints`), never the primary key. The stable `track_id` is
   the identity (invariant 5). → §3.
