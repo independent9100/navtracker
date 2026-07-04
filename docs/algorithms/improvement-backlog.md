@@ -672,3 +672,40 @@ considering (defense-in-depth for sensor failure).
 
 Raised 2026-07-04 (integrator asked "any other idea?"; recorded so it
 survives the two-week memory horizon).
+
+---
+
+## 18. Own-ship nav-input sanity guard (library-side, not just documented)
+
+**Problem.** Three own-ship nav failure modes are currently only
+*documented* pitfalls; the library accepts the bad input silently:
+(a) COG wired as heading at SOG≈0 → heading jumps with GPS jitter →
+every relative-bearing sensor smears targets in arcs (guide §9,
+2026-07-04); (b) stale pose — nav feed stops, projection silently
+continues with the old fix, error grows unbounded (guide §9);
+(c) position/heading step-jumps (GPS glitch, gyro fault) pass through
+unchallenged.
+
+**Proposal.** A small `NavInputGuard` at the OwnShipProvider edge
+(validate-at-the-edges invariant), all thresholds config:
+- **SOG-gated heading acceptance:** if the pose's heading source is
+  motion-derived (COG), reject/hold-last below a SOG threshold —
+  mirror the discipline `GyroVsGpsCogObservation` already applies
+  inside the bias estimator (SOG + turn-rate gates).
+- **Staleness signal:** pose age > threshold ⇒ fire a diagnostic sink
+  (operator-visible "nav degraded"), optionally inflate
+  sensor_position_std_m with age rather than pretending freshness.
+- **Jump detection:** implausible position/heading step vs elapsed
+  time ⇒ flag, don't silently ingest.
+Degrade VISIBLY, never silently: the guard's job is to make nav
+trouble an event, not a smear. Recovery after an episode is already
+graceful (phantoms starve in seconds–minutes, occupancy decays, bias
+estimator's COG gate closed the pollution path) — the guard shrinks
+the blind window itself, which is the only unrecoverable part.
+
+**Trigger.** Design when the real-test nav facts arrive (heading
+source type, GPS quality); implement before the first unattended
+deployment. Consumer-surface change ⇒ integration-guide entry.
+
+Raised 2026-07-04 (integrator: "COG could start to jump when
+stationary, or?" — yes; and the episode window is the damage).
