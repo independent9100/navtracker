@@ -334,6 +334,33 @@ flag "this track has only default-noise measurements". Note these are two
 different flags at two layers (per-measurement vs per-track output); see
 `docs/output-contract.md`.
 
+### Derived data and double-counting (the recurring trap)
+
+Before you feed *any* value a sensor reports, ask one question: **is this new
+information, or my own data coming back smoothed?** Feeding a sensor's *derived*
+output alongside the raw data it was derived from counts the same evidence
+twice. The filter's covariance shrinks as if two independent witnesses agreed —
+when one witness merely repeated himself. Overconfident tracks → smaller gates →
+missed associations. The trap has one shape and many disguises:
+
+- **ARPA speed/course (TTM fields)** — computed by the radar *from the same
+  range/bearing detections you already feed*. Never feed them as recurring
+  measurements. Legitimate uses: a **one-shot** velocity prior at track birth
+  (used once, then discarded — a prior can't double-count), and a target-swap
+  diagnostic (radar's course suddenly ≫ off from ours → distrust that
+  `sensor_track_id`).
+- **TLL positions** — the radar's echo already fused with *its* own-ship GNSS
+  and heading (see §4).
+- **A shore/VTS feed's velocity** — another tracker's smoothed derivative of
+  positions it also sends you. Same rule; see the remote-track ticket (R10).
+- **Raw AIS + an AIS-fusing shore feed** — the same transmission arriving twice
+  dressed as two sensors.
+
+The contrast that makes the rule easy to remember: **AIS SOG/COG/heading are
+fine as measurement content** — they come from the *target's own* GPS and gyro,
+a genuinely independent witness, not a derivative of positions you already
+consume.
+
 ---
 
 ## 4. The NMEA path
@@ -670,6 +697,13 @@ One-liners, each linking to where it is explained above.
   existing track, never start one. → §3.
 - **TLL when TTM exists** — TLL has own-ship error baked in; prefer TTM, and never
   double-count a target reported both ways. → §4.
+- **Feeding derived data as measurements** — ARPA speed/course, a shore feed's
+  velocity, any value a sensor computed from positions you already consume:
+  feeding it back double-counts the same evidence and makes tracks
+  over-confident. Ask "new information, or my own data smoothed?" One-shot
+  birth priors and diagnostics are fine; recurring measurements are not.
+  (AIS SOG/COG is the exception — the target's own GPS is an independent
+  witness.) → §3.
 - **Treating MMSI / ARPA target id as the fusion key** — external identifiers are
   *hints* (`AssociationHints`), never the primary key. The stable `track_id` is
   the identity (invariant 5). → §3.
