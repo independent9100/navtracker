@@ -709,3 +709,34 @@ deployment. Consumer-surface change ⇒ integration-guide entry.
 
 Raised 2026-07-04 (integrator: "COG could start to jump when
 stationary, or?" — yes; and the episode window is the damage).
+
+---
+
+## 19. Sensor-id continuity as soft association evidence (camera disambiguates what radar can't)
+
+**Idea (integrator, 2026-07-04).** Sensors with their own trackers emit
+per-sensor track ids (`hints.sensor_track_id` — today write-only). A
+camera can KEEP APART two objects that are one blob to radar (two moored
+boats side by side; the stationary/anchored use case). If the camera
+pipeline ran a detector-TRACKER (e.g. ByteTrack-style) instead of
+per-frame detection, its stable per-object ids could stabilize OUR
+identities exactly where backlog #11's residual lives (angularly-
+unresolvable targets) and in stationary clusters.
+
+**Mechanism sketch.** Extend the PMBM source-aware identity machinery —
+which already keys on mmsi/platform_id — with per-(source_id,
+sensor_track_id) CONTINUITY as a third, deliberately weaker signal: an
+association score bonus for id-consistent assignments (soft prior),
+never a hard key (invariant 5: ARPA ids swap on crossings; camera ids
+switch on occlusion — the evidence must lose to kinematics when they
+disagree).
+
+**Prereqs.** (a) Camera fixture pipeline currently emits per-frame YOLO
+detections with NO ids — needs a tracking pass (offline, cheap);
+`EoIrAdapter`'s detection struct already carries `sensor_track_id`.
+(b) A measurement of how often camera ids survive occlusion on our
+clips, BEFORE trusting them with weight.
+
+**Trigger.** After the corroboration/steady-state line closes; natural
+pairing with the camera-axis follow-ups (backlog #17). Evaluate on the
+close-moored-boats case + backlog #11's sc5-style scenarios.

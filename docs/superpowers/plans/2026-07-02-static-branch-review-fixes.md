@@ -743,3 +743,27 @@ fusion scenario is the detector for this).
 fusion scenario green; NEES sanity on the scenario recorded in the
 eval-log; guide entry present (drift-guard will enforce the config
 struct); north-star row updated.
+
+---
+
+## R11 — Identity surfacing to the output (found 2026-07-04, integrator question)
+
+**Finding.** The output contract promises identity attributes, but under
+PMBM (the winning config) NOTHING fills them: no code in `core/pmbm/`
+touches `TrackAttributes`. MMSI reaches `TrackOutput.attributes` only on
+the MHT path (estimator/tree_attributes copy). `platform_id` is worse:
+it exists on `AssociationHints` and `SourceTouch` (identity gate,
+retirement) but `TrackAttributes` has no field for it — NEITHER tracker
+surfaces it. For the first real cooperative+radar test this is directly
+operator-facing: the display cannot say WHICH fleet member a track is.
+
+**Do.** (1) Add `platform_id` to `TrackAttributes` + `TrackOutput`
+passthrough (output-contract doc + guide entry per keep-in-sync).
+(2) Make PMBM populate attributes (mmsi, platform_id) from the hints of
+measurements its Bernoullis claim — same last-write-wins semantics as
+the estimator path uses for MHT. (3) Tests: PMBM fusion scenario asserts
+the emitted TrackOutput carries the cooperative platform_id + AIS mmsi;
+MHT parity test unchanged. Small: ~half day.
+
+**Priority: BEFORE the first real cooperative+radar test** (it's the
+operator-visible half of what R9 built).
