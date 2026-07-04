@@ -631,3 +631,44 @@ no behavior change for correctly-configured deployments).
 
 Raised 2026-07-03 (integrator question; the "why don't we have a std
 deviation of heading?" wart).
+
+---
+
+## 17. Camera-only contact — options short of a distance sensor
+
+**Problem.** A target only the camera sees (kayak, small wooden boat —
+radar-silent) currently becomes NOTHING: `Bearing2D` cannot initiate a
+track (by design), so the object is invisible in the output. Sharpest
+real-world violation of the ADR-0002 "never invisible" rule. The clean
+fix is the planned distance sensor (camera+range = existing
+range/bearing path, zero new architecture). If that slips or fails,
+three fallbacks, in recommended order:
+
+1. **Bearing-wedge hazard (safety net, cheapest).** "Never invisible"
+   does not require a position. Emit a hazard that is a DIRECTION: a
+   wedge from own-ship along the detection bearing (width = bearing σ,
+   range unbounded or sensor-max). Operator-actionable ("keep clear of
+   that line"); CPA not computable; fits presence-over-classification
+   exactly. Needs an output-contract extension (hazard-as-sector).
+2. **Waterline monocular range (pragmatic upgrade).** Camera height
+   above water + the pixel row where target meets water ⇒ coarse range
+   by flat-water geometry (r ≈ h/tan(depression)). Error grows ~r²;
+   honest large σ_r is exactly what per-measurement R handles. Upgrades
+   camera to coarse range+bearing with the EXISTING path. Needs
+   calibrated pitch/roll + horizon; degrades in swell. Prior art:
+   standard practice in USV monocular perception.
+3. **Range-parameterized bearing-only initiation (heavy).** Birth a
+   mixture of candidates along the ray at assumed ranges; motion +
+   own-ship baseline kills the wrong ones (classic bearing-only TMA;
+   PMBM can host it as a birth mixture). Real work; only if 1+2 prove
+   insufficient.
+Also procedural, costs nothing: the system can PROMPT a small course
+alteration ("bearing-only contact — 10° alteration resolves range by
+triangulation").
+
+**Trigger.** Decide when the real deployment's camera/distance-sensor
+facts arrive. If the distance sensor is confirmed, only item 1 is worth
+considering (defense-in-depth for sensor failure).
+
+Raised 2026-07-04 (integrator asked "any other idea?"; recorded so it
+survives the two-week memory horizon).
