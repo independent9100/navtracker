@@ -47,9 +47,23 @@ EKF+GNN (33 s), ~20× slower than realtime. The occupancy-OFF baseline carries
 
 ## A/B configs
 
-- ON: `imm_cv_ct_pmbm_occupancy` (`use_live_occupancy_model=true`).
+**CORRECTION (2026-07-04, mid-run):** the ON arm is the Stage-1b-**ii** DETECTOR,
+NOT the 1b-i standard config. Measured: `imm_cv_ct_pmbm_occupancy` and
+`imm_cv_ct_pmbm_occupancy_sensitive` both classify **occ_peak_structures = 0** on
+decimated HAXR → inert → A/B byte-identical to OFF (the same two-layer wall as
+philos). The config that ENGAGES is `imm_cv_ct_pmbm_occupancy_detector` (1b-ii,
+coarse 100 m grid + clutter-adaptive bar; occ_peak_structures = 31), whose own
+comment says "A/B vs imm_cv_ct_pmbm_land." That is the correct ON arm.
+
+- ON: `imm_cv_ct_pmbm_occupancy_detector` (Stage 1b-ii; universal decay).
+- ON-6c: `imm_cv_ct_pmbm_occupancy_detector_coverage` (identical + coverage-aware
+  decay — the increment-6c stale-pin arm).
 - OFF: `imm_cv_ct_pmbm_land` (land inert on HAXR — no Hamburg coastline — so the
   delta isolates the occupancy layer; = imm_cv_ct_pmbm behaviourally on HAXR).
+
+The first 3-site A/B (2026-07-04) mistakenly used `imm_cv_ct_pmbm_occupancy`
+(inert) → byte-identical, which is itself the "standard-classifier inert on real
+radar" finding (2nd geography after philos). Re-run with the _detector arm.
 
 **Harness prerequisite (DONE, this plan): HaxrScenarioRun now (a) sets a nominal
 fixed anchor datum** — HAXR is a local metre frame, and the Stage-1b occupancy /
@@ -73,3 +87,35 @@ HAXR_AIS_CSV=data/dlr/<st>_08-UTC.csv HAXR_STATION=<st> \
 /usr/bin/time -v ./build/bench/navtracker_bench_baseline --with-haxr \
   --scenario-filter haxr --config-filter <config> --out <dir>/ --run-id haxr_<st>_<cfg>
 ```
+
+## RESULTS — DONE 2026-07-04
+
+**Headline: the persistence occupancy detector is near-inert on real dense-harbor
+radar.** Full numbers in the eval-log (2026-07-04 increment-8 entry). Summary:
+
+- **Phantom-over-count reduction (the core question): near-null.** The engaged
+  Stage-1b-ii detector (`_occupancy_detector` / `_detector_coverage`) cuts card_err
+  by < 3 % across 9 station-hours (3 sites × 08/09/11), once slightly POSITIVE.
+  Suppression is DECOUPLED from reduction (10 041 suppress hits → −1.18 card_err):
+  the classifier catches persistent structure, but the over-count is diffuse
+  clutter elsewhere. lifetime/missed identical (safe). No "N× faster".
+- **Decimation confound RESOLVED** (undecimated kattwyk t40): the near-null holds
+  undecimated (−0.45 %) as well as decimated (−0.72 %); decimation removed phantom
+  load (baseline 113 vs 51) but hid no benefit. Real, not an artifact.
+- **AIS third arm:** the corroboration veto is mechanically LIVE end-to-end on real
+  AIS (740 fixes/site shift occ_suppress_hits + structure classification), no
+  cardinality damage. Isolated benefit unmeasurable without a veto-ON/OFF toggle
+  (entangled with AIS-tracking); accuracy circular → no accuracy claims. FOLLOW-UP:
+  add a veto-disable flag to A/B the veto with AIS held constant.
+- **Self-heal:** N/A on HAXR (camera-eviction property; HAXR is radar-only).
+
+**Strategic conclusion:** persistence does NOT discriminate the phantom sources on
+real radar — confirmed on 2 geographies (HAXR + philos) × 2 decimation regimes.
+The over-count is diffuse clutter, not concentrated structure. The forward path is
+CORROBORATION (AIS/camera — the veto) + a different clutter/birth model for the
+diffuse over-count, NOT persistence tuning. This is a robust negative result that
+redirects Stage 1b-ii away from persistence-suppression.
+
+**Harness shipped this pass:** e5be99b (HAXR datum + per-station env — was inert),
+5ae6117 (bench --config-eq), 0472eae (veto production wiring — was inert). All 9
+station-hours decimated (clustering-first, 55–100 plots/scan) + windowed, md5-pinned.

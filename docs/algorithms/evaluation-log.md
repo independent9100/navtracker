@@ -8,6 +8,105 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-04 — Increment 8: HAXR occupancy A/B — persistence detector near-inert on a 2nd real geography [Cl-3]
+
+Steady-state occupancy A/B on real Hamburg port radar (HAXR), 3 sites × 08 UTC
+hour (Kattwyk / Seemannshöft / Parkhafen — one per site for geographic diversity),
+radar-only. **HAXR truth is AIS-only → cross-check, NOT the gate** (harbor_complete_
+truth stays the gate). Harness fixes this pass: HaxrScenarioRun now sets a nominal
+datum (was missing → occupancy silently never wired: commit e5be99b) + per-station
+env params; bench `--config-eq` (commit 5ae6117).
+
+**Decimation (clustering-first, per the compute reality — undecimated PMBM is
+1h35m/config, ~172× EKF+GNN).** `extract_plots.py --cluster-eps-m` raised per
+site to hit the 60–100 plots/scan band (kattwyk/parkhafen eps=50 → 82/55, dense
+seemannshöft eps=85 → 91); merges extended STRUCTURE (the phantom source) while
+point targets survive as single plots — NOT amplitude (which would delete the weak
+returns = small non-AIS craft we care about). 285 s windows, time-matched AIS
+truth, both A/B arms sharing each site's IDENTICAL decimated feed (md5-pinned).
+**Direction-of-bias (acknowledged):** decimation removes phantom load from the
+baseline, so it UNDERSTATES any occupancy benefit — conservative. (Honest aside:
+nobody feeds 169 plots/scan to a production tracker; sensible preprocessing is
+deployment-realistic, so the decimated regime is arguably MORE representative.)
+
+**Config correction:** the standard `imm_cv_ct_pmbm_occupancy` and `_sensitive`
+classify **occ_peak_structures = 0** on decimated HAXR → inert → A/B byte-identical
+to land OFF. The config that ENGAGES is the Stage-1b-ii **`_occupancy_detector`**
+(coarse 100 m grid + clutter-adaptive bar; comment: "A/B vs imm_cv_ct_pmbm_land").
+
+**Result (occupancy_detector / _detector_coverage ON vs imm_cv_ct_pmbm_land OFF):**
+
+| site | metric | OFF land | ON det | ON det+cov |
+|---|---|---:|---:|---:|
+| kattwyk | card_err_mean | 51.037 | 51.033 | **50.670** |
+| | gospa_false | 10729.7 | 10728.9 | **10656.4** |
+| | occ_peak_structures / suppress_hits | — | 31 / 175 | 26 / **7355** |
+| seemannshöft | card_err_mean | 58.218 | 58.201 | **57.982** |
+| | occ_peak_structures / suppress_hits | — | 33 / 707 | 33 / 4793 |
+| parkhafen | card_err_mean | 35.856 | 35.810 | **35.451** |
+| | occ_peak_structures / suppress_hits | — | 17 / 744 | 18 / 2618 |
+
+`lifetime_ratio` and `gospa_missed` are **IDENTICAL** across all arms (real vessels
+untouched — the layer is SAFE), and `wall_seconds`/RSS are within run-variance
+(no "N× faster" — phantoms barely cut, so the Bernoulli count barely moves).
+
+**Takeaway — the "persistence does not discriminate" wall, confirmed on a 2nd
+real geography.** The detector engages (classifies structure, fires up to 7355
+suppressions) yet cuts the phantom over-count by **< 1 %** (card_err −0.2…−0.4 of
+a 35–58 over-count). The persistent+extended classifier catches piers/structure,
+but the phantom over-count is **diffuse harbor clutter** not concentrated in those
+cells. Same shape as philos (see [[project_stage1b_occupancy]]). Direction is
+correct (ON ≤ OFF, never worse) and safe, but the magnitude is negligible. This
+validates the strategic pivot: Stage 1b-ii must be a **corroboration** detector
+(AIS/camera — the veto wired in 0472eae), NOT persistence. Coverage-aware decay
+(det+cov) accumulates far more suppression (7355 vs 175 hits) for a slightly
+larger — still negligible — reduction, consistent with the 6c stale-pin story.
+
+**Robustness — 9 station-hours (3 sites × 08/09/11).** The near-null holds across
+geography AND time: det+cov card_err reduction ranges −0.08…−1.23 (0.2–3 % of the
+34–60 over-count) on 8 of 9, and is slightly POSITIVE (+0.93) on seemannshöft_09.
+**Suppression is decoupled from phantom reduction** — kattwyk_09 fired 10 041
+occ_suppress_hits yet cut card_err only 1.18 (≈ 0.0001 card_err per suppression):
+the suppressed cells are not the phantom sources. This is the concrete evidence
+for "persistence does not discriminate" — the layer suppresses real structure but
+the over-count is diffuse clutter elsewhere.
+
+**AIS third arm (veto mechanics on real AIS; 3 sites).** `HAXR_FEED_AIS=1` feeds
+the AIS vessel positions as `SensorKind::Ais` measurements (740/site) so the
+corroboration veto (observeVesselFix, 0472eae) fires on real traffic. **HARD
+CIRCULARITY RULE:** AIS is both input AND truth here → this arm measures veto
+MECHANICS only, NEVER accuracy-vs-AIS (scoring against the same data we fed).
+Result: the veto is **mechanically LIVE end-to-end on real AIS** — feeding it
+shifts occ_suppress_hits materially at every site (e.g. parkhafen det 744→9471)
+and ticks structure classification up (occ_peak_structures 31→32, 26→33 kattwyk).
+But the effect is **ENTANGLED**: the added AIS tracks feed the occupancy model
+more (position, 1−r) data, classifying MORE structure and generating MORE
+suppression queries, which swamps the veto's near-AIS suppression-LIFT — so
+occ_suppress_hits mostly rises, not falls. lifetime_ratio is mixed (kattwyk
+0.1466→0.1485, parkhafen 0.1019→0.1086, but seemannshöft 0.1438→0.1374) and
+circular. Net: the wiring is validated on real data (the reviewer's ask), but the
+veto's ISOLATED benefit is unmeasurable without a veto-ON/OFF toggle holding AIS
+constant (clean follow-up — the always-on veto has no A/B partner today).
+
+**Self-heal target: N/A on HAXR** — self-heal (wrong camera eviction → re-emerge)
+is a camera-eviction property (increment ii); HAXR is radar-only, no camera.
+
+**Decimation confound — RESOLVED: not an artifact.** Undecimated kattwyk t40
+(169/scan) detcov vs land: card_err 113.14 → 112.63 (**−0.51 = −0.45 %**), vs the
+decimated −0.37 = −0.72 %. Undecimated the phantom over-count is ~2× larger (113
+vs 51 — confirming the user's direction-of-bias prediction that decimation removes
+phantom load from the baseline), and the detector classifies MORE structure
+(occ_peak_structures 40 vs 26), yet its effect on the over-count is STILL
+negligible (smaller as a fraction, even). So the near-null is real in BOTH
+regimes; decimation did not hide a benefit. **Bottom line:** the persistence
+occupancy detector is near-inert on real dense-harbor radar across two geographies
+(Hamburg HAXR + Boston philos) and two decimation regimes — persistence does not
+discriminate the phantom sources. The forward path is corroboration (the veto,
+validated mechanically-live on real AIS above), and a fundamentally different
+clutter/birth model for the diffuse over-count — NOT persistence tuning.
+Harness: commits e5be99b (datum + per-station env), 5ae6117 (--config-eq),
+0472eae (veto wiring). Full suite green.
+
 ## 2026-07-04 — Suppression veto: production wiring (was inert) [Cl-3]
 
 Review finding (post-R10): the R9 item-1b corroboration veto had a real,

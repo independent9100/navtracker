@@ -240,6 +240,31 @@ class HaxrScenarioRun : public ScenarioRun {
     // recenter (fixed datum per run). Without this the occupancy A/B is a no-op:
     // the ON arm would be bit-identical to OFF because the model is never wired.
     s.datum = geo::Datum(geo::Geodetic{53.53, 9.95, 0.0});  // Hamburg port, nominal
+
+    // Increment-8 AIS THIRD ARM (HAXR_FEED_AIS set): additionally feed the AIS
+    // vessel positions as SensorKind::Ais Position2D MEASUREMENTS (not just
+    // truth), so the corroboration veto (observeVesselFix) fires on real AIS
+    // traffic. CIRCULARITY (hard rule): AIS is both input AND truth here, so this
+    // arm measures veto MECHANICS + phantom behaviour ONLY — never accuracy-vs-AIS
+    // (that would be scoring against the same data we fed). Off by default → the
+    // radar-only core A/B is unaffected.
+    if (!haxrEnv("HAXR_FEED_AIS", "").empty()) {
+      for (const auto& t : s.truth) {
+        Measurement m;
+        m.time = t.time;
+        m.sensor = SensorKind::Ais;
+        m.source_id = "ais_" + station;
+        m.model = MeasurementModel::Position2D;
+        m.value = t.position;
+        m.covariance = Eigen::Matrix2d::Identity() * (30.0 * 30.0);  // AIS default σ
+        m.hints.mmsi = static_cast<std::uint32_t>(t.truth_id & 0xFFFFFFFFu);
+        s.measurements.push_back(std::move(m));
+      }
+      std::sort(s.measurements.begin(), s.measurements.end(),
+                [](const Measurement& a, const Measurement& b) {
+                  return a.time < b.time;
+                });
+    }
     return s;
   }
 };
