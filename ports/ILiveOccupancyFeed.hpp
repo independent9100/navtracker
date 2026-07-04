@@ -2,6 +2,8 @@
 
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "ports/ISensorDetectionModel.hpp"  // ScanObservation
 
 namespace navtracker {
@@ -28,6 +30,20 @@ class ILiveOccupancyFeed {
   /** Feed one per-scan bundle of clutter-labeled observations by sensor. */
   virtual void observe(
       const std::vector<ISensorDetectionModel::ScanObservation>& by_sensor) = 0;
+
+  /**
+   * Feed one corroborating vessel FIX — an AIS / Cooperative / RemoteTrack
+   * position (isNonScanningSource) — so the occupancy model can VETO
+   * birth-suppression near a known vessel (R9 item 1b). `position_enu` is in the
+   * tracker's working ENU frame; `t_unix` is the fix time (s) for the recency
+   * window. Kept SEPARATE from observe() because a vessel fix is external
+   * knowledge (a positive vessel presence), not a clutter-labeled return, and it
+   * feeds only the birth-veto face — never λ_C / p_D. Default no-op: an occupancy
+   * model without the veto, or a consumer that doesn't wire it, is unaffected —
+   * the same nullable-sink contract as observe().
+   */
+  virtual void observeVesselFix(double /*t_unix*/,
+                                const Eigen::Vector2d& /*position_enu*/) {}
 };
 
 }  // namespace navtracker

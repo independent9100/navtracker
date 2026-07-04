@@ -180,18 +180,25 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   void observeCamera(const CameraObservation& frame);
 
   /**
-   * One AIS/cooperative vessel fix (suppression veto input, R9 item 1b). Position
-   * is in the tracker's CURRENT-datum ENU (re-expressed to the anchor frame
-   * internally, like a camera sensor position); t_unix is its timestamp for the
-   * recency window. The WIRING selects which measurements are positional anchors
-   * (SensorKind::Ais / Cooperative — `isNonScanningSource`) and feeds only those,
-   * so the model stays sensor-kind agnostic. Inert until first fed.
+   * One AIS/cooperative/remote vessel fix (suppression veto input, R9 item 1b).
+   * Position is in the tracker's CURRENT-datum ENU (re-expressed to the anchor
+   * frame internally, like a camera sensor position); t_unix is its timestamp for
+   * the recency window. The PRODUCER (`PmbmTracker`'s occupancy feed) selects the
+   * positional anchors — `isNonScanningSource`: AIS / Cooperative / RemoteTrack —
+   * and routes only those here via the `ILiveOccupancyFeed::observeVesselFix`
+   * primitive override below, so the model stays sensor-kind agnostic. This
+   * struct overload is the direct/test entry point; the override delegates to it.
+   * Inert until first fed.
    */
   struct VesselFix {
     double t_unix{0.0};
     Eigen::Vector2d position_enu{Eigen::Vector2d::Zero()};
   };
   void observeVesselFix(const VesselFix& fix);
+
+  /** ILiveOccupancyFeed: production entry point (primitives); delegates above. */
+  void observeVesselFix(double t_unix,
+                        const Eigen::Vector2d& position_enu) override;
 
   /** Number of currently-active (unpruned, recent) vessel-fix vetoes. */
   std::size_t vesselFixCount() const { return vessel_fixes_.size(); }

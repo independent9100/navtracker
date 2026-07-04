@@ -8,6 +8,38 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-04 — Suppression veto: production wiring (was inert) [Cl-3]
+
+Review finding (post-R10): the R9 item-1b corroboration veto had a real,
+model-side-tested mechanism (`LiveOccupancyModel::observeVesselFix` →
+`birthSuppression` carve-out) but **no production feeder** — `observeVesselFix`
+was called only from unit tests. `PmbmTracker`, the only production producer,
+built the occupancy `observe(bundle)` feed but never extracted the
+`isNonScanningSource` (AIS/Cooperative/RemoteTrack) positions to feed the veto.
+So in any real run or bench the veto was **inert**, and a header comment
+falsely claimed the wiring already selected and fed anchors. This is the same
+failure shape as the earlier "clutter map inert in PMBM, observe never called"
+(cost weeks once); caught early here because the R10 handoff invited the check.
+
+**Fix (TDD, Option A — port-level, hexagonal-clean).** `ILiveOccupancyFeed`
+gains a default-no-op `observeVesselFix(double t_unix, Vector2d position_enu)`
+(primitives, so the port stays free of any `core/static` type). `LiveOccupancyModel`
+overrides it, delegating to the existing `VesselFix` overload. `PmbmTracker`'s
+occupancy producer collects `isNonScanningSource` positional fixes in the same
+scan loop that already tests that predicate for coverage exclusion, and routes
+them via `observeVesselFix` just before `observe(bundle)` — only when an
+occupancy sink is wired, so unwired runs stay **bit-identical**. The false
+header comment is corrected to name the producer.
+
+**Verification.** RED→GREEN: a new wiring test proves an AIS fix reaches both a
+`SpyOccupancyFeed` and a real `LiveOccupancyModel::vesselFixCount()` **through
+`processBatch`** (not a direct model call), and a scanning-radar return does
+NOT feed the veto. 117-test occupancy/philos/churn/determinism/clutter subset
+green (the now-active veto shifts no gate: philos is zero-AIS, the synthetic
+structure gates are radar-only, and the veto only ever LOWERS suppression —
+conservation-safe). Full suite green. Real-data validation of the veto's
+EFFECT rides increment 8 (HAXR hours carry AIS channels; philos does not).
+
 ## 2026-07-04 — R10: remote-track ingestion (shore/VTS pseudo-measurements) [Cl-3]
 
 Closes the last gap in the target deployment suite (remote station sends TRACKS).

@@ -1684,6 +1684,11 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     // position per bundle to self-estimate its swept footprint after the loop.
     const bool estimate_cov = cfg_.estimate_coverage_sector;
     std::map<Key, Eigen::Vector2d> cov_sensor;
+    // R9 item 1b wiring: collect non-scanning positional anchors (AIS/Cooperative/
+    // RemoteTrack) to route to the occupancy VETO — a birth near a known vessel
+    // must not be suppressed. Only when an occupancy sink is wired (else empty →
+    // no observeVesselFix calls → bit-identical to today).
+    std::vector<std::pair<double, Eigen::Vector2d>> vessel_fixes;
     for (std::size_t j = 0; j < scan.size(); ++j) {
       const Key k{scan[j].sensor, scan[j].model};
       auto it = by_sensor.find(k);
@@ -1706,6 +1711,12 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
         if (estimate_cov && !isNonScanningSource(scan[j].sensor) &&
             cov_sensor.find(k) == cov_sensor.end())
           cov_sensor[k] = scan[j].sensor_position_enu;
+        // Same non-scanning predicate, opposite use: a vessel POSITION from
+        // AIS/Cooperative/RemoteTrack is a corroboration fix for the birth veto.
+        if (feed_occupancy && isNonScanningSource(scan[j].sensor))
+          vessel_fixes.emplace_back(
+              scan[j].time.seconds(),
+              Eigen::Vector2d(scan[j].value(0), scan[j].value(1)));
         if (weight > 0.0) {
           it->second.clutter_positions.emplace_back(scan[j].value(0),
                                                     scan[j].value(1));
@@ -1739,7 +1750,14 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     bundle.reserve(by_sensor.size());
     for (auto& kv : by_sensor) bundle.push_back(std::move(kv.second));
     if (feed_detection) detection_model_->observe(bundle);
-    if (feed_occupancy) occupancy_feed_->observe(bundle);
+    if (feed_occupancy) {
+      // Route corroboration fixes BEFORE the structure feed, so this scan's
+      // known-vessel anchors are present for next scan's birth-veto queries
+      // (same recency as the structure update; observe() prunes stale fixes).
+      for (const auto& vf : vessel_fixes)
+        occupancy_feed_->observeVesselFix(vf.first, vf.second);
+      occupancy_feed_->observe(bundle);
+    }
   }
 
   aggregated_tracks_dirty_ = true;

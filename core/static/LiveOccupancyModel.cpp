@@ -80,6 +80,11 @@ void LiveOccupancyModel::observeVesselFix(const VesselFix& fix) {
   vessel_fixes_.push_back(f);
 }
 
+void LiveOccupancyModel::observeVesselFix(double t_unix,
+                                          const Eigen::Vector2d& position_enu) {
+  observeVesselFix(VesselFix{t_unix, position_enu});
+}
+
 void LiveOccupancyModel::observe(
     const std::vector<ISensorDetectionModel::ScanObservation>& by_sensor) {
   const double a = params_.ewma_alpha;

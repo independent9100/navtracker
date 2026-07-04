@@ -4,7 +4,9 @@
 #include <Eigen/Core>
 #include "core/estimation/ConstantVelocity2D.hpp"
 #include "core/estimation/EkfEstimator.hpp"
+#include "core/geo/Datum.hpp"
 #include "core/pmbm/PmbmTracker.hpp"
+#include "core/static/LiveOccupancyModel.hpp"
 #include "core/types/Measurement.hpp"
 #include "ports/ILiveOccupancyFeed.hpp"
 #include "ports/ISensorDetectionModel.hpp"
@@ -37,14 +39,20 @@ struct SpyDetectionModel : ISensorDetectionModel {
   }
 };
 
-// Records every occupancy feed bundle (the Stage 1b sink).
+// Records every occupancy feed bundle (the Stage 1b sink) AND every vessel-fix
+// veto routed through the tracker (R9 item 1b production wiring).
 struct SpyOccupancyFeed : navtracker::ILiveOccupancyFeed {
   int observe_calls = 0;
   std::vector<std::vector<ISensorDetectionModel::ScanObservation>> bundles;
+  std::vector<std::pair<double, Eigen::Vector2d>> vessel_fixes;
   void observe(const std::vector<ISensorDetectionModel::ScanObservation>&
                    by_sensor) override {
     ++observe_calls;
     bundles.push_back(by_sensor);
+  }
+  void observeVesselFix(double t_unix,
+                        const Eigen::Vector2d& position_enu) override {
+    vessel_fixes.emplace_back(t_unix, position_enu);
   }
 };
 
@@ -55,6 +63,11 @@ Measurement posMeas(double x, double y, double t) {
   m.time = Timestamp::fromSeconds(t);
   m.value = Eigen::Vector2d(x, y);
   m.covariance = Eigen::Matrix2d::Identity() * 25.0;
+  return m;
+}
+Measurement aisMeas(double x, double y, double t) {
+  Measurement m = posMeas(x, y, t);
+  m.sensor = SensorKind::Ais;  // a non-scanning positional anchor
   return m;
 }
 PmbmTracker::Config cfg() {
@@ -313,4 +326,56 @@ TEST(PmbmClutterFeed, DeterministicFeed) {
     return std::make_pair(spy->observe_calls, ws);
   };
   EXPECT_EQ(run(), run());
+}
+
+// R9 item 1b PRODUCTION WIRING: the suppression veto is only real if the tracker
+// actually routes non-scanning positional anchors (AIS/Cooperative/RemoteTrack)
+// to the occupancy feed's observeVesselFix — the mechanism was model-side tested
+// but never fed from PmbmTracker (inert in every real run). This proves the seam:
+// an AIS fix reaches the sink through processBatch, a radar return does NOT.
+TEST(PmbmOccupancyFeed, RoutesNonScanningAnchorToVetoThroughTrackerPath) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+  PmbmTracker t(ekf, cfg());
+  SpyOccupancyFeed occ;
+  t.setLiveOccupancyFeed(&occ);
+  // Feed a persistent AIS target. The occupancy producer runs once a Bernoulli
+  // exists (density non-empty), so fixes flow from the 2nd scan on.
+  for (int k = 0; k < 6; ++k) {
+    t.predict(Timestamp::fromSeconds(k));
+    t.processBatch({aisMeas(120.0, 30.0, k)});
+  }
+  ASSERT_FALSE(occ.vessel_fixes.empty())
+      << "AIS anchor never routed to the veto through the tracker path";
+  // The routed fix carries the AIS position (ENU working frame).
+  EXPECT_NEAR(occ.vessel_fixes.back().second.x(), 120.0, 1e-9);
+  EXPECT_NEAR(occ.vessel_fixes.back().second.y(), 30.0, 1e-9);
+
+  // A radar (scanning) return is NOT a vessel fix — the veto must not see it.
+  SpyOccupancyFeed occ_radar;
+  PmbmTracker t2(ekf, cfg());
+  t2.setLiveOccupancyFeed(&occ_radar);
+  for (int k = 0; k < 6; ++k) {
+    t2.predict(Timestamp::fromSeconds(k));
+    t2.processBatch({posMeas(120.0, 30.0, k)});  // ArpaTtm
+  }
+  EXPECT_TRUE(occ_radar.vessel_fixes.empty())
+      << "a scanning-radar return must NOT feed the vessel-fix veto";
+}
+
+// The reviewer's literal acceptance: a fed AIS fix lands in a REAL
+// LiveOccupancyModel's vesselFixCount() THROUGH the tracker path, not via a
+// direct model call.
+TEST(PmbmOccupancyFeed, VesselFixLandsInLiveOccupancyModelCountThroughTracker) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+  PmbmTracker t(ekf, cfg());
+  navtracker::LiveOccupancyModel occ(navtracker::geo::Datum({53.5, 8.0, 0.0}));
+  t.setLiveOccupancyFeed(&occ);
+  for (int k = 0; k < 6; ++k) {
+    t.predict(Timestamp::fromSeconds(k));
+    t.processBatch({aisMeas(80.0, -40.0, k)});
+  }
+  EXPECT_GT(occ.vesselFixCount(), 0u)
+      << "AIS fix never reached the LiveOccupancyModel veto via the tracker";
 }
