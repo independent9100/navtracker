@@ -1,0 +1,63 @@
+# Pre-water window — selected work while the real test waits (2026-07-05)
+
+NOT a new backlog. This SELECTS from the existing queues (improvement-backlog,
+data-expansion D1–D12, review-fix R-items, parked north-star rows) for the
+window between "research arc closed" and "deployment facts arrive / water
+test". Each item cites its home ticket; status lives there. Drop this doc
+when the water date firms.
+
+## Tier 1 — directly improves the water test (do first)
+
+1. **R11 identity surfacing** — RUNNING (implementer). Ticket §R11.
+2. **Target-reported kinematics** — backlog **#20** (new): AIS SOG/COG/
+   heading/**nav-status** (veto data path!) + TTM one-shot birth seed +
+   swap diagnostic. ~1–2 days. The nav-status half upgrades the
+   corroboration stack before the water test.
+3. **Bearing-wedge hazard** — backlog #17 option 1 (camera-only contact
+   safety net; "never invisible" without a position). Buildable NOW
+   (no deployment facts needed). ~1–2 days incl. output-contract.
+4. **Nav-input guard, fact-free half** — backlog #18: staleness signal +
+   jump detection (SOG-gated heading source waits for facts). ~1 day.
+5. **Per-pose heading σ** — backlog #16. ~half day; guide §5 updates.
+
+## Tier 2 — measurement integrity + unused data (cheap, parallel)
+
+6. **D2 Stone Soup GOSPA cross-validation** — STILL NEVER DONE; two
+   truth-fragmentation bugs argue for it. ~half day.
+7. **D7 MOANA feasibility** — the only in-hand path to (a) real radar
+   with NON-AIS truth and (b) a **Doppler-capable radar** (W-band) to
+   prototype the increment-8 Doppler direction before hardware answers
+   arrive. ~half day go/no-go.
+8. **D8 R-BAD feasibility** — 69 h berthing radar + synced video
+   (hour-scale steady state on a 3rd geography + label passes). ~half day.
+9. **R8.8 car_carrier_near re-extraction + occlusion video pass** — still
+   OPEN (verified 2026-07-05); the shadowing test for the decay sector
+   model. Extractor fallbacks + fail-loud guard per ticket. ~1 day
+   (video pass = user + analyst).
+10. **ais_ferry_far + almost_cross measurement pass** — held-out duty is
+    discharged (sailboats_busy scored); these two are now usable.
+    `ais_ferry_far` HAS AIS → the only philos clip where accuracy-vs-
+    truth is honestly measurable. ~1 day.
+
+## Tier 3 — bigger quality fronts (pick AT MOST ONE, design-first)
+
+11. **Clutter/birth-model investigation** (increment-8 redirect): the
+    diffuse over-count. Full gate suite mandatory (λ_C history: KEEP
+    over-deletion + dense_clutter spiral). ~1 week.
+12. **Cl-1 cold-start env-1 gap** (bearing-heavy open water, no anchor) —
+    the one open headline-claim gap. ~1 week.
+13. **D10 GFW anchorages (+ what's left of D3)** — anchored-vessel stats
+    + KEEP-side corroboration prior. ~1–2 days, registration first.
+
+## Stays parked (unchanged reasons)
+
+Stage 2 evidential grid + stationary IMM; TBD channel; D4/D5/D11/D12;
+backlog #19 (needs camera tracking pass + id-survival measurement);
+RTS promotion (anchored-mode structural fix); MHT static-mechanism port.
+
+## Suggested consumption
+
+While R11 runs: #2 + #6 in parallel → D7/D8 feasibility (#7/#8) →
+#3/#4/#5 → video-pass items (#9/#10, needs user) → THEN choose the one
+Tier-3 front, informed by whatever D7 said about Doppler and whatever
+the deployment facts said about the radar.

@@ -740,3 +740,25 @@ clips, BEFORE trusting them with weight.
 **Trigger.** After the corroboration/steady-state line closes; natural
 pairing with the camera-axis follow-ups (backlog #17). Evaluate on the
 close-moored-boats case + backlog #11's sc5-style scenarios.
+
+---
+
+## 20. Target-reported kinematics (AIS SOG/COG/heading/nav-status; TTM speed/course)
+
+**What.** We currently DROP most of what targets report about themselves:
+`AisDynamicReport` carries only position+accuracy (no SOG/COG/heading/
+nav-status); ArpaAdapter ignores TTM speed/course fields. Split by the
+independence rule (guide §3 "derived data and double-counting"):
+- **AIS (independent witness — the target's own GPS/gyro):** parse SOG/
+  COG/heading/nav-status. Uses: heading as a TrackAttribute + output
+  (fills "stationary, direction undefined" — anchored vessel points
+  somewhere even when COG is garbage); **nav-status (1=anchor, 5=moored)
+  as veto/corroboration input** (the R3 "nav-status → vessel, never
+  suppress" rule finally gets a data path); SOG/COG as measurement
+  content (PositionVelocity2D) with COG down-weighted at low SOG.
+- **ARPA TTM speed/course (our own data smoothed — never a recurring
+  measurement):** one-shot velocity prior at track birth (then
+  discarded); course-vs-ours swap diagnostic (distrust sensor_track_id
+  when they diverge hard). Mind stabilization (ground vs water course).
+**Effort.** ~1–2 days. Consumer surface ⇒ guide + output-contract sync.
+Raised 2026-07-04, queued 2026-07-05 (pre-water window).
