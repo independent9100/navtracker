@@ -127,6 +127,34 @@ TEST(LiveOccupancyModel, AbandonedStructureDecaysAndStopsSuppressing) {
   EXPECT_DOUBLE_EQ(m.birthSuppression(Eigen::Vector2d(62.5, 0.0)), 0.0);
 }
 
+// Structure-set membership hysteresis (backlog fix): a cell hovering near the
+// bar (in detector mode the clutter-adaptive bar drifts scan-to-scan) blinks in
+// and out of the structure set → hazards blink in operator output. With an
+// exit factor < 1, a cell that IS structure stays until its persistence drops
+// below bar·exit_factor, not merely below bar (the CpaEvaluator enter/exit
+// pattern). Deterministic: a saturated pier (p≈0.97) decayed two observed scans
+// (×0.7 each → p≈0.48) lands between the 0.30 exit bar and the 0.50 enter bar.
+TEST(LiveOccupancyModel, StructureMembershipHysteresisHoldsThroughBarDip) {
+  auto params = [](double exit_factor) {
+    LiveOccupancyParams p = testParams();
+    p.membership_exit_factor = exit_factor;  // exit bar = 0.5 · factor
+    return p;
+  };
+  const auto pier = pierReturns();
+  auto ramp_then_dip = [&](double exit_factor) {
+    LiveOccupancyModel m(anchorDatum(), params(exit_factor));
+    for (int s = 0; s < 10; ++s) m.observe(feed(pier, s));  // p → ~0.97, structure
+    EXPECT_EQ(m.obstacles().size(), 1u);
+    for (int s = 10; s < 12; ++s)  // 2 observed-empty decays → p ≈ 0.48
+      m.observe(feed({{Eigen::Vector2d(9000.0 + s, 9000.0), 1.0}}, s));
+    return m.obstacles().size();
+  };
+  // No hysteresis (exit factor 1.0 → exit bar 0.50): the dip drops the hazard.
+  EXPECT_EQ(ramp_then_dip(1.0), 0u) << "single bar: p<0.50 drops the structure";
+  // Hysteresis (exit factor 0.6 → exit bar 0.30): the same dip HOLDS the hazard.
+  EXPECT_EQ(ramp_then_dip(0.6), 1u) << "hysteresis: p≥0.30 holds it (no blink)";
+}
+
 // Suppression is capped strictly below the tracker's default hard gate (0.95):
 // the live layer is soft-only, never a hard no-birth kill (R3 safety — a
 // mislabeled large vessel must still be able to birth and confirm).

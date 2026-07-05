@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -37,6 +38,13 @@ struct LiveOccupancyParams {
   // clutter_reject_factor × median). false ⇒ absolute bar only (1b-i behaviour).
   bool clutter_adaptive = false;
   double clutter_reject_factor = 1.5;
+  // Structure-set membership hysteresis. A cell ENTERS the structure set at the
+  // effective bar, but only EXITS below bar·membership_exit_factor — so a cell
+  // hovering near the bar (the clutter-adaptive bar drifts scan-to-scan) does
+  // not blink in and out, which would blink hazards in operator output. 1.0 ⇒
+  // no hysteresis (single threshold; bit-identical to pre-fix). Same enter/exit
+  // pattern as CpaEvaluator. Must be in (0, 1].
+  double membership_exit_factor = 1.0;
   // Chart corroboration (increment 6): an emitted live-structure hazard whose
   // centroid lies within this radius of a charted structure point is CONFIRMED
   // as structure (label only — suppression is unchanged; the label feeds
@@ -261,6 +269,10 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   // evictCameraRefutedCells() (the eviction pre-pass), so the bar/connectivity
   // definition lives in exactly one place.
   std::vector<std::vector<Cell>> structureComponents() const;
+  // Cells above the effective bar, WITH membership hysteresis: a cell in
+  // `persistent_prev_` holds down to bar·membership_exit_factor. The input to the
+  // flood fill; recomputeStructure() updates `persistent_prev_` from its keys.
+  std::map<Cell, double> persistentCells() const;
   void recomputeStructure();
   // Increment-ii eviction pre-pass: spend (erase) the persistence of structure
   // cells the camera has refuted (matured + recent observed-empty streak) in
@@ -273,6 +285,7 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   LiveOccupancyParams params_;
 
   std::map<Cell, double> persistence_;      // EWMA persistence per touched cell
+  std::set<Cell> persistent_prev_;          // last scan's persistent set (hysteresis)
   // Emitted hazards + the geometry birthSuppression() is DERIVED from, so
   // suppression > 0 ⇒ inside some hazard's keep-clear ring (the ADR-0002
   // conservation invariant, structural). All three vectors are index-aligned.

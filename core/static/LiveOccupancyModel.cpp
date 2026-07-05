@@ -186,8 +186,8 @@ void LiveOccupancyModel::observe(
     peak_persistence_ = std::max(peak_persistence_, kv.second);
 }
 
-std::vector<std::vector<LiveOccupancyModel::Cell>>
-LiveOccupancyModel::structureComponents() const {
+std::map<LiveOccupancyModel::Cell, double>
+LiveOccupancyModel::persistentCells() const {
   // Effective persistence bar. In detector mode, raise it above the estimated
   // uniform-clutter background (median live-cell persistence — the clutter-map
   // feed is clutter-dominated) so dense clutter is rejected relative to its own
@@ -202,11 +202,23 @@ LiveOccupancyModel::structureComponents() const {
     const double median = vals[vals.size() / 2];
     bar = std::max(bar, params_.clutter_reject_factor * median);
   }
+  const double exit_bar = bar * params_.membership_exit_factor;
 
-  // Persistent cells (ordered → deterministic component labeling).
+  // Persistent cells (ordered → deterministic component labeling), with
+  // membership hysteresis: a cell already in last scan's structure set holds
+  // down to `exit_bar`; a new cell must clear the (higher) enter `bar`. With
+  // membership_exit_factor == 1 the two coincide (no hysteresis, bit-identical).
   std::map<Cell, double> persistent;
-  for (const auto& kv : persistence_)
-    if (kv.second >= bar) persistent.emplace(kv);
+  for (const auto& kv : persistence_) {
+    const double thresh = persistent_prev_.count(kv.first) ? exit_bar : bar;
+    if (kv.second >= thresh) persistent.emplace(kv);
+  }
+  return persistent;
+}
+
+std::vector<std::vector<LiveOccupancyModel::Cell>>
+LiveOccupancyModel::structureComponents() const {
+  const std::map<Cell, double> persistent = persistentCells();
 
   std::vector<std::vector<Cell>> components;
   std::map<Cell, bool> visited;
@@ -340,6 +352,13 @@ void LiveOccupancyModel::recomputeStructure() {
       cam_empty = true;
     obstacle_camera_empty_.push_back(cam_empty);
   }
+
+  // Membership hysteresis: record this scan's persistent set for next scan's
+  // enter/exit test. `persistent_prev_` was unchanged through this scan, so
+  // persistentCells() here returns exactly the set structureComponents() used.
+  const std::map<Cell, double> persistent = persistentCells();
+  persistent_prev_.clear();
+  for (const auto& kv : persistent) persistent_prev_.insert(kv.first);
 }
 
 double LiveOccupancyModel::birthSuppression(

@@ -392,6 +392,7 @@ All values are the struct defaults in `core/static/LiveOccupancyModel.hpp`. The
 | `erase_floor` | `1e-3` | — | Drop cells whose EWMA decays below this. |
 | `clutter_adaptive` | `false` | bool | Raise the bar above the estimated clutter background (detector mode). |
 | `clutter_reject_factor` | `1.5` | — | Multiplier on the median live-cell persistence for the adaptive bar. |
+| `membership_exit_factor` | `1.0` | — | Structure-set exit threshold as a fraction of the enter bar; `< 1` adds enter/exit hysteresis so a cell near the (drifting) bar does not blink hazards in and out. `1.0` ⇒ no hysteresis. |
 | `chart_corroboration_radius_m` | `100.0` | m | Centroid-to-charted-point radius that confirms structure (label). |
 | `camera_empty_sustain_s` | `2.0` | s | Continuous observed-empty duration to flag a cell camera-empty. |
 | `evict_camera_empty` | `false` | bool | Enable eviction-by-camera as behaviour (spend persistence). |
