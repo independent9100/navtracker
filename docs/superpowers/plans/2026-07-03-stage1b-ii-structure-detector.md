@@ -243,12 +243,11 @@ is a config (`imm_cv_ct_pmbm_occupancy_detector`), not a new class.
      no bench `Config` arm — the bench Sweep does not feed camera to the occupancy
      model (observeCamera is wired only in the replay harness), so a bench evict arm
      would be inert; it lands when camera enters the Sweep for the HAXR-hours A/B.
-     **Backlog item (own small fix, not needed for this gate):** a frozen-
+     **Backlog item — DONE 2026-07-05 (commit 9773510):** a frozen-
      persistence cell blinks in/out of the structure set as the clutter-adaptive
      live-cell median moves → hazards blink in operator output regardless of camera;
-     fix = hysteresis on structure-set membership (enter/exit thresholds, the
-     CpaEvaluator pattern). Kept separately fixable. **NEXT: AIS veto rides with
-     increment 8.**
+     fixed via `LiveOccupancyParams.membership_exit_factor` + `persistent_prev_`
+     enter/exit thresholds (the CpaEvaluator pattern; default 1.0 = bit-identical).
    - 6d TODO — docs (folds into increment 9): live-static-occupancy.md four-part +
      learning chapter + figure for coverage-aware decay + chart + camera.
 7. DONE — recovery gate SCENARIO `harbor_anchored_gets_underway` (stop→go boat
@@ -274,9 +273,13 @@ the student"):
   (sunset bit-identical after extraction); close_approach KEEP-stress baseline
   (`tracks_on_keep=5570`, `false_on_suppress=0`, `false_unlabeled=15182`; both
   KEEP_MIXED canaries COVERED, 0.14 m / 1.40 m); eval-log entry + R4 ceiling
-  correction. Full suite 925/925. R8.6 items 2 (CPA fixture) + 3 (sensor-doc
-  note) deferred as an independent task; `almost_cross`/`sailboats_busy`
-  anchorage canaries deferred pending FOV-confirming video passes.
+  correction. Full suite 925/925. **R8.6 items 2 (CPA fixture) + 3 (sensor-doc
+  note) DONE 2026-07-05 (commit bb47031):** first real-data collision-alarm test
+  (`test_philos_close_approach_cpa.cpp` — collider tracked to 10.2 m, CpaEvaluator
+  Entered 4.1 s before contact, keyed to the collider's track id); sensor-reference
+  raw-plot note (15 m floor is a last-metres blind zone only; radar tracked the 4 m
+  collider to 17 m). `almost_cross`/`sailboats_busy` anchorage canaries still
+  deferred pending FOV-confirming video passes.
 - TODO — R8.4 (observed-empty / coverage-aware decay) folds into increment 6.
   Coverage descriptor decided (R8.6 amendment): feed carries (sensor ENU, max
   range, azimuth sector); disc = degenerate [0°,360°); synthetics pass full
