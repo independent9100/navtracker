@@ -107,6 +107,30 @@ ARPA track ID (use as association hint **within one radar**; not stable across r
 - ARPA output is already filtered: feeding as a measurement is a pseudo-measurement (inflate `R`, correlated noise) — revisit track-level fusion if biased (spec §13).
 - Multiple radars may both report the same target in one cycle → relaxes the one-measurement-per-track assumption.
 
+### Fixture: raw radar-plot channel (philos / HAXR replay)
+
+Some replay fixtures carry raw radar **plots** rather than ARPA tracks (the
+"if no ARPA" case above), extracted offline into the shared plot schema
+(`tod, range_m, azimuth_deg, sigma_r_m, sigma_az_deg, n_cells, amp_max, station`):
+
+- **Amplitude / intensity threshold.** philos DBSCAN-clusters PCD returns above
+  **intensity ≥ 64** (`tests/fixtures/philos/extract_radar.py`); HAXR clusters
+  HDF5 amplitude cells above **amp ≥ 80** (`tests/fixtures/haxr_cfar/extract_plots.py`).
+  A second amplitude gate on top of the radar's own CFAR; not a production
+  detector.
+- **Near-range plot floor is a blind zone only in the last few metres — NOT
+  across the approach.** The philos extractor sets a lower range cutoff
+  (`range_min = 15 m`) to drop own-ship-proximate returns. Video-verified in the
+  `close_approach` clip (R8.6): a ~4 m club sailing dinghy that closed to contact
+  was tracked in the radar plots down to **17 m** (small returns, `n_cells 4–29`,
+  `amp ≥ 74`). So the 15 m floor does **not** blind the collision-alarm approach
+  window (t≈30–65 s here); it bites only in the final seconds/metres before
+  contact. This corrects an earlier in-session speculation that the floor was a
+  wide detection gap.
+- **Camera-channel motivation is identity/classification, not detection-at-range.**
+  The radar detects even a 4 m dinghy to 17 m; the camera's job is *what is it*,
+  not *is something there*.
+
 ---
 
 ## 3. EO/IR camera

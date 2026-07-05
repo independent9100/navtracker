@@ -311,6 +311,7 @@ add_executable(navtracker_tests
   tests/replay/test_philos_ospa.cpp
   tests/replay/test_philos_sunset_labels.cpp
   tests/replay/test_philos_close_approach_labels.cpp
+  tests/replay/test_philos_close_approach_cpa.cpp
   tests/replay/test_philos_occupancy_coverage_6c.cpp
   tests/replay/test_radar_truth_loader.cpp
   tests/replay/test_camera_bearing_loader.cpp
