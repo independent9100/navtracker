@@ -32,6 +32,21 @@ double distanceToMeters(double value, const std::string& units) {
   return value;
 }
 
+// TTM speed units (field 10, same K/N/S code as distance): N = knots,
+// K = km/h, S = mph. → m/s.
+double speedToMps(double value, const std::string& units) {
+  if (units == "N") return value * 0.514444;
+  if (units == "K") return value / 3.6;
+  if (units == "S") return value * 0.44704;
+  return value;  // assume m/s if unlabelled
+}
+
+// Smallest absolute difference between two true-course angles, degrees [0,180].
+double courseDeltaDeg(double a_deg, double b_deg) {
+  double d = std::fmod(std::abs(a_deg - b_deg), 360.0);
+  return d > 180.0 ? 360.0 - d : d;
+}
+
 }  // namespace
 
 ArpaAdapter::ArpaAdapter(geo::Datum datum, OwnShipProvider& own_ship,
@@ -124,6 +139,45 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
     m.covariance = out.cov;
     m.hints.sensor_track_id = target_num;
     m.sensor_position_std_m = own_opt->position_std_m;
+
+    // #20: TTM speed/course. This is the radar's OWN smoothed derivative of the
+    // range/bearing detections we already feed, so it is NEVER a recurring
+    // measurement (double-counting; guide §3). Two legitimate uses only:
+    //   (a) a one-shot birth-velocity prior (used once at initiate, discarded);
+    //   (b) a target-swap diagnostic (course jump ⇒ distrust sensor_track_id).
+    // Fields (0-indexed after the formatter): [4]=speed, [5]=course,
+    // [6]=course T/R, [9]=speed/distance units (same K/N/S code as distance).
+    const double speed_raw = std::strtod(parsed->fields[4].c_str(), nullptr);
+    const double course_raw = std::strtod(parsed->fields[5].c_str(), nullptr);
+    const std::string course_units = parsed->fields[6];
+    const bool speed_ok = edge::isFiniteValue(speed_raw) && speed_raw >= 0.0;
+    const bool course_ok = edge::isFiniteValue(course_raw) &&
+                           course_raw >= 0.0 && course_raw < 360.0;
+    if (speed_ok && course_ok) {
+      const double speed_mps = speedToMps(speed_raw, dist_units);
+      // Course to TRUE (relative course is water/ground-stabilised relative to
+      // own heading — mirror the bearing convention; deployment must confirm the
+      // radar's stabilisation mode, ground vs water, per the #20 note).
+      double course_true_deg = course_raw;
+      if (course_units == "R") course_true_deg += own_opt->heading_true_deg;
+
+      if (cfg_.seed_birth_velocity_from_ttm && speed_mps > 0.0) {
+        const double cr = course_true_deg * kDeg2Rad;  // true, CW from north
+        m.hints.birth_velocity_enu =
+            Eigen::Vector2d(speed_mps * std::sin(cr),   // east
+                            speed_mps * std::cos(cr));  // north
+      }
+      // Swap diagnostic: a discontinuous course jump for the same target number
+      // (while moving) is the target-number-reuse signature.
+      if (cfg_.swap_course_jump_deg > 0.0 && speed_mps >= cfg_.swap_min_speed_mps) {
+        auto it = last_ttm_course_deg_.find(target_num);
+        if (it != last_ttm_course_deg_.end() &&
+            courseDeltaDeg(course_true_deg, it->second) > cfg_.swap_course_jump_deg)
+          m.hints.sensor_track_id_suspect = true;
+        last_ttm_course_deg_[target_num] = course_true_deg;
+      }
+    }
+
     buffer_.push_back(std::move(m));
     return true;
   }

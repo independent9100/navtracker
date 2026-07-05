@@ -745,6 +745,31 @@ close-moored-boats case + backlog #11's sc5-style scenarios.
 
 ## 20. Target-reported kinematics (AIS SOG/COG/heading/nav-status; TTM speed/course)
 
+**STATUS — SHIPPED 2026-07-05 (3 increments, full suite 1022/1022).**
+- **Increment 1 (AIS self-report + veto data path):** AisDynamicReport carries
+  sog/cog/heading/nav-status; AisAdapter parses heading→`hints.heading_deg`
+  (attribute) and nav-status→`hints.nav_status`, dropping AIS sentinels. Both
+  surface last-write-wins through the R11 attribute sites (estimators, MHT
+  tree_attributes, PMBM Bernoulli+Acc). Nav-status veto: ILiveOccupancyFeed::
+  observeVesselFix gained a kind-agnostic `anchored` flag (PmbmTracker translates
+  nav-status 1/5); an anchored fix is held for the longer
+  `anchored_veto_window_s` (600 s) so a sparsely-reporting anchored vessel is
+  never re-suppressed (ADR 0002 / R3 finally has a data path).
+- **Increment 2 (SOG/COG measurement content):** AisAdapter emits
+  PositionVelocity2D when SOG≥threshold & COG present, COG down-weighted at low
+  SOG (falls back to Position2D below threshold; polar-Jacobian velocity cov +
+  isotropic floor). New AisAdapterConfig. Bench/sim-safe (no existing caller
+  sets SOG).
+- **Increment 3 (ARPA TTM, our-own-smoothed-data half):** TTM speed/course →
+  one-shot `hints.birth_velocity_enu` (consumed only at estimator initiate,
+  never recurring — guide §3), plus a swap diagnostic
+  (`hints.sensor_track_id_suspect` on a discontinuous course jump; diagnostic
+  only, association doesn't consume sensor_track_id). ArpaAdapterConfig knobs
+  `seed_birth_velocity_from_ttm` / `swap_course_jump_deg` / `swap_min_speed_mps`.
+  Stabilisation (ground-vs-water course) flagged as a deployment confirm.
+Docs: guide §3/§4/§6/§7 + appendix; output-contract attributes. The original
+ticket follows.
+
 **What.** We currently DROP most of what targets report about themselves:
 `AisDynamicReport` carries only position+accuracy (no SOG/COG/heading/
 nav-status); ArpaAdapter ignores TTM speed/course fields. Split by the

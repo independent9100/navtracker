@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <string_view>
 #include <vector>
 
@@ -25,6 +26,19 @@ struct ArpaAdapterConfig {
   double position_std_m{50.0};
   // Bearing 1-σ (deg) for TTM range/bearing projection.
   double bearing_std_deg{1.0};
+
+  // #20: seed a ONE-SHOT birth-velocity prior from TTM speed/course
+  // (`hints.birth_velocity_enu`, consumed only at track initiate — never a
+  // recurring measurement, so no double-counting; guide §3). false → ignore
+  // TTM speed/course entirely (historical behaviour).
+  bool seed_birth_velocity_from_ttm{true};
+  // #20 target-swap diagnostic: if the radar's own reported course for a given
+  // TTM target number jumps by more than this (deg) between consecutive reports
+  // — while the target is moving faster than `swap_min_speed_mps` — flag
+  // `hints.sensor_track_id_suspect` (the number may have been reused for a
+  // different physical target). 0 disables the diagnostic.
+  double swap_course_jump_deg{90.0};
+  double swap_min_speed_mps{1.0};
 };
 
 /**
@@ -64,6 +78,9 @@ class ArpaAdapter : public ISensorAdapter {
   ArpaAdapterConfig cfg_;
   const IHeadingBiasProvider* bias_provider_;
   std::vector<Measurement> buffer_;
+  // #20 swap diagnostic: last true course (deg) seen per TTM target number, to
+  // detect a discontinuous course jump (target-number reuse signature).
+  std::map<int, double> last_ttm_course_deg_;
 };
 
 }  // namespace navtracker

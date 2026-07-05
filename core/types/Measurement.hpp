@@ -36,6 +36,18 @@ struct AssociationHints {
   // content carried in `Measurement.value` as a PositionVelocity2D.
   std::optional<double> heading_deg;
   std::optional<std::uint8_t> nav_status;
+  // One-shot velocity prior at track BIRTH (backlog #20), ENU (vx=east, vy=north)
+  // in m/s. Set by the ARPA adapter from TTM speed/course — the radar's OWN
+  // smoothed derivative of the range/bearing detections we already feed, so it
+  // must NEVER be a recurring measurement (double-counting; guide §3). The
+  // estimator consumes it ONLY in initiate() to seed the birth velocity, then it
+  // is gone — a prior used once cannot double-count. Ignored on update.
+  std::optional<Eigen::Vector2d> birth_velocity_enu;
+  // Diagnostic (backlog #20): the emitting sensor's own reported course for this
+  // sensor_track_id jumped discontinuously — a target-swap signature. When true,
+  // treat `sensor_track_id` with suspicion (the radar may have reused the number
+  // for a different physical target). Diagnostic only today.
+  bool sensor_track_id_suspect{false};
 };
 
 /**

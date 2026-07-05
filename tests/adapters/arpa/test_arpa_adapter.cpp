@@ -342,3 +342,87 @@ TEST(ArpaAdapterTest, TllUnaffectedByGpsStd) {
   EXPECT_NEAR(m5[0].covariance(1, 0), m0[0].covariance(1, 0), 1e-9);
   EXPECT_NEAR(m5[0].covariance(1, 1), m0[0].covariance(1, 1), 1e-9);
 }
+
+// #20: TTM speed/course seeds a ONE-SHOT birth-velocity prior hint (consumed
+// once at track initiate, then discarded — never a recurring measurement;
+// guide §3). The measurement itself stays Position2D. COG true → ENU velocity.
+TEST(ArpaAdapter, TtmSeedsBirthVelocityPriorFromSpeedCourse) {
+  OwnShipProvider provider;
+  OwnShipPose pose;
+  pose.time = Timestamp::fromSeconds(0.0);
+  pose.lat_deg = 53.5;
+  pose.lon_deg = 8.0;
+  pose.heading_true_deg = 0.0;
+  provider.update(pose);
+
+  ArpaAdapter adapter(kDatum, provider);
+  // speed 12.0 kn (N), course 90° true → due east. 12 kn = 6.1733 m/s.
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("RATTM,01,1.0,90.0,T,12.0,90.0,T,0.0,0.0,N,TARG1,T,R,123456.78,A"),
+      Timestamp::fromSeconds(5.0)));
+  const auto out = adapter.poll();
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].model, navtracker::MeasurementModel::Position2D)
+      << "TTM velocity is a birth prior, not measurement content (no double-count)";
+  ASSERT_TRUE(out[0].hints.birth_velocity_enu.has_value());
+  EXPECT_NEAR(out[0].hints.birth_velocity_enu->x(), 12.0 * 0.514444, 1e-3);  // east
+  EXPECT_NEAR(out[0].hints.birth_velocity_enu->y(), 0.0, 1e-3);             // north
+}
+
+// A stationary TTM target (speed 0) gets no birth-velocity prior.
+TEST(ArpaAdapter, TtmZeroSpeedSeedsNoBirthVelocity) {
+  OwnShipProvider provider;
+  OwnShipPose pose;
+  pose.time = Timestamp::fromSeconds(0.0);
+  pose.lat_deg = 53.5;
+  pose.lon_deg = 8.0;
+  pose.heading_true_deg = 0.0;
+  provider.update(pose);
+
+  ArpaAdapter adapter(kDatum, provider);
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("RATTM,01,1.0,90.0,T,0.0,0.0,T,0.0,0.0,N,TARG1,T,R,123456.78,A"),
+      Timestamp::fromSeconds(5.0)));
+  const auto out = adapter.poll();
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_FALSE(out[0].hints.birth_velocity_enu.has_value());
+}
+
+// #20 swap diagnostic: a discontinuous course jump for the SAME target number
+// (while moving) flags sensor_track_id_suspect — the target-number-reuse
+// signature. A small course change does not.
+TEST(ArpaAdapter, TtmSwapDiagnosticFlagsCourseJump) {
+  OwnShipProvider provider;
+  OwnShipPose pose;
+  pose.time = Timestamp::fromSeconds(0.0);
+  pose.lat_deg = 53.5;
+  pose.lon_deg = 8.0;
+  pose.heading_true_deg = 0.0;
+  provider.update(pose);
+
+  ArpaAdapter adapter(kDatum, provider);
+  // First report for target 01: course 90°, moving at 12 kn. No prior → no flag.
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("RATTM,01,1.0,90.0,T,12.0,90.0,T,0.0,0.0,N,TARG1,T,R,123456.78,A"),
+      Timestamp::fromSeconds(5.0)));
+  auto a = adapter.poll();
+  ASSERT_EQ(a.size(), 1u);
+  EXPECT_FALSE(a[0].hints.sensor_track_id_suspect);
+
+  // Small change (90° → 100°): below the 90° jump threshold → not suspect.
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("RATTM,01,1.0,90.0,T,12.0,100.0,T,0.0,0.0,N,TARG1,T,R,123457.00,A"),
+      Timestamp::fromSeconds(6.0)));
+  auto b = adapter.poll();
+  ASSERT_EQ(b.size(), 1u);
+  EXPECT_FALSE(b[0].hints.sensor_track_id_suspect);
+
+  // Big jump (100° → 260°, Δ160° > 90°) for the SAME number while moving → flag.
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("RATTM,01,1.0,90.0,T,12.0,260.0,T,0.0,0.0,N,TARG1,T,R,123458.00,A"),
+      Timestamp::fromSeconds(7.0)));
+  auto c = adapter.poll();
+  ASSERT_EQ(c.size(), 1u);
+  EXPECT_TRUE(c[0].hints.sensor_track_id_suspect)
+      << "a discontinuous course jump for one target number is a swap signature";
+}

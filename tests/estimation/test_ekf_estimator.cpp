@@ -89,6 +89,26 @@ TEST(EkfEstimator, InitiateSeedsStateFromPositionMeasurement) {
   EXPECT_DOUBLE_EQ(t.last_update.seconds(), 5.0);
 }
 
+// #20: a birth-velocity prior hint (ARPA TTM speed/course) seeds the birth
+// velocity mean, while the birth covariance keeps the wide init_speed_std
+// variance (the prior nudges direction without over-committing). Used only at
+// initiate — a prior consumed once cannot double-count (guide §3).
+TEST(EkfEstimator, InitiateSeedsBirthVelocityFromPriorHint) {
+  auto model = std::make_shared<ConstantVelocity2D>(1.0);
+  const EkfEstimator ekf(model, 8.0);
+  Measurement z;
+  z.time = Timestamp::fromSeconds(5.0);
+  z.model = MeasurementModel::Position2D;
+  z.source_id = "arpa";
+  z.value = Eigen::Vector2d(100.0, -50.0);
+  z.covariance = Eigen::Matrix2d::Identity() * 9.0;
+  z.hints.birth_velocity_enu = Eigen::Vector2d(6.0, -2.0);
+  const Track t = ekf.initiate(z);
+  EXPECT_DOUBLE_EQ(t.state(2), 6.0);   // v_east seeded from the prior
+  EXPECT_DOUBLE_EQ(t.state(3), -2.0);  // v_north seeded from the prior
+  EXPECT_DOUBLE_EQ(t.covariance(2, 2), 64.0);  // variance still 8^2 (not tightened)
+}
+
 TEST(EkfEstimator, InitiateWithEmptyCovarianceDoesNotCreateTrack) {
   // The documented "no uncertainty" sentinel is a 0x0 covariance. initiate()
   // must not read it out of bounds nor birth a track from it — it returns the

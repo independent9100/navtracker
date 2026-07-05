@@ -421,10 +421,15 @@ missed associations. The trap has one shape and many disguises:
 
 - **ARPA speed/course (TTM fields)** — computed by the radar *from the same
   range/bearing detections you already feed*. Never feed them as recurring
-  measurements. Legitimate uses: a **one-shot** velocity prior at track birth
-  (used once, then discarded — a prior can't double-count), and a target-swap
-  diagnostic (radar's course suddenly ≫ off from ours → distrust that
-  `sensor_track_id`).
+  measurements. Legitimate uses, **both now wired in `ArpaAdapter` (#20)**: a
+  **one-shot** velocity prior at track birth (`hints.birth_velocity_enu`, seeded
+  from TTM speed/course, consumed only in the estimator's `initiate` then
+  discarded — a prior can't double-count; toggle `seed_birth_velocity_from_ttm`),
+  and a target-swap diagnostic (`hints.sensor_track_id_suspect` set when the
+  radar's own course for a TTM target number jumps > `swap_course_jump_deg`
+  between reports while moving — the number-reuse signature; diagnostic only, as
+  association does not consume `sensor_track_id`). Mind the radar's stabilisation
+  mode: TTM course may be ground- or water-referenced — confirm per deployment.
 - **TLL positions** — the radar's echo already fused with *its* own-ship GNSS
   and heading (see §4).
 - **A shore/VTS feed's velocity** — another tracker's smoothed derivative of
@@ -448,7 +453,10 @@ them.
 
 - **`ArpaAdapter`** (`adapters/arpa/ArpaAdapter.hpp`) parses radar **TTM**
   (range/bearing) and **TLL** (target lat/lon) sentences into `Position2D`
-  measurements. TTM needs the latest own-ship pose to project.
+  measurements. TTM needs the latest own-ship pose to project. TTM speed/course
+  are NOT fed as recurring content (double-counting; §3) — instead they seed a
+  one-shot `hints.birth_velocity_enu` prior and drive the swap diagnostic
+  (`hints.sensor_track_id_suspect`); see the `ArpaAdapterConfig` knobs.
 - **`EoIrAdapter`** (`adapters/eoir/EoIrAdapter.hpp`) takes a `CameraDetection`
   struct (relative bearing + optional range). Each `CameraDetection` carries its
   own per-detection uncertainties; if you leave them at their struct defaults they
@@ -1027,7 +1035,7 @@ or three fields most worth reviewing. (`core/benchmark/` sweep configs and the
 | Struct | Header | Controls | Fields worth reviewing |
 |---|---|---|---|
 | `OwnShipNmeaAdapterConfig` | `adapters/own_ship/OwnShipNmeaAdapter.hpp` | Own-ship NMEA parsing: GPS noise, velocity source, heading sources | `uere_m{5.0}`, `gps_heading_talkers{}`, `prefer_rmc_velocity{true}` |
-| `ArpaAdapterConfig` | `adapters/arpa/ArpaAdapter.hpp` | Radar TTM/TLL → measurements | `heading_std_deg{0.0}`, `position_std_m{50.0}`, `bearing_std_deg{1.0}` |
+| `ArpaAdapterConfig` | `adapters/arpa/ArpaAdapter.hpp` | Radar TTM/TLL → measurements; TTM speed/course → one-shot birth prior + swap diagnostic (#20) | `heading_std_deg{0.0}`, `position_std_m{50.0}`, `bearing_std_deg{1.0}`, `seed_birth_velocity_from_ttm{true}`, `swap_course_jump_deg{90.0}`, `swap_min_speed_mps{1.0}` |
 | `EoIrAdapterConfig` | `adapters/eoir/EoIrAdapter.hpp` | EO/IR camera heading σ | `heading_std_deg{0.0}` |
 | `RemoteTrackAdapterConfig` | `adapters/remote_track/RemoteTrackAdapter.hpp` | Shore/VTS remote track → pseudo-measurement (R-inflation, rate thinning, velocity opt-in) | `r_inflation_factor{3.0}`, `min_update_interval_s{2.0}`, `default_position_std_m{50.0}`, `accept_velocity{false}` |
 | `AisAdapterConfig` | `adapters/ais/AisAdapter.hpp` | AIS SOG/COG → PositionVelocity2D content (#20), COG down-weighted at low SOG | `emit_velocity_from_sog_cog{true}`, `sog_velocity_min_mps{0.5}`, `sog_std_mps{0.5}`, `cog_std_deg{5.0}`, `velocity_iso_floor_mps{0.3}`, `position_std_high_accuracy_m{10.0}`, `position_std_standard_m{30.0}` |

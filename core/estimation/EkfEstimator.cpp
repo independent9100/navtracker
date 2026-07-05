@@ -81,6 +81,14 @@ Track EkfEstimator::initiate(const Measurement& z) const {
   Eigen::Vector4d x = Eigen::Vector4d::Zero();
   x(0) = z.value(0);
   x(1) = z.value(1);
+  // #20: one-shot velocity prior at birth (ARPA TTM speed/course). Used ONCE
+  // here to seed the birth velocity, then discarded — a prior cannot
+  // double-count (guide §3). The birth covariance keeps the wide init_speed_std
+  // variance, so the prior nudges the direction without over-committing.
+  if (z.hints.birth_velocity_enu.has_value()) {
+    x(2) = z.hints.birth_velocity_enu->x();
+    x(3) = z.hints.birth_velocity_enu->y();
+  }
   t.state = x;
 
   Eigen::Matrix4d p = Eigen::Matrix4d::Zero();

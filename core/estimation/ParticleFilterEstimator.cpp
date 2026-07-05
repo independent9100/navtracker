@@ -127,6 +127,11 @@ Track ParticleFilterEstimator::initiate(const Measurement& z) const {
   Eigen::VectorXd x = Eigen::VectorXd::Zero(n);
   x(0) = z.value(0);
   x(1) = z.value(1);
+  // #20: one-shot velocity prior at birth (ARPA TTM speed/course), used once.
+  if (z.hints.birth_velocity_enu.has_value() && n >= 4) {
+    x(2) = z.hints.birth_velocity_enu->x();
+    x(3) = z.hints.birth_velocity_enu->y();
+  }
 
   Eigen::MatrixXd P = Eigen::MatrixXd::Zero(n, n);
   P(0, 0) = z.covariance(0, 0);
