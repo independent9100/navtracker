@@ -284,14 +284,29 @@ structure. Hence 1b-ii adds coverage-aware decay, chart corroboration, and
 camera observed-empty eviction as the discriminators, keeping extent only as a
 single-return noise floor.
 
+Increment 8 (eval-log 2026-07-04) then confirmed this on a **second real
+geography** (Hamburg HAXR, 9 station-hours) — see §5. The persistence detector
+*classifies structure correctly* yet cuts the phantom over-count by **< 3 %**,
+because the over-count is diffuse harbour clutter, not the persistent-extended
+structure the classifier catches. That closes the persistence-suppression
+question negatively across two independent datasets and is why the layer's
+enduring value is the hazard/presence channel and the corroboration substrate,
+**not** birth suppression.
+
 ---
 
 ## 4. Ways to improve / what to test next
 
-1. **AIS KEEP-guard.** Veto suppression within a radius of a recent AIS vessel
-   fix (an AIS-known vessel must track). Belt-and-suspenders to the unclaimed-only
-   feed rule; guards the not-yet-tracked case. Pending on synthetic/HAXR fixtures
-   (all labelled philos clips are zero-AIS).
+1. **AIS/cooperative KEEP-guard (veto).** Veto suppression within a radius of a
+   recent AIS/cooperative/remote vessel fix (a corroborated vessel must track).
+   Belt-and-suspenders to the unclaimed-only feed rule; guards the not-yet-tracked
+   case. **DONE + wired into production** (commit 0472eae): `observeVesselFix` is
+   now fed from `PmbmTracker`'s occupancy producer for every `isNonScanningSource`
+   return (it was previously called only from unit tests — inert in any real run).
+   Increment 8 validated it **mechanically live end-to-end on real HAXR AIS**
+   (740 fixes/site shift the suppression pattern, no cardinality damage). Its
+   *isolated* benefit still needs a veto-ON/OFF toggle holding AIS constant (the
+   always-on veto has no A/B partner today) — a small diagnostic follow-up.
 2. **Stage 2 — Dempster-Shafer / DOGMa evidential grid** with an explicit
    *unknown* mass (§3.2), replacing the EWMA scalar. This is the genuinely-future
    work; the EWMA layer is not a partial DOGMa.
@@ -306,12 +321,56 @@ single-return noise floor.
 5. **Stationary IMM mode** so an anchored track recovered from a suppressed
    region keeps a tight gate (zero-velocity / constant-position, locking the
    unobservable turn-rate), rather than holding with inflated covariance.
-6. **Layer-2 HAXR-hours A/B.** The 20 s philos clips cannot show confirmed-cohort
-   re-birth; the steady-state phantom-reduction benefit must be measured on
-   hour-long real churn (plan increment 8).
+6. **Layer-2 HAXR-hours A/B.** **DONE — measured negative (increment 8, §5).** The
+   steady-state phantom-reduction benefit was measured on real Hamburg radar
+   (9 station-hours) and is near-null (< 3 % over-count reduction, confound-resolved
+   against decimation). Redirect: the forward levers are the detection **front-end**
+   (clustering the raw plots already halves the over-count, 113 → 51) and
+   **clutter/birth economics** for the diffuse over-count — NOT persistence
+   suppression. See §5.
 7. **Bench camera arm.** `observeCamera` is currently wired only in the replay
-   harness; a bench `Config` evict arm lands when camera enters the Sweep for the
-   HAXR-hours A/B.
+   harness; a bench `Config` evict arm lands when camera enters the Sweep.
+
+---
+
+## 5. Measured outcome (increment 8) — persistence suppression is near-inert on real radar
+
+The honest result of the whole persistence-suppression idea, measured end-to-end
+on **real Hamburg port radar** (HAXR), radar-only, across **9 station-hours**
+(3 sites × 08/09/11 UTC), against AIS-as-truth as a **cross-check** (not a gate):
+
+- **Phantom-over-count reduction: near-null.** The engaged detector
+  (`_occupancy_detector` / `_detector_coverage`) cuts `card_err` by −0.08 … −1.23
+  of a 34–60 over-count (**< 3 %**), once slightly *positive*. `lifetime_ratio`
+  and `gospa_missed` are **identical** to the OFF baseline — the layer is *safe*
+  (no real vessels dropped), just ineffective at cutting phantoms.
+- **The one-line explanation — suppression is decoupled from reduction.** One site
+  fired **10 041** birth-suppression hits yet cut the over-count by only **1.18**
+  tracks. The classifier does its job perfectly on the thing it was built to find
+  (persistent, extended structure — piers, breakwaters); that thing is simply
+  **not where the over-count lives**. The over-count is **diffuse harbour clutter**
+  scattered across the scene, not concentrated in the structure cells.
+- **Not a decimation artifact.** Raw HAXR is ~169 plots/scan; to make PMBM
+  tractable (undecimated is ~172× EKF+GNN, ~20× slower than realtime) the plots
+  were clustered down to 55–100/scan. The near-null holds **undecimated** (−0.45 %)
+  as well as decimated (−0.72 %); undecimated the over-count is ~2× larger
+  (113 vs 51 — clustering removes phantom load) yet the detector still barely moves
+  it. Same shape as philos (§3.4) → confirmed across **two geographies × two
+  decimation regimes**.
+
+**What this changes — and what it does not.** It closes the *hoped-for* payoff
+(occupancy learning as a phantom-track cutter) honestly, before any deployment bet
+on it. It does **not** touch the safety architecture: conservation, presence,
+recovery, and corroboration were never premised on suppression winning. The layer
+keeps its keep — the **hazard / presence channel** (every learned region is an
+emitted keep-clear hazard, ADR 0002) and the **substrate the four corroboration
+sources hang off** (chart, camera, AIS/cooperative, remote-track). The forward
+path for the diffuse over-count is elsewhere: the detection **front-end**
+(clustering already halves it — a deployment recommendation independent of any
+tracker change; and Doppler/MTI on a Doppler-capable radar would reject the
+zero-Doppler structure returns at source) and **spatially-honest clutter/birth
+economics** — a new investigation, promoted only through the full standing gate
+suite (philos KEEP-ceiling, dense_clutter, harbor_complete_truth).
 
 ---
 

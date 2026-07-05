@@ -431,9 +431,53 @@ identical to a pier. Deleting slow tracks silently drops anchored ships — the
 exact targets that most need a collision alert in a crowded anchorage. The
 extent test discriminates on *shape*, not speed, and the output is soft.
 
+## 9. Did it actually cut the fake tracks? The honest answer: no.
+
+We built this layer to remove the extra fake tracks from §1. So we tested it on
+real radar — a whole hour of a second harbour (Hamburg), nine hours in total.
+
+**It barely helped.** It removed fewer than **3 in 100** of the fake tracks.
+Almost nothing.
+
+Why? Think of the fake tracks as **static on an old TV**. This layer learns where
+the fixed furniture is — the pier, the sea wall — and wipes those spots clean. It
+does that part perfectly. But the static is spread across the **whole screen**,
+not sitting on the furniture. So wiping the furniture changes almost nothing.
+
+One number tells the whole story: in one test the layer **blocked 10,000 spots**
+and removed only **one** fake track. It was cleaning the right *kind* of place — it
+was just not where the fakes come from. The fakes are **scattered clutter** all
+over the harbour, not the fixed structures the layer can find.
+
+Two things kept this from being a bad result:
+
+- **It never dropped a real ship.** The count of correctly-tracked vessels was
+  identical with the layer on or off. It is *safe*, just not *useful* for this job.
+- **It repeated.** We had already seen the same thing on the Boston data (§3.4).
+  Now Hamburg agrees. Two different harbours, same answer — a solid, trustworthy
+  result, not a fluke.
+
+**So what is this layer for, if not cutting fakes?** Two real jobs remain, and
+neither ever depended on cutting fakes:
+
+1. It draws the fixed structure as a **keep-clear hazard** — so nothing persistent
+   disappears silently (the promise of chapter 26 and ADR 0002).
+2. It is the **place other evidence attaches** — chart, camera, and AIS each
+   confirm or clear a learned region. "Confirm with another sensor" is the
+   direction that *does* work (chapters 25–26 and the multi-sensor chapter).
+
+**Where the real fix lives:** further **upstream** and **sideways**, not in this
+layer. Cleaning the raw radar returns before the tracker sees them already
+**halves** the fakes; a radar that reports Doppler could reject the motionless
+structure returns at the source; and a smarter model of the scattered clutter is
+the remaining lever. The fake tracks are a *detection* problem, not a *tracking*
+one.
+
+This is a good chapter to end on a negative result. We had a clear idea, built it
+cleanly, measured it honestly on real data from two harbours — and it did not pay
+off the way we hoped, but it told us *exactly why*, and pointed at what will.
+
 ---
 
 Previous: [26 — Static obstacles: charted hazards as a vessel-birth prior](26-static-obstacles.md)
 Back to: [Index](00-index.md)
-</content>
-</invoke>
