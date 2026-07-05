@@ -36,11 +36,17 @@ moorings* (would imply a projection/registration bug or unknown infrastructure).
 All high-persistence mass is peripheral (shore lines); mid-basin is transient only.
 So the analyst's model of philos and the clip's projection are intact.
 
-**Freeze flip-guard (exit_factor 0.6 vs 1.0): zero flips.** Every prediction bets
-on WHERE structure appears — an *entry* property. Hysteresis changes only
-*exit* stickiness (how long a cell stays, i.e. scan-hits), never the SET of
-locations that ever cross the bar. So no item's hit/miss depends on the freeze
-value; scored against the frozen 0.6 artifact as specified.
+**Freeze flip-guard (exit_factor 0.6 vs 1.0): zero flips — CHECKED, not assumed.**
+Every prediction bets on WHERE structure appears (entry) or on content
+(AIS/tracks); hysteresis changes only *exit* stickiness (how long a cell stays,
+i.e. scan-hits), never the SET of locations that cross the bar. Verified
+empirically by re-running the probe at 1.0 and diffing the hazard map on the
+detector's 100 m cell grid: **126 of 128 occupied cells identical**; the sole
+difference is one *transient* flicker landing in an adjacent SE cell (100,−400 vs
+100,−500) — not near the far-bank, the bridge, or any prediction region, so no
+item flips. Tracking (predictions 1, 6) is bit-identical (hysteresis touches only
+the birth-suppression face, not the tracker). Scored against the frozen 0.6
+artifact as specified.
 
 ## Tally and reading
 

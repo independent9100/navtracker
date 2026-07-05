@@ -66,6 +66,10 @@ struct ScanTracks {
   double t_unix;
   std::vector<ConfirmedTrack> tracks;
   std::vector<HazardSnapshot> hazards;
+  // Anchor-frame cell centres whose camera-observed-empty STREAK has matured this
+  // scan — INDEPENDENT of structure membership / hazard emission (the raw "camera
+  // proved this cell empty" fact). Empty unless an occupancy model + camera wired.
+  std::vector<Eigen::Vector2d> camera_empty_cells;
 };
 struct ClipRun {
   geo::Datum datum{geo::Geodetic{0, 0, 0}};
@@ -289,6 +293,7 @@ inline ClipRun runClip(const std::string& clip_name,
                               occ->obstacleCorroborated(i),
                               occ->obstacleCameraObservedEmpty(i)});
       }
+      st.camera_empty_cells = occ->cameraObservedEmptyCells();  // raw per-cell streak
     }
     run.history.push_back(std::move(st));
   };

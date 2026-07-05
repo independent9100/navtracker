@@ -257,6 +257,16 @@ class LiveOccupancyModel : public IStaticObstacleModel,
       if (c) ++n;
     return n;
   }
+  /**
+   * Anchor-frame cell centres whose per-cell camera-observed-empty STREAK has
+   * matured (>= camera_empty_sustain_s) — INDEPENDENT of whether the cell is
+   * currently classified as structure or emitted as a hazard. This is the raw
+   * "the camera proved this cell empty" fact (streak accumulation does not depend
+   * on the persistence bar or membership hysteresis), the config-independent
+   * signal, as opposed to obstacleCameraObservedEmpty() which is the flag on the
+   * emitted-hazard path (centroid-cell, and so sensitive to membership).
+   */
+  std::vector<Eigen::Vector2d> cameraObservedEmptyCells() const;
 
  private:
   using Cell = std::pair<int, int>;

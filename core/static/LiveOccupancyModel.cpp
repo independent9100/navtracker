@@ -394,4 +394,12 @@ double LiveOccupancyModel::birthSuppression(
   return best;
 }
 
+std::vector<Eigen::Vector2d> LiveOccupancyModel::cameraObservedEmptyCells() const {
+  std::vector<Eigen::Vector2d> out;
+  for (const auto& kv : camera_empty_streak_)
+    if ((kv.second.second - kv.second.first) >= params_.camera_empty_sustain_s)
+      out.push_back(cellCenter(kv.first));  // anchor-frame cell centre
+  return out;
+}
+
 }  // namespace navtracker
