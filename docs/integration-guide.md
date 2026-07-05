@@ -1076,10 +1076,39 @@ One-liners, each linking to where it is explained above.
   or at anchor. Use a real heading source (gyro, dual-antenna GPS heading,
   magnetic); only fall back to COG above a firm SOG threshold (the bias
   estimator's own COG observation is SOG- and turn-rate-gated for this exact
-  reason — copy that discipline). → §5.
+  reason — copy that discipline). The **nav-input guard** below now *flags* this
+  (and a stale feed, and position/heading glitches) at the edge. → §5, guard below.
 - **Treating MMSI / ARPA target id as the fusion key** — external identifiers are
   *hints* (`AssociationHints`), never the primary key. The stable `track_id` is
   the identity (invariant 5). → §3.
+
+### Nav-input guard — flag bad own-ship input at the edge
+
+The three own-ship pitfalls above (COG-as-heading at low SOG, a stale nav feed,
+and position/heading step-jumps) are checked by a **fact-free guard** at the
+`OwnShipProvider` edge (backlog #18). Wire a sink and each `update(pose)` that
+trips a sanity flag fires it:
+
+```cpp
+provider.setNavHealthSink(&nav_health_sink);   // INavHealthSink; nullable
+// optionally: provider.setNavHealthSink(&sink, NavInputGuardConfig{...});
+```
+
+`INavHealthSink::onNavHealth(NavHealth)` reports four flags with their measured
+quantities: `heading_unreliable_low_sog` (SOG below `heading_min_sog_mps`),
+`stale_gap` (gap since the previous pose > `stale_after_s`), `position_jump`
+(step speed > `max_position_speed_mps`), `heading_jump` (yaw rate >
+`max_heading_rate_dps`). The `NavInputGuardConfig` defaults (0.5 m/s / 3 s /
+50 m/s / 60°/s) are **generic plausibility bounds, not tuned per sensor** — the
+calibrated thresholds (your heading source, GPS quality) are a deployment fact,
+still on the shopping list. Two rules:
+
+- **Degrade visibly, never silently.** The guard is *pure notification*: it does
+  NOT rewrite the pose or reduce trust inside the core (validate at the edge,
+  invariant #6 — the tracker keeps using the pose it is given). Its value is
+  shrinking the *blind window* — turning a silent smear into an operator event.
+- **Nullable = inert.** No sink ⇒ the guard does not run; behaviour is
+  bit-identical to today.
 
 ---
 
@@ -1096,6 +1125,7 @@ or three fields most worth reviewing. (`core/benchmark/` sweep configs and the
 | `EoIrAdapterConfig` | `adapters/eoir/EoIrAdapter.hpp` | EO/IR camera heading σ | `heading_std_deg{0.0}` |
 | `RemoteTrackAdapterConfig` | `adapters/remote_track/RemoteTrackAdapter.hpp` | Shore/VTS remote track → pseudo-measurement (R-inflation, rate thinning, velocity opt-in) | `r_inflation_factor{3.0}`, `min_update_interval_s{2.0}`, `default_position_std_m{50.0}`, `accept_velocity{false}` |
 | `AisAdapterConfig` | `adapters/ais/AisAdapter.hpp` | AIS SOG/COG → PositionVelocity2D content (#20), COG down-weighted at low SOG | `emit_velocity_from_sog_cog{true}`, `sog_velocity_min_mps{0.5}`, `sog_std_mps{0.5}`, `cog_std_deg{5.0}`, `velocity_iso_floor_mps{0.3}`, `position_std_high_accuracy_m{10.0}`, `position_std_standard_m{30.0}` |
+| `NavInputGuardConfig` | `core/own_ship/NavInputGuard.hpp` | Fact-free own-ship nav-input sanity flags at the OwnShipProvider edge (#18); flags, never rewrites | `heading_min_sog_mps{0.5}`, `stale_after_s{3.0}`, `max_position_speed_mps{50.0}`, `max_heading_rate_dps{60.0}` |
 | `CpaEvaluatorConfig` | `core/collision/CpaEvaluator.hpp` | Collision-risk thresholds + hysteresis | `d_threshold_m{500.0}`, `enter_probability{0.5}`, `exit_probability{0.3}` |
 | `StaticHazardEvaluatorConfig` | `core/collision/StaticHazardEvaluator.hpp` | Keep-clear-ring alerts | `exit_hysteresis{1.1}`, `emit_updates{false}` |
 | `HeadingBiasEstimatorConfig` | `core/bias/HeadingBiasEstimator.hpp` | Gyro-bias KF tuning + per-kind gates | `initial_variance_rad2` (5°)², `cog_min_sog_mps{3.0}`, `bi_min_range_m{50.0}` |

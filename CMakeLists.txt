@@ -48,6 +48,7 @@ add_library(navtracker_core
   core/own_ship/UereEstimator.cpp
   core/own_ship/OwnShipVelocityEstimator.cpp
   core/own_ship/OwnShipProvider.cpp
+  core/own_ship/NavInputGuard.cpp
   core/collision/Cpa.cpp
   core/collision/CpaOwnShip.cpp
   core/collision/CpaEvaluator.cpp
@@ -308,6 +309,7 @@ add_executable(navtracker_tests
   tests/bias/test_bias_correction.cpp
   tests/own_ship/test_uere_estimator.cpp
   tests/own_ship/test_own_ship_velocity_estimator.cpp
+  tests/own_ship/test_nav_input_guard.cpp
   tests/output/test_track_output.cpp
   tests/output/test_static_hazard_output.cpp
   tests/replay/test_haxr_ospa.cpp

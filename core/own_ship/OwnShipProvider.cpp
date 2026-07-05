@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "ports/INavHealthSink.hpp"
+
 namespace navtracker {
 
 OwnShipProvider::OwnShipProvider(std::size_t history_size,
@@ -20,6 +22,14 @@ OwnShipProvider::OwnShipProvider(geo::Datum initial_datum,
       policy_(policy) {}
 
 void OwnShipProvider::update(const OwnShipPose& pose) {
+  // #18: fact-free nav-input guard at the edge. Evaluate the incoming pose
+  // against the previous latest BEFORE inserting; degrade visibly if it trips a
+  // sanity flag. Never rewrites the pose — the tracker keeps trusting its input.
+  if (nav_sink_) {
+    const NavHealth health = evaluateNavInput(latest(), pose, nav_cfg_);
+    if (health.any()) nav_sink_->onNavHealth(health);
+  }
+
   if (!current_datum_) {
     current_datum_ = geo::Datum(geo::Geodetic{pose.lat_deg, pose.lon_deg, pose.alt_m});
   } else if (policy_.enable_auto_recenter) {
@@ -77,6 +87,12 @@ void OwnShipProvider::registerDatumSink(IDatumChangeSink* sink) {
 
 void OwnShipProvider::unregisterDatumSink(IDatumChangeSink* sink) {
   sinks_.erase(std::remove(sinks_.begin(), sinks_.end(), sink), sinks_.end());
+}
+
+void OwnShipProvider::setNavHealthSink(INavHealthSink* sink,
+                                       NavInputGuardConfig cfg) {
+  nav_sink_ = sink;
+  nav_cfg_ = cfg;
 }
 
 }  // namespace navtracker

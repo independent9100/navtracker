@@ -10,9 +10,12 @@
 #include <Eigen/Core>
 
 #include "core/geo/Datum.hpp"
+#include "core/own_ship/NavInputGuard.hpp"
 #include "core/types/Timestamp.hpp"
 
 namespace navtracker {
+
+class INavHealthSink;  // ports/INavHealthSink.hpp
 
 /**
  * One own-ship navigation fix: geodetic position, true heading, and (when
@@ -117,12 +120,24 @@ class OwnShipProvider {
   void registerDatumSink(IDatumChangeSink* sink);
   void unregisterDatumSink(IDatumChangeSink* sink);
 
+  /**
+   * Wire the fact-free nav-input guard (backlog #18). With a sink set, each
+   * `update(pose)` is checked against the previous pose and, if it trips a
+   * sanity flag (low-SOG heading, stale gap, position/heading jump), the sink is
+   * fired — degrade VISIBLY. The guard never rewrites the pose; the tracker
+   * keeps trusting its input (validate at the edge, invariant #6). Nullable sink
+   * ⇒ the guard does not run, bit-identical to today.
+   */
+  void setNavHealthSink(INavHealthSink* sink, NavInputGuardConfig cfg = {});
+
  private:
   std::deque<OwnShipPose> history_;
   std::size_t history_size_limit_;
   std::optional<geo::Datum> current_datum_;
   DatumRecenterPolicy policy_;
   std::vector<IDatumChangeSink*> sinks_;
+  INavHealthSink* nav_sink_{nullptr};       // #18 nav-input guard (nullable)
+  NavInputGuardConfig nav_cfg_{};
 };
 
 }  // namespace navtracker

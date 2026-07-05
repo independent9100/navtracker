@@ -692,6 +692,20 @@ survives the two-week memory horizon).
 
 ## 18. Own-ship nav-input sanity guard (library-side, not just documented)
 
+**STATUS — fact-free half SHIPPED 2026-07-05 (full suite green).** `NavInputGuard`
+(`core/own_ship/NavInputGuard.hpp`, free `evaluateNavInput`) + `INavHealthSink` +
+`OwnShipProvider::setNavHealthSink`. On each `update(pose)` with a sink wired, the
+incoming pose is checked against the previous and, if it trips a flag, the sink is
+fired — degrade VISIBLY, never rewrite the pose (validate at the edge, invariant
+#6). Four fact-free checks with GENERIC thresholds (`NavInputGuardConfig`):
+`heading_unreliable_low_sog` (SOG < steerage way, the COG-at-anchor own-ship
+twin), `stale_gap` (pose gap too long), `position_jump`, `heading_jump`. Nullable
+sink ⇒ inert. **Parked (fact-dependent half):** the calibrated per-sensor
+thresholds and any hold-last/σ-inflation *policy* — those need the deployment's
+heading-source type + GPS quality (still on the shopping list). Docs: guide §9
+(pitfalls + guard subsection) + appendix `NavInputGuardConfig`. The original
+ticket follows.
+
 **Problem.** Three own-ship nav failure modes are currently only
 *documented* pitfalls; the library accepts the bad input silently:
 (a) COG wired as heading at SOG≈0 → heading jumps with GPS jitter →
