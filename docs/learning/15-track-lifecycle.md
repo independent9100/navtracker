@@ -223,6 +223,13 @@ simpler baseline that any team can audit by eye.
 - **Track stitching across deletes.** A separate layer above the
   tracker. Possible future work; needs careful AIS-MMSI hint
   design.
+- **An in-lifecycle "hand off to static hazard" transition.** The
+  lifecycle here is vessel-track-only; there is no state that
+  converts a stopped track into a static-hazard representation (or
+  back). That vessel-vs-environment handling lives entirely in the
+  birth channel — [chapter 26](26-static-obstacles.md) (charted)
+  and [chapter 27](27-live-static-occupancy.md) (learned) — not in
+  this state machine.
 
 ---
 

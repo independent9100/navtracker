@@ -81,6 +81,14 @@ graph LR
     WL -->|"moving inland"| IL
 ```
 
+And here is the same ramp as a quantitative plot of `c(d)` — the smooth linear
+taper between the two half-widths, the inland hard-gate plateau where `c = 1`,
+and the offshore flat where `c = 0`. The dashed line is the `c = 0.95` hard gate:
+a birth above it (roughly 45 m or more inland, for the 50 m defaults) is dropped
+outright; below it the birth is only weakened.
+
+![The shoreline clutter prior c(d) vs signed distance to shore](figures/25-coastline-ramp.png)
+
 ### 2.3 Applying the prior at birth
 
 When the PMBM tracker creates a new birth candidate at position `p`, it asks:

@@ -196,6 +196,12 @@ mode is a CV with inflated process noise — a third IMM mode
 that absorbs unmodelled erratic motion. See
 `docs/algorithms/algorithm-review-2026-06-07.md`.
 
+The same noisy-CV mode is also what currently holds a *stopped*
+vessel (anchor-watch wandering, a moored boat swinging on its
+chain): there is no dedicated stationary / low-speed mode, so the
+inflated-`q` mode does double duty. That is a known gap — see
+[chapter 09 §10](09-imm.md#10-what-we-did-not-pick-and-why).
+
 ## 5. Discretisation choices — why `dt³/3` etc.
 
 The continuous-time model is `ẋ = A · x + B · w(t)` with

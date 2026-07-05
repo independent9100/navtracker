@@ -1306,6 +1306,69 @@ def fig_static_obstacle_zones():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 25 coastline clutter prior — the signed-distance shoreline ramp c(d)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def fig_coastline_ramp():
+    """The shoreline clutter prior c(d) vs signed distance to the nearest shore
+    edge. c(d) = clamp((W_off - d) / (W_off + W_in), 0, 1). d<0 inland, d>0
+    offshore. Marks the inland hard-gate plateau and the offshore taper."""
+    W_in = 50.0    # inland half-width: c reaches 1.0 this far inland
+    W_off = 50.0   # offshore half-width: c reaches 0.0 this far offshore
+    hard_gate = 0.95
+
+    d = np.linspace(-80.0, 80.0, 800)
+    c = np.clip((W_off - d) / (W_off + W_in), 0.0, 1.0)
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+
+    # Shade the three regimes.
+    ax.axvspan(-80.0, -W_in, color="#aa3333", alpha=0.10)   # inland plateau (c=1)
+    ax.axvspan(-W_in, W_off, color="#e8a030", alpha=0.10)   # soft taper band
+    ax.axvspan(W_off, 80.0, color="#2d8659", alpha=0.10)    # open water (c=0)
+
+    # The ramp itself.
+    ax.plot(d, c, color="#1f3a5f", linewidth=2.6, zorder=5, label=r"$c(d)$")
+
+    # Hard-gate threshold: births with c > 0.95 are dropped. c=0.95 at d=-45 m.
+    d_gate = W_off - hard_gate * (W_off + W_in)   # solve c(d)=0.95 → d = -45
+    ax.axhline(hard_gate, color="#aa3333", linewidth=1.3, linestyle="--",
+               alpha=0.8, zorder=4)
+    ax.text(78.0, hard_gate + 0.015, "hard gate  c = 0.95\n(birth dropped above)",
+            color="#aa3333", fontsize=9, ha="right", va="bottom")
+
+    # Waterline marker at d=0, c≈0.5.
+    ax.plot(0.0, 0.5, marker="o", markersize=8, color="#1f3a5f", zorder=6)
+    ax.annotate("waterline\nd = 0,  c ≈ 0.5", xy=(0.0, 0.5), xytext=(14.0, 0.62),
+                fontsize=9, color="#1f3a5f",
+                arrowprops=dict(arrowstyle="->", color="#1f3a5f", lw=1.2))
+
+    # Region labels.
+    ax.text(-65.0, 0.30, "inland hard-gate\nplateau  (c = 1)", color="#8a2020",
+            fontsize=9.5, ha="center", va="center", fontweight="bold")
+    ax.text(0.0, 0.14, "soft taper\n(birth weakened)", color="#9a7010",
+            fontsize=9.5, ha="center", va="center")
+    ax.text(65.0, 0.30, "open water\n(c = 0, no effect)", color="#1c6b45",
+            fontsize=9.5, ha="center", va="center")
+
+    # Half-width guides.
+    for x, lab in [(-W_in, r"$-W_\mathrm{in}$"), (W_off, r"$+W_\mathrm{off}$")]:
+        ax.axvline(x, color="#888888", linewidth=1.0, linestyle=":", zorder=2)
+        ax.text(x, -0.09, lab, color="#555555", fontsize=10, ha="center",
+                va="top")
+
+    ax.axvline(0.0, color="#bbbbbb", linewidth=0.9, zorder=1)
+    ax.set_xlim(-80.0, 80.0)
+    ax.set_ylim(-0.02, 1.05)
+    ax.set_xlabel("signed distance to shore  d  (m)     ← inland      offshore →")
+    ax.set_ylabel("clutter prior  c(d)")
+    ax.set_title("Shoreline clutter prior: the signed-distance ramp  "
+                 r"($W_\mathrm{in}=W_\mathrm{off}=50$ m)")
+    ax.grid(True, linestyle=":", alpha=0.4)
+    save(fig, "25-coastline-ramp.png")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 27 live occupancy grid + EWMA persistence
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1427,6 +1490,7 @@ def main():
     fig_ospa_vs_gospa()
     fig_sensor_bias_convergence()
     fig_seeing_the_tracker()
+    fig_coastline_ramp()
     fig_static_obstacle_zones()
     fig_live_occupancy()
     render_dot_figures()

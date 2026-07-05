@@ -300,7 +300,7 @@ better but the **urban channel got a little worse**. The reason: near a
 city waterfront the "unowned" returns are not sea clutter — they are
 **docks, walls, moored barges**. Blending toward them pulls the track
 *into* the shore. The fix is to ask the map: if a return sits on land
-(the same coastline map we use to stop births on shore, chapter 13),
+(the same coastline map we use to stop births on shore, chapter 25),
 keep it **out of the blend**. So PDA softens against *water* clutter
 only. This is the `pda_pool_excludes_land` option. It is safe — with no
 map loaded it does nothing.

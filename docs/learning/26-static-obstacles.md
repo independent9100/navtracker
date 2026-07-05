@@ -217,6 +217,12 @@ vessel has exactly zero speed — the same as a rock. Deleting slow tracks would
 silently drop anchored ships, which are the exact targets most in need of a CPA
 alert when own-ship is manoeuvring in a crowded anchorage.
 
+The concrete safeguard for the "where we *can* identify a platform, it must
+track, never be suppressed" half of this rule is the **AIS/cooperative
+suppression veto**: a birth near a recent AIS or cooperative fix is never
+suppressed into a static hazard. It is wired in the live occupancy layer — see
+[chapter 27 §3.5](27-live-static-occupancy.md#35-corroboration-and-eviction-optional-labels).
+
 ---
 
 ## 5. What we assume

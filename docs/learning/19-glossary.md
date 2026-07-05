@@ -188,6 +188,27 @@
   source's own-identity report is overdue. Tells the operator
   contact was lost; does NOT lower the track's existence
   probability. See §24.
+- **"occupancy grid"** — a metric grid of cells laid over the water,
+  anchored to the datum; each cell holds one persistence number that
+  estimates how likely fixed structure sits there. Built live from
+  the PMBM clutter feed. Chapter 27.
+- **"EWMA persistence"** — the running score in each occupancy-grid
+  cell, updated as `p ← (1−α)·p + α·w` (an Exponentially Weighted
+  Moving Average of the per-scan clutter evidence `w`). Old evidence
+  fades; a cell that keeps producing clutter climbs toward 1. Chapter 27.
+- **"coverage sector"** — the angular/range wedge a scanning sensor
+  actually swept this scan. The occupancy model self-estimates it
+  (from scanning-source returns only) so it decays persistence *only*
+  over ground it truly observed, never over unswept gaps. Chapters 24, 27.
+- **"conservation-by-construction"** — the ADR-0002 safety invariant:
+  birth suppression at a location is legal *only* if that same
+  location is simultaneously emitted as a static hazard. An object is
+  never suppressed into nothing. Chapters 26, 27.
+- **"non-scanning source"** — a sensor kind that reports vessel
+  *positions* without sweeping a footprint (AIS, Cooperative/fleet
+  GNSS). Excluded from coverage-sector estimation (a wedge fit to
+  position reports over-claims coverage) and the strongest evidence
+  for the suppression veto. Chapter 27. Contrast surveillance sensor.
 
 ---
 

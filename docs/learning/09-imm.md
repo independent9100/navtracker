@@ -245,6 +245,22 @@ Per IMM step we run `K` per-mode predicts and updates. With
 - **Mode-conditioned different state vectors.** Lets you have a
   3-D mode and a 2-D mode with different dimensions. Bookkeeping
   hell. We use vIMM (shared state) for simplicity.
+- **A dedicated stationary / low-speed mode (known gap).** Today
+  a moored or anchored vessel is held only by the noisy-CV mode's
+  inflated process noise `q` (§1, the `nCV` row) — there is **no**
+  dedicated zero-velocity / low-speed motion model in the mode set.
+  A vessel sitting still is a compromise fit: the noisy-CV mode is
+  loose enough not to lose it, but it was designed for erratic
+  motion, not for "not moving." A dedicated stationary mode (a
+  near-zero-velocity model with tight speed process noise, switched
+  in by the IMM when a track's estimated speed collapses) is a
+  concrete candidate to evaluate — it would give anchored/moored
+  tracks a tighter, better-calibrated fit and cleaner NEES/NIS while
+  stopped. Note this is *tracking* a stopped vessel; the separate
+  question of *representing* long-persistent fixed structure as a
+  static hazard lives in [chapter 26](26-static-obstacles.md) /
+  [chapter 27](27-live-static-occupancy.md), not in the motion-mode
+  set.
 
 ---
 

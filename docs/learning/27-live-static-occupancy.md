@@ -154,12 +154,53 @@ it. (You already met EWMA in the adaptive clutter map, chapter 13.)
 
 **Coverage-aware decay (the subtle part).** A cell only decays when it was
 actually **observable** this scan — inside some sensor's coverage footprint (the
-coverage idea from chapter 24). If no sensor was looking at that patch of sea,
-its score is **frozen**, not faded. Absence of returns where nobody looked is
-*not* evidence of vacancy. This is what lets the model tell a **departed vessel**
-(returns cease while the cell is still swept → it decays, evidence of leaving)
-from a cell that merely **left coverage** (returns cease because nobody is
-looking → frozen, no false "it left" signal).
+coverage idea from [chapter 24](24-coverage-visibility-channel.md)). If no
+sensor was looking at that patch of sea, its score is **frozen**, not faded.
+Absence of returns where nobody looked is *not* evidence of vacancy. This is
+what lets the model tell a **departed vessel** (returns cease while the cell is
+still swept → it decays, evidence of leaving) from a cell that merely **left
+coverage** (returns cease because nobody is looking → frozen, no false "it left"
+signal).
+
+**Where does the footprint come from? The producer self-estimates it.** Nobody
+hands the grid a coverage sector from outside. Each scan the occupancy producer
+(`PmbmTracker`) looks at *where this scan's returns actually landed* and fits a
+wedge (a `CoverageSector`: a centre bearing, an angular width, and a max range
+about the sensor) to them. That wedge is its honest guess at "the arc the sensor
+actually swept this scan." A cell inside the wedge is observable and decays; a
+cell outside it is frozen. This is the same self-estimation idea as the
+clutter-adaptive bar (§3.3): learn the parameter from the feed, so nothing has
+to be configured per dataset. (It is turned on by the `estimate_coverage_sector`
+knob — a per-burst radar like philos turns it on; the synthetic bench, which
+uses one fixed full-coverage frame, leaves it off and behaves bit-identically.)
+
+**Two rules make the self-estimate *safe*, both pushing the same way — toward
+under-claiming coverage:**
+
+1. **Keep the largest cluster of returns, not the gap between clusters.** A
+   single physical burst sweeps only a small arc, but several bursts can share
+   one timestamp — so a scan's returns can fall into *separate* angular clusters
+   with a wide empty gap between them (measured on philos: 5–17 % of bursts, with
+   80–169° internal gaps). If the model fit one big wedge spanning both clusters,
+   it would claim the empty gap in the middle as "swept" — and then **decay cells
+   there that the sensor never looked at**. That is the *unsafe* direction: it
+   forgets real structure. So the fit keeps only the **largest** contiguous
+   cluster of returns; the others are credited by their own narrower bursts. This
+   under-estimates coverage on purpose. Under-estimating is safe: a cell wrongly
+   left out of the wedge just doesn't decay this scan, so a hazard persists a
+   little longer — never the reverse.
+
+2. **Exclude non-scanning sources (AIS, Cooperative, RemoteTrack).** These
+   sources do **not** sweep an arc. They *report a position*: an AIS transponder,
+   a fleet-partner GNSS fix, or a shore/VTS station's filtered track. Fitting a
+   wedge to a scatter of reported positions would invent a swept arc that was
+   never swept — again over-claiming coverage and driving the unsafe decay
+   direction. So the producer excludes them from the sector fit
+   (`isNonScanningSource` in `core/types/Ids.hpp`) and estimates the swept sector
+   from **scanning-source returns only** (radar/ARPA, lidar, the camera FOV).
+   (Those same excluded fixes are *reused* for a different job — the suppression
+   veto of §3.5 — because a reported position is exactly the kind of "we know a
+   platform is here" evidence a veto wants.)
 
 ### 3.3 The test: persistent AND spatially extended
 
@@ -212,8 +253,10 @@ track confirms. The exact same passing-vessel protection as chapter 26 §2.3.
 
 ### 3.5 Corroboration and eviction (optional labels)
 
-Two optional inputs make a learned pin more trustworthy, without changing the
-suppression maths:
+Three optional inputs refine a learned pin. The first two are pure **labels** —
+they make a pin more or less trustworthy without touching the suppression maths;
+the third is a **veto** that can cancel suppression outright (called out
+explicitly below):
 
 - **Chart corroboration.** If a charted structure point lies within
   `chart_corroboration_radius_m` (~100 m) of a learned hazard's centroid, the
@@ -225,7 +268,28 @@ suppression maths:
   camera was actually looking — the same coverage-aware-absence principle as
   §3.2.
 
-These two combine into an **eviction policy** for the classic false pin: a
+- **AIS / cooperative suppression veto (active in production).** This third
+  input is stronger than a label: it can *cancel* suppression. A birth is
+  **never** suppressed within `veto_radius_m` (default **100 m**, ≈ one coarse
+  cell — enough to cover the vessel plus its fix uncertainty) of a **recent**
+  AIS or cooperative vessel fix. Feed the fixes via `observeVesselFix(...)`; a
+  fix vetoes only while it is within `veto_window_s` (default **60 s**, matching
+  typical AIS/cooperative report cadence) of the current scan, after which it is
+  **pruned**. Where an AIS/cooperative/remote report tells us a *known platform*
+  sits, the occupancy layer must not quietly suppress its birth into a static
+  hazard — this is the concrete mechanism behind the ADR-0002 amendment's rule
+  *"where we CAN identify a platform, it must track, never be suppressed"* (the
+  reported-position sources of §3.2, reused here as the strongest vessel
+  discriminator). It only ever **reduces** suppression to 0, never raises it, so
+  the ADR-0002 conservation invariant of §3.4 still holds. And because a stale
+  fix is pruned, an anchored vessel whose transponder goes quiet gracefully
+  falls back to the accepted **static-hazard degraded mode** until its next fix
+  re-asserts the veto — presence is preserved either way, never suppressed into
+  nothing. Since commit 0472eae this is wired end-to-end: `PmbmTracker` extracts
+  `isNonScanningSource` positions each scan and routes them to the veto (before
+  that it was reachable only from unit tests).
+
+The first two (chart + camera) combine into an **eviction policy** for the classic false pin: a
 vessel that anchored long enough to pin a cell and then **departed**. Such a pin
 has no chart backing (uncorroborated) and the camera now sees empty water
 (observed-empty). With `evict_camera_empty` on, its accumulated persistence is
@@ -291,10 +355,15 @@ promise the "presence over classification" invariant demands.
    rather than confirmed vessels. In a scene that is almost all confirmed traffic
    the feed is nearly empty and the model simply does little.
 
-3. **Coverage footprints are supplied for coverage-aware decay.** If no sensor
-   bundle carries a valid coverage sector, the model assumes full coverage and
-   every cell decays each scan (the legacy behaviour). The departed-vessel-vs-
-   left-coverage distinction (§3.2) only works when footprints are wired.
+3. **The self-estimated sector is a usable proxy for what was swept.** The
+   coverage footprint is **not** supplied from outside — the producer estimates
+   it each scan from that scan's scanning-source returns (§3.2). The
+   departed-vessel-vs-left-coverage distinction only works when this estimation
+   is enabled (`estimate_coverage_sector`); if it is off, or a scan carries no
+   valid sector, the model assumes full coverage and every cell decays each scan
+   (the legacy behaviour). The self-estimate is deliberately biased to
+   *under-claim* coverage (largest-cluster-only, non-scanning sources excluded),
+   which is the safe direction — an unobserved cell simply does not decay.
 
 4. **Datum recenters are wired as a sink** (§3.6). Otherwise the grid drifts
    in ENU space after a recenter.
