@@ -457,10 +457,22 @@ them.
   1-σ values.
 - **`AisAdapter`** (`adapters/ais/AisAdapter.hpp`) takes an `AisDynamicReport`
   struct (MMSI + lat/lon + accuracy flag, plus optional self-reported
-  `heading_deg` / `nav_status` — backlog #20). It has no config struct; construct
-  with just a datum. Heading → `hints.heading_deg` (attribute), nav-status →
-  `hints.nav_status` (the anchored/moored veto cue, §6/§7); AIS "not available"
-  sentinels (heading 511, nav-status 15) are dropped at the edge.
+  `sog_knots` / `cog_deg` / `heading_deg` / `nav_status` — backlog #20) and an
+  optional **`AisAdapterConfig`** (`adapters/ais/AisAdapter.hpp`). Heading →
+  `hints.heading_deg` (attribute), nav-status → `hints.nav_status` (the
+  anchored/moored veto cue, §6/§7); AIS "not available" sentinels (heading 511,
+  nav-status 15, SOG 1023) are dropped at the edge. When the report carries a
+  usable SOG (≥ `sog_velocity_min_mps`, default 0.5 m/s) **and** COG, the adapter
+  emits a **`PositionVelocity2D`** measurement with the target-reported velocity
+  as content (COG is true, clockwise from north → ENU); below the threshold COG
+  is meaningless and it stays `Position2D` ("COG down-weighted at low SOG"). The
+  velocity covariance is the polar Jacobian of SOG/COG (σ from `sog_std_mps` /
+  `cog_std_deg`, AIS carries none) plus an isotropic `velocity_iso_floor_mps`
+  floor so a noisy low-SOG COG can't make the velocity *direction* overconfident.
+  This is legitimate content, not double-counting: AIS SOG/COG come from the
+  target's *own* GPS (§3). Set `emit_velocity_from_sog_cog = false` to force
+  `Position2D` if you distrust a feed's velocity. Position σ is
+  `position_std_high_accuracy_m` / `position_std_standard_m` (10 / 30 m).
 
 **The TTM-vs-TLL rule.** A radar may report the *same target* two ways. Prefer
 **TTM** when you want own-ship pose error modelled explicitly in `R`; **TLL** has
@@ -1018,6 +1030,7 @@ or three fields most worth reviewing. (`core/benchmark/` sweep configs and the
 | `ArpaAdapterConfig` | `adapters/arpa/ArpaAdapter.hpp` | Radar TTM/TLL → measurements | `heading_std_deg{0.0}`, `position_std_m{50.0}`, `bearing_std_deg{1.0}` |
 | `EoIrAdapterConfig` | `adapters/eoir/EoIrAdapter.hpp` | EO/IR camera heading σ | `heading_std_deg{0.0}` |
 | `RemoteTrackAdapterConfig` | `adapters/remote_track/RemoteTrackAdapter.hpp` | Shore/VTS remote track → pseudo-measurement (R-inflation, rate thinning, velocity opt-in) | `r_inflation_factor{3.0}`, `min_update_interval_s{2.0}`, `default_position_std_m{50.0}`, `accept_velocity{false}` |
+| `AisAdapterConfig` | `adapters/ais/AisAdapter.hpp` | AIS SOG/COG → PositionVelocity2D content (#20), COG down-weighted at low SOG | `emit_velocity_from_sog_cog{true}`, `sog_velocity_min_mps{0.5}`, `sog_std_mps{0.5}`, `cog_std_deg{5.0}`, `velocity_iso_floor_mps{0.3}`, `position_std_high_accuracy_m{10.0}`, `position_std_standard_m{30.0}` |
 | `CpaEvaluatorConfig` | `core/collision/CpaEvaluator.hpp` | Collision-risk thresholds + hysteresis | `d_threshold_m{500.0}`, `enter_probability{0.5}`, `exit_probability{0.3}` |
 | `StaticHazardEvaluatorConfig` | `core/collision/StaticHazardEvaluator.hpp` | Keep-clear-ring alerts | `exit_hysteresis{1.1}`, `emit_updates{false}` |
 | `HeadingBiasEstimatorConfig` | `core/bias/HeadingBiasEstimator.hpp` | Gyro-bias KF tuning + per-kind gates | `initial_variance_rad2` (5°)², `cog_min_sog_mps{3.0}`, `bi_min_range_m{50.0}` |

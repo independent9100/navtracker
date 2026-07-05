@@ -45,16 +45,47 @@ struct AisDynamicReport {
 };
 
 /**
+ * Tuning for `AisAdapter` (backlog #20). Defaults preserve the historical
+ * behaviour for a report that carries no SOG (Position2D at 10/30 m) so existing
+ * consumers see no change; each field is a per-deployment knob.
+ */
+struct AisAdapterConfig {
+  // When the report carries SOG (and COG), emit a PositionVelocity2D with the
+  // target-reported velocity as content. false → always Position2D (velocity
+  // ignored). AIS SOG/COG come from the target's OWN GPS — a genuinely
+  // independent witness — so they are legitimate measurement content, unlike
+  // ARPA-derived speed/course (our own smoothed data; see guide §3).
+  bool emit_velocity_from_sog_cog = true;
+  // Below this ground speed COG is meaningless (a near-stationary / drifting
+  // target reports a random course), so the measurement stays Position2D — the
+  // "COG down-weighted at low SOG" rule in the limit. m/s.
+  double sog_velocity_min_mps = 0.5;
+  // 1-σ used to build the SOG/COG → ENU-velocity covariance (AIS carries no
+  // velocity uncertainty of its own).
+  double sog_std_mps = 0.5;
+  double cog_std_deg = 5.0;
+  // Isotropic velocity-σ floor ADDED to the polar-Jacobian velocity covariance
+  // so that even just above the SOG threshold a noisy COG cannot make the
+  // velocity DIRECTION overconfident (the low-SOG down-weighting, continuous
+  // form). m/s.
+  double velocity_iso_floor_mps = 0.3;
+  // Position 1-σ (m) for high-accuracy vs standard AIS fixes.
+  double position_std_high_accuracy_m = 10.0;
+  double position_std_standard_m = 30.0;
+};
+
+/**
  * Sensor adapter that converts AIS dynamic reports into ENU `Position2D`
- * measurements in the supplied `Datum` frame. Validates at the edge
- * (invariant #6): implausible / sentinel / NaN fixes — e.g. AIS lat 91° /
- * lon 181° "position not available" — are rejected before they can become
- * phantom tracks. High-accuracy fixes get a tighter position σ than
- * standard ones; the MMSI is attached as a non-fusion identity hint.
+ * (or `PositionVelocity2D` when SOG/COG are present, backlog #20) measurements
+ * in the supplied `Datum` frame. Validates at the edge (invariant #6):
+ * implausible / sentinel / NaN fixes — e.g. AIS lat 91° / lon 181° "position
+ * not available" — are rejected before they can become phantom tracks.
+ * High-accuracy fixes get a tighter position σ than standard ones; the MMSI is
+ * attached as a non-fusion identity hint; heading/nav-status ride on the hints.
  */
 class AisAdapter : public ISensorAdapter {
  public:
-  explicit AisAdapter(geo::Datum datum);
+  explicit AisAdapter(geo::Datum datum, AisAdapterConfig cfg = {});
 
   /** Validate report `r` and, if plausible, buffer an ENU `Position2D` measurement. */
   void ingest(const AisDynamicReport& r);
@@ -63,6 +94,7 @@ class AisAdapter : public ISensorAdapter {
 
  private:
   geo::Datum datum_;
+  AisAdapterConfig cfg_;
   std::vector<Measurement> buffer_;
 };
 

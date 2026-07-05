@@ -1,5 +1,6 @@
 #include <limits>
 
+#include <Eigen/Dense>  // Matrix2d::determinant() for the velocity-block check
 #include <gtest/gtest.h>
 #include "adapters/ais/AisAdapter.hpp"
 #include "core/geo/Datum.hpp"
@@ -78,6 +79,71 @@ TEST(AisAdapter, LowAccuracyHasLargerCovariance) {
   const auto out = adapter.poll();
   ASSERT_EQ(out.size(), 1u);
   EXPECT_EQ(out[0].covariance(0, 0), 900.0);
+}
+
+// #20: SOG/COG become PositionVelocity2D measurement content (AIS is an
+// independent witness). COG true (clockwise from north) → ENU velocity.
+TEST(AisAdapter, EmitsPositionVelocityFromSogCogAboveThreshold) {
+  Datum datum({53.5, 8.0, 0.0});
+  AisAdapter adapter(datum);
+  AisDynamicReport r;
+  r.time = Timestamp::fromSeconds(0.0);
+  r.lat_deg = 53.5;
+  r.lon_deg = 8.0;
+  r.sog_knots = 10.0;  // ~5.14 m/s
+  r.cog_deg = 90.0;    // due east (true) → v_east = SOG, v_north ≈ 0
+  adapter.ingest(r);
+  auto out = adapter.poll();
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].model, navtracker::MeasurementModel::PositionVelocity2D);
+  ASSERT_EQ(out[0].value.size(), 4);
+  const double sog_mps = 10.0 * 0.514444;
+  EXPECT_NEAR(out[0].value(2), sog_mps, 1e-6);  // v_east
+  EXPECT_NEAR(out[0].value(3), 0.0, 1e-6);      // v_north
+  // 4x4 R; the velocity block is non-degenerate thanks to the isotropic floor.
+  ASSERT_EQ(out[0].covariance.rows(), 4);
+  const Eigen::Matrix2d cov_v = out[0].covariance.bottomRightCorner<2, 2>();
+  EXPECT_GT(cov_v(0, 0), 0.0);
+  EXPECT_GT(cov_v(1, 1), 0.0);
+  EXPECT_GT(cov_v.determinant(), 0.0) << "velocity block must not be rank-1";
+  // Position block unchanged (standard-accuracy 30 m).
+  EXPECT_DOUBLE_EQ(out[0].covariance(0, 0), 900.0);
+}
+
+// Near-stationary target: COG is meaningless, so no velocity content.
+TEST(AisAdapter, LowSogFallsBackToPosition2D) {
+  Datum datum({53.5, 8.0, 0.0});
+  AisAdapter adapter(datum);
+  AisDynamicReport r;
+  r.time = Timestamp::fromSeconds(0.0);
+  r.lat_deg = 53.5;
+  r.lon_deg = 8.0;
+  r.sog_knots = 0.2;  // ~0.1 m/s, below the 0.5 m/s threshold
+  r.cog_deg = 123.0;
+  adapter.ingest(r);
+  auto out = adapter.poll();
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].model, navtracker::MeasurementModel::Position2D)
+      << "low-SOG COG must be down-weighted → Position2D";
+  EXPECT_EQ(out[0].value.size(), 2);
+}
+
+// A consumer that distrusts AIS velocity can turn it off.
+TEST(AisAdapter, VelocityEmissionCanBeDisabled) {
+  Datum datum({53.5, 8.0, 0.0});
+  navtracker::AisAdapterConfig cfg;
+  cfg.emit_velocity_from_sog_cog = false;
+  AisAdapter adapter(datum, cfg);
+  AisDynamicReport r;
+  r.time = Timestamp::fromSeconds(0.0);
+  r.lat_deg = 53.5;
+  r.lon_deg = 8.0;
+  r.sog_knots = 10.0;
+  r.cog_deg = 90.0;
+  adapter.ingest(r);
+  auto out = adapter.poll();
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].model, navtracker::MeasurementModel::Position2D);
 }
 
 // #20: AIS self-report heading + nav-status flow onto the measurement hints,
