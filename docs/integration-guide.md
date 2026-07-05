@@ -564,6 +564,14 @@ carries:
   Velocity is `is_valid == false` for a 2D-only state or an unobserved/degenerate
   velocity covariance (`core/output/TrackOutput.cpp`).
 - metadata — `id`, `status`, `last_update`, `attributes`, `contributing_sources`.
+  `attributes` carries the vessel identity: `mmsi` (from AIS) and `platform_id`
+  (numeric cooperative/fleet identity, also carried by a remote/VTS feed when it
+  has one) — **parallel keys, either or both may be set**. Both are surfaced
+  last-write-wins from the hints of the measurements a track claims, under **both
+  the PMBM and MHT trackers** (before R11 the PMBM path filled no attributes, so
+  the operator display could not name which fleet member a track was). Identity
+  is an attribute, never the fusion key — that is always the internal `id`
+  (invariant 5). Feed it in via `Measurement.hints.mmsi` / `hints.platform_id`.
 - `covariance_is_default` — OR of the contributing measurements' flags (§3).
 
 Exact unit and validity rules, plus a worked example, are in
@@ -791,6 +799,58 @@ pmbm.setSensorActivity(&activity);   // ports/ISensorActivity.hpp — nullable
 > track is **never** penalised in existence; it is retired only after
 > **`cooperative_stale_timeout_sec`** (default **`0.0`** = never by this rule)
 > seconds without an own-identity report.
+
+#### Cooperative + radar: the deployment recipe (R9)
+
+The first real deployment is a cooperative fleet partner (`SensorKind::Cooperative`
+GNSS fixes carrying `platform_id`) fused with radar. The correct "silence" and
+retirement behaviour for that mix depends on getting three things right together:
+
+1. **Miss model = `use_sensor_activity` ALONE.** Do **not** also set
+   `source_aware_misdetection` — the two are **alternative** miss models and the
+   `PmbmTracker` constructor **throws** on the pair (a fail-loud guard). With both
+   on, the identity gate short-circuits an empty scan before the activity model
+   runs, silently blocking the cooperative retirement in (3). The named benchmark
+   `imm_cv_ct_pmbm` configs use `source_aware_misdetection`; the deployment
+   configs (`imm_cv_ct_pmbm_land`, coverage variants) use `use_sensor_activity`
+   alone. Pick one.
+
+2. **Declare BOTH channels a profile.** Give the radar a
+   `ChannelKind::Surveillance` profile (its `duty_cycle_sec`, `max_range_m`,
+   sector, `p_D`) **and** the cooperative feed a `ChannelKind::Cooperative`
+   profile (its `expected_report_interval_sec`). Without profiles the tracker
+   falls back to a legacy `== SensorKind::Cooperative` check that behaves
+   differently — the cooperative timer resets and retirement timing are only
+   correct when the profiles are present. (AIS declared as `Cooperative` counts
+   as a cooperative announce too: its silence is weak identity-keyed evidence,
+   never a surveillance miss.)
+
+3. **Radar coverage suppresses cooperative-timeout retirement.** The
+   cooperative-stale retirement sits inside the *no-surveillance-opportunity*
+   branch: while radar keeps covering the track's predicted position, a
+   cooperative dropout does **not** retire it (the platform is still observed,
+   just not announcing). Retirement fires only when **both** channels go silent —
+   no covering radar sweep *and* no cooperative report — past
+   `cooperative_stale_timeout_sec`. This is the behaviour the fusion scenario
+   `PmbmRemoteTrackFusion` and `test_pmbm_sensor_activity.cpp` pin.
+
+```cpp
+DeclaredSensorActivity activity({
+    {ChannelKind::Surveillance, SensorKind::ArpaTtm,
+     /*duty_cycle_sec=*/1.0, /*max_range_m=*/20000.0,
+     0.0, 6.2831853, /*p_D=*/0.9, /*expected_report_interval_sec=*/0.0},
+    {ChannelKind::Cooperative, SensorKind::Cooperative,
+     0.0, 0.0, 0.0, 6.2831853, 0.0, /*expected_report_interval_sec=*/5.0},
+});
+PmbmTracker::Config c;
+c.use_sensor_activity = true;            // NOT source_aware_misdetection
+c.cooperative_stale_timeout_sec = 20.0;  // retire only after BOTH go silent this long
+pmbm.setSensorActivity(&activity);
+```
+
+The cooperative platform's `platform_id` is surfaced to the operator on the fused
+`TrackOutput.attributes.platform_id` (see §6, R11) — this recipe delivers the
+lifecycle half, that field the identity half.
 
 Two optional surveillance-sector self-estimation knobs feed the occupancy grid's
 decay (see the occupancy detector above): **`estimate_coverage_sector`** (default

@@ -365,8 +365,9 @@ class MhtTracker {
   // Per-tree fused identity, accumulated over the tree's lifetime and
   // copied into the emitted Track view each scan (the canonical pipeline
   // otherwise drops MMSI/provenance, since TrackTreeNode carries no
-  // attributes). `tree_attributes_` takes the latest mmsi hint seen on a
-  // committed (born or chosen-hit) measurement; `tree_sources_` is the
+  // attributes). `tree_attributes_` takes the latest mmsi / platform_id hint
+  // seen on a committed (born or chosen-hit) measurement (R11: platform_id is
+  // surfaced parallel to mmsi); `tree_sources_` is the
   // ordered set of distinct contributing source_ids. Both are pruned when
   // a tree dies, alongside contribution_history_.
   std::map<TrackId, TrackAttributes> tree_attributes_;

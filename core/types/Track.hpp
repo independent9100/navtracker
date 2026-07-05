@@ -19,6 +19,12 @@ namespace navtracker {
  */
 struct TrackAttributes {
   std::optional<std::uint32_t> mmsi;
+  // Numeric per-vessel identity used by cooperative fleet partners (and carried
+  // by a remote/VTS feed when it has one). Parallel to `mmsi`: a track may be
+  // known by either or both. Surfaced last-write-wins from the hints of the
+  // measurements a track claims — see toTrackOutput and the tracker attribute
+  // copy sites (PMBM: PmbmTypes toTrack; MHT: tree_attributes_).
+  std::optional<std::uint64_t> platform_id;
   std::optional<std::string> name;
   std::optional<std::string> vessel_type;
   std::optional<double> length_m;

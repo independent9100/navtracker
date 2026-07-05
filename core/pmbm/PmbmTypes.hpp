@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <vector>
 
 #include <Eigen/Core>
@@ -213,6 +214,15 @@ struct Bernoulli {
   // just processed; not round-tripped through toTrack/fromTrack.
   int last_claimed_meas_index{-1};
 
+  // R11 identity surfacing. The vessel identity carried by the measurements
+  // this Bernoulli has claimed, persisted across scans (unlike the transient
+  // last_claimed_meas_index) and set last-write-wins at each detection/birth
+  // claim that carries a hint (PmbmTracker.cpp). Copied into TrackAttributes by
+  // toTrack so the operator-facing output can say WHICH fleet member / MMSI a
+  // track is. nullopt = never claimed an identity-bearing measurement.
+  std::optional<std::uint32_t> mmsi;
+  std::optional<std::uint64_t> platform_id;
+
   // Convenience: a Bernoulli is "alive" if r is above the supplied
   // pruning threshold. Caller picks the threshold per the tracker's
   // configured ipda_delete_threshold equivalent. Phase 1 default
@@ -414,6 +424,11 @@ inline Track toTrack(const Bernoulli& b) {
   t.imm_means = b.imm_means;
   t.imm_covariances = b.imm_covariances;
   t.imm_mode_probabilities = b.imm_mode_probabilities;
+  // R11: surface the persisted vessel identity. fromTrack does NOT round-trip
+  // these back (the estimator never touches identity), so the Bernoulli fields
+  // set at the claim sites remain authoritative.
+  t.attributes.mmsi = b.mmsi;
+  t.attributes.platform_id = b.platform_id;
   return t;
 }
 

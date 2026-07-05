@@ -24,7 +24,7 @@ When sog < 0.01 m/s, the COG direction is not meaningful and **both `cog_deg` an
 - **`id`**: Stable, monotonically increasing integer. Never reused after a track is deleted. Two successive drains on the same processing cycle return the same id.
 - **`status`**: Enum. Tentative (new, < M-of-N confirmed), Confirmed (M-of-N threshold met), Coasting (was Confirmed, now propagated through a detection gap without a fresh update), Deleted (marked for removal, drained one final time).
 - **`last_update`**: Timestamp of the most recent measurement that contributed to this track's state.
-- **`attributes`**: Optional fields sourced from identity-carrying sensors (AIS, etc.): mmsi, vessel_name, vessel_type, length_m, beam_m. All optional; client should test presence before use.
+- **`attributes`**: Optional fields sourced from identity-carrying sensors (AIS, cooperative fleet partners, a remote/VTS feed): `mmsi`, `platform_id`, `vessel_name`, `vessel_type`, `length_m`, `beam_m`. All optional; client should test presence before use. `mmsi` (AIS) and `platform_id` (cooperative fleet identity, numeric) are **parallel** identity keys — a track may carry either or both. Both are surfaced last-write-wins from the hints of the measurements a track claims, under **both** the PMBM (winning) and MHT trackers (they were PMBM-empty before R11). Neither is the fusion key — that is always the internal `id` (invariant 5); identity is an attribute/hint.
 - **`contributing_sources`**: Vector of source_id strings ("ais", "arpa", "eoir") that have ever contributed measurements to this track. Order and multiplicity are unspecified.
 
 ## Diagnostic flag
@@ -52,6 +52,7 @@ velocity.sigma_sog_m_per_s = 0.5
 velocity.sigma_cog_deg  = 5.0  (derived from polar Jacobian at sog=5 m/s)
 velocity.is_valid       = true
 attributes.mmsi         = 211378120
+attributes.platform_id  = (absent — set only when a cooperative/remote feed carries one)
 attributes.vessel_name  = "EXAMPLE VESSEL"
 attributes.vessel_type  = "Cargo"
 attributes.length_m     = 190

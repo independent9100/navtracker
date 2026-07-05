@@ -943,6 +943,13 @@ void PmbmTracker::enumerateChildren(
         }
         det.last_update = scan[l].time;
         det.last_claimed_meas_index = l;  // R2: true assignment for the feed
+        // R11 identity surfacing: last-write-wins from the claimed measurement's
+        // hints. `det` was copied from the parent Bernoulli (line above), so an
+        // identity-free claim (e.g. a radar plot) preserves a previously-seen
+        // mmsi/platform_id; an AIS/cooperative claim refreshes it.
+        if (scan[l].hints.mmsi.has_value()) det.mmsi = scan[l].hints.mmsi;
+        if (scan[l].hints.platform_id.has_value())
+          det.platform_id = scan[l].hints.platform_id;
         // Detection: x_pred = parent's state (post-predict, pre-update);
         //            x_filt = updated state.
         appendTrajectoryPoint(det, cfg_.trajectory_window_scans,
@@ -1128,6 +1135,10 @@ void PmbmTracker::enumerateChildren(
       nb.last_update = scan[l].time;
       nb.last_claimed_meas_index = l;  // R2: this measurement birthed it
       nb.birth_time = scan[l].time;
+      // R11 identity surfacing: seed identity from the birthing measurement's
+      // hints (nullopt if it carries none — refined by later claims).
+      nb.mmsi = scan[l].hints.mmsi;
+      nb.platform_id = scan[l].hints.platform_id;
       // Birth: no prior → predicted = filtered (smoother G ≈ I at
       // first point, no effect).
       appendTrajectoryPoint(nb, cfg_.trajectory_window_scans,
@@ -1888,6 +1899,11 @@ void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h) const {
           b.last_claimed_meas_index >= 0 &&
           (a.last_claimed_meas_index < 0 || r_b > r_a);
       if (take_b_claim) a.last_claimed_meas_index = b.last_claimed_meas_index;
+      // R11: the two folding Bernoullis are the same logical target, so the
+      // survivor keeps any identity it already has and inherits the duplicate's
+      // when it had none (never drop a real id in favour of a nullopt).
+      if (!a.mmsi.has_value()) a.mmsi = b.mmsi;
+      if (!a.platform_id.has_value()) a.platform_id = b.platform_id;
       if (b.last_update.seconds() > a.last_update.seconds())
         a.last_update = b.last_update;
       dead[j] = true;
@@ -2024,6 +2040,15 @@ void PmbmTracker::refreshAggregatedTracks() const {
     // gate knob is enabled.
     double earliest_birth_sec{std::numeric_limits<double>::infinity()};
     int hyp_count{0};
+    // R11 identity surfacing: the vessel identity carried by the contributing
+    // Bernoullis. Taken from the highest-mass hypothesis that actually HAS an
+    // identity (a dominant hypothesis with no id must not shadow an id carried
+    // by a slightly-weaker one). `*_id_mass` is that contributor's mass, kept
+    // so the cross-id merge below can prefer the stronger source.
+    std::optional<std::uint32_t> mmsi;
+    double mmsi_mass{0.0};
+    std::optional<std::uint64_t> platform_id;
+    double platform_id_mass{0.0};
   };
   std::map<BernoulliId, Acc> by_id;
 
@@ -2045,6 +2070,15 @@ void PmbmTracker::refreshAggregatedTracks() const {
       const double birth_s = b.birth_time.seconds();
       if (birth_s < a.earliest_birth_sec) a.earliest_birth_sec = birth_s;
       a.hyp_count += 1;
+      // R11: adopt each id from the strongest hypothesis that carries it.
+      if (b.mmsi.has_value() && m > a.mmsi_mass) {
+        a.mmsi = b.mmsi;
+        a.mmsi_mass = m;
+      }
+      if (b.platform_id.has_value() && m > a.platform_id_mass) {
+        a.platform_id = b.platform_id;
+        a.platform_id_mass = m;
+      }
     }
   }
 
@@ -2118,6 +2152,16 @@ void PmbmTracker::refreshAggregatedTracks() const {
           a.earliest_birth_sec = b.earliest_birth_sec;
         }
         a.hyp_count += b.hyp_count;
+        // R11: the folded id may carry the identity the survivor lacks (or a
+        // stronger source of it) — same mass-preference as the accumulate loop.
+        if (b.mmsi.has_value() && b.mmsi_mass > a.mmsi_mass) {
+          a.mmsi = b.mmsi;
+          a.mmsi_mass = b.mmsi_mass;
+        }
+        if (b.platform_id.has_value() && b.platform_id_mass > a.platform_id_mass) {
+          a.platform_id = b.platform_id;
+          a.platform_id_mass = b.platform_id_mass;
+        }
         by_id.erase(bit);
         // Recompute i's snapshot for any further j-pair comparisons.
         stats[ids[i]] = computeStats(a);
@@ -2143,6 +2187,9 @@ void PmbmTracker::refreshAggregatedTracks() const {
     t.state = a.mean_acc / a.mass;
     // Moment-matched covariance: E[P + μμ'] − mean·mean'
     t.covariance = (a.cov_acc / a.mass) - (t.state * t.state.transpose());
+    // R11 identity surfacing: mmsi (AIS) + platform_id (cooperative/remote).
+    t.attributes.mmsi = a.mmsi;
+    t.attributes.platform_id = a.platform_id;
     auto hit = contribution_history_.find(id);
     if (hit != contribution_history_.end()) {
       t.recent_contributions = hit->second;

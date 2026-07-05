@@ -31,6 +31,7 @@
 #include "core/estimation/ConstantVelocity2D.hpp"
 #include "core/estimation/EkfEstimator.hpp"
 #include "core/geo/Datum.hpp"
+#include "core/output/TrackOutput.hpp"
 #include "core/pmbm/PmbmTracker.hpp"
 #include "core/sensor_activity/DeclaredSensorActivity.hpp"
 #include "core/types/Measurement.hpp"
@@ -275,4 +276,90 @@ TEST(PmbmRemoteTrackFusion, FourSourcesOneTrackStableThroughRemoteSwapAndDrop) {
   const auto circular = remote.circularAisMmsis({kMmsi});
   ASSERT_EQ(circular.size(), 1u);
   EXPECT_EQ(circular[0], kMmsi);
+}
+
+// R11 identity surfacing: the fused PMBM track (the winning config) must carry
+// the AIS mmsi and the cooperative platform_id in its TrackAttributes, and
+// toTrackOutput must pass BOTH through to the operator-facing output. Before
+// R11 (finding 2026-07-04) PMBM populated NO attributes: mmsi reached the
+// output only on the MHT path, and platform_id had no TrackAttributes field at
+// all — so the display could not say WHICH fleet member a track was. This pins
+// the operator-visible half of the cooperative+radar deployment. Same last-
+// write-wins semantics the estimator/MHT path uses for mmsi.
+TEST(PmbmRemoteTrackFusion, SurfacesAisMmsiAndCooperativePlatformId) {
+  const Datum d = gDatum();
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  auto activity = gActivity();
+
+  PmbmTracker::Config c;
+  c.gate_threshold = 20.0;
+  c.probability_of_detection = 0.9;
+  c.clutter_intensity = 1e-4;
+  c.measurement_driven_birth = true;
+  c.birth_weight_per_measurement = 0.3;
+  c.smart_birth_skip_existing = true;
+  c.smart_birth_skip_r_min = 0.5;
+  c.smart_birth_skip_gate = 20.0;
+  c.min_new_bernoulli_existence = 0.05;
+  c.k_best_per_hypothesis = 1;
+  c.max_global_hypotheses = 10;
+  c.confirm_threshold = 0.5;
+  c.output_existence_floor = 0.1;
+  c.r_min = 1e-5;
+  c.idle_halflife_sec = 10.0;
+  c.use_sensor_activity = true;
+  c.cooperative_stale_timeout_sec = 20.0;
+  PmbmTracker tracker(ekf, c);
+  tracker.setSensorActivity(&activity);
+
+  std::mt19937_64 rng(20260705ULL);
+  const std::uint32_t kMmsi = 211999888u;
+  const std::uint64_t kPlatform = 42ULL;
+
+  // Radar (no identity) + AIS (mmsi) + cooperative (platform_id) on one vessel,
+  // staggered so no two-in-one-scan competition. Radar carries no identity, so
+  // the identity must come from the AIS/coop claims (last-write-wins).
+  for (int k = 0; k <= 15; ++k) {
+    const double base = k;
+    tracker.predict(Timestamp::fromSeconds(base));
+    tracker.processBatch({gPos(base, SensorKind::ArpaTtm, "radar",
+                               gTruth(base) + Eigen::Vector2d(gauss(rng, 3.0),
+                                                              gauss(rng, 3.0)),
+                               3.0)});
+    tracker.predict(Timestamp::fromSeconds(base + 0.25));
+    Measurement ais = gPos(base + 0.25, SensorKind::Ais, "ais",
+                           gTruth(base + 0.25) +
+                               Eigen::Vector2d(gauss(rng, 6.0), gauss(rng, 6.0)),
+                           6.0);
+    ais.hints.mmsi = kMmsi;
+    tracker.processBatch({ais});
+    tracker.predict(Timestamp::fromSeconds(base + 0.5));
+    Measurement coop = gPos(base + 0.5, SensorKind::Cooperative, "fleet",
+                            gTruth(base + 0.5) + Eigen::Vector2d(
+                                gauss(rng, 4.0), gauss(rng, 4.0)),
+                            4.0);
+    coop.hints.platform_id = std::optional<std::uint64_t>{kPlatform};
+    tracker.processBatch({coop});
+  }
+
+  ASSERT_EQ(confirmedCount(tracker), 1);
+  const Track* tr = confirmed(tracker);
+  ASSERT_NE(tr, nullptr);
+
+  // Identity on the Track itself — PMBM now populates attributes from the hints
+  // of the measurements its Bernoullis claimed.
+  ASSERT_TRUE(tr->attributes.mmsi.has_value())
+      << "PMBM must surface the AIS mmsi (was empty pre-R11)";
+  EXPECT_EQ(*tr->attributes.mmsi, kMmsi);
+  ASSERT_TRUE(tr->attributes.platform_id.has_value())
+      << "PMBM must surface the cooperative platform_id (no field existed pre-R11)";
+  EXPECT_EQ(*tr->attributes.platform_id, kPlatform);
+
+  // Identity on the operator-facing TrackOutput (verbatim passthrough).
+  const auto out = navtracker::toTrackOutput(*tr, d);
+  ASSERT_TRUE(out.attributes.mmsi.has_value());
+  EXPECT_EQ(*out.attributes.mmsi, kMmsi);
+  ASSERT_TRUE(out.attributes.platform_id.has_value());
+  EXPECT_EQ(*out.attributes.platform_id, kPlatform);
 }

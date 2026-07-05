@@ -368,6 +368,8 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     // it in the contribution loop below.
     if (scan[j].hints.mmsi.has_value())
       tree_attributes_[id].mmsi = scan[j].hints.mmsi;
+    if (scan[j].hints.platform_id.has_value())
+      tree_attributes_[id].platform_id = scan[j].hints.platform_id;
     tree_sources_[id].push_back(scan[j].source_id);
   }
 
@@ -617,6 +619,8 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_arg) {
       const TrackId ext_id = trees_[ti].externalId();
       if (z.hints.mmsi.has_value())
         tree_attributes_[ext_id].mmsi = z.hints.mmsi;
+      if (z.hints.platform_id.has_value())
+        tree_attributes_[ext_id].platform_id = z.hints.platform_id;
       {
         auto& srcs = tree_sources_[ext_id];
         if (std::find(srcs.begin(), srcs.end(), z.source_id) == srcs.end())

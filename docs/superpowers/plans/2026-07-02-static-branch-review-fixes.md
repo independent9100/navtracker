@@ -664,8 +664,14 @@ code paths. Three items to close BEFORE the real test:
   coverage[_land]` were themselves setting both (inherited `source_aware_misdetection`
   + `use_sensor_activity`), silently defeating the cooperative retirement their own
   comment demands; fixed both to `use_sensor_activity` alone, coverage A/B gate green.
-- **Item 3 deferred** to the in-flight integration-guide doc pass (as this ticket
-  already routes it).
+- **Item 3 DONE (2026-07-05, folded into the R11 consumer-surface pass).** The
+  integration-guide ISensorActivity section gained a "Cooperative + radar: the
+  deployment recipe" subsection: (1) miss model = `use_sensor_activity` ALONE
+  (constructor throws on the `source_aware_misdetection` pair), (2) declare BOTH
+  a `Surveillance` radar profile and a `Cooperative` feed profile or the legacy
+  fallback misbehaves, (3) radar coverage suppresses cooperative-timeout
+  retirement — it fires only when both channels go silent past
+  `cooperative_stale_timeout_sec`. This was the last open R9 item.
 Also folded in (increment-ii caveat 2): a WRONG camera eviction of a present,
 radar-visible object self-heals — bounded latency window, not a hole (gate
 `LiveOccupancyModel.WrongEvictionOfPresentObjectSelfHeals`).
@@ -747,6 +753,28 @@ struct); north-star row updated.
 ---
 
 ## R11 — Identity surfacing to the output (found 2026-07-04, integrator question)
+
+**STATUS — SHIPPED 2026-07-05.** `platform_id` added to `TrackAttributes` +
+`TrackOutput` passthrough (free — `toTrackOutput` copies attributes verbatim).
+Surfaced **parallel to `mmsi`, symmetric everywhere identity enters a track**:
+the four estimator `initiate` sites (EKF/IMM/UKF/PF), the MHT `tree_attributes_`
+birth+refine sites, and — the real gap — the **PMBM output path**. PMBM emits
+via `refreshAggregatedTracks()` (the `Acc` cross-hypothesis aggregation, NOT
+`toTrack`), which dropped identity entirely; now each `Acc` adopts `mmsi`/
+`platform_id` from the **highest-mass hypothesis that carries it** (a dominant
+id-less hypothesis must not shadow a slightly-weaker one that has the id), with
+the same mass-preference carried through the output-side cross-id birth merge.
+Bernoulli-level persistence (`Bernoulli.mmsi`/`platform_id`, set last-write-wins
+at the detection/birth claim sites, carried through the duplicate merge) keeps
+the id alive across scans even after the AIS/coop feed drops. `toTrack(Bernoulli)`
+also copies them (used by internal adapters). Test: new fusion scenario
+`PmbmRemoteTrackFusion.SurfacesAisMmsiAndCooperativePlatformId` — radar (no id)
++ AIS (mmsi) + cooperative (platform_id) on one vessel → the confirmed track and
+its `toTrackOutput` carry BOTH. Docs: output-contract + integration-guide §6
+(keep-in-sync). **R9 item 3 folded in** (same consumer-surface pass): the guide's
+ISensorActivity section gained a "Cooperative + radar: the deployment recipe"
+subsection (miss-model exclusivity, both-channels-profiled, radar-suppresses-
+retirement). The original ticket follows.
 
 **Finding.** The output contract promises identity attributes, but under
 PMBM (the winning config) NOTHING fills them: no code in `core/pmbm/`
