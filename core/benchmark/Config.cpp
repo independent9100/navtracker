@@ -1,5 +1,7 @@
 #include "core/benchmark/Config.hpp"
 
+#include <cstddef>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 
@@ -290,6 +292,24 @@ MhtTracker::Config makeMhtMofnConfig() {
 // at 30 globals. r_min / weight_min / hypothesis_weight_min at the
 // defaults. confirm_threshold=0.5 emits a track once it carries half
 // the aggregated existence mass.
+// Env-gated compute-knob overrides for the PMBM runtime probe
+// (branch pmbm-runtime-probe, docs/baselines/2026-07-05_pmbm_runtime_frontier.md).
+// UNSET env → bit-identical to the shipped config: no default is touched, so the
+// determinism test and the standing suite stay green with these vars unset. Set
+// exactly one per run during the compute-vs-accuracy knob sweep so a single
+// binary can vary one knob without a recompile — mirrors the HAXR_* scenario env
+// overrides in ReplayScenarioRun.cpp. NOT a deployment surface.
+double probeEnvD(const char* var, double def) {
+  const char* v = std::getenv(var);
+  return (v != nullptr && *v != '\0') ? std::strtod(v, nullptr) : def;
+}
+std::size_t probeEnvU(const char* var, std::size_t def) {
+  const char* v = std::getenv(var);
+  return (v != nullptr && *v != '\0')
+             ? static_cast<std::size_t>(std::strtoull(v, nullptr, 10))
+             : def;
+}
+
 pmbm::PmbmTracker::Config makePmbmConfig() {
   pmbm::PmbmTracker::Config cfg;
   cfg.gate_threshold = kJpdaGate;
@@ -378,6 +398,19 @@ pmbm::PmbmTracker::Config makePmbmConfig() {
   //     r_new ≥ 0.5 under any reasonable (P_D, λ_C) so the threshold
   //     never blocks a true initiation.
   cfg.min_new_bernoulli_existence = 0.5;
+  // --- PMBM runtime-probe compute-knob overrides (env-gated; UNSET = no-op) ---
+  // Applied last so an env var wins over the shipped value. The derived
+  // configs (imm_cv_ct_pmbm_*) call makePmbmConfig() then override OTHER knobs
+  // (adaptive_birth, birth_existence_target, …) but never these five, so the
+  // overrides survive into the coverage_land sweep config. See
+  // docs/baselines/2026-07-05_pmbm_runtime_frontier.md.
+  cfg.gate_threshold = probeEnvD("PMBM_PROBE_GATE", cfg.gate_threshold);
+  cfg.max_global_hypotheses =
+      probeEnvU("PMBM_PROBE_MAXHYP", cfg.max_global_hypotheses);
+  cfg.max_ppp_components = probeEnvU("PMBM_PROBE_MAXPPP", cfg.max_ppp_components);
+  cfg.r_min = probeEnvD("PMBM_PROBE_RMIN", cfg.r_min);
+  cfg.trajectory_window_scans =
+      probeEnvU("PMBM_PROBE_TRAJWIN", cfg.trajectory_window_scans);
   return cfg;
 }
 

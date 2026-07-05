@@ -1,0 +1,20 @@
+# PMBM runtime probe frontier — 2026-07-05, branch pmbm-runtime-probe
+# workload: haxr / kattwyk_08_dec50_w285.csv (md5 304cdeb8e81f03cbddb52d629fab22a9), config imm_cv_ct_pmbm_coverage_land
+# wall_s = bench wall_seconds (steady-state, warm machine); wall_delta_pct vs c_baseline=442.0s (same batch, ~0.2% within-batch noise floor)
+# knobs applied via env override in makePmbmConfig (default-unset = bit-identical). gate_suite = KEEP-safety pricing of the fast candidate.
+section,scenario,run_id,knob,value,wall_s,wall_delta_pct,peak_rss_mb,gospa_mean,card_err_mean,lifetime_ratio,id_switches
+haxr_ofat,haxr,c_baseline,(shipped),-,442.004,0.00,83.0,104.262,48.7626,0.104497,0
+haxr_ofat,haxr,c_rmin_1e2,r_min,1e-2,416.292,-5.82,82.6,104.261,48.7615,0.104497,0
+haxr_ofat,haxr,c_rmin_1e3,r_min,1e-3,424.848,-3.88,82.8,104.261,48.7615,0.104497,0
+haxr_ofat,haxr,c_rmin_1e4,r_min,1e-4,432.635,-2.12,83.1,104.262,48.7626,0.104497,0
+haxr_ofat,haxr,c_gate_9,gate_threshold,9.0,438.535,-0.78,83.0,104.262,48.7626,0.104497,0
+haxr_ofat,haxr,c_gate_138,gate_threshold,13.8,439.809,-0.50,82.9,104.262,48.7626,0.104497,0
+haxr_ofat,haxr,c_maxppp_50,max_ppp_components,50,441.505,-0.11,83.2,104.262,48.7626,0.104497,0
+haxr_ofat,haxr,c_maxppp_100,max_ppp_components,100,441.645,-0.08,82.9,104.262,48.7626,0.104497,0
+haxr_ofat,haxr,c_trajwin_0,trajectory_window_scans,0,437.085,-1.11,81.1,104.262,48.7626,0.104497,0
+gate_suite,harbor_complete_truth,gate_harbor_complete_truth_base,(shipped),-,0.781178,,,42.5485,8,0.975,0
+gate_suite,harbor_complete_truth,gate_harbor_complete_truth_fast,r_min,1e-2,0.170767,,,42.5485,8,0.975,0
+gate_suite,dense_clutter_datum,gate_dense_clutter_datum_base,(shipped),-,0.0635851,,,22.7107,0.425,0.6125,0
+gate_suite,dense_clutter_datum,gate_dense_clutter_datum_fast,r_min,1e-2,0.0631712,,,22.7107,0.425,0.6125,0
+gate_suite,philos,gate_philos_base,(shipped),-,128.554,,,153.539,107.85,0.0386728,0
+gate_suite,philos,gate_philos_fast,r_min,1e-2,119.299,,,153.539,107.85,0.0386728,0
