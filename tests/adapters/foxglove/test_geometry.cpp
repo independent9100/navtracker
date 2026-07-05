@@ -37,6 +37,37 @@ TEST(Geometry, BearingWedgeApexAtSensorAndSpread) {
   EXPECT_LT(w[2].y, 2.0);
 }
 
+TEST(Geometry, CircleRadiusAndClosed) {
+  auto pts = circle(Eigen::Vector2d(5.0, -3.0), /*radius=*/10.0, /*n=*/32);
+  ASSERT_GE(pts.size(), 2u);
+  EXPECT_NEAR(pts.front().x, pts.back().x, 1e-9);   // closed loop
+  EXPECT_NEAR(pts.front().y, pts.back().y, 1e-9);
+  for (auto& p : pts) {
+    const double r = std::hypot(p.x - 5.0, p.y + 3.0);
+    EXPECT_NEAR(r, 10.0, 1e-9);                      // every vertex on the radius
+    EXPECT_DOUBLE_EQ(p.z, 0.0);
+  }
+}
+
+TEST(Geometry, SectorArcApexAndSpanClosed) {
+  const double cx = 2.0, cy = 1.0, range = 50.0, half = 0.3;
+  auto s = sectorArc(Eigen::Vector2d(cx, cy), /*center_rad=*/0.0, half, range, /*n=*/8);
+  ASSERT_GE(s.size(), 3u);
+  EXPECT_NEAR(s.front().x, cx, 1e-9);               // starts at apex
+  EXPECT_NEAR(s.front().y, cy, 1e-9);
+  EXPECT_NEAR(s.back().x, cx, 1e-9);                // closes at apex
+  EXPECT_NEAR(s.back().y, cy, 1e-9);
+  // Arc points sit at `range` from the apex.
+  for (std::size_t i = 1; i + 1 < s.size(); ++i)
+    EXPECT_NEAR(std::hypot(s[i].x - cx, s[i].y - cy), range, 1e-9);
+}
+
+TEST(Geometry, SectorArcOmniIsFullCircle) {
+  auto s = sectorArc(Eigen::Vector2d::Zero(), 0.0, /*half_width=*/M_PI, 20.0, 16);
+  // Omni -> full circle: no apex vertex, every point on the radius.
+  for (auto& p : s) EXPECT_NEAR(std::hypot(p.x, p.y), 20.0, 1e-9);
+}
+
 TEST(Geometry, ColorIsStablePerSource) {
   auto a = colorForSensor(SensorKind::EoIr, "cam-1");
   auto b = colorForSensor(SensorKind::EoIr, "cam-1");

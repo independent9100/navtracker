@@ -394,6 +394,12 @@ if(NAVTRACKER_BUILD_FOXGLOVE)
   add_executable(navtracker_foxglove_autoferry tools/foxglove_autoferry.cpp)
   target_link_libraries(navtracker_foxglove_autoferry PRIVATE
     navtracker_core navtracker_replay navtracker_foxglove Eigen3::Eigen)
+
+  # PMBM + static-world debug drawing demo: exercises the environment / PMBM /
+  # occupancy / coverage layers end to end into one .mcap.
+  add_executable(navtracker_foxglove_pmbm_scenario tools/foxglove_pmbm_scenario.cpp)
+  target_link_libraries(navtracker_foxglove_pmbm_scenario PRIVATE
+    navtracker_core navtracker_replay navtracker_foxglove Eigen3::Eigen)
 endif()
 
 add_subdirectory(bench)

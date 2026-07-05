@@ -45,6 +45,9 @@ class CoastlineModel : public ILandModel, public IDatumChangeSink {
   /** Replace the coastline geometry (must be called at a deterministic, timestamp-ordered point). */
   void setCoastline(CoastlineGeometry geom) { geom_ = std::move(geom); }
 
+  /** Read-only access to the held geometry (for debug visualization). */
+  const CoastlineGeometry& geometry() const { return geom_; }
+
  private:
   CoastlineGeometry geom_;
   geo::Datum datum_;

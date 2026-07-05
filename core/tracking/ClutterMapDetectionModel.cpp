@@ -54,6 +54,33 @@ double ClutterMapSensorDetectionModel::bearingCellLambda(
   return m.cells[idx].rate / (kTwoPi / static_cast<double>(m.cells.size()));
 }
 
+std::vector<std::pair<Eigen::Vector2d, double>>
+ClutterMapSensorDetectionModel::positionClutterCells() const {
+  const double h = p_.cell_size_m;
+  std::vector<std::pair<Eigen::Vector2d, double>> out;
+  for (const auto& [key, map] : position_maps_)
+    for (const auto& [idx, cell] : map.cells)
+      out.emplace_back(Eigen::Vector2d((idx.first + 0.5) * h, (idx.second + 0.5) * h),
+                       cell.rate / (h * h));   // λ_c = rate / area; centre of cell
+  return out;
+}
+
+std::vector<std::pair<double, double>>
+ClutterMapSensorDetectionModel::bearingClutterCells() const {
+  std::vector<std::pair<double, double>> out;
+  for (const auto& [key, map] : bearing_maps_) {
+    const std::size_t n = map.cells.size();
+    if (n == 0) continue;
+    const double cell_w = kTwoPi / static_cast<double>(n);
+    for (std::size_t i = 0; i < n; ++i) {
+      if (i >= map.touched.size() || !map.touched[i]) continue;
+      const double az = (static_cast<double>(i) + 0.5) * cell_w - kTwoPi / 2.0;
+      out.emplace_back(az, map.cells[i].rate / cell_w);
+    }
+  }
+  return out;
+}
+
 DetectionParams ClutterMapSensorDetectionModel::paramsFor(
     const Measurement& z) const {
   DetectionParams dp = inner_->paramsFor(z);

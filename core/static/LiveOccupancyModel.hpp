@@ -268,6 +268,25 @@ class LiveOccupancyModel : public IStaticObstacleModel,
    */
   std::vector<Eigen::Vector2d> cameraObservedEmptyCells() const;
 
+  // --- Read-only spatial introspection for debug visualization ---
+  // All positions are in the fixed ANCHOR-frame ENU (== the tracker's current
+  // datum until a recenter; the bench uses a single fixed datum, so anchor ==
+  // current there). These expose grid state the fusion path keeps private; they
+  // do not affect suppression or tracking.
+
+  /** Metric grid resolution (cell edge length, m). */
+  double cellSizeMeters() const { return params_.cell_size_m; }
+  /** Vessel-fix veto radius (m) — the ring each active fix suppresses within. */
+  double vetoRadiusMeters() const { return params_.veto_radius_m; }
+  /** Every touched cell as (anchor-ENU cell centre, EWMA persistence value). */
+  std::vector<std::pair<Eigen::Vector2d, double>> persistenceCells() const;
+  /** Anchor-ENU centroid per emitted structure hazard (index-aligned with obstacles()). */
+  const std::vector<Eigen::Vector2d>& structureCenters() const { return obstacle_center_; }
+  /** Charted structure points (anchor ENU); empty when no chart was fed. */
+  const std::vector<Eigen::Vector2d>& chartedPoints() const { return charted_enu_; }
+  /** Active vessel-fix veto anchor positions (anchor ENU). */
+  std::vector<Eigen::Vector2d> vesselFixPositions() const;
+
  private:
   using Cell = std::pair<int, int>;
 

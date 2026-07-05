@@ -156,6 +156,16 @@ class ClutterMapSensorDetectionModel : public ISensorDetectionModel {
    */
   void observe(const std::vector<ScanObservation>& by_sensor) override;
 
+  // --- Read-only heatmap introspection for debug visualization ---
+  /** ENU grid pitch (m) of the position-space maps. */
+  double cellSizeMeters() const { return p_.cell_size_m; }
+  /** All learned position-map cells across sensors as (ENU cell centre, λ in
+   *  m⁻²). Empty until the position map has been fed. For a debug heatmap. */
+  std::vector<std::pair<Eigen::Vector2d, double>> positionClutterCells() const;
+  /** All learned bearing-map cells as (absolute-ENU azimuth centre rad, λ in
+   *  rad⁻¹). Empty unless the bearing map is enabled and fed. */
+  std::vector<std::pair<double, double>> bearingClutterCells() const;
+
  private:
   struct Cell {
     double rate{0.0};  // EWMA of unassociated returns per scan in cell

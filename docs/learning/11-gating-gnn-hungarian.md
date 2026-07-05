@@ -325,6 +325,37 @@ and a bearing wedge from a sensor. (Right) A synthetic NIS time series
 with a chi-squared band — the running mean stays near `m = 2`,
 indicating a well-tuned filter.
 
+### Beyond tracks: the environment and PMBM layers
+
+The recorder now also draws everything the fusion core learned about the
+world, not just the confirmed tracks:
+
+- **Static world** — coastline land polygons (`/land`), charted
+  obstacles with footprint + keep-clear rings (`/static_obstacles`), and
+  keep-clear crossing alerts (`/static_hazard`). This is the
+  "presence over classification" picture of ADR 0002: what is out there
+  that a track can hit.
+- **Live occupancy** — the persistence heatmap (`/occupancy/persistence`,
+  blue→red by how sticky a cell is), the learned structure hazards
+  coloured by whether a chart / camera / AIS confirmed or refuted them
+  (`/occupancy/structures`, `/occupancy/camera_empty`, `/occupancy/veto`).
+  This is how you *see* why a region does or does not suppress new births.
+- **PMBM posterior** — the Poisson birth/undetected intensity as faint
+  ellipses (`/pmbm/ppp`), each possible target (Bernoulli) sized/coloured
+  by its existence probability `r` (`/pmbm/bernoulli`), and per-target
+  trajectories (`/pmbm/trajectories`). Watch `r` grow as evidence
+  accumulates and the ellipse migrate from PPP into a confirmed track.
+- **Estimator internals** — per-IMM-mode ellipses fanned by mode
+  probability (`/tracks/imm_modes`, `/diag/mode_prob`), particle clouds
+  (`/tracks/particles`), and existence/visibility scalars
+  (`/diag/existence`).
+- **Sensor coverage** — each sensor's declared sector or disc
+  (`/coverage/<source_id>`), so a "missed" target near a coverage edge is
+  obvious.
+
+The canonical end-to-end recording of all of this is
+`navtracker_foxglove_pmbm_scenario`.
+
 ### Reference
 
 Full channel table, wiring instructions, and panel layout:

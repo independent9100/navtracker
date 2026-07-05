@@ -4,6 +4,12 @@
 #include <string>
 #include <mcap/reader.hpp>
 #include "adapters/foxglove/FoxgloveDebugRecorder.hpp"
+#include "core/land/CoastlineGeometry.hpp"       // LandPolygon
+#include "core/pmbm/PmbmTypes.hpp"
+#include "core/static/LiveOccupancyModel.hpp"
+#include "core/tracking/ClutterMapDetectionModel.hpp"
+#include "core/types/StaticObstacle.hpp"
+#include "ports/IStaticHazardSink.hpp"
 #include "tests/adapters/foxglove/TmpPath.hpp"
 
 using namespace navtracker;
@@ -114,6 +120,164 @@ TEST(Recorder, LifecycleCpaOwnshipEmit) {
   EXPECT_GE(c["/log"], 3);     // confirmed + deleted + cpa entered
   EXPECT_EQ(c["/cpa"], 1);
   EXPECT_EQ(c["/tf"], 2);  // static map->enu root frame + the own-ship transform
+}
+
+TEST(Recorder, MasterDisableSuppressesAllOutput) {
+  const std::string path = navtracker::foxglove::test::tmpMcapPath("recorder_disabled");
+  {
+    RecorderConfig cfg; cfg.enabled = false; cfg.gate_gamma = 9.21;
+    FoxgloveDebugRecorder rec(path, geo::Datum(geo::Geodetic{59.9, 10.7}), nullptr, cfg);
+    // Drive every entry point; with enabled=false none may write a message.
+    rec.recordMeasurement(posMeas(10, 20));
+    rec.recordMeasurement(bearingMeas(0.0));
+    OwnShipPose pose; pose.time = Timestamp{4000}; pose.lat_deg = 59.9; pose.lon_deg = 10.7;
+    rec.recordOwnShip(pose);
+    InnovationEvent e; e.time = Timestamp{3000}; e.track_id = TrackId{1};
+    e.sensor = SensorKind::Ais; e.source_id = "ais-1";
+    e.residual = Eigen::Vector2d(1.0, 0.0);
+    e.S = Eigen::Matrix2d::Identity() * 4.0; e.R = e.S; e.dim = 2;
+    rec.onInnovation(e);
+    rec.onTracks({makeTrack(1, 0, 0)}, Timestamp{3001});
+    rec.onTrackConfirmed({TrackId{1}, Timestamp{4000}, TrackStatus::Confirmed});
+    CollisionRiskEvent ev; ev.transition = CollisionRiskTransition::Entered;
+    ev.other = TrackId{1}; ev.time = Timestamp{4100};
+    rec.onCollisionRisk(ev);
+    rec.close();
+  }
+  auto c = countByTopic(path);
+  std::remove(path.c_str());
+  int total = 0;
+  for (const auto& kv : c) total += kv.second;
+  EXPECT_EQ(total, 0) << "enabled=false must suppress all messages";
+}
+
+TEST(Recorder, CoastlineAndStaticObstaclesEmit) {
+  const std::string path = navtracker::foxglove::test::tmpMcapPath("recorder_env");
+  {
+    FoxgloveDebugRecorder rec(path, geo::Datum(geo::Geodetic{59.9, 10.7}));
+    LandPolygon poly;
+    poly.outer = {{10.70, 59.90}, {10.71, 59.90}, {10.71, 59.91}, {10.70, 59.91}};  // (lon,lat)
+    poly.holes = {{{10.703, 59.903}, {10.705, 59.903}, {10.705, 59.905}}};
+    rec.recordCoastline({poly});
+    StaticObstacle o;
+    o.position = geo::Geodetic{59.905, 10.705};
+    o.footprint_radius_m = 20.0; o.keep_clear_radius_m = 100.0;
+    o.category = ObstacleCategory::Rock;
+    rec.recordStaticObstacles({o});
+    rec.close();
+  }
+  auto c = countByTopic(path);
+  std::remove(path.c_str());
+  EXPECT_EQ(c["/land"], 1);
+  EXPECT_EQ(c["/static_obstacles"], 1);
+}
+
+TEST(Recorder, OccupancyLayersEmit) {
+  const std::string path = navtracker::foxglove::test::tmpMcapPath("recorder_occ");
+  {
+    FoxgloveDebugRecorder rec(path, geo::Datum(geo::Geodetic{59.9, 10.7}));
+    LiveOccupancyModel occ(geo::Datum(geo::Geodetic{59.9, 10.7}));
+    occ.observeVesselFix(1.0, Eigen::Vector2d(50, 50));          // veto anchor
+    StaticObstacle chart; chart.position = geo::Geodetic{59.9, 10.7};
+    occ.setChartedStructure({chart});                            // charted point
+    rec.recordOccupancy(occ, Timestamp{6000});
+    rec.close();
+  }
+  auto c = countByTopic(path);
+  std::remove(path.c_str());
+  EXPECT_EQ(c["/occupancy/persistence"], 1);
+  EXPECT_EQ(c["/occupancy/structures"], 1);
+  EXPECT_EQ(c["/occupancy/camera_empty"], 1);
+  EXPECT_EQ(c["/occupancy/veto"], 1);
+}
+
+TEST(Recorder, PmbmDensityLayersEmit) {
+  const std::string path = navtracker::foxglove::test::tmpMcapPath("recorder_pmbm");
+  {
+    FoxgloveDebugRecorder rec(path, geo::Datum(geo::Geodetic{59.9, 10.7}));
+    pmbm::PmbmDensity d;
+    pmbm::PoissonComponent pc;
+    pc.weight = 0.5; pc.mean = Eigen::Vector4d(10, 20, 0, 0);
+    pc.covariance = Eigen::Matrix4d::Identity() * 25.0;
+    d.ppp.push_back(pc);
+    pmbm::GlobalHypothesis gh; gh.weight = 1.0;
+    pmbm::Bernoulli b;
+    b.existence_probability = 0.8; b.mean = Eigen::Vector4d(30, 40, 1, 0);
+    b.covariance = Eigen::Matrix4d::Identity() * 9.0;
+    pmbm::TrajectoryPoint tp0; tp0.state = Eigen::Vector4d(28, 38, 1, 0);
+    pmbm::TrajectoryPoint tp1; tp1.state = Eigen::Vector4d(30, 40, 1, 0);
+    b.trajectory = {tp0, tp1};
+    gh.bernoullis.push_back(b);
+    d.mbm.push_back(gh);
+    rec.recordPmbmDensity(d, Timestamp{7000});
+    rec.close();
+  }
+  auto c = countByTopic(path);
+  std::remove(path.c_str());
+  EXPECT_EQ(c["/pmbm/ppp"], 1);
+  EXPECT_EQ(c["/pmbm/bernoulli"], 1);
+  EXPECT_EQ(c["/pmbm/trajectories"], 1);
+}
+
+TEST(Recorder, EstimatorInternalsAndCoverageEmit) {
+  const std::string path = navtracker::foxglove::test::tmpMcapPath("recorder_est");
+  {
+    FoxgloveDebugRecorder rec(path, geo::Datum(geo::Geodetic{59.9, 10.7}));
+    Track t = makeTrack(1, 0, 0);
+    t.imm_means = Eigen::MatrixXd(4, 2);
+    t.imm_means.col(0) = Eigen::Vector4d(0, 0, 1, 0);
+    t.imm_means.col(1) = Eigen::Vector4d(1, 1, 1, 0);
+    t.imm_covariances = {Eigen::MatrixXd::Identity(4, 4) * 4.0,
+                         Eigen::MatrixXd::Identity(4, 4) * 9.0};
+    t.imm_mode_probabilities = Eigen::Vector2d(0.7, 0.3);
+    t.particles = Eigen::MatrixXd(4, 3);
+    t.particles << 0, 1, 2,  0, 1, 2,  1, 1, 1,  0, 0, 0;
+    t.particle_weights = Eigen::Vector3d(0.5, 0.3, 0.2);
+    rec.onTracks({t}, Timestamp{8000});
+    rec.recordSensorCoverage("radar-1", SensorKind::ArpaTtm, Eigen::Vector2d(0, 0),
+                             /*center_rad=*/0.0, /*half_width=*/M_PI, /*range=*/3000.0,
+                             Timestamp{8000});
+    rec.close();
+  }
+  auto c = countByTopic(path);
+  std::remove(path.c_str());
+  EXPECT_EQ(c["/tracks/imm_modes"], 1);
+  EXPECT_EQ(c["/tracks/particles"], 1);
+  EXPECT_EQ(c["/diag/mode_prob"], 1);
+  EXPECT_EQ(c["/diag/existence"], 1);
+  EXPECT_EQ(c["/coverage/radar-1"], 1);
+}
+
+TEST(Recorder, ClutterMapLayersEmit) {
+  const std::string path = navtracker::foxglove::test::tmpMcapPath("recorder_clutter");
+  {
+    FoxgloveDebugRecorder rec(path, geo::Datum(geo::Geodetic{59.9, 10.7}));
+    // Empty maps (no observe): the layers still emit one message each so the
+    // panel has channels; accessors return empty vectors and don't touch inner_.
+    ClutterMapSensorDetectionModel cm(/*inner=*/nullptr);
+    rec.recordClutterMap(cm, Eigen::Vector2d(0, 0), Timestamp{9500});
+    rec.close();
+  }
+  auto c = countByTopic(path);
+  std::remove(path.c_str());
+  EXPECT_EQ(c["/clutter/position"], 1);
+  EXPECT_EQ(c["/clutter/bearing"], 1);
+}
+
+TEST(Recorder, StaticHazardEventEmits) {
+  const std::string path = navtracker::foxglove::test::tmpMcapPath("recorder_hazard");
+  {
+    FoxgloveDebugRecorder rec(path, geo::Datum(geo::Geodetic{59.9, 10.7}));
+    StaticHazardEvent e;
+    e.transition = StaticHazardTransition::Entered; e.hazard_id = 42;
+    e.time = Timestamp{9000}; e.distance_m = 80.0; e.keep_clear_m = 100.0;
+    rec.onStaticHazard(e);
+    rec.close();
+  }
+  auto c = countByTopic(path);
+  std::remove(path.c_str());
+  EXPECT_EQ(c["/static_hazard"], 1);
+  EXPECT_GE(c["/log"], 1);
 }
 
 TEST(Recorder, AssociationsLineFromTouchToTrack) {

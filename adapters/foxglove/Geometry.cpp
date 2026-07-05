@@ -30,6 +30,31 @@ std::vector<Pt> bearingWedge(const Eigen::Vector2d& s, double alpha, double sigm
   return {{e1.x(), e1.y(), 0.0}, {s.x(), s.y(), 0.0}, {e2.x(), e2.y(), 0.0}};
 }
 
+std::vector<Pt> circle(const Eigen::Vector2d& c, double radius_m, int n) {
+  std::vector<Pt> out;
+  out.reserve(n + 1);
+  for (int i = 0; i <= n; ++i) {                            // <= n closes the loop
+    const double t = 2.0 * M_PI * static_cast<double>(i) / static_cast<double>(n);
+    out.push_back({c.x() + radius_m * std::cos(t), c.y() + radius_m * std::sin(t), 0.0});
+  }
+  return out;
+}
+
+std::vector<Pt> sectorArc(const Eigen::Vector2d& c, double center_rad,
+                          double half_width_rad, double range_m, int n) {
+  if (half_width_rad >= M_PI) return circle(c, range_m, std::max(n, 8));  // omni -> full disc
+  std::vector<Pt> out;
+  out.reserve(n + 2);
+  out.push_back({c.x(), c.y(), 0.0});                       // apex
+  const double a0 = center_rad - half_width_rad;
+  for (int i = 0; i <= n; ++i) {
+    const double a = a0 + 2.0 * half_width_rad * static_cast<double>(i) / static_cast<double>(n);
+    out.push_back({c.x() + range_m * std::cos(a), c.y() + range_m * std::sin(a), 0.0});
+  }
+  out.push_back({c.x(), c.y(), 0.0});                       // close back to apex
+  return out;
+}
+
 Rgba colorForSensor(SensorKind sensor, const std::string& source_id) {
   // Fixed, well-separated base hue per sensor kind so radar / lidar / AIS / EO-IR
   // are visually distinct (and clear of the track-green ~120 and gate-blue ~240
