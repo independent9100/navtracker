@@ -23,6 +23,19 @@ void AisAdapter::ingest(const AisDynamicReport& r) {
   const double sigma = r.high_accuracy ? 10.0 : 30.0;
   m.covariance = Eigen::Matrix2d::Identity() * (sigma * sigma);
   if (r.mmsi != 0) m.hints.mmsi = r.mmsi;
+
+  // Target-reported kinematics (backlog #20). Validate at the edge
+  // (invariant #6): drop AIS "not available" sentinels / out-of-range values
+  // rather than let a 511° heading or an "undefined" nav-status reach the core.
+  // heading is an attribute (true heading in [0,360)); nav_status is the
+  // corroboration cue (0..14; 15 = undefined is dropped).
+  if (r.heading_deg.has_value() && *r.heading_deg >= 0.0 &&
+      *r.heading_deg < 360.0) {
+    m.hints.heading_deg = *r.heading_deg;
+  }
+  if (r.nav_status.has_value() && *r.nav_status <= 14) {
+    m.hints.nav_status = *r.nav_status;
+  }
   buffer_.push_back(std::move(m));
 }
 

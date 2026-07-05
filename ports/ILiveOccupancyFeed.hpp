@@ -41,9 +41,19 @@ class ILiveOccupancyFeed {
    * feeds only the birth-veto face — never λ_C / p_D. Default no-op: an occupancy
    * model without the veto, or a consumer that doesn't wire it, is unaffected —
    * the same nullable-sink contract as observe().
+   *
+   * `anchored` marks a self-declared stationary vessel (backlog #20: the
+   * producer sets it for AIS nav-status 1 = at anchor / 5 = moored). Such a
+   * vessel reports infrequently (AIS anchored cadence ~3 min) yet must never be
+   * suppressed into nothing (ADR 0002 / R3), so its veto is held for a LONGER
+   * recency window than an underway fix — otherwise the veto lapses between its
+   * sparse reports and its (stationary → structure-like) radar returns get
+   * suppressed. The port speaks "anchored", not "nav-status": kind-agnostic by
+   * design, the sensor-format translation stays in the producer.
    */
   virtual void observeVesselFix(double /*t_unix*/,
-                                const Eigen::Vector2d& /*position_enu*/) {}
+                                const Eigen::Vector2d& /*position_enu*/,
+                                bool /*anchored*/ = false) {}
 };
 
 }  // namespace navtracker

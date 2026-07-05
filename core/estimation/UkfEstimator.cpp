@@ -142,6 +142,10 @@ Track UkfEstimator::initiate(const Measurement& z) const {
   if (z.hints.mmsi.has_value()) t.attributes.mmsi = z.hints.mmsi;
   if (z.hints.platform_id.has_value())
     t.attributes.platform_id = z.hints.platform_id;
+  if (z.hints.heading_deg.has_value())
+    t.attributes.heading_deg = z.hints.heading_deg;
+  if (z.hints.nav_status.has_value())
+    t.attributes.nav_status = z.hints.nav_status;
   t.contributing_sources.push_back(z.source_id);
   return t;
 }

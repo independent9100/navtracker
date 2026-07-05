@@ -222,6 +222,10 @@ struct Bernoulli {
   // track is. nullopt = never claimed an identity-bearing measurement.
   std::optional<std::uint32_t> mmsi;
   std::optional<std::uint64_t> platform_id;
+  // #20 target-reported attributes (heading true-deg, AIS nav-status code),
+  // same last-write-wins persistence and surfacing as the ids above.
+  std::optional<double> heading_deg;
+  std::optional<std::uint8_t> nav_status;
 
   // Convenience: a Bernoulli is "alive" if r is above the supplied
   // pruning threshold. Caller picks the threshold per the tracker's
@@ -429,6 +433,8 @@ inline Track toTrack(const Bernoulli& b) {
   // set at the claim sites remain authoritative.
   t.attributes.mmsi = b.mmsi;
   t.attributes.platform_id = b.platform_id;
+  t.attributes.heading_deg = b.heading_deg;
+  t.attributes.nav_status = b.nav_status;
   return t;
 }
 

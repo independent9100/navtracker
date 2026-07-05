@@ -100,6 +100,16 @@ struct LiveOccupancyParams {
   // AIS-silent vessel may fall back to the accepted static-hazard degraded mode
   // until its next fix re-asserts the veto. Matches typical AIS/cooperative cadence.
   double veto_window_s = 60.0;
+  // #20: veto window for a self-declared stationary vessel (AIS nav-status
+  // 1 = at anchor / 5 = moored). Anchored class-A AIS reports every ~3 min, so
+  // the underway veto_window_s would lapse between reports and the vessel's
+  // (stationary → structure-like) returns would be suppressed — the exact
+  // "never suppress a self-declared vessel" failure ADR 0002 / R3 forbid. A
+  // longer window bridges the sparse cadence with margin; the veto only LOWERS
+  // suppression (conservation-safe), so a stale anchored veto merely delays
+  // re-suppressing an area — the safe direction. Default 600 s ≈ 3 missed
+  // anchored reports. Set == veto_window_s to disable the anchored distinction.
+  double anchored_veto_window_s = 600.0;
 };
 
 /**
@@ -201,12 +211,16 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   struct VesselFix {
     double t_unix{0.0};
     Eigen::Vector2d position_enu{Eigen::Vector2d::Zero()};
+    // #20: a self-declared stationary vessel (AIS nav-status at anchor / moored).
+    // Its veto is held for params_.anchored_veto_window_s instead of the shorter
+    // veto_window_s, bridging its sparse anchored-cadence reports.
+    bool anchored{false};
   };
   void observeVesselFix(const VesselFix& fix);
 
   /** ILiveOccupancyFeed: production entry point (primitives); delegates above. */
-  void observeVesselFix(double t_unix,
-                        const Eigen::Vector2d& position_enu) override;
+  void observeVesselFix(double t_unix, const Eigen::Vector2d& position_enu,
+                        bool anchored = false) override;
 
   /** Number of currently-active (unpruned, recent) vessel-fix vetoes. */
   std::size_t vesselFixCount() const { return vessel_fixes_.size(); }

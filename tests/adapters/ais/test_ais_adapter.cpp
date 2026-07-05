@@ -79,3 +79,46 @@ TEST(AisAdapter, LowAccuracyHasLargerCovariance) {
   ASSERT_EQ(out.size(), 1u);
   EXPECT_EQ(out[0].covariance(0, 0), 900.0);
 }
+
+// #20: AIS self-report heading + nav-status flow onto the measurement hints,
+// with AIS "not available" sentinels dropped at the edge (invariant #6).
+TEST(AisAdapter, ParsesHeadingAndNavStatusAndDropsSentinels) {
+  Datum datum({53.5, 8.0, 0.0});
+  AisAdapter adapter(datum);
+
+  AisDynamicReport r;
+  r.time = Timestamp::fromSeconds(0.0);
+  r.lat_deg = 53.5;
+  r.lon_deg = 8.0;
+  r.heading_deg = 47.0;
+  r.nav_status = std::uint8_t{1};  // at anchor
+  adapter.ingest(r);
+  auto out = adapter.poll();
+  ASSERT_EQ(out.size(), 1u);
+  ASSERT_TRUE(out[0].hints.heading_deg.has_value());
+  EXPECT_DOUBLE_EQ(*out[0].hints.heading_deg, 47.0);
+  ASSERT_TRUE(out[0].hints.nav_status.has_value());
+  EXPECT_EQ(*out[0].hints.nav_status, 1u);
+
+  // Sentinels: heading 511 = "not available", nav-status 15 = "undefined".
+  AisDynamicReport s = r;
+  s.heading_deg = 511.0;
+  s.nav_status = std::uint8_t{15};
+  adapter.ingest(s);
+  auto out2 = adapter.poll();
+  ASSERT_EQ(out2.size(), 1u);
+  EXPECT_FALSE(out2[0].hints.heading_deg.has_value())
+      << "511 heading sentinel must be dropped, not surfaced as a bearing";
+  EXPECT_FALSE(out2[0].hints.nav_status.has_value())
+      << "nav-status 15 (undefined) must be dropped";
+
+  // A report that carries neither leaves both hints empty.
+  AisDynamicReport bare = r;
+  bare.heading_deg.reset();
+  bare.nav_status.reset();
+  adapter.ingest(bare);
+  auto out3 = adapter.poll();
+  ASSERT_EQ(out3.size(), 1u);
+  EXPECT_FALSE(out3[0].hints.heading_deg.has_value());
+  EXPECT_FALSE(out3[0].hints.nav_status.has_value());
+}

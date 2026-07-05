@@ -43,6 +43,7 @@ struct SpyDetectionModel : ISensorDetectionModel {
 // veto routed through the tracker (R9 item 1b production wiring).
 struct SpyOccupancyFeed : navtracker::ILiveOccupancyFeed {
   int observe_calls = 0;
+  int anchored_fixes = 0;
   std::vector<std::vector<ISensorDetectionModel::ScanObservation>> bundles;
   std::vector<std::pair<double, Eigen::Vector2d>> vessel_fixes;
   void observe(const std::vector<ISensorDetectionModel::ScanObservation>&
@@ -50,9 +51,10 @@ struct SpyOccupancyFeed : navtracker::ILiveOccupancyFeed {
     ++observe_calls;
     bundles.push_back(by_sensor);
   }
-  void observeVesselFix(double t_unix,
-                        const Eigen::Vector2d& position_enu) override {
+  void observeVesselFix(double t_unix, const Eigen::Vector2d& position_enu,
+                        bool anchored = false) override {
     vessel_fixes.emplace_back(t_unix, position_enu);
+    if (anchored) ++anchored_fixes;
   }
 };
 
@@ -361,6 +363,42 @@ TEST(PmbmOccupancyFeed, RoutesNonScanningAnchorToVetoThroughTrackerPath) {
   }
   EXPECT_TRUE(occ_radar.vessel_fixes.empty())
       << "a scanning-radar return must NOT feed the vessel-fix veto";
+}
+
+// #20 nav-status data path (producer half): the PmbmTracker translates an AIS
+// nav-status hint (1 = at anchor / 5 = moored) into the occupancy port's
+// kind-agnostic `anchored` flag on the routed vessel fix — an underway AIS fix
+// stays anchored=false. This is the seam that lets the occupancy veto hold a
+// self-declared stationary vessel for its longer window.
+TEST(PmbmOccupancyFeed, TranslatesAisNavStatusToAnchoredFlagThroughTrackerPath) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf{motion, 5.0};
+
+  // Anchored: nav-status 1 → anchored=true on the routed fix.
+  PmbmTracker t(ekf, cfg());
+  SpyOccupancyFeed occ;
+  t.setLiveOccupancyFeed(&occ);
+  for (int k = 0; k < 6; ++k) {
+    t.predict(Timestamp::fromSeconds(k));
+    Measurement m = aisMeas(120.0, 30.0, k);
+    m.hints.nav_status = std::uint8_t{1};  // at anchor
+    t.processBatch({m});
+  }
+  ASSERT_FALSE(occ.vessel_fixes.empty());
+  EXPECT_GT(occ.anchored_fixes, 0)
+      << "AIS nav-status 1 (anchor) must route as an anchored vessel fix";
+
+  // Underway: no nav-status → anchored=false.
+  PmbmTracker t2(ekf, cfg());
+  SpyOccupancyFeed occ_underway;
+  t2.setLiveOccupancyFeed(&occ_underway);
+  for (int k = 0; k < 6; ++k) {
+    t2.predict(Timestamp::fromSeconds(k));
+    t2.processBatch({aisMeas(120.0, 30.0, k)});  // no nav-status hint
+  }
+  ASSERT_FALSE(occ_underway.vessel_fixes.empty());
+  EXPECT_EQ(occ_underway.anchored_fixes, 0)
+      << "an AIS fix without nav-status must not be flagged anchored";
 }
 
 // The reviewer's literal acceptance: a fed AIS fix lands in a REAL

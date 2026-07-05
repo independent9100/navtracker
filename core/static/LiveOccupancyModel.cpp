@@ -81,8 +81,9 @@ void LiveOccupancyModel::observeVesselFix(const VesselFix& fix) {
 }
 
 void LiveOccupancyModel::observeVesselFix(double t_unix,
-                                          const Eigen::Vector2d& position_enu) {
-  observeVesselFix(VesselFix{t_unix, position_enu});
+                                          const Eigen::Vector2d& position_enu,
+                                          bool anchored) {
+  observeVesselFix(VesselFix{t_unix, position_enu, anchored});
 }
 
 void LiveOccupancyModel::observe(
@@ -158,13 +159,18 @@ void LiveOccupancyModel::observe(
   }
 
   // Prune stale vessel-fix vetoes (older than the recency window relative to this
-  // scan) so an AIS/cooperative feed going quiet lets the veto lapse.
+  // scan) so an AIS/cooperative feed going quiet lets the veto lapse. #20: an
+  // anchored/moored self-declared vessel gets the longer anchored window so its
+  // veto survives the sparse anchored AIS cadence (never suppress a vessel).
   if (!vessel_fixes_.empty() && !by_sensor.empty()) {
     const double now = by_sensor.front().time.seconds();
     vessel_fixes_.erase(
         std::remove_if(vessel_fixes_.begin(), vessel_fixes_.end(),
                        [&](const VesselFix& f) {
-                         return now - f.t_unix > params_.veto_window_s;
+                         const double window = f.anchored
+                                                   ? params_.anchored_veto_window_s
+                                                   : params_.veto_window_s;
+                         return now - f.t_unix > window;
                        }),
         vessel_fixes_.end());
   }

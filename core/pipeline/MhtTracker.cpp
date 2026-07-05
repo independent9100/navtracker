@@ -370,6 +370,10 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_arg) {
       tree_attributes_[id].mmsi = scan[j].hints.mmsi;
     if (scan[j].hints.platform_id.has_value())
       tree_attributes_[id].platform_id = scan[j].hints.platform_id;
+    if (scan[j].hints.heading_deg.has_value())
+      tree_attributes_[id].heading_deg = scan[j].hints.heading_deg;
+    if (scan[j].hints.nav_status.has_value())
+      tree_attributes_[id].nav_status = scan[j].hints.nav_status;
     tree_sources_[id].push_back(scan[j].source_id);
   }
 
@@ -621,6 +625,10 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_arg) {
         tree_attributes_[ext_id].mmsi = z.hints.mmsi;
       if (z.hints.platform_id.has_value())
         tree_attributes_[ext_id].platform_id = z.hints.platform_id;
+      if (z.hints.heading_deg.has_value())
+        tree_attributes_[ext_id].heading_deg = z.hints.heading_deg;
+      if (z.hints.nav_status.has_value())
+        tree_attributes_[ext_id].nav_status = z.hints.nav_status;
       {
         auto& srcs = tree_sources_[ext_id];
         if (std::find(srcs.begin(), srcs.end(), z.source_id) == srcs.end())

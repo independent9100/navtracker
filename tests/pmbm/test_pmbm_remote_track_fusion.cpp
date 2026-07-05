@@ -333,6 +333,8 @@ TEST(PmbmRemoteTrackFusion, SurfacesAisMmsiAndCooperativePlatformId) {
                                Eigen::Vector2d(gauss(rng, 6.0), gauss(rng, 6.0)),
                            6.0);
     ais.hints.mmsi = kMmsi;
+    ais.hints.heading_deg = 47.0;             // #20: self-reported true heading
+    ais.hints.nav_status = std::uint8_t{5};   // #20: moored (a self-declared vessel)
     tracker.processBatch({ais});
     tracker.predict(Timestamp::fromSeconds(base + 0.5));
     Measurement coop = gPos(base + 0.5, SensorKind::Cooperative, "fleet",
@@ -356,10 +358,23 @@ TEST(PmbmRemoteTrackFusion, SurfacesAisMmsiAndCooperativePlatformId) {
       << "PMBM must surface the cooperative platform_id (no field existed pre-R11)";
   EXPECT_EQ(*tr->attributes.platform_id, kPlatform);
 
-  // Identity on the operator-facing TrackOutput (verbatim passthrough).
+  // #20: target-reported heading + AIS nav-status surface on the same track.
+  ASSERT_TRUE(tr->attributes.heading_deg.has_value())
+      << "AIS self-reported heading must surface on the fused track";
+  EXPECT_DOUBLE_EQ(*tr->attributes.heading_deg, 47.0);
+  ASSERT_TRUE(tr->attributes.nav_status.has_value())
+      << "AIS nav-status must surface (moored = a self-declared vessel)";
+  EXPECT_EQ(*tr->attributes.nav_status, 5u);
+
+  // Identity + target-reported attributes on the operator-facing TrackOutput
+  // (verbatim passthrough).
   const auto out = navtracker::toTrackOutput(*tr, d);
   ASSERT_TRUE(out.attributes.mmsi.has_value());
   EXPECT_EQ(*out.attributes.mmsi, kMmsi);
   ASSERT_TRUE(out.attributes.platform_id.has_value());
   EXPECT_EQ(*out.attributes.platform_id, kPlatform);
+  ASSERT_TRUE(out.attributes.heading_deg.has_value());
+  EXPECT_DOUBLE_EQ(*out.attributes.heading_deg, 47.0);
+  ASSERT_TRUE(out.attributes.nav_status.has_value());
+  EXPECT_EQ(*out.attributes.nav_status, 5u);
 }

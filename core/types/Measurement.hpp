@@ -24,6 +24,18 @@ struct AssociationHints {
   // set by the Cooperative adapter; assumed unique per fleet member. A
   // strong association prior but still a hint, never the fusion key.
   std::optional<std::uint64_t> platform_id;
+  // Target-reported kinematics (backlog #20). AIS is an INDEPENDENT witness —
+  // the target's own GPS/gyro — so these are legitimate content, unlike ARPA-
+  // derived speed/course (our own smoothed data; see guide §3). `heading_deg`
+  // is true heading in degrees [0,360); it is an ATTRIBUTE only (a heading is
+  // not a velocity — it points where the bow faces even at zero SOG), never a
+  // kinematic measurement. `nav_status` is the AIS navigational-status code
+  // (1 = at anchor, 5 = moored): the "this is a vessel, never suppress" cue
+  // (ADR 0002 / R3) — an anchored vessel looks static but must not be
+  // suppressed into nothing. SOG/COG do NOT live here — they are measurement
+  // content carried in `Measurement.value` as a PositionVelocity2D.
+  std::optional<double> heading_deg;
+  std::optional<std::uint8_t> nav_status;
 };
 
 /**

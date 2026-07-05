@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,23 @@ struct AisDynamicReport {
   double lon_deg{0.0};
   bool high_accuracy{false};
   std::string source_id{"ais"};
+
+  // Target-reported kinematics (backlog #20). All optional: leave unset for a
+  // report that does not carry the field, or set the AIS "not available"
+  // sentinel value and the adapter will drop it at the edge (invariant #6):
+  //   - sog_knots: speed over ground, knots ([0, 102.2]; 1023 sentinel dropped).
+  //   - cog_deg:   course over ground, deg true ([0, 360); 3600 sentinel).
+  //   - heading_deg: true heading, deg ([0, 360); 511 sentinel dropped).
+  //   - nav_status: AIS navigational status code (0..15; 15 = undefined/default,
+  //                 dropped). 1 = at anchor, 5 = moored — the "never suppress a
+  //                 self-declared vessel" cue (ADR 0002 / R3).
+  // SOG/COG become PositionVelocity2D measurement content; heading/nav_status
+  // are attribute/corroboration hints. AIS is an independent witness, so all of
+  // these are legitimate (contrast ARPA TTM speed/course — guide §3).
+  std::optional<double> sog_knots;
+  std::optional<double> cog_deg;
+  std::optional<double> heading_deg;
+  std::optional<std::uint8_t> nav_status;
 };
 
 /**

@@ -25,6 +25,15 @@ struct TrackAttributes {
   // measurements a track claims — see toTrackOutput and the tracker attribute
   // copy sites (PMBM: PmbmTypes toTrack; MHT: tree_attributes_).
   std::optional<std::uint64_t> platform_id;
+  // Target-reported heading (true, deg [0,360)) and AIS navigational status
+  // (code; 1 = at anchor, 5 = moored), from an AIS self-report (backlog #20).
+  // Surfaced last-write-wins from claimed-measurement hints, exactly like mmsi
+  // / platform_id. `heading_deg` fills the "stationary, direction undefined"
+  // gap — an anchored vessel still points somewhere when SOG≈0 makes COG
+  // meaningless. `nav_status` is the operator-facing anchored/moored cue and
+  // the corroboration veto's data path (never suppress a self-declared vessel).
+  std::optional<double> heading_deg;
+  std::optional<std::uint8_t> nav_status;
   std::optional<std::string> name;
   std::optional<std::string> vessel_type;
   std::optional<double> length_m;

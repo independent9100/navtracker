@@ -667,6 +667,37 @@ TEST(LiveOccupancyModel, StaleVesselFixIsPrunedAndStopsVetoing) {
   EXPECT_GT(m.birthSuppression(near), 0.0) << "stale veto must lapse";
 }
 
+// #20 nav-status data path: a self-declared stationary vessel (AIS nav-status
+// 1=anchor / 5=moored → observeVesselFix anchored=true) holds its veto for the
+// LONGER anchored window, so an anchored vessel reporting sparsely is never
+// re-suppressed in the gaps — while an underway fix at the same age lapses on
+// the short window. This is the "never suppress a self-declared vessel" rule
+// (ADR 0002 / R3) getting its data path.
+TEST(LiveOccupancyModel, AnchoredVesselFixVetoesLongerThanUnderway) {
+  LiveOccupancyParams p = testParams();
+  p.veto_radius_m = 50.0;  // rings of the two 125 m-apart fixes stay disjoint
+  p.veto_window_s = 5.0;
+  p.anchored_veto_window_s = 100.0;
+  LiveOccupancyModel m(anchorDatum(), p);
+  auto returns = pierReturns();
+  for (int scan = 0; scan < 10; ++scan) m.observe(feed(returns, scan));
+  const Eigen::Vector2d anchored_spot(12.5, 12.5), underway_spot(137.5, 12.5);
+  ASSERT_GT(m.birthSuppression(anchored_spot), 0.0);
+  ASSERT_GT(m.birthSuppression(underway_spot), 0.0);
+
+  m.observeVesselFix(10.0, anchored_spot, /*anchored=*/true);
+  m.observeVesselFix(10.0, underway_spot, /*anchored=*/false);
+  EXPECT_EQ(m.vesselFixCount(), 2u);
+
+  // Advance 20 s: past the 5 s underway window, well inside the 100 s anchored.
+  for (int scan = 11; scan <= 30; ++scan) m.observe(feed(returns, scan));
+  EXPECT_EQ(m.vesselFixCount(), 1u) << "underway veto lapses, anchored persists";
+  EXPECT_DOUBLE_EQ(m.birthSuppression(anchored_spot), 0.0)
+      << "an anchored/moored self-declared vessel must never be re-suppressed";
+  EXPECT_GT(m.birthSuppression(underway_spot), 0.0)
+      << "the underway veto must lapse on the short window";
+}
+
 // A vessel fix far from a structure must not veto it (the veto is proximity-gated).
 TEST(LiveOccupancyModel, DistantVesselFixDoesNotVeto) {
   LiveOccupancyParams p = testParams();

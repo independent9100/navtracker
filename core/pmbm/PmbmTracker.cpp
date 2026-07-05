@@ -950,6 +950,10 @@ void PmbmTracker::enumerateChildren(
         if (scan[l].hints.mmsi.has_value()) det.mmsi = scan[l].hints.mmsi;
         if (scan[l].hints.platform_id.has_value())
           det.platform_id = scan[l].hints.platform_id;
+        if (scan[l].hints.heading_deg.has_value())
+          det.heading_deg = scan[l].hints.heading_deg;
+        if (scan[l].hints.nav_status.has_value())
+          det.nav_status = scan[l].hints.nav_status;
         // Detection: x_pred = parent's state (post-predict, pre-update);
         //            x_filt = updated state.
         appendTrajectoryPoint(det, cfg_.trajectory_window_scans,
@@ -1136,9 +1140,12 @@ void PmbmTracker::enumerateChildren(
       nb.last_claimed_meas_index = l;  // R2: this measurement birthed it
       nb.birth_time = scan[l].time;
       // R11 identity surfacing: seed identity from the birthing measurement's
-      // hints (nullopt if it carries none — refined by later claims).
+      // hints (nullopt if it carries none — refined by later claims). #20 adds
+      // the target-reported attributes on the same footing.
       nb.mmsi = scan[l].hints.mmsi;
       nb.platform_id = scan[l].hints.platform_id;
+      nb.heading_deg = scan[l].hints.heading_deg;
+      nb.nav_status = scan[l].hints.nav_status;
       // Birth: no prior → predicted = filtered (smoother G ≈ I at
       // first point, no effect).
       appendTrajectoryPoint(nb, cfg_.trajectory_window_scans,
@@ -1698,8 +1705,15 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     // R9 item 1b wiring: collect non-scanning positional anchors (AIS/Cooperative/
     // RemoteTrack) to route to the occupancy VETO — a birth near a known vessel
     // must not be suppressed. Only when an occupancy sink is wired (else empty →
-    // no observeVesselFix calls → bit-identical to today).
-    std::vector<std::pair<double, Eigen::Vector2d>> vessel_fixes;
+    // no observeVesselFix calls → bit-identical to today). #20: carry an
+    // `anchored` flag (AIS nav-status 1=anchor / 5=moored) so the occupancy
+    // veto can hold a self-declared stationary vessel for its longer window.
+    struct VesselFixIn {
+      double t;
+      Eigen::Vector2d pos;
+      bool anchored;
+    };
+    std::vector<VesselFixIn> vessel_fixes;
     for (std::size_t j = 0; j < scan.size(); ++j) {
       const Key k{scan[j].sensor, scan[j].model};
       auto it = by_sensor.find(k);
@@ -1724,10 +1738,16 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
           cov_sensor[k] = scan[j].sensor_position_enu;
         // Same non-scanning predicate, opposite use: a vessel POSITION from
         // AIS/Cooperative/RemoteTrack is a corroboration fix for the birth veto.
-        if (feed_occupancy && isNonScanningSource(scan[j].sensor))
-          vessel_fixes.emplace_back(
-              scan[j].time.seconds(),
-              Eigen::Vector2d(scan[j].value(0), scan[j].value(1)));
+        if (feed_occupancy && isNonScanningSource(scan[j].sensor)) {
+          // Translate AIS nav-status → the kind-agnostic "anchored" flag the
+          // occupancy port speaks (1 = at anchor, 5 = moored).
+          const bool anchored =
+              scan[j].hints.nav_status.has_value() &&
+              (*scan[j].hints.nav_status == 1 || *scan[j].hints.nav_status == 5);
+          vessel_fixes.push_back(
+              {scan[j].time.seconds(),
+               Eigen::Vector2d(scan[j].value(0), scan[j].value(1)), anchored});
+        }
         if (weight > 0.0) {
           it->second.clutter_positions.emplace_back(scan[j].value(0),
                                                     scan[j].value(1));
@@ -1766,7 +1786,7 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
       // known-vessel anchors are present for next scan's birth-veto queries
       // (same recency as the structure update; observe() prunes stale fixes).
       for (const auto& vf : vessel_fixes)
-        occupancy_feed_->observeVesselFix(vf.first, vf.second);
+        occupancy_feed_->observeVesselFix(vf.t, vf.pos, vf.anchored);
       occupancy_feed_->observe(bundle);
     }
   }
@@ -1904,6 +1924,8 @@ void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h) const {
       // when it had none (never drop a real id in favour of a nullopt).
       if (!a.mmsi.has_value()) a.mmsi = b.mmsi;
       if (!a.platform_id.has_value()) a.platform_id = b.platform_id;
+      if (!a.heading_deg.has_value()) a.heading_deg = b.heading_deg;
+      if (!a.nav_status.has_value()) a.nav_status = b.nav_status;
       if (b.last_update.seconds() > a.last_update.seconds())
         a.last_update = b.last_update;
       dead[j] = true;
@@ -2049,6 +2071,10 @@ void PmbmTracker::refreshAggregatedTracks() const {
     double mmsi_mass{0.0};
     std::optional<std::uint64_t> platform_id;
     double platform_id_mass{0.0};
+    std::optional<double> heading_deg;
+    double heading_deg_mass{0.0};
+    std::optional<std::uint8_t> nav_status;
+    double nav_status_mass{0.0};
   };
   std::map<BernoulliId, Acc> by_id;
 
@@ -2078,6 +2104,14 @@ void PmbmTracker::refreshAggregatedTracks() const {
       if (b.platform_id.has_value() && m > a.platform_id_mass) {
         a.platform_id = b.platform_id;
         a.platform_id_mass = m;
+      }
+      if (b.heading_deg.has_value() && m > a.heading_deg_mass) {
+        a.heading_deg = b.heading_deg;
+        a.heading_deg_mass = m;
+      }
+      if (b.nav_status.has_value() && m > a.nav_status_mass) {
+        a.nav_status = b.nav_status;
+        a.nav_status_mass = m;
       }
     }
   }
@@ -2162,6 +2196,14 @@ void PmbmTracker::refreshAggregatedTracks() const {
           a.platform_id = b.platform_id;
           a.platform_id_mass = b.platform_id_mass;
         }
+        if (b.heading_deg.has_value() && b.heading_deg_mass > a.heading_deg_mass) {
+          a.heading_deg = b.heading_deg;
+          a.heading_deg_mass = b.heading_deg_mass;
+        }
+        if (b.nav_status.has_value() && b.nav_status_mass > a.nav_status_mass) {
+          a.nav_status = b.nav_status;
+          a.nav_status_mass = b.nav_status_mass;
+        }
         by_id.erase(bit);
         // Recompute i's snapshot for any further j-pair comparisons.
         stats[ids[i]] = computeStats(a);
@@ -2188,8 +2230,11 @@ void PmbmTracker::refreshAggregatedTracks() const {
     // Moment-matched covariance: E[P + μμ'] − mean·mean'
     t.covariance = (a.cov_acc / a.mass) - (t.state * t.state.transpose());
     // R11 identity surfacing: mmsi (AIS) + platform_id (cooperative/remote).
+    // #20: target-reported heading + AIS nav-status on the same footing.
     t.attributes.mmsi = a.mmsi;
     t.attributes.platform_id = a.platform_id;
+    t.attributes.heading_deg = a.heading_deg;
+    t.attributes.nav_status = a.nav_status;
     auto hit = contribution_history_.find(id);
     if (hit != contribution_history_.end()) {
       t.recent_contributions = hit->second;

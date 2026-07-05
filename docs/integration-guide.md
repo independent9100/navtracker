@@ -456,8 +456,11 @@ them.
   the struct in `adapters/eoir/EoIrAdapter.hpp`) — set them to your camera's real
   1-σ values.
 - **`AisAdapter`** (`adapters/ais/AisAdapter.hpp`) takes an `AisDynamicReport`
-  struct (MMSI + lat/lon + accuracy flag). It has no config struct; construct with
-  just a datum.
+  struct (MMSI + lat/lon + accuracy flag, plus optional self-reported
+  `heading_deg` / `nav_status` — backlog #20). It has no config struct; construct
+  with just a datum. Heading → `hints.heading_deg` (attribute), nav-status →
+  `hints.nav_status` (the anchored/moored veto cue, §6/§7); AIS "not available"
+  sentinels (heading 511, nav-status 15) are dropped at the edge.
 
 **The TTM-vs-TLL rule.** A radar may report the *same target* two ways. Prefer
 **TTM** when you want own-ship pose error modelled explicitly in `R`; **TLL** has
@@ -572,6 +575,15 @@ carries:
   the operator display could not name which fleet member a track was). Identity
   is an attribute, never the fusion key — that is always the internal `id`
   (invariant 5). Feed it in via `Measurement.hints.mmsi` / `hints.platform_id`.
+  `attributes` also carries **target-reported kinematics** (backlog #20, from an
+  AIS self-report): `heading_deg` (true heading, deg [0,360)) and `nav_status`
+  (AIS navigational-status code; 1 = at anchor, 5 = moored). Same last-write-wins
+  surfacing. `heading_deg` fills the "stationary, direction undefined" gap — an
+  anchored vessel still *points* somewhere when SOG≈0 makes COG meaningless — and
+  `nav_status` is both an operator cue and the corroboration veto's data path
+  (§7: a self-declared anchored/moored vessel is never suppressed). Feed them via
+  `Measurement.hints.heading_deg` / `hints.nav_status` (the `AisAdapter` fills
+  both from an `AisDynamicReport`, dropping the AIS "not available" sentinels).
 - `covariance_is_default` — OR of the contributing measurements' flags (§3).
 
 Exact unit and validity rules, plus a worked example, are in
@@ -732,13 +744,21 @@ vessel that pinned a cell:
   densified to points). An emitted hazard within `chart_corroboration_radius_m`
   (default 100 m) of a charted point is labelled *corroborated* and is held
   regardless of the camera (evidence precedence).
-- `observeVesselFix(fix)` — one AIS/cooperative vessel fix (current-datum ENU +
-  timestamp). A birth is NEVER suppressed within `veto_radius_m` (default 100 m) of
-  a fix seen within `veto_window_s` (default 60 s): an AIS/cooperative-known vessel
-  must stay track-eligible (the strongest vessel discriminator). The veto is local
-  (the rest of a structure still suppresses) and only lowers suppression to 0
-  (conservation preserved); it lapses when the feed goes quiet. Feed only positional
-  anchors (`isNonScanningSource` — AIS/Cooperative); the model stays kind-agnostic.
+- `observeVesselFix(t, pos, anchored=false)` — one AIS/cooperative vessel fix
+  (current-datum ENU + timestamp). A birth is NEVER suppressed within
+  `veto_radius_m` (default 100 m) of a fix seen within `veto_window_s` (default
+  60 s): an AIS/cooperative-known vessel must stay track-eligible (the strongest
+  vessel discriminator). The veto is local (the rest of a structure still
+  suppresses) and only lowers suppression to 0 (conservation preserved); it lapses
+  when the feed goes quiet. Feed only positional anchors (`isNonScanningSource` —
+  AIS/Cooperative/RemoteTrack); the model stays kind-agnostic. **#20:** pass
+  `anchored=true` for a self-declared stationary vessel (the `PmbmTracker` producer
+  sets it from AIS nav-status 1 = anchor / 5 = moored) — its veto is held for the
+  longer **`anchored_veto_window_s`** (default 600 s) instead, because an anchored
+  vessel reports infrequently (~3 min) yet (being stationary, structure-like) is
+  exactly the object that must never be suppressed into nothing (ADR 0002 / R3).
+  The port speaks `anchored`, not "nav-status": the sensor-format translation
+  stays in the producer.
 - `observeCamera(frame)` — one live camera frame (own-ship ENU, absolute-bearing
   detections, FOV, match tolerance). A structure cell the camera watches (in FOV,
   live frame) with no detection at its bearing for `camera_empty_sustain_s`
