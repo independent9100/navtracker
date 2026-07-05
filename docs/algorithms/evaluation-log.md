@@ -8,6 +8,30 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-05 — Held-out pass: sailboats_busy scored against the locked pre-registration [Cl-3]
+
+First frozen-detector held-out validation. Detector frozen as
+`imm_cv_ct_pmbm_occupancy_detector` + `membership_exit_factor = 0.6` (hysteresis
+ON, deployable artifact); scored against the verbatim pre-registration committed
+BEFORE the clip was touched (git-provable ordering). Eight predictions →
+**3 HIT (zero AIS; fleet builds no persistent cells / persistent mass is shore
+structure; highest raw track mass of any clip — 22 703 track-scans vs
+close_approach 15 182 / sunset 18 295), 1 MISS (Longfellow Bridge pillars did not
+surface at 550–600 m ENE), 4 PARTIAL (far-bank weak cross-validation; land-prior
+unverifiable on an unlabeled held-out clip; committee-boat identification needs
+frames; and the valuable one —** prediction 7: the low-bar detector
+(`extended_cells_min=1`, `persistence_bar=0.2`) DID transiently bait on the moving
+dinghy fleet in open water — a mild instance of the race-mark trap the analyst
+pre-flagged as the most-informative failure, amplified because the clip ran 120 s
+vs the assumed 20–80 s; nothing matured into sustained extended structure (peak 4
+hazards, all high-persistence mass on shore lines). The big falsifier
+(persistent EXTENDED structure mid-basin) did NOT fire → projection/registration
+and the analyst's philos model are intact. Freeze flip-guard: zero flips (every
+prediction is entry-driven; hysteresis is exit-only). Full results table:
+`docs/baselines/2026-07-05_heldout_results_sailboats_busy.md`. Probe:
+`tests/replay/test_heldout_sailboats_probe.cpp`. `almost_cross` / `ais_ferry_far`
+measured, not bet on.
+
 ## 2026-07-04 — Increment 8: HAXR occupancy A/B — persistence detector near-inert on a 2nd real geography [Cl-3]
 
 Steady-state occupancy A/B on real Hamburg port radar (HAXR), 3 sites × 08 UTC

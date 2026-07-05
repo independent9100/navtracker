@@ -832,6 +832,11 @@ std::vector<Config> defaultConfigs() {
     lp.extended_cells_min = 1;       // compact structure/craft classifies (safe:
                                      // conservation + recovery + corroboration)
     lp.clutter_reject_factor = 1.5;
+    // FROZEN detector artifact (held-out pass 2026-07-05): hysteresis ON — the
+    // deployable operator-facing hazard channel, where blink is a real cost.
+    // Affects membership EXIT stickiness only; entry (what the pre-registered
+    // held-out predictions bet on) is unchanged.
+    lp.membership_exit_factor = 0.6;
     c.live_occupancy_params = lp;
     c.pmbm_config = []() {
       auto cfg = makePmbmConfig();
@@ -875,6 +880,7 @@ std::vector<Config> defaultConfigs() {
     lp.persistence_bar = 0.2;
     lp.extended_cells_min = 1;
     lp.clutter_reject_factor = 1.5;
+    lp.membership_exit_factor = 0.6;  // FROZEN detector: hysteresis ON (see above)
     c.live_occupancy_params = lp;
     c.pmbm_config = []() {
       auto cfg = makePmbmConfig();
