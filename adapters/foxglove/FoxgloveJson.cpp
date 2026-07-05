@@ -65,6 +65,23 @@ json arrowEntity(const std::string& id, const Pt& a, const Pt& b, const Rgba& co
   return e;
 }
 
+json gridCellsEntity(const std::string& id,
+                     const std::vector<std::pair<Pt, Rgba>>& cells,
+                     double cell_size_m, double height_m) {
+  json cubes = json::array();
+  for (const auto& [center, color] : cells) {
+    cubes.push_back(json{
+        {"pose", {{"position", ptJson(center)},
+                  {"orientation", {{"x",0},{"y",0},{"z",0},{"w",1}}}}},
+        {"size", {{"x", cell_size_m}, {"y", cell_size_m}, {"z", height_m}}},
+        {"color", colorJson(color)}});
+  }
+  json e = lineEntity(id, {}, Rgba{0,0,0,0});   // reuse the empty-arrays skeleton
+  e["lines"] = json::array();
+  e["cubes"] = cubes;
+  return e;
+}
+
 json sceneUpdate(Timestamp t, const std::vector<json>& entities, double lifetime_sec) {
   json ents = json::array();
   json lifetime;

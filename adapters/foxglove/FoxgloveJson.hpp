@@ -22,6 +22,16 @@ nlohmann::json arrowEntity(const std::string& id, const Pt& a, const Pt& b,
                            const Rgba& color);
 
 /**
+ * A SceneUpdate entity holding one flat "cubes" primitive per cell — a
+ * heatmap. Each cell is `{center, color}`; every cube is `cell_size_m` square
+ * and `height_m` tall (default flat), centered at `center`. Used for the
+ * occupancy-persistence grid and the learned clutter-intensity map.
+ */
+nlohmann::json gridCellsEntity(const std::string& id,
+                               const std::vector<std::pair<Pt, Rgba>>& cells,
+                               double cell_size_m, double height_m = 0.0);
+
+/**
  * Wrap a list of entity json objects into a SceneUpdate message at time t.
  * Stamp `t` onto each entity and wrap into a SceneUpdate. When
  * lifetime_sec > 0 each entity is given that lifetime (Foxglove auto-expires

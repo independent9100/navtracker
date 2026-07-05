@@ -20,6 +20,17 @@ TEST(FoxgloveJson, SceneUpdateHasEntityWithLine) {
   EXPECT_DOUBLE_EQ(ent["lines"][0]["color"]["r"].get<double>(), 1.0);
 }
 
+TEST(FoxgloveJson, GridCellsEntityHasCubePerCell) {
+  std::vector<std::pair<Pt, Rgba>> cells{
+      {{0, 0, 0}, {1, 0, 0, 0.5}}, {{25, 0, 0}, {0, 1, 0, 0.8}}};
+  auto e = gridCellsEntity("occ", cells, /*cell_size=*/25.0, /*height=*/0.0);
+  ASSERT_EQ(e["cubes"].size(), 2u);
+  EXPECT_DOUBLE_EQ(e["cubes"][0]["size"]["x"].get<double>(), 25.0);
+  EXPECT_DOUBLE_EQ(e["cubes"][1]["pose"]["position"]["x"].get<double>(), 25.0);
+  EXPECT_DOUBLE_EQ(e["cubes"][0]["color"]["a"].get<double>(), 0.5);
+  EXPECT_EQ(e["lines"].size(), 0u);   // heatmap uses cubes, not lines
+}
+
 TEST(FoxgloveJson, LocationFixCarriesLatLonAndCov) {
   std::array<double,9> cov{}; cov[0] = 4.0; cov[4] = 9.0;
   auto j = locationFix(Timestamp{0}, 59.9, 10.7, cov);

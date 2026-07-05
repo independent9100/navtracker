@@ -2,22 +2,40 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include <Eigen/Core>
 #include "ports/ITrackSnapshotSink.hpp"
 #include "ports/ITrackSink.hpp"
 #include "ports/IInnovationSink.hpp"
 #include "ports/ICollisionRiskSink.hpp"
+#include "ports/IStaticHazardSink.hpp"
 #include "ports/ISensorBiasProvider.hpp"
 #include "adapters/own_ship/OwnShipProvider.hpp"     // OwnShipPose + IDatumChangeSink
 #include "core/geo/Datum.hpp"
 #include "core/types/Measurement.hpp"
 #include "adapters/foxglove/McapWriter.hpp"
 
+namespace navtracker {
+// Domain types drawn by the environment/PMBM taps — included in the .cpp; only
+// referenced here by const-ref, so forward declarations keep the header light.
+struct StaticObstacle;
+struct LandPolygon;
+class LiveOccupancyModel;
+class ClutterMapSensorDetectionModel;
+namespace pmbm { struct PmbmDensity; }
+}  // namespace navtracker
+
 namespace navtracker::foxglove {
 
 /** Tuning knobs for the debug recorder's visual output (ellipse scale,
  *  gate threshold, entity lifetime). */
 struct RecorderConfig {
+  // Master on/off switch for ALL debug drawing (old and new layers). When
+  // false every recorder entry point early-returns and nothing is written.
+  // This is a per-instance member threaded through the constructor — never a
+  // global / static / singleton — so it is safe across dynamic-library
+  // boundaries and multiple recorder instances.
+  bool enabled = true;
   double ellipse_k = 2.0;       // confidence multiplier for covariance ellipses
   double gate_gamma = 0.0;      // chi-square gate threshold; 0 disables /gates ellipses
   double entity_lifetime_sec = 0.0;  // SceneUpdate entity lifetime; 0 = persist forever,
@@ -38,7 +56,7 @@ struct RecorderConfig {
  */
 class FoxgloveDebugRecorder final
     : public ITrackSnapshotSink, public ITrackSink, public IInnovationSink,
-      public ICollisionRiskSink, public IDatumChangeSink {
+      public ICollisionRiskSink, public IStaticHazardSink, public IDatumChangeSink {
  public:
   /** Open `path` for writing; entities are placed in the ENU frame anchored
    *  at `datum`. Optional `bias` provider is sampled for the /bias diagnostic
@@ -53,6 +71,36 @@ class FoxgloveDebugRecorder final
   void recordMeasurement(const Measurement& m);
   /** Record an own-ship pose (position track + heading). */
   void recordOwnShip(const OwnShipPose& pose);
+
+  // Environment / static-world taps (called from the composition root).
+  /** Draw the coastline land polygons (outer ring + holes) as outlines. Static;
+   *  call once (or whenever the geometry changes). Topic: /land. */
+  void recordCoastline(const std::vector<LandPolygon>& polys);
+  /** Draw charted static obstacles: centre + footprint + keep-clear rings.
+   *  Static; call once / on change. Topic: /static_obstacles. */
+  void recordStaticObstacles(const std::vector<StaticObstacle>& obstacles);
+  /** Draw the live-occupancy state at time `now`: persistence heatmap, learned
+   *  structure hazards, charted points, camera-empty cells, vessel-fix veto
+   *  rings. Per scan. Topics under /occupancy. */
+  void recordOccupancy(const LiveOccupancyModel& occ, Timestamp now);
+
+  // PMBM posterior tap (called from the composition root, per scan).
+  /** Draw the PMBM posterior at time `now`: PPP intensity ellipses, Bernoulli
+   *  existence ellipses, and per-target trajectories. Topics under /pmbm. */
+  void recordPmbmDensity(const pmbm::PmbmDensity& density, Timestamp now);
+
+  // Sensor-modelling tap (per scan or once for declared coverage).
+  /** Draw a sensor coverage sector/disc at `sensor_enu` (ENU bearing
+   *  `center_rad`, half-width `half_width_rad`, out to `range_m`). Topic:
+   *  /coverage/<source_id>. */
+  void recordSensorCoverage(const std::string& source_id, SensorKind sensor,
+                            const Eigen::Vector2d& sensor_enu, double center_rad,
+                            double half_width_rad, double range_m, Timestamp now);
+  /** Draw the learned clutter-intensity map: a position-space heatmap and, when
+   *  the bearing map is enabled, an azimuth rose centred at `origin_enu` (radial
+   *  segments, length ∝ normalized λ). Topics under /clutter. */
+  void recordClutterMap(const ClutterMapSensorDetectionModel& clutter,
+                        const Eigen::Vector2d& origin_enu, Timestamp now);
 
   // ITrackSnapshotSink
   /** Write the current set of tracks as a SceneUpdate at time `now`. */
@@ -72,6 +120,9 @@ class FoxgloveDebugRecorder final
   // ICollisionRiskSink
   /** Record a CPA collision-risk event (Entered/Exited/Updated). */
   void onCollisionRisk(const CollisionRiskEvent& e) override;
+  // IStaticHazardSink
+  /** Record a static-hazard keep-clear crossing (log + marker). */
+  void onStaticHazard(const StaticHazardEvent& e) override;
   // IDatumChangeSink
   /** React to a datum recenter; logs the shift for downstream frame context. */
   void onDatumRecentered(const geo::Datum& old_d, const geo::Datum& new_d) override;

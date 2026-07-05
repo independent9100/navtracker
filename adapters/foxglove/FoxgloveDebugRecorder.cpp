@@ -1,4 +1,5 @@
 #include "adapters/foxglove/FoxgloveDebugRecorder.hpp"
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -7,6 +8,12 @@
 #include "adapters/foxglove/Geometry.hpp"
 #include "adapters/foxglove/Schemas.hpp"
 #include "core/output/TrackOutput.hpp"
+#include "core/types/StaticObstacle.hpp"
+#include "core/land/CoastlineGeometry.hpp"       // LandPolygon
+#include "core/static/LiveOccupancyModel.hpp"
+#include "core/tracking/ClutterMapDetectionModel.hpp"
+#include "core/pmbm/PmbmTypes.hpp"
+#include "ports/IStaticHazardSink.hpp"           // StaticHazardEvent
 
 namespace navtracker::foxglove {
 using nlohmann::json;
@@ -18,6 +25,32 @@ std::string loadSchema(const char* file) {
 }
 Eigen::Matrix2d pos2(const Eigen::MatrixXd& P) { return P.topLeftCorner<2,2>(); }
 Eigen::Vector2d xy(const Eigen::VectorXd& s) { return s.head<2>(); }
+
+Rgba colorForObstacleCategory(ObstacleCategory cat) {
+  switch (cat) {
+    case ObstacleCategory::Rock:        return {0.55, 0.35, 0.20, 1.0};  // brown
+    case ObstacleCategory::Wreck:       return {0.80, 0.20, 0.20, 1.0};  // red
+    case ObstacleCategory::Obstruction: return {0.85, 0.45, 0.10, 1.0};  // orange
+    case ObstacleCategory::Pile:
+    case ObstacleCategory::Platform:    return {0.70, 0.70, 0.20, 1.0};  // olive
+    case ObstacleCategory::Buoy:
+    case ObstacleCategory::Beacon:      return {0.20, 0.70, 0.90, 1.0};  // cyan
+    default:                            return {0.75, 0.75, 0.75, 1.0};  // grey
+  }
+}
+const char* obstacleCategoryName(ObstacleCategory cat) {
+  switch (cat) {
+    case ObstacleCategory::Rock:        return "rock";
+    case ObstacleCategory::Wreck:       return "wreck";
+    case ObstacleCategory::Obstruction: return "obstruction";
+    case ObstacleCategory::Pile:        return "pile";
+    case ObstacleCategory::Platform:    return "platform";
+    case ObstacleCategory::Buoy:        return "buoy";
+    case ObstacleCategory::Beacon:      return "beacon";
+    case ObstacleCategory::Other:       return "other";
+    default:                            return "obstacle";
+  }
+}
 }  // namespace
 
 FoxgloveDebugRecorder::FoxgloveDebugRecorder(const std::string& path, const geo::Datum& datum,
@@ -36,13 +69,15 @@ void FoxgloveDebugRecorder::registerChannels() {
   // Per-sensor detection topics (/detections/<source_id>, /map/detections/<source_id>)
   // are registered lazily in recordMeasurement so each sensor is its own layer.
   for (const char* t : {"/tracks/confirmed","/tracks/tentative",
+                        "/tracks/imm_modes","/tracks/particles",
                         "/associations","/gates","/cpa","/ownship"})
     w_->ensureChannel(t, kSceneUpdateSchema, scene);
   for (const char* t : {"/map/tracks/confirmed","/map/tracks/tentative","/map/ownship"})
     w_->ensureChannel(t, kLocationFixSchema, loc);
   w_->ensureChannel("/tf", kFrameTransformSchema, tf);
   w_->ensureChannel("/log", kLogSchema, log);
-  for (const char* t : {"/diag/innovation","/diag/track_count","/diag/bias"})
+  for (const char* t : {"/diag/innovation","/diag/track_count","/diag/bias",
+                        "/diag/mode_prob","/diag/existence"})
     w_->ensureChannel(t, kDiagSchema, "");
 }
 
@@ -54,6 +89,7 @@ void FoxgloveDebugRecorder::ensureRootFrame(Timestamp t) {
 }
 
 void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp now) {
+  if (!cfg_.enabled) return;
   last_time_ = now;
   ensureRootFrame(now);
   // Split by lifecycle: /tracks/confirmed is the committed OUTPUT (what a
@@ -119,12 +155,58 @@ void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp
   w_->write("/associations", now, sceneUpdate(now, assoc, cfg_.entity_lifetime_sec).dump());
   w_->write("/tracks/confirmed", now, sceneUpdate(now, conf_entities, cfg_.entity_lifetime_sec).dump());
   w_->write("/tracks/tentative", now, sceneUpdate(now, tent_entities, cfg_.entity_lifetime_sec).dump());
+
+  // Estimator internals: per-mode IMM ellipses, particle clouds, and the
+  // existence / mode-probability scalars (drawn from fields already on Track).
+  std::vector<json> imm_ents;
+  std::vector<std::pair<Pt, Rgba>> particle_cells;
+  for (const auto& t : tracks) {
+    if (t.state.size() < 2) continue;
+    const std::string base = "track-" + std::to_string(t.id.value);
+    // IMM per-mode ellipses (opacity ∝ mode probability).
+    const int K = static_cast<int>(t.imm_mode_probabilities.size());
+    if (K > 0 && t.imm_means.cols() >= K && static_cast<int>(t.imm_covariances.size()) >= K) {
+      for (int k = 0; k < K; ++k) {
+        if (t.imm_means.rows() < 2 || t.imm_covariances[k].rows() < 2) continue;
+        const double mp = t.imm_mode_probabilities(k);
+        imm_ents.push_back(lineEntity(base + "-mode-" + std::to_string(k),
+            covarianceEllipse(t.imm_means.col(k).head<2>(),
+                              t.imm_covariances[k].topLeftCorner<2,2>(), cfg_.ellipse_k),
+            Rgba{0.95, 0.5, 0.1, 0.2 + 0.7 * std::min(1.0, std::max(0.0, mp))}, 1.0));
+      }
+      json mp{{"time_ns", now.nanos()}, {"track_id", t.id.value}};
+      for (int k = 0; k < K; ++k) mp["m" + std::to_string(k)] = t.imm_mode_probabilities(k);
+      w_->write("/diag/mode_prob", now, mp.dump());
+    }
+    // Particle cloud (opacity ∝ normalized weight).
+    if (t.particles.cols() > 0 && t.particles.rows() >= 2) {
+      double wmax = 1e-12;
+      for (int j = 0; j < t.particle_weights.size(); ++j)
+        wmax = std::max(wmax, t.particle_weights(j));
+      for (int j = 0; j < t.particles.cols(); ++j) {
+        const double w = j < t.particle_weights.size() ? t.particle_weights(j) / wmax : 1.0;
+        particle_cells.push_back({{t.particles(0, j), t.particles(1, j), 0.0},
+                                  {0.1, 0.9, 0.9, 0.2 + 0.6 * std::min(1.0, w)}});
+      }
+    }
+    // Existence / visibility scalars (IPDA / VIMM).
+    w_->write("/diag/existence", now,
+              json{{"time_ns", now.nanos()}, {"track_id", t.id.value},
+                   {"existence_probability", t.existence_probability},
+                   {"visibility_given_exists", t.visibility_given_exists}}.dump());
+  }
+  w_->write("/tracks/imm_modes", now, sceneUpdate(now, imm_ents, cfg_.entity_lifetime_sec).dump());
+  w_->write("/tracks/particles", now,
+            sceneUpdate(now, {gridCellsEntity("particles", particle_cells, 3.0)},
+                        cfg_.entity_lifetime_sec).dump());
+
   json diag{{"time_ns", now.nanos()}, {"confirmed", confirmed}, {"tentative", tentative},
             {"total", confirmed + tentative}};
   w_->write("/diag/track_count", now, diag.dump());
 }
 
 void FoxgloveDebugRecorder::recordMeasurement(const Measurement& m) {
+  if (!cfg_.enabled) return;
   last_time_ = m.time;
   ensureRootFrame(m.time);
   const Rgba col = colorForSensor(m.sensor, m.source_id);
@@ -186,20 +268,24 @@ void FoxgloveDebugRecorder::recordMeasurement(const Measurement& m) {
 }
 
 void FoxgloveDebugRecorder::onTrackInitiated(const TrackLifecycleEvent& e) {
+  if (!cfg_.enabled) return;
   w_->write("/log", e.time, logMsg(e.time, 1, "lifecycle",
       "track " + std::to_string(e.id.value) + " initiated").dump());
 }
 void FoxgloveDebugRecorder::onTrackConfirmed(const TrackLifecycleEvent& e) {
+  if (!cfg_.enabled) return;
   w_->write("/log", e.time, logMsg(e.time, 2, "lifecycle",
       "track " + std::to_string(e.id.value) + " confirmed").dump());
 }
 void FoxgloveDebugRecorder::onTrackUpdated(const TrackLifecycleEvent&) { /* high-volume: skip /log */ }
 void FoxgloveDebugRecorder::onTrackDeleted(const TrackLifecycleEvent& e) {
+  if (!cfg_.enabled) return;
   w_->write("/log", e.time, logMsg(e.time, 3, "lifecycle",
       "track " + std::to_string(e.id.value) + " deleted").dump());
 }
 
 void FoxgloveDebugRecorder::onInnovation(const InnovationEvent& e) {
+  if (!cfg_.enabled) return;
   const double nis = (e.residual.transpose() * e.S.ldlt().solve(e.residual)).value();
   last_S_[e.track_id.value] = e.S;
   w_->write("/diag/innovation", e.time,
@@ -209,6 +295,7 @@ void FoxgloveDebugRecorder::onInnovation(const InnovationEvent& e) {
 }
 
 void FoxgloveDebugRecorder::onCollisionRisk(const CollisionRiskEvent& e) {
+  if (!cfg_.enabled) return;
   const char* kind = e.transition == CollisionRiskTransition::Entered ? "ENTERED"
                    : e.transition == CollisionRiskTransition::Exited  ? "EXITED" : "UPDATED";
   w_->write("/log", e.time, logMsg(e.time, 2, "cpa",
@@ -223,6 +310,7 @@ void FoxgloveDebugRecorder::onCollisionRisk(const CollisionRiskEvent& e) {
 }
 
 void FoxgloveDebugRecorder::recordOwnShip(const OwnShipPose& pose) {
+  if (!cfg_.enabled) return;
   last_time_ = pose.time;
   ensureRootFrame(pose.time);
   // ENU position of own-ship relative to the datum.
@@ -250,10 +338,251 @@ void FoxgloveDebugRecorder::recordOwnShip(const OwnShipPose& pose) {
 }
 
 void FoxgloveDebugRecorder::onDatumRecentered(const geo::Datum& /*old_d*/, const geo::Datum& new_d) {
+  // Keep the datum in sync even when drawing is disabled, so re-enabling
+  // mid-run draws in the correct ENU frame; only the /log note is gated.
   datum_ = new_d;
+  if (!cfg_.enabled) return;
   // Mark the discontinuity in the log at the last known event time.
   w_->write("/log", last_time_, logMsg(last_time_, 4, "datum",
       "datum recentered").dump());
+}
+
+void FoxgloveDebugRecorder::onStaticHazard(const StaticHazardEvent& e) {
+  if (!cfg_.enabled) return;
+  const char* kind = e.transition == StaticHazardTransition::Entered ? "ENTERED"
+                   : e.transition == StaticHazardTransition::Exited  ? "EXITED" : "UPDATED";
+  w_->write("/log", e.time, logMsg(e.time, 3, "static_hazard",
+      std::string("HAZARD ") + kind + " id=" + std::to_string(e.hazard_id) +
+      " d=" + std::to_string(e.distance_m) + "m keep_clear=" +
+      std::to_string(e.keep_clear_m) + "m").dump());
+  // Marker mirrors /cpa (numbers at origin); the obstacle ring is already drawn
+  // on /static_obstacles, so this only flags the crossing.
+  w_->ensureChannel("/static_hazard", kSceneUpdateSchema, "");
+  std::vector<json> ents{ textEntity("hazard-" + std::to_string(e.hazard_id), {0,0,0},
+      std::string(kind) + " id=" + std::to_string(e.hazard_id) +
+      " d=" + std::to_string(e.distance_m), {1.0, 0.5, 0.0, 1.0}) };
+  w_->write("/static_hazard", e.time, sceneUpdate(e.time, ents, cfg_.entity_lifetime_sec).dump());
+}
+
+void FoxgloveDebugRecorder::recordCoastline(const std::vector<LandPolygon>& polys) {
+  if (!cfg_.enabled) return;
+  ensureRootFrame(last_time_);
+  w_->ensureChannel("/land", kSceneUpdateSchema, "");
+  const Rgba land{0.55, 0.45, 0.30, 0.9};   // tan/brown outline
+  auto ringToEnu = [&](const std::vector<Eigen::Vector2d>& ring) {
+    std::vector<Pt> out;
+    out.reserve(ring.size());
+    for (const auto& lonlat : ring) {        // LandPolygon stores (lon, lat)
+      const Eigen::Vector3d e = datum_.toEnu(geo::Geodetic{lonlat.y(), lonlat.x(), 0.0});
+      out.push_back({e.x(), e.y(), 0.0});
+    }
+    return out;
+  };
+  std::vector<json> ents;
+  int i = 0;
+  for (const auto& poly : polys) {
+    auto outer = ringToEnu(poly.outer);
+    if (outer.size() >= 2)
+      ents.push_back(lineEntity("land-" + std::to_string(i) + "-outer", outer, land, 2.0));
+    int h = 0;
+    for (const auto& hole : poly.holes) {
+      auto hr = ringToEnu(hole);
+      if (hr.size() >= 2)
+        ents.push_back(lineEntity("land-" + std::to_string(i) + "-hole-" + std::to_string(h++),
+                                  hr, land, 1.0));
+    }
+    ++i;
+  }
+  // Persist (static geometry): lifetime 0 so it stays visible across the run.
+  w_->write("/land", last_time_, sceneUpdate(last_time_, ents, 0.0).dump());
+}
+
+void FoxgloveDebugRecorder::recordStaticObstacles(const std::vector<StaticObstacle>& obstacles) {
+  if (!cfg_.enabled) return;
+  ensureRootFrame(last_time_);
+  w_->ensureChannel("/static_obstacles", kSceneUpdateSchema, "");
+  std::vector<json> ents;
+  int i = 0;
+  for (const auto& o : obstacles) {
+    const Eigen::Vector3d e3 = datum_.toEnu(o.position);
+    const Eigen::Vector2d c(e3.x(), e3.y());
+    const Rgba col = colorForObstacleCategory(o.category);
+    const std::string base = "obs-" + std::to_string(i++);
+    const double hard = o.footprint_radius_m + o.position_uncertainty_m;  // no-birth core
+    if (hard > 0.0) ents.push_back(lineEntity(base + "-footprint", circle(c, hard), col, 2.0));
+    if (o.keep_clear_radius_m > 0.0) {
+      Rgba soft = col; soft.a = 0.5;
+      ents.push_back(lineEntity(base + "-keepclear", circle(c, o.keep_clear_radius_m), soft, 1.0));
+    }
+    ents.push_back(textEntity(base + "-label", {c.x(), c.y(), 0},
+        obstacleCategoryName(o.category), col));
+  }
+  w_->write("/static_obstacles", last_time_, sceneUpdate(last_time_, ents, 0.0).dump());
+}
+
+void FoxgloveDebugRecorder::recordOccupancy(const LiveOccupancyModel& occ, Timestamp now) {
+  if (!cfg_.enabled) return;
+  last_time_ = now;
+  ensureRootFrame(now);
+  const double cs = occ.cellSizeMeters();
+  // Persistence heatmap (cubes, colored blue->red by normalized persistence).
+  {
+    std::vector<std::pair<Pt, Rgba>> cells;
+    const double peak = std::max(1e-9, occ.peakPersistence());
+    for (const auto& [center, val] : occ.persistenceCells()) {
+      const double v = std::min(1.0, val / peak);
+      cells.push_back({{center.x(), center.y(), 0.0},
+                       {v, 0.2, 1.0 - v, 0.25 + 0.5 * v}});
+    }
+    w_->ensureChannel("/occupancy/persistence", kSceneUpdateSchema, "");
+    w_->write("/occupancy/persistence", now,
+              sceneUpdate(now, {gridCellsEntity("occ-persist", cells, cs)},
+                          cfg_.entity_lifetime_sec).dump());
+  }
+  // Learned structure hazards (rings) + charted points.
+  {
+    std::vector<json> ents;
+    const auto& obs = occ.obstacles();
+    const auto& ctr = occ.structureCenters();
+    for (std::size_t i = 0; i < obs.size() && i < ctr.size(); ++i) {
+      const Rgba col = occ.obstacleCameraObservedEmpty(i) ? Rgba{1.0, 0.2, 0.2, 0.9}   // eviction candidate
+                     : occ.obstacleCorroborated(i)        ? Rgba{0.2, 0.9, 0.2, 0.9}   // chart-confirmed
+                                                          : Rgba{0.9, 0.9, 0.2, 0.9};  // uncorroborated
+      const double r = obs[i].keep_clear_radius_m > 0.0 ? obs[i].keep_clear_radius_m : cs;
+      ents.push_back(lineEntity("occ-struct-" + std::to_string(i), circle(ctr[i], r), col, 2.0));
+    }
+    const auto& chart = occ.chartedPoints();
+    for (std::size_t i = 0; i < chart.size(); ++i)
+      ents.push_back(lineEntity("occ-chart-" + std::to_string(i),
+                                circle(chart[i], cs * 0.3, 8), Rgba{0.6, 0.6, 0.6, 0.7}));
+    w_->ensureChannel("/occupancy/structures", kSceneUpdateSchema, "");
+    w_->write("/occupancy/structures", now, sceneUpdate(now, ents, cfg_.entity_lifetime_sec).dump());
+  }
+  // Camera-observed-empty cells (eviction evidence).
+  {
+    std::vector<json> ents;
+    int i = 0;
+    for (const auto& c : occ.cameraObservedEmptyCells())
+      ents.push_back(lineEntity("occ-camempty-" + std::to_string(i++),
+                                circle(c, cs * 0.4, 8), Rgba{1.0, 0.4, 0.0, 0.8}));
+    w_->ensureChannel("/occupancy/camera_empty", kSceneUpdateSchema, "");
+    w_->write("/occupancy/camera_empty", now, sceneUpdate(now, ents, cfg_.entity_lifetime_sec).dump());
+  }
+  // Vessel-fix veto rings.
+  {
+    std::vector<json> ents;
+    int i = 0;
+    const double vr = occ.vetoRadiusMeters();
+    for (const auto& c : occ.vesselFixPositions())
+      ents.push_back(lineEntity("occ-veto-" + std::to_string(i++),
+                                circle(c, vr), Rgba{0.2, 0.6, 1.0, 0.6}));
+    w_->ensureChannel("/occupancy/veto", kSceneUpdateSchema, "");
+    w_->write("/occupancy/veto", now, sceneUpdate(now, ents, cfg_.entity_lifetime_sec).dump());
+  }
+}
+
+void FoxgloveDebugRecorder::recordPmbmDensity(const pmbm::PmbmDensity& density, Timestamp now) {
+  if (!cfg_.enabled) return;
+  last_time_ = now;
+  ensureRootFrame(now);
+  // PPP intensity: weighted covariance ellipse per Poisson component (opacity ~ weight).
+  {
+    std::vector<json> ents;
+    double wmax = 1e-9;
+    for (const auto& p : density.ppp) wmax = std::max(wmax, p.weight);
+    int i = 0;
+    for (const auto& p : density.ppp) {
+      if (p.mean.size() < 2 || p.covariance.rows() < 2) continue;
+      const double a = 0.15 + 0.5 * std::min(1.0, p.weight / wmax);
+      ents.push_back(lineEntity("ppp-" + std::to_string(i++),
+          covarianceEllipse(p.mean.head<2>(), p.covariance.topLeftCorner<2,2>(), cfg_.ellipse_k),
+          Rgba{0.6, 0.3, 0.9, a}));   // purple, opacity ~ intensity
+    }
+    w_->ensureChannel("/pmbm/ppp", kSceneUpdateSchema, "");
+    w_->write("/pmbm/ppp", now, sceneUpdate(now, ents, cfg_.entity_lifetime_sec).dump());
+  }
+  // Bernoulli existence ellipses + trajectories, from the top-weight global hypothesis.
+  {
+    std::vector<json> bern, traj;
+    const pmbm::GlobalHypothesis* best = nullptr;
+    for (const auto& h : density.mbm)
+      if (best == nullptr || h.weight > best->weight) best = &h;
+    if (best != nullptr) {
+      int i = 0;
+      for (const auto& b : best->bernoullis) {
+        if (b.mean.size() < 2 || b.covariance.rows() < 2) { ++i; continue; }
+        const double r = b.existence_probability;
+        const Rgba col{1.0 - r, 0.3 + 0.6 * r, 0.2, 0.3 + 0.6 * r};  // green ramps with r
+        bern.push_back(lineEntity("bern-" + std::to_string(i),
+            covarianceEllipse(b.mean.head<2>(), b.covariance.topLeftCorner<2,2>(), cfg_.ellipse_k),
+            col));
+        std::vector<Pt> path;
+        for (const auto& tp : b.trajectory)
+          if (tp.state.size() >= 2) path.push_back({tp.state(0), tp.state(1), 0.0});
+        if (path.size() >= 2)
+          traj.push_back(lineEntity("btraj-" + std::to_string(i), path, col, 1.5));
+        ++i;
+      }
+    }
+    w_->ensureChannel("/pmbm/bernoulli", kSceneUpdateSchema, "");
+    w_->write("/pmbm/bernoulli", now, sceneUpdate(now, bern, cfg_.entity_lifetime_sec).dump());
+    w_->ensureChannel("/pmbm/trajectories", kSceneUpdateSchema, "");
+    w_->write("/pmbm/trajectories", now, sceneUpdate(now, traj, cfg_.entity_lifetime_sec).dump());
+  }
+}
+
+void FoxgloveDebugRecorder::recordSensorCoverage(const std::string& source_id, SensorKind sensor,
+    const Eigen::Vector2d& sensor_enu, double center_rad, double half_width_rad,
+    double range_m, Timestamp now) {
+  if (!cfg_.enabled) return;
+  last_time_ = now;
+  ensureRootFrame(now);
+  Rgba col = colorForSensor(sensor, source_id); col.a = 0.25;
+  const std::string topic = "/coverage/" + source_id;
+  w_->ensureChannel(topic, kSceneUpdateSchema, "");
+  auto ent = lineEntity("cov-" + source_id,
+      sectorArc(sensor_enu, center_rad, half_width_rad, range_m), col, 1.0);
+  w_->write(topic, now, sceneUpdate(now, {ent}, cfg_.entity_lifetime_sec).dump());
+}
+
+void FoxgloveDebugRecorder::recordClutterMap(const ClutterMapSensorDetectionModel& clutter,
+    const Eigen::Vector2d& origin_enu, Timestamp now) {
+  if (!cfg_.enabled) return;
+  last_time_ = now;
+  ensureRootFrame(now);
+  // Position-space clutter heatmap (cubes, blue->red by normalized λ).
+  {
+    const auto in = clutter.positionClutterCells();
+    double lmax = 1e-12;
+    for (const auto& [c, l] : in) lmax = std::max(lmax, l);
+    std::vector<std::pair<Pt, Rgba>> cells;
+    for (const auto& [c, l] : in) {
+      const double v = std::min(1.0, l / lmax);
+      cells.push_back({{c.x(), c.y(), 0.0}, {v, 0.1, 1.0 - v, 0.2 + 0.6 * v}});
+    }
+    w_->ensureChannel("/clutter/position", kSceneUpdateSchema, "");
+    w_->write("/clutter/position", now,
+              sceneUpdate(now, {gridCellsEntity("clutter-pos", cells, clutter.cellSizeMeters())},
+                          cfg_.entity_lifetime_sec).dump());
+  }
+  // Bearing-space azimuth rose: radial ray per touched cell, length ∝ λ.
+  {
+    const auto rose = clutter.bearingClutterCells();
+    double lmax = 1e-12;
+    for (const auto& [az, l] : rose) lmax = std::max(lmax, l);
+    std::vector<json> ents;
+    constexpr double kRefLen = 1000.0;   // ray length (m) at peak λ
+    int i = 0;
+    for (const auto& [az, l] : rose) {
+      const double len = kRefLen * std::min(1.0, l / lmax);
+      const Eigen::Vector2d tip = origin_enu + len * Eigen::Vector2d(std::cos(az), std::sin(az));
+      ents.push_back(lineEntity("clutter-brg-" + std::to_string(i++),
+          {{origin_enu.x(), origin_enu.y(), 0}, {tip.x(), tip.y(), 0}},
+          Rgba{0.9, 0.2, 0.2, 0.7}));
+    }
+    w_->ensureChannel("/clutter/bearing", kSceneUpdateSchema, "");
+    w_->write("/clutter/bearing", now, sceneUpdate(now, ents, cfg_.entity_lifetime_sec).dump());
+  }
 }
 
 }  // namespace navtracker::foxglove

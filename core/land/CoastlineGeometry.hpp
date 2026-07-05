@@ -35,6 +35,9 @@ class CoastlineGeometry {
   double priorAtGeodetic(double lat_deg, double lon_deg) const;
   /** True when no land polygons are loaded (prior is identically 0). */
   bool empty() const { return polys_.empty(); }
+  /** The geodetic land polygons (outer ring + holes, lon/lat). Read-only
+   *  accessor for debug visualization; the fusion path uses priorAtGeodetic. */
+  const std::vector<LandPolygon>& polygons() const { return polys_; }
 
  private:
   std::vector<LandPolygon> polys_;

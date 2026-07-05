@@ -402,4 +402,20 @@ std::vector<Eigen::Vector2d> LiveOccupancyModel::cameraObservedEmptyCells() cons
   return out;
 }
 
+std::vector<std::pair<Eigen::Vector2d, double>>
+LiveOccupancyModel::persistenceCells() const {
+  std::vector<std::pair<Eigen::Vector2d, double>> out;
+  out.reserve(persistence_.size());
+  for (const auto& kv : persistence_)
+    out.emplace_back(cellCenter(kv.first), kv.second);  // anchor-frame centre + value
+  return out;
+}
+
+std::vector<Eigen::Vector2d> LiveOccupancyModel::vesselFixPositions() const {
+  std::vector<Eigen::Vector2d> out;
+  out.reserve(vessel_fixes_.size());
+  for (const auto& f : vessel_fixes_) out.push_back(f.position_enu);
+  return out;
+}
+
 }  // namespace navtracker

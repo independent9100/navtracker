@@ -42,10 +42,10 @@ The file is written and closed when the program exits.
 
 ```cpp
 #include "adapters/foxglove/FoxgloveDebugRecorder.hpp"
-#include "adapters/sinks/TrackSnapshotFanout.hpp"
 
 // Construct — path, datum, optional bias provider, optional config.
 foxglove::RecorderConfig cfg;
+cfg.enabled     = true;  // master on/off for ALL drawing; false = record nothing
 cfg.ellipse_k   = 2.0;   // covariance ellipses shown at 2σ (default)
 cfg.gate_gamma  = 9.21;  // χ² 2-DOF 99 % threshold; 0 disables /gates
 
@@ -57,11 +57,9 @@ tracker.setInnovationSink(&recorder);       // → /diag/innovation
 cpa_evaluator.setCollisionRiskSink(&recorder);  // → /cpa, /log
 own_ship_provider.registerDatumSink(&recorder); // → /tf, /log
 
-// If you already have an ITrackSnapshotSink registered, fan-out.
-TrackSnapshotFanout fanout;
-fanout.add(&existing_sink);
-fanout.add(&recorder);
-// tracker uses &fanout instead of &existing_sink
+// Snapshot the track set once per scan (the recorder implements
+// ITrackSnapshotSink). Call it directly after advancing the tracker:
+recorder.onTracks(tracker.tracks(), t);
 
 // Per measurement: tee BEFORE tracker.process(m).
 recorder.recordMeasurement(m);
@@ -94,6 +92,23 @@ Call `recorder.close()` (or let the destructor run) when the session ends.
 | `/diag/innovation` | custom JSON scalars | `IInnovationSink` | Per-update NIS `nis = νᵀ S⁻¹ ν` and measurement dimension `dim`, keyed by `(track_id, sensor, source_id)`. Feed a Plot panel; add a horizontal reference line at `dim` to see the chi-squared expectation. |
 | `/diag/track_count` | custom JSON scalars | `ITrackSnapshotSink` | Confirmed + tentative + total count. Plot over time to see lifecycle health. |
 | `/diag/bias` | custom JSON scalars | `ISensorBiasProvider` | Per-`SensorBiasKey` position bias (ENU m) and bearing bias (rad) plus `is_published`. Plot to watch registration bias converge after startup. |
+| `/land` | `foxglove.SceneUpdate` | `recordCoastline` | Coastline land polygons (outer ring + hole rings) drawn as tan outlines, projected geodetic→ENU via the datum. Static; drawn once. |
+| `/static_obstacles` | `foxglove.SceneUpdate` | `recordStaticObstacles` | Charted static hazards: centre label + footprint (hard core, includes position uncertainty) and keep-clear (soft) rings. Colour by `ObstacleCategory`. Static; drawn once. |
+| `/static_hazard` | `foxglove.SceneUpdate` + `/log` | `IStaticHazardSink` (`onStaticHazard`) | Own-ship keep-clear crossing of a charted obstacle (Entered/Exited/Updated) with separation and keep-clear distance. Mirrors `/cpa`; the obstacle ring itself is on `/static_obstacles`. |
+| `/occupancy/persistence` | `foxglove.SceneUpdate` | `recordOccupancy` | Live-occupancy persistence heatmap: one flat cube per touched cell (`cell_size_m` square), coloured blue→red by persistence normalized to the run peak. Per scan. |
+| `/occupancy/structures` | `foxglove.SceneUpdate` | `recordOccupancy` | Learned structure hazards as keep-clear rings — green = chart-corroborated, red = camera-observed-empty (eviction candidate), yellow = uncorroborated — plus charted structure points (grey). Per scan. |
+| `/occupancy/camera_empty` | `foxglove.SceneUpdate` | `recordOccupancy` | Cells the camera has proven empty (matured observed-empty streak). Per scan. |
+| `/occupancy/veto` | `foxglove.SceneUpdate` | `recordOccupancy` | Active AIS/cooperative vessel-fix veto rings (`veto_radius_m`). Per scan. |
+| `/pmbm/ppp` | `foxglove.SceneUpdate` | `recordPmbmDensity` | PMBM Poisson (undetected/birth) intensity: one covariance ellipse per `PoissonComponent`, opacity ∝ component weight. Per scan. |
+| `/pmbm/bernoulli` | `foxglove.SceneUpdate` | `recordPmbmDensity` | Bernoulli existence ellipses from the top-weight global hypothesis; colour/opacity ramp with existence probability `r`. Per scan. |
+| `/pmbm/trajectories` | `foxglove.SceneUpdate` | `recordPmbmDensity` | Per-Bernoulli trajectory polylines (TPMBM history) for the top-weight hypothesis. Per scan. |
+| `/tracks/imm_modes` | `foxglove.SceneUpdate` | `ITrackSnapshotSink` | Per-IMM-mode covariance ellipse per track (from `imm_means`/`imm_covariances`), opacity ∝ mode probability. |
+| `/tracks/particles` | `foxglove.SceneUpdate` | `ITrackSnapshotSink` | Particle-filter cloud: one small cube per particle, opacity ∝ normalized weight. |
+| `/coverage/<source_id>` | `foxglove.SceneUpdate` | `recordSensorCoverage` | Per-sensor coverage sector (or full disc for omni) at the sensor ENU position, coloured per `SensorKind`. |
+| `/clutter/position` | `foxglove.SceneUpdate` | `recordClutterMap` | Learned position-space clutter-intensity heatmap (one cube per cell, blue→red by λ normalized to the max). Populated when the tracker feeds a `ClutterMapSensorDetectionModel`. |
+| `/clutter/bearing` | `foxglove.SceneUpdate` | `recordClutterMap` | Azimuth-space clutter rose: radial rays from the given origin, length ∝ normalized λ. Empty unless the bearing map is enabled. |
+| `/diag/mode_prob` | custom JSON scalars | `ITrackSnapshotSink` | Per-track IMM mode probabilities `m0..mK`. Feed a Plot panel to watch mode switching. |
+| `/diag/existence` | custom JSON scalars | `ITrackSnapshotSink` | Per-track `existence_probability` and `visibility_given_exists` (IPDA/VIMM). |
 
 Foxglove recognizes well-known schemas **by name** regardless of
 encoding, so JSON-encoded `SceneUpdate`, `LocationFix`, etc.
@@ -186,9 +201,32 @@ timelines align without any offset correction.
 
 ## Disabling the adapter
 
-Pass `-DNAVTRACKER_BUILD_FOXGLOVE=OFF` to cmake. This drops the `mcap`
-and `nlohmann_json` dependencies entirely. Consumers linking only
-`navtracker_core` are unaffected regardless of this option.
+Three levels, coarsest to finest:
+
+1. **Build-time:** pass `-DNAVTRACKER_BUILD_FOXGLOVE=OFF` to cmake. This
+   drops the `mcap` and `nlohmann_json` dependencies entirely. Consumers
+   linking only `navtracker_core` are unaffected regardless of this option.
+2. **Runtime master switch:** set `RecorderConfig::enabled = false`
+   (default `true`). Every recorder entry point — old layers and new —
+   early-returns and nothing is written; the datum is still tracked so a
+   later re-enable draws in the correct frame. This is a **per-instance**
+   member threaded through the constructor (never a global/static), so it
+   is safe across dynamic-library boundaries and multiple recorders. The
+   `navtracker_foxglove_pmbm_scenario` tool wires it to the
+   `NAVTRACKER_DEBUG_DRAW` env var (`0`/`false` → disabled).
+3. **Per-layer (Foxglove side):** toggle individual topics in the
+   Foxglove/Lichtblick panel's topic list. `gate_gamma = 0` additionally
+   suppresses the `/gates` layer at the source.
+
+## Recording the full stack (PMBM + static world)
+
+`navtracker_foxglove_pmbm_scenario [scenario_dir] [label] [out.mcap]`
+runs a scenario through the **PMBM** tracker with every layer wired —
+PMBM posterior, static obstacles, land, live occupancy, sensor coverage,
+and estimator internals — and is the canonical end-to-end example of the
+environment/PMBM taps (`recordCoastline`, `recordStaticObstacles`,
+`recordOccupancy`, `recordPmbmDensity`, `recordSensorCoverage`,
+`recordClutterMap`).
 
 ---
 
