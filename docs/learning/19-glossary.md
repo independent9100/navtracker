@@ -152,6 +152,14 @@
   mark with no physical structure at that position). Encoded in `AtoNRealism`.
   AIS Message 21 broadcasts AtoN positions as a first-class `StaticObstacle`
   source. Chapter 26.
+- **"bearing wedge"** — a direction-only hazard for a camera-only contact that
+  cannot initiate a track (a `Bearing2D` stream has no range). A sector from
+  own-ship (apex) spanning ±half-width (`= 2σ`, σ composed of camera ⊕ heading,
+  with a floor) about the detection bearing, range usually unbounded. Satisfies
+  ADR 0002 "never invisible" without a position; CPA not computable. A confirmed
+  track on the bearing *suppresses* it (recomputed each drain, never deleted);
+  only camera silence removes it. Stored as `BearingWedge` / `BearingWedgeModel`.
+  Chapter 28.
 - **"sensor pose"** — the ENU position (and optionally
   orientation) of the sensor at the moment of measurement.
 - **"sticky modes"** — IMM transition matrix with high diagonal

@@ -155,3 +155,50 @@ question: "is own-ship currently inside the required clearance zone?" That
 question has a direct geometric answer; no trajectory extrapolation is needed or
 appropriate. The vessel-track CPA (`CpaEvaluator`) remains the correct tool for
 dynamic hazard assessment against confirmed vessel tracks.
+
+---
+
+## BearingWedgeOutput (hazard as a sector)
+
+Canonical drain function: `toBearingWedgeOutput(wedge, anchor)` in
+`core/output/BearingWedgeOutput.hpp`. A **third** output type, distinct from both
+`TrackOutput` and `StaticHazardOutput`: it represents a hazard that is a
+**direction, not a position** — the "never invisible" safety net for a
+camera-only contact (a `Bearing2D` stream that cannot initiate a track). Produced
+by `BearingWedgeModel` (backlog #17 option 1); plain-English intro in
+`docs/learning/28-bearing-wedge-hazard.md`, precise reference in
+`docs/algorithms/bearing-wedge-hazard.md`.
+
+### Geometry
+
+- **`apex_lat_deg`, `apex_lon_deg`**: WGS84 geodetic position of the wedge apex —
+  own-ship at detection time. Converted from the model's fixed **anchor** ENU
+  frame (so a datum recenter does not move it); like `StaticHazardOutput`, no NED
+  covariance rotation applies (a wedge has no position covariance).
+- **`bearing_true_deg`**: centre bearing, **true** (clockwise from north), in
+  `[0, 360)`. (Internally the model carries the `Bearing2D` math convention
+  `atan2(dN,dE)`; the output converts to true bearing.)
+- **`half_width_deg`**: angular half-width of the sector, `= max(2σ, floor)` where
+  σ is the **composed** camera ⊕ heading bearing uncertainty.
+- **`max_range_m`** (`std::optional<double>`): the sector's range extent. **Absent
+  ⇒ unbounded** — range is genuinely unknown, the defining case of a bearing-only
+  contact. Present ⇒ clip the wedge at that range.
+
+### Identity and provenance
+
+- **`hazard_id`**: stable `uint64_t`, unique per physical contact and **never
+  reused**. Stays constant while the same contact is continuously reported; a
+  contact number that goes quiet and later returns (sensor number-reuse) gets a
+  fresh id, not the dead one's.
+- **`is_charted`**: always `false` (live-detected, no chart record).
+- **`source_id`**: the emitting camera/source id.
+
+### No CPA — and handover by suppression
+
+A wedge has no position or velocity, so **CPA is not computable** for it (unlike a
+vessel track). The operator reading is "keep clear along that bearing". A wedge is
+**suppressed** from the drained output while a confirmed vessel track occupies its
+angular span (the better source has taken over), and **reappears** as soon as no
+track does — the claim is recomputed every drain, never latched, so a vessel
+crossing the bearing of a still-seen camera contact cannot erase it. Only the
+camera going quiet removes a wedge.

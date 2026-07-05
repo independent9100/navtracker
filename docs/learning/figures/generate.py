@@ -1461,6 +1461,83 @@ def fig_live_occupancy():
     save(fig, "27-live-occupancy.png")
 
 
+def fig_bearing_wedge():
+    """Camera-only contact → a bearing wedge from own-ship; handover by suppression."""
+    fig, (axL, axR) = plt.subplots(1, 2, figsize=(13, 6.2), sharex=True, sharey=True)
+
+    apex = (0.0, 0.0)
+    bearing_deg = 63.0          # true-ish bearing of the camera contact
+    half_deg = 9.0              # exaggerated half-width for legibility
+    Rmax = 9.3                  # draw length (range is actually UNKNOWN)
+
+    def draw_common(ax, title):
+        # Unbounded wedge (drawn to the plot edge; range genuinely unknown).
+        wedge = mpatches.Wedge(apex, Rmax, bearing_deg - half_deg,
+                               bearing_deg + half_deg, color="#e8a030",
+                               alpha=0.28, zorder=1)
+        ax.add_patch(wedge)
+        wedge_edge = mpatches.Wedge(apex, Rmax, bearing_deg - half_deg,
+                                    bearing_deg + half_deg, fill=False,
+                                    edgecolor="#e8a030", linewidth=1.8,
+                                    linestyle="--", zorder=2)
+        ax.add_patch(wedge_edge)
+        # Centre bearing line.
+        br = np.deg2rad(bearing_deg)
+        ax.plot([0, Rmax * np.cos(br)], [0, Rmax * np.sin(br)],
+                color="#b5791f", linewidth=1.4, linestyle=":", zorder=3)
+        # Own-ship apex.
+        ax.plot(*apex, marker="^", markersize=16, color="#26527a", zorder=6)
+        ax.text(0.15, -0.55, "own-ship\n(apex)", fontsize=10, color="#26527a",
+                ha="left", va="top")
+        # "range unknown" arrow along the bearing.
+        ax.annotate("", xy=(Rmax * np.cos(br), Rmax * np.sin(br)),
+                    xytext=(5.0 * np.cos(br), 5.0 * np.sin(br)),
+                    arrowprops=dict(arrowstyle="->", color="#b5791f", lw=1.6),
+                    zorder=4)
+        ax.text(8.6, 8.9, "range unknown →", fontsize=9.5, color="#b5791f",
+                rotation=bearing_deg, ha="center", va="center")
+        ax.set_title(title, fontsize=12)
+        ax.set_xlim(-2.0, 11.0)
+        ax.set_ylim(-2.0, 11.0)
+        ax.set_aspect("equal")
+        ax.grid(True, linestyle=":", alpha=0.35)
+        ax.set_xlabel("east (arb.)")
+
+    # LEFT: the wedge is emitted (no track claims it).
+    draw_common(axL, "Camera-only contact → wedge emitted")
+    # camera contact marker somewhere on the line (range unknown).
+    br = np.deg2rad(bearing_deg)
+    cx, cy = 6.5 * np.cos(br), 6.5 * np.sin(br)
+    axL.plot(cx, cy, marker="*", markersize=16, color="#7a3fb5", zorder=6)
+    axL.text(cx + 0.3, cy, "camera contact\n(bearing only)", fontsize=9.5,
+             color="#7a3fb5", ha="left", va="center")
+    axL.annotate(f"half-width = 2σ\n(σ = camera ⊕ heading)",
+                 xy=(3.2 * np.cos(br + np.deg2rad(half_deg)),
+                     3.2 * np.sin(br + np.deg2rad(half_deg))),
+                 xytext=(0.4, 8.7), fontsize=9.5, color="#b5791f",
+                 arrowprops=dict(arrowstyle="->", color="#b5791f", lw=1.3))
+    axL.set_ylabel("north (arb.)")
+
+    # RIGHT: a confirmed track sits on the bearing → wedge SUPPRESSED (handover).
+    draw_common(axR, "Track claims the bearing → wedge suppressed (not deleted)")
+    # grey-out the wedge to signal suppression.
+    axR.add_patch(mpatches.Wedge(apex, Rmax, bearing_deg - half_deg,
+                                 bearing_deg + half_deg, color="#999999",
+                                 alpha=0.30, zorder=5))
+    tx, ty = 5.2 * np.cos(br), 5.2 * np.sin(br)
+    axR.plot(tx, ty, marker="o", markersize=12, color="#2d8659", zorder=7)
+    axR.text(tx + 0.3, ty - 0.2, "confirmed track\n(better source)", fontsize=9.5,
+             color="#2d8659", ha="left", va="top")
+    axR.text(2.2, 9.6, "suppressed while claimed —\nreappears if the track leaves\n"
+             "(only camera silence deletes it)", fontsize=9.5, color="#555555",
+             ha="left", va="top")
+
+    fig.suptitle("Bearing-wedge hazard: 'never invisible' without a range",
+                 fontsize=13)
+    fig.subplots_adjust(wspace=0.12, top=0.90)
+    save(fig, "28-bearing-wedge.png")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 
 def main():
@@ -1493,6 +1570,7 @@ def main():
     fig_coastline_ramp()
     fig_static_obstacle_zones()
     fig_live_occupancy()
+    fig_bearing_wedge()
     render_dot_figures()
     print("done.")
 

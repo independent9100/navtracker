@@ -186,11 +186,15 @@ models cache positions in ENU and must be registered if you use auto-recenter:
 - `CoastlineModel` (`core/land/CoastlineModel.hpp`) — swaps its datum.
 - `LiveOccupancyModel` (`core/static/LiveOccupancyModel.hpp`) — re-anchors its
   occupancy grid.
+- `BearingWedgeModel` (`core/static/BearingWedgeModel.hpp`) — re-anchors its wedge
+  apexes (§7). Wire it as a datum sink too if you use auto-recenter, or every
+  emitted wedge points the wrong way after a recenter.
 
 ```cpp
 provider.registerDatumSink(&obstacle_model);
 provider.registerDatumSink(&coastline_model);
 provider.registerDatumSink(&occupancy_model);
+provider.registerDatumSink(&bearing_wedge_model);
 ```
 
 > **Note.** If you use the MHT tracker, its hidden per-node kinematic state is not
@@ -795,6 +799,59 @@ vessel that pinned a cell:
 > Stage 1b-i plan). **Its config may change**; check the plan before depending on
 > it, and expect field names/defaults to move.
 
+### Camera-only contact — the bearing-wedge hazard
+
+**What you have:** a camera (or any bearing-only sensor) seeing a radar-silent
+target — a kayak, a small wooden boat — as a `Bearing2D` stream. **What you
+want:** it not to vanish. A bearing-only measurement cannot initiate a track (no
+range → no position), but ADR 0002 forbids it becoming nothing. The clean fix is a
+range sensor (camera + range → the existing range/bearing path, §3). Absent that,
+`BearingWedgeModel` (`core/static/BearingWedgeModel.hpp`) is the safety net: it
+surfaces the **direction** as a wedge from own-ship. Learning intro: chapter 28;
+reference: `docs/algorithms/bearing-wedge-hazard.md`.
+
+It is **standalone** — not on the PMBM hot path. You feed it each cycle:
+
+```cpp
+BearingWedgeModel wedges(datum);                 // BearingWedgeParams optional
+provider.registerDatumSink(&wedges);             // MANDATORY with auto-recenter (§2)
+// ... per cycle:
+wedges.observeBearing(t, own_enu, bearing_math_rad, sigma_composed_rad,
+                      "cam0", contact_id);        // a camera-only detection
+wedges.observeConfirmedTracks(confirmed_track_enu);  // for handover (below)
+wedges.pruneStale(now_s);                         // drop contacts the camera lost
+for (const auto& h : wedges.hazardOutputs()) { /* draw the sector */ }
+```
+
+Four things to get right:
+
+1. **`bearing_math_rad` is the `Bearing2D` value verbatim** — the math angle
+   `atan2(dN, dE)` (CCW from east), the same convention the tracker uses
+   internally. The output (`BearingWedgeOutput`, §6-style drain) converts it to a
+   **true** bearing for display.
+2. **`sigma_composed_rad` must be the COMPOSED σ** — `σ_camera ⊕ σ_heading` in
+   quadrature — because the bearing you feed is *relative bearing + own-ship
+   heading*, so heading error is part of it (this is the backlog #16 connection).
+   The half-width is `max(2σ, min_half_width_rad)`; the floor (default ≈ 1.5°)
+   stops an optimistic σ from drawing an implausibly thin wedge (calibration p90
+   was 1.32°).
+3. **Handover is by suppression, not deletion.** `observeConfirmedTracks(...)`
+   supplies the current confirmed-track positions; a wedge is *hidden from the
+   drain* while a track sits in its angular span, and *reappears* the instant no
+   track does — recomputed every drain, never latched. This is deliberate: a near
+   vessel crossing the bearing of a far, still-seen camera contact must not
+   permanently erase it (the ADR-0002 forbidden failure). Only `pruneStale`
+   (camera went quiet) actually removes a wedge.
+4. **Identity survives, reuse does not.** Key each detection by
+   `(source_id, contact_id)` — the camera's own contact/detector track number. A
+   number that goes quiet and returns (sensor number-reuse) mints a **new**
+   `wedge_id`, never resurrecting the dead one; pass `suspect=true` (e.g. from the
+   #20 `sensor_track_id_suspect` cue) to force a fresh id immediately.
+
+`max_range` is `std::optional<double>` — **absent = unbounded** (range genuinely
+unknown, the defining case). CPA is **not** computable for a wedge; the operator
+reading is "keep clear along that bearing".
+
 ### Sensor coverage / visibility — `ISensorActivity`
 
 The models above tell the tracker where the *world* is fixed. This channel tells
@@ -1073,6 +1130,7 @@ Non-`Config` tuning structs a consumer also touches: `DatumRecenterPolicy`
 (`core/own_ship/OwnShipProvider.hpp`, §2), `StaticObstacleParams`
 (`core/static/StaticObstacleModel.hpp`, §7), `CoastlinePriorParams`
 (`core/land/CoastlineGeometry.hpp`, §7), `LiveOccupancyParams`
-(`core/static/LiveOccupancyModel.hpp`, §7),
+(`core/static/LiveOccupancyModel.hpp`, §7), `BearingWedgeParams`
+(`core/static/BearingWedgeModel.hpp`, §7),
 `DeclaredSensorActivity::ChannelProfile`
 (`core/sensor_activity/DeclaredSensorActivity.hpp`, §7).

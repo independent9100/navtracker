@@ -79,7 +79,9 @@ add_library(navtracker_core
   core/scenario/TruthResample.cpp
   core/output/TrackOutput.cpp
   core/output/StaticHazardOutput.cpp
+  core/output/BearingWedgeOutput.cpp
   core/static/LiveOccupancyModel.cpp
+  core/static/BearingWedgeModel.cpp
   core/sensor_activity/DeclaredSensorActivity.cpp
 )
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
@@ -234,6 +236,7 @@ add_executable(navtracker_tests
   tests/pmbm/test_pmbm_pda_soft_update.cpp
   tests/static/test_static_obstacle_model.cpp
   tests/static/test_live_occupancy_model.cpp
+  tests/static/test_bearing_wedge_model.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
   tests/adapters/own_ship/test_own_ship_provider.cpp

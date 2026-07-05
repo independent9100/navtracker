@@ -636,6 +636,21 @@ deviation of heading?" wart).
 
 ## 17. Camera-only contact — options short of a distance sensor
 
+**STATUS — option 1 SHIPPED 2026-07-05 (full suite 1032/1032).** `BearingWedgeModel`
+(`core/static/BearingWedgeModel.hpp`) + `BearingWedgeOutput`: a camera-only
+`Bearing2D` contact surfaces as a wedge from own-ship (half-width `max(2σ, floor)`,
+σ = composed camera⊕heading; range `std::optional`, unbounded by default). Standalone
+(not on the PMBM hot path). Handover is per-drain **suppression, not deletion**
+(a confirmed track in the wedge's angle hides it; it reappears when the track
+leaves; only camera silence removes it — avoids the ADR-0002 forbidden failure of
+a crossing vessel erasing a still-seen contact). Anchor-frame apexes + IDatumChangeSink
+(recenter-safe); reused/suspect contact ids mint a fresh never-reused wedge_id.
+Docs: output-contract (BearingWedgeOutput), integration-guide §7 + datum-sink list,
+learning ch. 28 (+figure), algorithm doc `bearing-wedge-hazard.md`, glossary. Options
+2 (waterline monocular range) + 3 (range-parameterised bearing-only init) remain
+open; PMBM auto-wiring of option 1 is the next step (see the algorithm doc). The
+original ticket follows.
+
 **Problem.** A target only the camera sees (kayak, small wooden boat —
 radar-silent) currently becomes NOTHING: `Bearing2D` cannot initiate a
 track (by design), so the object is invisible in the output. Sharpest
