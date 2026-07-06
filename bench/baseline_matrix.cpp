@@ -47,6 +47,13 @@ int main(int argc, char** argv) {
            "                                 [--scenario-filter SUBSTR]\n"
            "                                 [--config-eq LABEL]\n"
            "                                 [--scenario-eq LABEL]\n"
+           "                                 [--fast-metrics]\n"
+           "\n"
+           "--fast-metrics skips per-cell accuracy/consistency scoring\n"
+           "(OSPA/GOSPA/T-GOSPA/RMSE/NEES/NIS) and emits only wall_seconds +\n"
+           "per-scan latency (scan_proc_ms_*, scan_interval_s, n_scans). The\n"
+           "tracker still runs in full; use it to cut dev turnaround and to\n"
+           "separate the harness scoring tax from tracker compute.\n"
            "\n"
            "Writes <out>/<run-id>.csv containing one row per\n"
            "(config x scenario x seed x metric) plus a provenance header.\n"
@@ -93,6 +100,9 @@ int main(int argc, char** argv) {
                         : static_cast<std::uint32_t>(std::stoul(seeds_arg));
   const bool skip_replays = has_flag(argc, argv, "--skip-replays");
   const bool with_haxr = has_flag(argc, argv, "--with-haxr");
+  // Dev-loop knob: skip per-cell accuracy/consistency scoring (OSPA/GOSPA/
+  // T-GOSPA/RMSE/NEES/NIS), emit only wall + per-scan latency. See SweepParams.
+  const bool fast_metrics = has_flag(argc, argv, "--fast-metrics");
 
   const auto t0 = std::chrono::steady_clock::now();
 
@@ -161,6 +171,7 @@ int main(int argc, char** argv) {
   SweepParams sp;
   sp.run_id = run_id;
   sp.synthetic_seeds = synthetic_seeds;
+  sp.fast_metrics = fast_metrics;
   const std::string export_states_dir =
       argv_str(argc, argv, "--export-states-dir");
   if (!export_states_dir.empty()) sp.export_states_dir = export_states_dir;

@@ -43,6 +43,17 @@ struct SweepParams {
   std::uint32_t track_manager_min_misses{2};
   std::uint32_t track_manager_max_misses{4};
   double tracker_init_gate_m{30.0};
+  // Fast-metrics dev-loop knob (perf round 2). When true, the per-cell
+  // accuracy/consistency scoring (computeMetrics + computeConsistency —
+  // OSPA / GOSPA / T-GOSPA / RMSE / NEES / NIS, each of which runs its own
+  // Hungarian assignments over the full truth×track set) is SKIPPED; only
+  // wall_seconds + the per-scan latency rows are emitted. The tracker still
+  // runs in full (every processBatch executes, RTS smoothing still drains),
+  // so wall time and latency stay representative — you just don't get the
+  // accuracy numbers. Purpose: cut dev-iteration turnaround and isolate the
+  // harness scoring tax from tracker cost. Default false ⇒ full scoring,
+  // bit-identical to prior behaviour. Not for accuracy runs.
+  bool fast_metrics{false};
   // D2 GOSPA cross-validation hook. When set, each run additionally writes
   // its per-scan (truth, track) states and our per-scan GOSPA to
   // <dir>/<config>__<scenario>__seed<seed>.{states,ours_gospa}.csv, for an

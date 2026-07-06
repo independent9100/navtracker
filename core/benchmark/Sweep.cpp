@@ -570,14 +570,22 @@ std::vector<MetricRow> runSweep(
         const auto t_cell1 = std::chrono::steady_clock::now();
         const double wall_seconds =
             std::chrono::duration<double>(t_cell1 - t_cell0).count();
-        const auto m = (config.tracker_kind == TrackerKind::Pmbm)
-            ? computeMetrics(result, params.metrics,
-                             pmbm_smoothed_trajectories)
-            : computeMetrics(result, params.metrics);
-        const auto c =
-            computeConsistency(nis, result, params.metrics.assoc_gate_m);
-        emit(rows, params, config.label, desc.label,
-             static_cast<std::uint64_t>(seed), m, c, wall_seconds);
+        if (params.fast_metrics) {
+          // Dev-loop path: skip the accuracy/consistency scoring (its own
+          // Hungarian passes over truth×track), emit only wall + latency.
+          rows.push_back({params.run_id, config.label, desc.label,
+                          static_cast<std::uint64_t>(seed), "wall_seconds",
+                          wall_seconds, "s"});
+        } else {
+          const auto m = (config.tracker_kind == TrackerKind::Pmbm)
+              ? computeMetrics(result, params.metrics,
+                               pmbm_smoothed_trajectories)
+              : computeMetrics(result, params.metrics);
+          const auto c =
+              computeConsistency(nis, result, params.metrics.assoc_gate_m);
+          emit(rows, params, config.label, desc.label,
+               static_cast<std::uint64_t>(seed), m, c, wall_seconds);
+        }
         emitScanTiming(rows, params, config.label, desc.label,
                        static_cast<std::uint64_t>(seed), result);
         // D2 GOSPA cross-validation export (inert unless a dir is set). Dump
