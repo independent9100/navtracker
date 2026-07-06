@@ -57,6 +57,12 @@ int main(int argc, char** argv) {
            "are intractable on it without cluster decomposition; pass\n"
            "--with-haxr to include it (expect long runtime / high memory).\n"
            "\n"
+           "--export-states-dir DIR writes, per run, the per-scan (truth,\n"
+           "track) states and our per-scan GOSPA to DIR for the D2 Stone\n"
+           "Soup metric cross-check (tools/stonesoup_gospa_crosscheck.py).\n"
+           "Pair with --config-eq / --scenario-eq / --seeds 1 to export a\n"
+           "single run.\n"
+           "\n"
            "--config-filter / --scenario-filter restrict the matrix to\n"
            "entries whose label contains the given substring. Both filters\n"
            "compose. Use for focused re-measurement against an existing\n"
@@ -155,6 +161,9 @@ int main(int argc, char** argv) {
   SweepParams sp;
   sp.run_id = run_id;
   sp.synthetic_seeds = synthetic_seeds;
+  const std::string export_states_dir =
+      argv_str(argc, argv, "--export-states-dir");
+  if (!export_states_dir.empty()) sp.export_states_dir = export_states_dir;
   const auto rows = runSweep(configs, all, sp);
 
   const auto t1 = std::chrono::steady_clock::now();

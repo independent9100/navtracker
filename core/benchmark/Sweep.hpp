@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,13 @@ struct SweepParams {
   std::uint32_t track_manager_min_misses{2};
   std::uint32_t track_manager_max_misses{4};
   double tracker_init_gate_m{30.0};
+  // D2 GOSPA cross-validation hook. When set, each run additionally writes
+  // its per-scan (truth, track) states and our per-scan GOSPA to
+  // <dir>/<config>__<scenario>__seed<seed>.{states,ours_gospa}.csv, for an
+  // independent scorer (Stone Soup) to re-score the exact tracks the harness
+  // scores. Unset (default) → no files, bit-identical behaviour. Test/tool
+  // knob only — see core/benchmark/GospaExport.hpp.
+  std::optional<std::string> export_states_dir;
 };
 
 /**

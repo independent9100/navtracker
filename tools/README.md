@@ -1,7 +1,8 @@
 # tools/
 
 Offline diagnostic scripts. Not part of the build. Python 3 only,
-no extra dependencies (stdlib).
+stdlib-only **except** `stonesoup_gospa_crosscheck.py`, which needs a
+venv with Dstl Stone Soup (see its section below).
 
 ## `autoferry_r_calibration.py`
 
@@ -47,3 +48,37 @@ so naive central differencing on consecutive samples produces wild
 spikes. The script uses a ≥0.5 s differentiation baseline and gates
 out turn-rate samples below a minimum speed (heading undefined when
 stationary).
+
+## `stonesoup_gospa_crosscheck.py` (D2 — metric integrity)
+
+Re-scores a bench run's per-scan `(truth, track)` sets with Dstl
+Stone Soup's independently-authored GOSPA and diffs, scan by scan,
+against navtracker's own per-scan GOSPA. An external agreement is the
+cheapest hedge against a metric-kernel bug — see
+`docs/algorithms/gospa-crosscheck.md` for the convention table and the
+2026-07-06 result (navtracker == Stone Soup to floating-point epsilon
+on one sim + one real run).
+
+**Needs a venv** (Stone Soup is not a Conan dependency; it lives at
+`data/stonesoup/Stone-Soup/`):
+
+```bash
+python3 -m venv /tmp/claude/d2-stonesoup-venv
+/tmp/claude/d2-stonesoup-venv/bin/pip install ./data/stonesoup/Stone-Soup
+```
+
+Inputs come from the C++ exporter (`core/benchmark/GospaExport`), driven
+by `navtracker_bench_baseline --export-states-dir DIR`:
+
+```bash
+cmake --build build --target navtracker_bench_baseline
+./build/bench/navtracker_bench_baseline \
+    --scenario-eq harbor_complete_truth --config-eq imm_cv_ct_pmbm \
+    --seeds 1 --skip-replays --run-id d2 --out /tmp/d2 --export-states-dir /tmp/d2
+/tmp/claude/d2-stonesoup-venv/bin/python tools/stonesoup_gospa_crosscheck.py \
+    --states /tmp/d2/imm_cv_ct_pmbm__harbor_complete_truth__seed0.states.csv \
+    --ours   /tmp/d2/imm_cv_ct_pmbm__harbor_complete_truth__seed0.ours_gospa.csv
+```
+
+Exits 0 on PASS (max per-scan `|Δ|` ≤ `--tol`, default 1e-6 m, and no
+cardinality mismatch), 1 otherwise, printing the offending scans.

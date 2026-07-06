@@ -8,6 +8,39 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-06 — D2 GOSPA cross-validation: navtracker == Stone Soup to FP epsilon on one sim + one real run [measurement integrity]
+
+Question: after two truth-fragmentation bugs (autoferry 2026-06-10, harbor
+2026-07-02) silently corrupted metrics, does `core/scenario/Gospa.hpp` agree
+with an independently-authored GOSPA? Method: export the harness's own
+per-scan `(truth, track)` sets — the exact `BenchResult` the metrics consume,
+so the cross-check scores identical tracks by construction, not a
+reconstruction — and re-score with Dstl Stone Soup's
+`stonesoup.metricgenerator.ospametric.GOSPAMetric`. Same convention on both
+sides: **c = 20 m, p = 2, α = 2, switching = 0** (α is hardcoded in Stone
+Soup's `compute_gospa_metric`; cardinality penalty c^p/α per drop; rooted
+distance = (loc+missed+false)^(1/p); decomposition reported pre-root power-p by
+both). Tooling: `core/benchmark/GospaExport` + `--export-states-dir` +
+`tools/stonesoup_gospa_crosscheck.py` (venv-local, not a Conan dep).
+
+**Result — PASS on both arms:**
+
+| Run | Scans | mean GOSPA (ours / SS) | max per-scan \|Δ\| | card mismatches |
+|-----|------:|-----------------------|-------------------|-----------------|
+| `harbor_complete_truth` (sim, imm_cv_ct_pmbm, seed 0) | 40 | 49.528608 / 49.528608 | 1.42e-14 | none |
+| `philos` (real ARPA replay, imm_cv_ct_pmbm) | 20 | 99.129014 / 99.129014 | 1.42e-14 | none |
+
+Per-scan localisation/missed/false and the recovered n_missed/n_false counts
+agree on every scan (philos is the stronger arm: richer cardinality dynamics,
+nm 4–14 / nf 38–47 per scan). Max deviation is 1.42e-14 m — pure
+floating-point ordering, not an algorithmic difference. **Verdict: the harness
+GOSPA is validated by an external implementation under matched conventions.**
+The two prior metric bugs were truth *grouping/ordering* faults upstream of the
+metric kernel; this closes the remaining question — the kernel itself is
+correct. Doc: `docs/algorithms/gospa-crosscheck.md`. Out of scope (parked): a
+convention-mismatch audit of Stone Soup's *time-series* GOSPA (switching term)
+and running Stone Soup's own trackers as a baseline.
+
 ## 2026-07-06 — Raw-density (undecimated) realtime check post-Murty-fix: keeps up (2.0×), fails the ≥5× margin gate [Cl-3]
 
 Question: after the Murty fix, is clustering-first decimation still a

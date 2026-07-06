@@ -44,7 +44,19 @@ time-sorted (contract test), baselines in the eval log, north-star row updated.
 
 ---
 
-## D2 — Stone Soup GOSPA cross-validation [all claims — measurement integrity; ~half day]
+## D2 — Stone Soup GOSPA cross-validation [all claims — measurement integrity; ~half day] — **DONE 2026-07-06**
+
+**Status (2026-07-06): SHIPPED, PASS.** Exporter `core/benchmark/GospaExport`
+(+ `--export-states-dir` on `navtracker_bench_baseline`, dumping the harness's
+own `BenchResult` so the *same* tracks are re-scored) + venv-local
+`tools/stonesoup_gospa_crosscheck.py`. Stone Soup's `GOSPAMetric` at matched
+convention (c=20, p=2, α=2, switching=0) == `core/scenario/Gospa.hpp` to
+floating-point epsilon (max per-scan |Δ| = 1.42e-14) on **one sim
++ one real** run: `harbor_complete_truth` (40 scans) and `philos` (20 scans,
+real ARPA). Per-scan loc/missed/false and cardinality counts agree on every
+scan. Result + convention table: `docs/algorithms/gospa-crosscheck.md`;
+eval-log entry 2026-07-06. Parked: time-series/switching (T-GOSPA) arm, OSPA
+arm, and (out of scope by design) Stone Soup's own trackers as a baseline.
 
 **What.** Score at least one benched run's tracks with
 `stonesoup.metricgenerator`'s GOSPA (repo already cloned at

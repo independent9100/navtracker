@@ -127,6 +127,7 @@ add_library(navtracker_benchmark
   core/benchmark/Metrics.cpp
   core/benchmark/Config.cpp
   core/benchmark/Sweep.cpp
+  core/benchmark/GospaExport.cpp
   core/benchmark/CsvWriter.cpp
   core/benchmark/CsvReader.cpp
   core/benchmark/ExistenceLabel.cpp
@@ -347,6 +348,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_occupancy_ab.cpp
   tests/benchmark/test_harbor_complete_truth.cpp
   tests/benchmark/test_harbor_complete_truth_baseline.cpp
+  tests/benchmark/test_gospa_export.cpp
   tests/benchmark/test_harbor_boat_near_pier.cpp
   tests/benchmark/test_harbor_gate_scenarios.cpp
   tests/benchmark/test_occupancy_detector_gates.cpp

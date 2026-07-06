@@ -47,6 +47,7 @@
 #include "core/benchmark/BenchRunner.hpp"
 #include "core/benchmark/BenchSink.hpp"
 #include "core/benchmark/Consistency.hpp"
+#include "core/benchmark/GospaExport.hpp"
 #include "core/bias/SensorBiasPairExtractor.hpp"
 #include "core/land/CoastlineModel.hpp"
 #include "core/static/LiveOccupancyModel.hpp"
@@ -538,6 +539,18 @@ std::vector<MetricRow> runSweep(
             computeConsistency(nis, result, params.metrics.assoc_gate_m);
         emit(rows, params, config.label, desc.label,
              static_cast<std::uint64_t>(seed), m, c, wall_seconds);
+        // D2 GOSPA cross-validation export (inert unless a dir is set). Dump
+        // the exact BenchResult the metrics just consumed so an external
+        // scorer re-scores identical tracks. See GospaExport.hpp.
+        if (params.export_states_dir) {
+          std::string base = *params.export_states_dir;
+          if (!base.empty() && base.back() != '/') base.push_back('/');
+          base += config.label + "__" + desc.label + "__seed" +
+                  std::to_string(seed);
+          writeBenchStatesCsv(result, base + ".states.csv");
+          writeOurGospaCsv(result, params.metrics.gospa_cutoff_m,
+                           base + ".ours_gospa.csv");
+        }
         if (occ_peak_structures >= 0.0) {
           const auto s64 = static_cast<std::uint64_t>(seed);
           rows.push_back({params.run_id, config.label, desc.label, s64,
