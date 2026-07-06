@@ -1,0 +1,12 @@
+clip,config,arm,sensors,truth_source,circularity,gospa_mean,gospa_loc,gospa_missed,gospa_false,card_err_mean,lifetime_ratio,id_switches,pos_rmse_m
+ais_ferry_far,imm_cv_ct_mht,A,radar-only,AIS_ENU,HONEST,42.3384,0,1652.63,231.579,-7.10526,0,0,0
+ais_ferry_far,imm_cv_ct_mht,A,radar-only,AIS_range_az,HONEST,42.3384,0,1652.63,231.579,-7.10526,0,0,0
+ais_ferry_far,imm_cv_ct_mht,B,radar+AIS,AIS_ENU,CIRCULAR_mechanics,49.2027,269.769,1273.68,957.895,-1.57895,0.415545,0.05,25.209
+ais_ferry_far,imm_cv_ct_pmbm_coverage_land,A,radar-only,AIS_ENU,HONEST,81.6804,35.5739,1631.58,5305.26,18.3684,0.1,0.15,46.0206
+ais_ferry_far,imm_cv_ct_pmbm_coverage_land,A,radar-only,AIS_range_az,HONEST,81.6991,38.4961,1631.58,5305.26,18.3684,0.1,0.2,46.1808
+ais_ferry_far,imm_cv_ct_pmbm_coverage_land,B,radar+AIS,AIS_ENU,CIRCULAR_mechanics,81.5752,32.6988,1631.58,5284.21,18.2632,0.149621,0,46.4706
+ais_ferry_far,imm_cv_ct_pmbm_adapt,A,radar-only,AIS_ENU,HONEST,78.0245,0,1652.63,4484.21,14.1579,0.0536616,0.1,54.0954
+ais_ferry_far,imm_cv_ct_pmbm_adapt,A,radar-only,AIS_range_az,HONEST,78.0245,0,1652.63,4484.21,14.1579,0.0536616,0.1,54.6928
+ais_ferry_far,imm_cv_ct_pmbm_adapt,B,radar+AIS,AIS_ENU,CIRCULAR_mechanics,76.5613,179.729,1147.37,4578.95,17.1579,0.532842,0.15,18.4845
+almost_cross,ekf_gnn_smoke,C,radar-only,NONE,NO_TRUTH,,,,,,,,
+# almost_cross direct-harness (EKF+GNN, fixed 1s clock): final_tracks=73 unique_ids=211 over 50s; ADR-0002 persistence canary PASSED (contacts surface + persist). Bench cannot score it (truth-driven, empty truth).

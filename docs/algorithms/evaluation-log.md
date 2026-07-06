@@ -8,6 +8,95 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-06 — CORRECTION: `philos_radartruth` is AIS-derived, not independent radar truth [measurement integrity]
+
+Standing correction (an observation too). Since the `philos_radartruth`
+truth-source variant shipped (2026-06-24, `docs/superpowers/plans/
+2026-06-24-pmbm-philos-cardinality-improvements.md`), it was described in code
+and plan as "independent radar-derived truth — kills the AIS circularity." **That
+is false.** `tests/fixtures/philos/build_truth.py` (line 20, "a quick analytical
+projection") builds `radar_truth.csv` by projecting each **AIS** row's lat/lon
+into the radar's `(range_m, azimuth)` frame with `uid = MMSI`. Verified: the 20
+`radar_truth` uids are exactly the 20 AIS MMSIs, sampled at the AIS timestamps
+(100 % overlap). So `philos_radartruth` is **AIS truth expressed in the radar
+frame** — a projection/datum consistency check vs `philos`, NOT independent of
+AIS. An AIS-consuming arm scored against it is still circular.
+
+Fix (2026-07-06): corrected the `ReplayScenarioRun.cpp` comment (registration +
+`generate()`). **Audit of past load-bearing use → CLEAN.** Every prior mention
+is either an A/B *delta* (eval-log 2026-07-02 PDA `philos 63.13→63.08 /
+philos_radartruth 67.08→67.04`; 2026-06-29 coverage "philos/philos_radartruth
+identical") or an *inertness* check (2026-07-02 land-PDA byte-identical) — both
+survive because both arms share the same truth, so independence is irrelevant to
+the delta. The R8 entries (2026-07-03) that reason about AIS-truth *limits*
+explicitly treat AIS truth as incomplete/bound-only and never cite radartruth as
+a de-circularizer. The one independence *claim* was the 2026-06-24 plan's Step 6
+hypothesis ("if PMBM's gap vs MHT shrinks under the independent truth, the
+regression was AIS penalizing real radar tracks") — that inference was **never**
+the basis of the shipped philos diagnosis, which was root-caused instead by the
+raw-radar check (2026-07-01, "over-count is static infrastructure") and
+single-knob isolation. **Net: no shipped accuracy result was ever load-bearing
+on radartruth independence** — the good outcome. Detail:
+`docs/baselines/2026-07-06_philos_farcross.md`.
+
+## 2026-07-06 — Philos `ais_ferry_far` + `almost_cross` measurement pass (pre-water Tier-2 #10) [Cl-3]
+
+Measurement-only pass on the two released philos clips (held-out duty discharged
+on sailboats_busy 2026-07-05). No default touched. Wiring added (both proven
+bit-identical when unset): `PHILOS_CLIP` clip selector + `PHILOS_RADAR_ONLY`
+radar-only measurement mode (the philos scenario previously fed AIS as
+measurements unconditionally, so no honest radar-only arm existed). Configs:
+`imm_cv_ct_mht`, `imm_cv_ct_pmbm_coverage_land`, `imm_cv_ct_pmbm_adapt`. Single
+seed (replay, deterministic). Full data + tables:
+`docs/baselines/2026-07-06_philos_farcross.md` (+ `.csv`).
+
+**Clip facts:** `ais_ferry_far` = 19 s, 1038 radar plots, 40 AIS rows / 20
+MMSIs (carries SOG+COG), has `radar_truth`. `almost_cross` = 50 s, 1504 plots,
+**0 AIS, no radar_truth, no labels**.
+
+**Arm A — `ais_ferry_far` radar-only vs AIS truth (HONEST; c=20,p=α=2):**
+missed-dominated — 19 s is barely a confirmation window. MHT confirms
+essentially no matched track (gospa 42.3 is degenerate: loc 0, lifetime 0, card
+−7 — under-production dodges the false penalty). PMBM forms tracks (lifetime
+0.05–0.10, **pos_rmse 46–54 m**) but gospa 78–82 is dominated by `false`
+(4484–5305) — largely radar returns the sparse AIS truth cannot score. Only real
+accuracy signal: PMBM's ~46–54 m position error where tracks match. **Weight:
+19 s / 40 truth rows = a spot check on an untuned clip, NOT a benchmark.** The
+`philos` vs `philos_radartruth` frames agree to projection precision (gospa
+identical to 5 s.f.; loc 35.6 vs 38.5) → the two-frames **consistency check
+PASSES** (see the correction entry above for why it is a consistency check, not
+two truths).
+
+**Arm B — radar+AIS (CIRCULAR → mechanics):** AIS fusion transforms tracking vs
+Arm A (MHT lifetime 0→0.42, pos_rmse →25 m; adapt lifetime 0.05→0.53, pos_rmse
+54→18.5 m). PMBM philos over-count persists (card +17–18); MHT conservative
+(card −1.6); identity stable (id_switch ≈0). **#20 SOG/COG velocity path NOT
+exercised**: the replay loader `loadAisCsv` emits `Position2D` only (ignores the
+SOG/COG columns present in the fixture); the #20 path lives in `AisAdapter`
+(NMEA), not replay. R11 mmsi identity does flow. Wiring `loadAisCsv` to emit
+`PositionVelocity2D` is an arbiter change (not bit-identical) — listed, not done.
+
+**Arm C — `almost_cross` (no truth):** bench is truth-driven → 0 metrics on a
+truthless clip (tracker runs 4.17 s, unscored). Direct harness (EKF+GNN, fixed
+1 s clock, `tests/replay/test_philos_farcross.cpp`): 73 final tracks / 211
+unique over 50 s. **ADR-0002 persistence canary PASS** — radar contacts surface
+as confirmed tracks and persist to end-of-clip, none suppressed into nothing.
+Heavy raw-plot over-count (no clutter suppression in the smoke harness);
+mechanics-grade presence, not a cardinality claim. ID-stability/id-switch not
+obtainable (no truth).
+
+**Honest one-paragraph takeaway:** on the one philos clip with honest truth
+(`ais_ferry_far`, radar-only vs AIS), the tracker's real-data position accuracy
+is **~46–54 m (PMBM, where tracks match)** over a 19 s window that is
+missed-dominated — a spot check, not a benchmark, and the only such number
+before the water test. AIS fusion is what makes tracking work here (Arm B). Two
+integrity findings fell out (radartruth is AIS-derived; #20 unreachable via
+replay) and are handled above / listed for the arbiter.
+
+Fixture checksums: `ais_ferry_far` ownship 707978cc / ais d743cce5 /
+radar_plots 300109a4 / radar_truth 3fdff546; `almost_cross` ownship e78bd603 /
+ais b9595f9a (empty) / radar_plots 9e4a3725.
+
 ## 2026-07-06 — Perf round 3: hot-path mechanical sympathy — 1.5–1.66× on the PMBM/IMM likelihood path, output preserved [Cl-3]
 
 Branch `hotpath-mech-sympathy` (worktree, off master `3108d0f`). Ticket
