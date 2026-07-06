@@ -592,7 +592,23 @@ general smell that will hurt naive consumers).
 
 ---
 
-## 16. Per-pose heading σ on OwnShipPose (consistency wart)
+## 16. Per-pose heading σ on OwnShipPose (consistency wart) — **DONE 2026-07-06**
+
+**Status (2026-07-06): SHIPPED.** `std::optional<double> heading_std_deg` added
+to `OwnShipPose`. Composition rule `max(pose.heading_std_deg, floor)` in
+quadrature, floor-can-only-widen, absent ⇒ bit-identical: wired into the bearing
+builders (`makeMeasurementFromRelativeBearing` / `...TrueBearing` gain a trailing
+`heading_std_floor_deg=0.0`), `ArpaAdapter` and `EoIrAdapter` (their
+`cfg_.heading_std_deg` is now the floor). Bias-estimator assessment (steer): NO
+change — its observations (`GyroVsGps*`, `AisArpaPairObservation`, …) already
+carry their own per-source σ and compare heading *sources* to estimate gyro
+bias, a different quantity from the fused-heading σ the projection uses; wiring
+the new field there would be conceptually muddy. Tests: builder composition
+(widen / floor-clamp / bit-identical) + one per-adapter. Guide §4/§5/§7 (wedge
+tie-in) + appendix + pitfall updated same commit; no new Config struct ⇒
+drift-guard green untouched. Follow-up (parked): `OwnShipNmeaAdapter` populating
+`heading_std_deg` from a talker's reported quality (needs the fact-dependent
+per-sensor mapping — same shopping-list gate as #18's fact half).
 
 **What.** `OwnShipPose` carries per-fix σ for position
 (`position_std_m`) and velocity (`velocity_std_m_per_s`) — but NOT for

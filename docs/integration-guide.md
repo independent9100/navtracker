@@ -264,16 +264,20 @@ Measurement m = makeMeasurementFromRelativeBearing(
     Timestamp::fromSeconds(123.0),
     range_m, rel_bearing_rad,
     range_std_m, bearing_std_rad,
-    provider);
+    provider,
+    /*hints=*/{}, /*heading_std_floor_deg=*/1.0);  // optional, see §5
 ```
 
 **Important:** both bearing builders *project* range+bearing into an absolute
 `Position2D` measurement, composing the range/bearing σ with own-ship's GPS
-*position* uncertainty. They do **not** fold in own-ship *heading* uncertainty —
-that σ must already be baked into your `bearing_std_rad` upstream
-(`core/types/MeasurementBuilders.cpp`). The NMEA adapters do this for you from
-their `heading_std_deg` config; if you call the builders directly, inflate
-`bearing_std_rad` yourself. See §5.
+*position* uncertainty. For own-ship *heading* uncertainty they compose
+`max(pose.heading_std_deg, heading_std_floor_deg)` in quadrature (#16, see §5):
+set `OwnShipPose::heading_std_deg` per fix if your nav source reports varying
+heading quality, and pass a `heading_std_floor_deg` as the static trust bound.
+Leave both at their defaults (pose σ absent, floor `0.0`) and the builders add
+*zero* heading σ — then you must bake heading σ into `bearing_std_rad` yourself
+(the NMEA adapters do this for you from their `heading_std_deg` config, which
+also acts as the floor over any per-pose σ).
 
 If there is no own-ship pose at or before `t` (or no datum), the builder returns a
 `Measurement` with empty `value`/`covariance` — check and buffer/drop it
@@ -514,14 +518,29 @@ with those.
 fields (`gps_true_heading_deg`, `magnetic_heading_deg`, `magnetic_variation_deg`)
 default to `NaN` = "not present" (`core/own_ship/OwnShipProvider.hpp`).
 
+**Per-fix heading σ (#16).** `OwnShipPose` also carries an optional
+`std::optional<double> heading_std_deg` — the per-fix 1-σ of `heading_true_deg`,
+in degrees. Set it when your nav source reports heading quality that varies
+fix-to-fix (gyro settling, sensor switchover). Every relative/true-bearing
+measurement composed through that pose then folds `max(pose.heading_std_deg,
+floor)` into its angular covariance in quadrature, where `floor` is a static
+trust bound: the builders take it as the `heading_std_floor_deg` argument
+(default `0.0`), and the NMEA adapters use their config `heading_std_deg` as the
+floor. **The floor can only widen, never tighten** — a pose claiming an
+implausibly tight σ cannot make measurements overconfident. Absent per-pose σ
+(the default) ⇒ heading σ comes only from the floor / adapter config, exactly as
+before, bit-identical.
+
 > **The "perfect gyro" pitfall.** The bearing-projection builders and the NMEA
 > adapters read a heading-noise σ from the adapter config field
 > **`heading_std_deg`, which defaults to `0.0`** — i.e. *zero* heading
 > uncertainty, a perfect gyro (`adapters/arpa/ArpaAdapter.hpp`,
 > `adapters/eoir/EoIrAdapter.hpp`). If your heading comes from a real compass,
 > set this to its real 1-σ (degrees), or your range/bearing measurements will be
-> over-confident in cross-range. (Note: this field lives on the *adapter configs*,
-> not on `OwnShipPose`, which has no σ for its primary `heading_true_deg`.)
+> over-confident in cross-range. With #16, this config σ is now the *floor* in
+> `max(pose.heading_std_deg, config)`, so it protects you even when a per-fix
+> pose σ is present but bogus. If you call the builders directly instead of the
+> adapters, pass `heading_std_floor_deg` for the same protection.
 
 **Estimating heading bias.** `HeadingBiasEstimator`
 (`core/bias/HeadingBiasEstimator.hpp`) is a scalar Kalman filter on a single
@@ -831,10 +850,13 @@ Four things to get right:
    **true** bearing for display.
 2. **`sigma_composed_rad` must be the COMPOSED σ** — `σ_camera ⊕ σ_heading` in
    quadrature — because the bearing you feed is *relative bearing + own-ship
-   heading*, so heading error is part of it (this is the backlog #16 connection).
-   The half-width is `max(2σ, min_half_width_rad)`; the floor (default ≈ 1.5°)
-   stops an optimistic σ from drawing an implausibly thin wedge (calibration p90
-   was 1.32°).
+   heading*, so heading error is part of it. This is the same composition the
+   bearing builders now do internally (#16, §5): the heading term is
+   `max(pose.heading_std_deg, floor)`. Compute σ_heading the same way here — the
+   per-fix `OwnShipPose::heading_std_deg` floored by your compass's config σ —
+   then quadrature-add σ_camera. The wedge half-width is `max(2σ,
+   min_half_width_rad)`; the floor (default ≈ 1.5°) stops an optimistic σ from
+   drawing an implausibly thin wedge (calibration p90 was 1.32°).
 3. **Handover is by suppression, not deletion.** `observeConfirmedTracks(...)`
    supplies the current confirmed-track positions; a wedge is *hidden from the
    drain* while a track sits in its angular span, and *reappears* the instant no
@@ -1052,7 +1074,9 @@ One-liners, each linking to where it is explained above.
   occupancy caches and your tracks go stale. Register every ENU-caching component.
   → §2.
 - **`heading_std_deg` left at 0** — a "perfect gyro"; range/bearing measurements
-  become over-confident. Set the adapter config to your compass's real σ. → §5.
+  become over-confident. Set the adapter config (or builder
+  `heading_std_floor_deg`) to your compass's real σ; it is the *floor* over any
+  per-fix `OwnShipPose::heading_std_deg` (#16). → §5.
 - **Empty covariance is dropped, not defaulted** — a measurement that reaches the
   tracker with an empty `R` is silently skipped (never initiates or updates a
   track). The tracker does *not* fill it in for you. Supply your own `R` or call
@@ -1121,8 +1145,8 @@ or three fields most worth reviewing. (`core/benchmark/` sweep configs and the
 | Struct | Header | Controls | Fields worth reviewing |
 |---|---|---|---|
 | `OwnShipNmeaAdapterConfig` | `adapters/own_ship/OwnShipNmeaAdapter.hpp` | Own-ship NMEA parsing: GPS noise, velocity source, heading sources | `uere_m{5.0}`, `gps_heading_talkers{}`, `prefer_rmc_velocity{true}` |
-| `ArpaAdapterConfig` | `adapters/arpa/ArpaAdapter.hpp` | Radar TTM/TLL → measurements; TTM speed/course → one-shot birth prior + swap diagnostic (#20) | `heading_std_deg{0.0}`, `position_std_m{50.0}`, `bearing_std_deg{1.0}`, `seed_birth_velocity_from_ttm{true}`, `swap_course_jump_deg{90.0}`, `swap_min_speed_mps{1.0}` |
-| `EoIrAdapterConfig` | `adapters/eoir/EoIrAdapter.hpp` | EO/IR camera heading σ | `heading_std_deg{0.0}` |
+| `ArpaAdapterConfig` | `adapters/arpa/ArpaAdapter.hpp` | Radar TTM/TLL → measurements; TTM speed/course → one-shot birth prior + swap diagnostic (#20) | `heading_std_deg{0.0}` (floor over per-pose σ, #16), `position_std_m{50.0}`, `bearing_std_deg{1.0}`, `seed_birth_velocity_from_ttm{true}`, `swap_course_jump_deg{90.0}`, `swap_min_speed_mps{1.0}` |
+| `EoIrAdapterConfig` | `adapters/eoir/EoIrAdapter.hpp` | EO/IR camera heading σ (floor over per-pose σ, #16) | `heading_std_deg{0.0}` |
 | `RemoteTrackAdapterConfig` | `adapters/remote_track/RemoteTrackAdapter.hpp` | Shore/VTS remote track → pseudo-measurement (R-inflation, rate thinning, velocity opt-in) | `r_inflation_factor{3.0}`, `min_update_interval_s{2.0}`, `default_position_std_m{50.0}`, `accept_velocity{false}` |
 | `AisAdapterConfig` | `adapters/ais/AisAdapter.hpp` | AIS SOG/COG → PositionVelocity2D content (#20), COG down-weighted at low SOG | `emit_velocity_from_sog_cog{true}`, `sog_velocity_min_mps{0.5}`, `sog_std_mps{0.5}`, `cog_std_deg{5.0}`, `velocity_iso_floor_mps{0.3}`, `position_std_high_accuracy_m{10.0}`, `position_std_standard_m{30.0}` |
 | `NavInputGuardConfig` | `core/own_ship/NavInputGuard.hpp` | Fact-free own-ship nav-input sanity flags at the OwnShipProvider edge (#18); flags, never rewrites | `heading_min_sog_mps{0.5}`, `stale_after_s{3.0}`, `max_position_speed_mps{50.0}`, `max_heading_rate_dps{60.0}` |

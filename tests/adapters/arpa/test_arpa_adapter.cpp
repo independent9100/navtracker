@@ -1,4 +1,5 @@
 #include <cmath>
+#include <optional>
 
 #include <gtest/gtest.h>
 #include "adapters/arpa/ArpaAdapter.hpp"
@@ -125,6 +126,37 @@ TEST(ArpaAdapter, HeadingStdInflatesTtmCovariance) {
   // (cov(0,0), along-range) should be unchanged.
   EXPECT_GT(m2[0].covariance(1, 1), m0[0].covariance(1, 1));
   EXPECT_NEAR(m0[0].covariance(0, 0), m2[0].covariance(0, 0), 1e-3);
+}
+
+TEST(ArpaAdapter, PerPoseHeadingStdInflatesAndCfgFloorsIt) {
+  // #16: OwnShipPose.heading_std_deg widens the cross-track covariance beyond
+  // the config floor; a per-pose σ TIGHTER than the floor is clamped to the
+  // floor (never makes the measurement overconfident).
+  const std::string ttm =
+      makeNmea("RATTM,01,1.0,90.0,R,0.0,0.0,T,0.0,0.0,N,TARG1,T,R,123456.78,A");
+  auto crossTrackVar = [&](std::optional<double> pose_sigma, double cfg_floor) {
+    OwnShipProvider provider;
+    OwnShipPose pose;
+    pose.time = Timestamp::fromSeconds(0.0);
+    pose.lat_deg = 53.5;
+    pose.lon_deg = 8.0;
+    pose.heading_true_deg = 0.0;
+    pose.heading_std_deg = pose_sigma;
+    provider.update(pose);
+    ArpaAdapter a(kDatum, provider,
+                  navtracker::ArpaAdapterConfig{/*heading_std_deg=*/cfg_floor});
+    EXPECT_TRUE(a.ingest(ttm, Timestamp::fromSeconds(1.0)));
+    const auto m = a.poll();
+    EXPECT_EQ(m.size(), 1u);
+    return m[0].covariance(1, 1);
+  };
+
+  // Per-pose 6° over a 1° floor widens vs. the floor-only baseline.
+  EXPECT_GT(crossTrackVar(6.0, 1.0), crossTrackVar(std::nullopt, 1.0));
+  // A per-pose 0.1° UNDER a 3° floor is clamped: identical to floor-only.
+  EXPECT_NEAR(crossTrackVar(0.1, 3.0), crossTrackVar(std::nullopt, 3.0), 1e-9);
+  // Absent per-pose σ ⇒ exactly the config-only behaviour (bit-identical).
+  EXPECT_DOUBLE_EQ(crossTrackVar(std::nullopt, 2.0), crossTrackVar(std::nullopt, 2.0));
 }
 
 TEST(ArpaAdapterTest, AppliesPublishedBiasToProjectedBearing) {

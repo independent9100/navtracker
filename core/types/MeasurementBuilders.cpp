@@ -1,5 +1,6 @@
 #include "core/types/MeasurementBuilders.hpp"
 
+#include <algorithm>
 #include <utility>
 
 #include "core/projection/Projection.hpp"
@@ -24,7 +25,8 @@ Measurement buildBearingMeasurement(SensorKind sensor,
                                     double bearing_std_rad,
                                     BearingKind kind,
                                     const OwnShipProvider& provider,
-                                    AssociationHints hints) {
+                                    AssociationHints hints,
+                                    double heading_std_floor_deg) {
   Measurement m;
   m.time = t;
   m.sensor = sensor;
@@ -55,19 +57,23 @@ Measurement buildBearingMeasurement(SensorKind sensor,
       provider.datum().toEnu(geo::Geodetic{pose.lat_deg, pose.lon_deg, 0.0});
   const Eigen::Vector2d own_xy(own_enu_3.x(), own_enu_3.y());
 
+  // #16: heading σ composition. The effective heading uncertainty folded into
+  // the angular covariance is max(per-pose σ, config floor): the floor is the
+  // consumer's static trust bound (a pose claiming implausibly tight heading σ
+  // must NOT make bearing measurements overconfident — the floor can only
+  // widen, never tighten). When the pose carries no per-fix σ AND the floor is
+  // 0 (both defaults), this is 0.0 — exactly the prior behaviour, bit-identical
+  // (heading σ then comes only from bearing_std_rad, which the adapters
+  // pre-inflate, or the caller supplies). projectRangeBearingToEnu adds it in
+  // quadrature with bearing_std_rad on the angular component.
+  const double sigma_heading_deg =
+      std::max(pose.heading_std_deg.value_or(0.0), heading_std_floor_deg);
   const PointAndCov2D proj = projectRangeBearingToEnu(
       range_m,
       bearing_true_rad,
       range_std_m,
       bearing_std_rad,
-      // sigma_heading_rad = 0 deliberately: this convenience builder models
-      // only range + bearing + own-ship GPS-position uncertainty. Heading
-      // (gyro/compass) uncertainty is composed upstream on the sensor
-      // adapters that wire a HeadingBiasEstimator (see ArpaAdapter /
-      // EoIrAdapter `sigma_heading_eff`), which fold it into bearing_std_rad
-      // before calling. Callers not on that path who want heading σ
-      // reflected should inflate bearing_std_rad by their σ_heading.
-      /*sigma_heading_rad=*/0.0,
+      /*sigma_heading_rad=*/sigma_heading_deg * kDeg2Rad,
       pose.position_std_m,
       own_xy);
 
@@ -89,7 +95,8 @@ Measurement makeMeasurementFromRelativeBearing(
     double range_std_m,
     double bearing_std_rad,
     const OwnShipProvider& provider,
-    AssociationHints hints) {
+    AssociationHints hints,
+    double heading_std_floor_deg) {
   return buildBearingMeasurement(sensor,
                                  std::move(source_id),
                                  t,
@@ -99,7 +106,8 @@ Measurement makeMeasurementFromRelativeBearing(
                                  bearing_std_rad,
                                  BearingKind::Relative,
                                  provider,
-                                 std::move(hints));
+                                 std::move(hints),
+                                 heading_std_floor_deg);
 }
 
 Measurement makeMeasurementFromTrueBearing(
@@ -111,7 +119,8 @@ Measurement makeMeasurementFromTrueBearing(
     double range_std_m,
     double bearing_std_rad,
     const OwnShipProvider& provider,
-    AssociationHints hints) {
+    AssociationHints hints,
+    double heading_std_floor_deg) {
   return buildBearingMeasurement(sensor,
                                  std::move(source_id),
                                  t,
@@ -121,7 +130,8 @@ Measurement makeMeasurementFromTrueBearing(
                                  bearing_std_rad,
                                  BearingKind::True,
                                  provider,
-                                 std::move(hints));
+                                 std::move(hints),
+                                 heading_std_floor_deg);
 }
 
 Measurement makeMeasurementFromEnuPosition(

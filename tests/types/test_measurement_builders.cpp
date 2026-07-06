@@ -216,4 +216,73 @@ TEST(MeasurementBuildersTest, EmptyWhenProviderHasNoDatum) {
   EXPECT_EQ(m.covariance.size(), 0);
 }
 
+// ---- #16 per-pose heading σ composition -------------------------------------
+
+namespace {
+// Build a relative-bearing measurement with a given per-pose heading σ and
+// floor, over a fixed geometry, and return its covariance.
+Eigen::Matrix2d covWithHeading(std::optional<double> pose_heading_std_deg,
+                               double floor_deg) {
+  OwnShipProvider provider;
+  const Timestamp t = Timestamp::fromSeconds(10.0);
+  OwnShipPose pose = makePose(t, 59.01, 10.01, 45.0, /*pos_std=*/3.0);
+  pose.heading_std_deg = pose_heading_std_deg;
+  provider.update(pose);
+  const Measurement m = makeMeasurementFromRelativeBearing(
+      SensorKind::ArpaTtm, "TTM", t, /*range=*/1500.0,
+      /*rel_bearing=*/30.0 * kDeg2Rad, /*range_std=*/20.0,
+      /*bearing_std=*/1.0 * kDeg2Rad, provider, /*hints=*/{}, floor_deg);
+  return m.covariance;
+}
+}  // namespace
+
+TEST(MeasurementBuildersHeadingSigma, AbsentPoseAndZeroFloorIsBitIdenticalToNoHeading) {
+  // The default path (no per-pose σ, floor 0) must reproduce the sigma=0
+  // heading contribution exactly — i.e. today's covariance.
+  const Eigen::Matrix2d cov = covWithHeading(std::nullopt, 0.0);
+
+  OwnShipProvider provider;
+  const Timestamp t = Timestamp::fromSeconds(10.0);
+  const OwnShipPose pose = makePose(t, 59.01, 10.01, 45.0, 3.0);
+  provider.update(pose);
+  const Eigen::Vector3d own_3 =
+      provider.datum().toEnu(geo::Geodetic{pose.lat_deg, pose.lon_deg, 0.0});
+  const Eigen::Vector2d own_xy(own_3.x(), own_3.y());
+  const PointAndCov2D expected = projectRangeBearingToEnu(
+      1500.0, 30.0 * kDeg2Rad + 45.0 * kDeg2Rad, 20.0, 1.0 * kDeg2Rad,
+      /*sigma_heading_rad=*/0.0, 3.0, own_xy);
+  for (int i = 0; i < 2; ++i)
+    for (int j = 0; j < 2; ++j)
+      EXPECT_NEAR(cov(i, j), expected.cov(i, j), 1e-9);
+}
+
+TEST(MeasurementBuildersHeadingSigma, PerPoseSigmaWidensCovariance) {
+  // A pose reporting a real per-fix heading σ must inflate the covariance
+  // (larger trace) vs. the no-heading-σ baseline.
+  const double base_trace = covWithHeading(std::nullopt, 0.0).trace();
+  const double wide_trace = covWithHeading(/*pose σ=*/5.0, /*floor=*/0.0).trace();
+  EXPECT_GT(wide_trace, base_trace);
+}
+
+TEST(MeasurementBuildersHeadingSigma, ConfigFloorClampsOverconfidentPoseSigma) {
+  // A pose claiming an implausibly TIGHT heading σ (0.01°) must not make the
+  // measurement more confident than the floor allows: the covariance with a
+  // 3° floor must equal the covariance from a 3° per-pose σ (floor wins), and
+  // exceed the covariance from the tight 0.01° value with no floor.
+  const Eigen::Matrix2d floored = covWithHeading(/*pose σ=*/0.01, /*floor=*/3.0);
+  const Eigen::Matrix2d as_if_3deg = covWithHeading(/*pose σ=*/3.0, /*floor=*/0.0);
+  const Eigen::Matrix2d unfloored = covWithHeading(/*pose σ=*/0.01, /*floor=*/0.0);
+  for (int i = 0; i < 2; ++i)
+    for (int j = 0; j < 2; ++j)
+      EXPECT_NEAR(floored(i, j), as_if_3deg(i, j), 1e-9);
+  EXPECT_GT(floored.trace(), unfloored.trace());
+}
+
+TEST(MeasurementBuildersHeadingSigma, PerPoseSigmaWidensBeyondFloorWhenLarger) {
+  // When the per-fix σ exceeds the floor, the per-fix value wins (only widens).
+  const double floor_only = covWithHeading(std::nullopt, /*floor=*/2.0).trace();
+  const double wider = covWithHeading(/*pose σ=*/8.0, /*floor=*/2.0).trace();
+  EXPECT_GT(wider, floor_only);
+}
+
 }  // namespace navtracker

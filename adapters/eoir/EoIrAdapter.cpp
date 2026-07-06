@@ -1,5 +1,6 @@
 #include "adapters/eoir/EoIrAdapter.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -43,7 +44,12 @@ void EoIrAdapter::ingest(const CameraDetection& d) {
 
   const double bearing_true_rad_corrected = bearing_true_rad - b_hat;
 
-  const double sigma_heading_cfg = cfg_.heading_std_deg * kDeg2Rad;
+  // #16: cfg_.heading_std_deg is the FLOOR; a per-fix pose σ (when the nav
+  // source reports one) can only widen it. Pose σ absent ⇒ floor only,
+  // bit-identical to before. Bias-estimator variance composes in quadrature.
+  const double sigma_heading_deg =
+      std::max(cfg_.heading_std_deg, own_opt->heading_std_deg.value_or(0.0));
+  const double sigma_heading_cfg = sigma_heading_deg * kDeg2Rad;
   const double sigma_heading_eff =
       std::sqrt(sigma_heading_cfg * sigma_heading_cfg + var_b_hat);
 

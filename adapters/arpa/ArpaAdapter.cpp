@@ -1,5 +1,6 @@
 #include "adapters/arpa/ArpaAdapter.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <utility>
@@ -117,7 +118,13 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
 
     const double bearing_true_rad_corrected = bearing_true_rad - b_hat;
 
-    const double sigma_heading_cfg = cfg_.heading_std_deg * kDeg2Rad;
+    // #16: cfg_.heading_std_deg is the FLOOR; a per-fix pose σ (when the nav
+    // source reports one) can only widen it, never tighten it. Pose σ absent ⇒
+    // floor only, bit-identical to before. Then compose the bias-estimator
+    // variance in quadrature as before.
+    const double sigma_heading_deg =
+        std::max(cfg_.heading_std_deg, own_opt->heading_std_deg.value_or(0.0));
+    const double sigma_heading_cfg = sigma_heading_deg * kDeg2Rad;
     const double sigma_heading_eff =
         std::sqrt(sigma_heading_cfg * sigma_heading_cfg + var_b_hat);
 

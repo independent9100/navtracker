@@ -18,18 +18,28 @@ namespace navtracker {
  * `provider.poseAtOrBefore(t)`, adds own-ship heading to the relative
  * bearing, and projects to ENU Position2D via projectRangeBearingToEnu.
  * Composes own-ship GPS position uncertainty from the looked-up pose.
- * sigma_heading is 0 by design: this builder models range + bearing +
- * GPS-position uncertainty only. Heading (gyro/compass) σ is folded into
- * bearing_std_rad upstream by the adapters that wire a HeadingBiasEstimator
- * (ArpaAdapter / EoIrAdapter); callers off that path should pre-inflate
- * bearing_std_rad by their σ_heading.
+ *
+ * Heading (gyro/compass) σ composition (#16): the effective heading
+ * uncertainty folded into the angular covariance (in quadrature with
+ * bearing_std_rad) is `max(pose.heading_std_deg, heading_std_floor_deg)`.
+ * The pose's per-fix `heading_std_deg` (optional) lets a nav source report
+ * heading quality that varies fix-to-fix; `heading_std_floor_deg` is the
+ * caller's static trust bound so an implausibly tight per-fix σ cannot make
+ * measurements overconfident (the floor only widens, never tightens). With
+ * both at their defaults (pose σ absent, floor 0) the heading contribution is
+ * 0 — bit-identical to the prior behaviour, where heading σ came only from
+ * bearing_std_rad (which the ArpaAdapter / EoIrAdapter pre-inflate via a wired
+ * HeadingBiasEstimator, or the caller supplies). This is the composition
+ * helper the bearing-wedge hazard (#17) refers to: pass the wedge a
+ * bearing_sigma composed the same way (camera ⊕ heading).
  *
  * If no pose at-or-before t is available, returns a Measurement with
  * empty value/covariance and `covariance_is_default == false`; callers
  * should drop or buffer these (the situation indicates the sensor
  * arrived before any GPS fix).
  *
- * All angles in radians. Range in meters.
+ * All angles in radians. Range in meters. `heading_std_floor_deg` in DEGREES
+ * (matching OwnShipPose.heading_std_deg).
  */
 Measurement makeMeasurementFromRelativeBearing(
     SensorKind sensor,
@@ -40,12 +50,14 @@ Measurement makeMeasurementFromRelativeBearing(
     double range_std_m,
     double bearing_std_rad,
     const OwnShipProvider& provider,
-    AssociationHints hints = {});
+    AssociationHints hints = {},
+    double heading_std_floor_deg = 0.0);
 
 /**
  * Range + TRUE bearing (already-projected, world-frame). Useful when the
  * sensor pipeline pre-computes true bearings outside this library.
- * Otherwise identical to the relative-bearing variant.
+ * Otherwise identical to the relative-bearing variant, including the #16
+ * `max(pose.heading_std_deg, heading_std_floor_deg)` heading-σ composition.
  */
 Measurement makeMeasurementFromTrueBearing(
     SensorKind sensor,
@@ -56,7 +68,8 @@ Measurement makeMeasurementFromTrueBearing(
     double range_std_m,
     double bearing_std_rad,
     const OwnShipProvider& provider,
-    AssociationHints hints = {});
+    AssociationHints hints = {},
+    double heading_std_floor_deg = 0.0);
 
 /**
  * Absolute ENU position (AIS-style). No pose lookup or projection — the

@@ -35,6 +35,16 @@ struct OwnShipPose {
   double velocity_std_m_per_s{0.0};
   bool velocity_is_valid{false};
 
+  // Per-fix 1-σ uncertainty of `heading_true_deg`, in DEGREES (matching the
+  // heading field convention above). Optional (#16): when the nav source
+  // reports per-fix heading quality that varies (gyro settling, sensor
+  // switchover), set it here and every relative-bearing measurement composed
+  // through this pose will widen its bearing covariance accordingly — floored
+  // by the consumer's config σ so an implausibly tight value cannot make
+  // measurements overconfident. Absent ⇒ today's behaviour (heading σ comes
+  // only from the consumer's static config), bit-identical.
+  std::optional<double> heading_std_deg;
+
   // Multi-heading-source fields (v3 NMEA wiring). NaN = not present.
   double gps_true_heading_deg{std::nan("")};
   double gps_true_heading_std_deg{0.0};

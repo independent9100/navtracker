@@ -1,5 +1,6 @@
 #include <cmath>
 #include <limits>
+#include <optional>
 
 #include <gtest/gtest.h>
 #include "adapters/eoir/EoIrAdapter.hpp"
@@ -126,6 +127,38 @@ TEST(EoIrAdapter, HeadingStdInflatesCrossTrackCovariance) {
   // variance — should grow. East–east (cov(0,0)) along-range should not.
   EXPECT_GT(m2[0].covariance(1, 1), m0[0].covariance(1, 1));
   EXPECT_NEAR(m0[0].covariance(0, 0), m2[0].covariance(0, 0), 1e-3);
+}
+
+TEST(EoIrAdapter, PerPoseHeadingStdInflatesAndCfgFloorsIt) {
+  // #16: OwnShipPose.heading_std_deg widens the cross-track covariance beyond
+  // the config floor; a per-pose σ tighter than the floor is clamped.
+  navtracker::geo::Datum datum({53.5, 8.0, 0.0});
+  auto crossTrackVar = [&](std::optional<double> pose_sigma, double cfg_floor) {
+    navtracker::OwnShipProvider provider;
+    navtracker::OwnShipPose pose;
+    pose.lat_deg = 53.5;
+    pose.lon_deg = 8.0;
+    pose.heading_true_deg = 0.0;
+    pose.time = navtracker::Timestamp::fromSeconds(0.0);
+    pose.heading_std_deg = pose_sigma;
+    provider.update(pose);
+    navtracker::EoIrAdapter a(
+        datum, provider,
+        navtracker::EoIrAdapterConfig{/*heading_std_deg=*/cfg_floor});
+    navtracker::CameraDetection d;
+    d.time = navtracker::Timestamp::fromSeconds(1.0);
+    d.bearing_relative_deg = 90.0;
+    d.range_m = 1000.0;
+    d.bearing_std_deg = 0.5;
+    d.range_std_m = 10.0;
+    a.ingest(d);
+    const auto m = a.poll();
+    EXPECT_EQ(m.size(), 1u);
+    return m[0].covariance(1, 1);
+  };
+
+  EXPECT_GT(crossTrackVar(6.0, 1.0), crossTrackVar(std::nullopt, 1.0));
+  EXPECT_NEAR(crossTrackVar(0.1, 3.0), crossTrackVar(std::nullopt, 3.0), 1e-9);
 }
 
 TEST(EoIrAdapterTest, AppliesPublishedBiasToProjectedBearing) {
