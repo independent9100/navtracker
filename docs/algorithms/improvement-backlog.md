@@ -856,3 +856,46 @@ scenario's assertion robust (tolerance / cardinality band instead of a pinned
 point, per the freeze-commit rule), or nudge that config's birth threshold off
 the borderline so the decision is not epsilon-sensitive. Cheap; do it before
 the clutter/birth investigation so its replays don't trip on this.
+
+---
+
+## 22. Parallelize the PMBM hot loop (design item — determinism is the hard part)
+
+**Problem.** The tracker is single-threaded (99% of one core). After the
+2026-07-06 perf arc (Murty K=1 early exit 12.4×; mechanical sympathy 1.5–1.66×)
+the remaining per-scan cost is the cost-matrix / per-mode measurement update,
+which is embarrassingly parallel across (Bernoulli, measurement) pairs.
+Plausible win on deployment-class multicore hardware: 3–6×. This is the last
+big *mechanical* lever; everything cheaper has been done or priced
+(see `docs/baselines/2026-07-06_perf_round3.md`).
+
+**Why it is a DESIGN item, not a perf fix.** Two invariants stand in the way:
+
+1. **Deterministic replay (architecture invariant 4).** Naive parallel
+   reduction reorders floating-point sums → same log no longer replays to
+   identical output. Any design must make merge order deterministic
+   (fixed-partition scheduling, ordered reduction, or per-pair results
+   written to indexed slots and reduced sequentially — the last one is the
+   simple safe shape: parallelize the *independent* work, keep every
+   *combining* step sequential and ordered).
+2. **Library thread policy.** navtracker is a library; consumers must control
+   threading (embedders may forbid spawned threads, or want to supply their
+   own executor). Concurrency must be per-instance, ctor-threaded
+   configuration (never global — same rule as all toggles), default =
+   single-threaded = today's behavior bit-identical.
+
+**Proposal sketch (when triggered).** Parallel map over cost-matrix rows into
+preallocated indexed storage; sequential ordered reduction; worker count a
+per-instance config (0/1 = off). Determinism test extended: same log, N
+threads vs 1 thread → identical output (this becomes a standing gate).
+
+**Trigger.** A measured deployment compute budget that the single-threaded
+tracker fails — NOT speculative. Deployment-representative feed currently
+runs at 10× realtime margin single-threaded; nothing is throttled. If
+triggered: fresh profile first (round-3 changed the hot path; its profile is
+already stale), then the lossless gate prefilter (cheap distance bound
+skipping hopeless pairs — likely 1.3–1.5× at high density) BEFORE reaching
+for threads.
+
+Raised 2026-07-06 (post-round-3 review: "sure there are no more performance
+gains?"). Cross-ref: north-star runtime row; `docs/baselines/2026-07-06_perf_round3.md`.
