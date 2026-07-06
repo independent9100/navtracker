@@ -1,0 +1,3 @@
+workload,wall_full_s,wall_fastmetrics_s,metrics_tax_pct,scan_interval_ms,scan_proc_mean_ms,scan_proc_p95_ms,scan_proc_p99_ms,scan_proc_max_ms,n_scans,max_fits_interval,peak_rss_mb
+decimated,44.2,43.5,1.7,148,20.6885,24.9676,28.9272,41.1178,1998,yes_3.6x,93
+raw_density,163.4,146.5,10.3,148,73.5595,85.5647,92.626,101.727,1998,yes_1.45x,168
