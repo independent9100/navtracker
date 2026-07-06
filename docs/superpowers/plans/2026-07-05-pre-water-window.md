@@ -22,8 +22,12 @@ when the water date firms.
 
 ## Tier 2 — measurement integrity + unused data (cheap, parallel)
 
-6. **D2 Stone Soup GOSPA cross-validation** — STILL NEVER DONE; two
-   truth-fragmentation bugs argue for it. ~half day.
+6. **D2 Stone Soup GOSPA cross-validation** — DONE 2026-07-06 (b5b3ea5):
+   kernel == Stone Soup to 1.42e-14 on 1 sim + 1 real arm, conventions
+   matched (c=20/p=2/α=2); both prior metric incidents confirmed as
+   truth-grouping faults UPSTREAM of the now-validated kernel. Exporter +
+   re-runnable tool shipped (`tools/stonesoup_gospa_crosscheck.py`).
+   See `docs/algorithms/gospa-crosscheck.md`.
 7. **D7 MOANA feasibility** — the only in-hand path to (a) real radar
    with NON-AIS truth and (b) a **Doppler-capable radar** (W-band) to
    prototype the increment-8 Doppler direction before hardware answers
