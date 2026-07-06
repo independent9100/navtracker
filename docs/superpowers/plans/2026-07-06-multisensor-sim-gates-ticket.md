@@ -1,6 +1,6 @@
 # Implementer prompt — multi-sensor sim gates: Layer 1+3 skeleton + first scenario battery
 
-Status: ready to hand off. Paste everything below the line to the implementer
+Status: DONE 2026-07-06 (3d9543a, merged; suite 1058/1058 on merge). 6-scenario battery live behind --with-simms; first controlled fusion-vs-radar-only numbers (fusion ~2x on ais_dropout OSPA 33 vs 67); clutter_burst discriminator bites (+2.5/+3.5 card_err — the future lambda_C gate); ADR-0002 camera-only wedge canary PASS; out-of-model maneuvers cost identity not position (MHT 12.5 id-switches vs PMBM 0). #20 loader gap reproduced (follow-up filed in backlog). Paste everything below the line to the implementer
 agent. Origin: the 2026-07-06 simulation survey
 (`docs/superpowers/plans/2026-07-06-multisensor-sim-survey.md` — READ IT
 FIRST, it is the design document this ticket executes). Motivation: every
