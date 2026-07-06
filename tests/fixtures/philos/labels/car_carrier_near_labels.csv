@@ -1,0 +1,38 @@
+# Video-derived existence/region labels for the philos `car_carrier_near` clip.
+# Produced by the 2026-07-06 operator video + frame/radar cross-reference pass
+# (ticket R8.8 step 4 — the OCCLUSION pass). These are NOT kinematic truth —
+# see core/benchmark/ExistenceLabel.hpp and
+# docs/superpowers/plans/2026-07-02-static-branch-review-fixes.md (R8.8).
+#
+# Clip context: Boston Inner Harbor, 2020-10-22 bag, 120.99 s
+# (unix 1603390014.90 -> 1603390135.89), NO AIS (receiver absent on 2020
+# campaigns), ~50 Hz radar (5117 returns). Extraction: re-extracted 2026-07-06
+# (3855efd) after the rotated-clip fix — heading from quaternion yaw
+# (~2 deg convention residual documented in the eval log).
+#
+# THE OCCLUSION ARCHETYPE (why this pass exists): the moored-yacht region
+# `unknown_w860` is present the ENTIRE clip but radar-silent t 50-85 s —
+# GENTLE LEADER's hull crosses its bearing at ~150-250 m and blocks
+# line-of-sight (returns cease and resume at the same cell; verified in both
+# video and the plot timeline). A coverage-decay LOS/shadow test must assert
+# that those scans are NOT treated as observed-empty for that region.
+# BONUS: the same yachts are also CAMERA-hidden behind the carrier at clip
+# start (center camera until ~20 s / ~36 s) — a second, camera-side occlusion.
+#
+# Camera-evidence caveat (operator): the left camera is SHAKY — the yachts
+# repeatedly leave the frame for stretches. Out-of-frame is "not observed",
+# never "observed empty" (relevant to any evict_camera_empty-style use).
+#
+# t_start_s / t_end_s are RELATIVE to the clip's first ownship timestamp
+# (1603390014.90). Blank window = whole clip. `notes` is the last column and
+# may contain commas.
+region_id,source_rank,lat,lon,radius_m,t_start_s,t_end_s,label,evidence,confidence,notes
+carrier_gl_a,nearestbig60,42.359843,-71.038665,120,40,80,KEEP_VESSEL,video (name GENTLE LEADER readable) + radar nearest-big,high,NYK car carrier crossing port side; enters left cam ~20 s; spans camera FOV boundary ~60 s
+carrier_gl_b,nearestbig95,42.359568,-71.039011,120,80,110,KEEP_VESSEL,video+radar closest large return ~143-187 m,high,same vessel late leg; starts exiting left cam ~77 s; gone from cams by ~105 s
+unknown_w860,r4unknown,42.358300,-71.046400,50,,,KEEP_VESSEL,video (two moored white motor yachts) + radar 16-return/25 m cluster + shadow timeline,high,THE R4 UNKNOWN RESOLVED: moored motor yacht(s); radar-shadowed 50-85 s by GENTLE LEADER (present but occluded — the LOS test row); also camera-hidden until ~20/36 s at clip start
+yacht_moored_2,operator,42.358500,-71.045600,60,,,KEEP_VESSEL,video (second moored white yacht close to first; visible from ~36 s center cam),med,operator: both yachts close together; moored; position approximate (offset from unknown_w860)
+yacht_exit_port,operator,42.357200,-71.034800,80,0,12,KEEP_VESSEL,video (left cam: motor yacht slowly exits left 0:00-0:12),high,moving; heads toward port-aft sector; possibly related to portq_object but range mismatch unresolved
+portq_object,nearestbig30,42.355955,-71.035765,80,0,60,SUPPRESS_STRUCTURE,radar-only (big returns 210-250 m port quarter t 0-60; nothing visible in any camera per operator),low-med,class UNKNOWN — out of camera FOV; structure label provisional; NOT corroborated by video; revisit if this region matters
+sail_pair,operator,42.358600,-71.037500,150,6,121,KEEP_VESSEL,video (operator: 2 sailboats right of center cam from 0:06; circle each other to ~60 s then follow carrier; one crosses the other),high,TWO vessels in one region (angularly unresolvable at times — id-churn stress case); position approximate mid-river
+sail_third,operator,42.359200,-71.039500,120,40,110,KEEP_VESSEL,video faint + radar (operator: 3 small blobs in a line at ~71 s),med,third boat behind the pair; farther away; hard to see visually
+sail_close_end,operator,42.359500,-71.038900,80,107,121,KEEP_VESSEL,video (left cam: sailboat enters 1:47 to mid-screen) + radar small 88 m port-bow return,med-high,likely the 88 m/23-cell close return t 110-121 (NOT the carrier — carrier is bigger and further by then); passes in front of moored yachts ~107 s

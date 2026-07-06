@@ -374,6 +374,39 @@ correct. Doc: `docs/algorithms/gospa-crosscheck.md`. Out of scope (parked): a
 convention-mismatch audit of Stone Soup's *time-series* GOSPA (switching term)
 and running Stone Soup's own trackers as a baseline.
 
+## 2026-07-06 — R8.8 occlusion labelling pass (car_carrier_near): shadow interval MEASURED; R4 UNKNOWN resolved as moored yachts [Cl-3 / ADR 0002]
+
+Operator (user) + analyst video/frame/radar cross-reference on the re-extracted
+clip (3855efd). Labels: `tests/fixtures/philos/labels/car_carrier_near_labels.csv`
+(committed; same format/discipline as sunset_cruise/close_approach).
+
+**The occlusion archetype is now a measured, labeled case.** The R4 UNKNOWN at
+(42.3583, -71.0464) — uncharted, in-coverage, radar-supported across two
+clips — is RESOLVED by video: **two moored white motor yachts** (~860 m W of
+own-ship track). Present the ENTIRE clip, but radar-silent **t 50-85 s**
+(7 consecutive empty 5-s bins) exactly while NYK **GENTLE LEADER** (name read
+off the bow on video) crosses that bearing at 150-250 m: returns cease and
+resume at the SAME cell. Bonus: the same yachts are CAMERA-hidden behind the
+carrier at clip start (center camera until ~20 s / ~36 s) — one clip, two
+occlusion modalities (radar LOS + camera LOS).
+
+**What this enables (the R8.8 question):** a coverage-decay LOS/shadow test —
+those 35 s of scans must NOT count as observed-empty for the yacht region
+(`unknown_w860` row is the assertion target). Whether the decay sector model
+needs an explicit LOS guard or shadow-induced false-fires stay negligible is
+now decidable against ground truth instead of argument.
+
+**Operator caveat recorded in the labels:** left camera is shaky — objects
+repeatedly leave the frame; out-of-frame is "not observed", never
+"observed empty" (constraint on any evict_camera_empty-style evidence).
+
+**Residuals:** port-quarter big radar object (210-250 m, t 0-60) not visible
+in any camera — labeled radar-only, class unknown, provisional
+SUPPRESS_STRUCTURE. Camera-bearing YOLO chain deliberately NOT used for
+labelling (circularity: these labels will test camera corroboration); running
+it on this clip as a machine-vs-operator comparison is a named follow-up.
+R8.8 is now FULLY closed (code half 3855efd + this pass).
+
 ## 2026-07-06 — Raw-density (undecimated) realtime check post-Murty-fix: keeps up (2.0×), fails the ≥5× margin gate [Cl-3]
 
 Question: after the Murty fix, is clustering-first decimation still a

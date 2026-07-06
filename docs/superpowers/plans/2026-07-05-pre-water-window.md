@@ -41,9 +41,11 @@ when the water date firms.
    --all); re-extracted 8739 rows, rotation undone (shore-median 121->50 m);
    R4 re-check: coverage IMPROVES (UNION@50m 53.6->59.5%), the
    (42.3583,-71.0464) UNKNOWN SURVIVES with robust support (16 returns/25 m,
-   87% of clip) — now the top question for the video pass. REMAINING: the
-   occlusion labelling session (user + analyst; clip ready, closest approach
-   t_rel 110-120 s, no AIS on 2020 bags).
+   87% of clip) — now the top question for the video pass. LABELLING PASS DONE
+   2026-07-06: R8.8 FULLY CLOSED — shadow interval measured (yachts radar-
+   silent 50-85 s behind GENTLE LEADER, present whole clip), R4 UNKNOWN
+   resolved = moored motor yachts, labels committed
+   (car_carrier_near_labels.csv), LOS-guard test now buildable against truth.
 10. **ais_ferry_far + almost_cross measurement pass** — DONE 2026-07-06
     (09edb64): PMBM ~46-54 m radar-only vs AIS truth (19 s spot check,
     stated weight); AIS fusion transforms mechanics (MHT lifetime 0->0.42);
