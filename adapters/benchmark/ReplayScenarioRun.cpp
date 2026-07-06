@@ -162,9 +162,13 @@ class PhilosScenarioRun : public ScenarioRun {
     // Build measurement set — AIS included as measurements unless radar-only
     // (it provides vessel IDs / AIS tracks); AIS measurements are not the same
     // as AIS truth, so the truth build below is independent of this gate.
+    // #20 pricing (mechanics only — philos truth is AIS-derived, so a velocity
+    // arm scored against it is CIRCULAR; labelled as such in the eval-log).
+    // Default OFF => byte-identical Position2D.
+    const bool ais_velocity = !envOr("PHILOS_AIS_VELOCITY", "").empty();
     if (fileExists(ais_csv)) {
       const auto ais = navtracker::replay::loadAisCsv(
-          ais_csv, provider.datum(), "ais");
+          ais_csv, provider.datum(), "ais", ais_velocity);
       s.measurements.reserve(radar.size() + (radar_only ? 0 : ais.size()));
       if (!radar_only)
         s.measurements.insert(s.measurements.end(), ais.begin(), ais.end());

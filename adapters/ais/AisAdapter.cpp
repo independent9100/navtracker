@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "adapters/util/EdgeValidation.hpp"
+#include "core/estimation/PolarVelocity.hpp"
 
 namespace navtracker {
 
@@ -40,31 +41,21 @@ void AisAdapter::ingest(const AisDynamicReport& r) {
   const double sog_mps = has_speed ? *r.sog_knots * kKnotsToMps : 0.0;
   if (cfg_.emit_velocity_from_sog_cog && has_speed && has_course &&
       sog_mps >= cfg_.sog_velocity_min_mps) {
+    // SOG/COG → ENU velocity + covariance via the shared polar-Jacobian helper
+    // (core/estimation/PolarVelocity.hpp) — the identical math the replay
+    // loadAisCsv path uses, so the two cannot drift (backlog #20).
     const double cog = *r.cog_deg * kDeg2Rad;  // true, clockwise from north
-    const double s = std::sin(cog), c = std::cos(cog);
-    const double ve = sog_mps * s;  // east  = SOG·sin(COG)
-    const double vn = sog_mps * c;  // north = SOG·cos(COG)
+    const EnuVelocity2D vel =
+        sogCogToEnuVelocity(sog_mps, cog, cfg_.sog_std_mps,
+                            cfg_.cog_std_deg * kDeg2Rad,
+                            cfg_.velocity_iso_floor_mps);
     m.model = MeasurementModel::PositionVelocity2D;
     Eigen::VectorXd v(4);
-    v << enu.x(), enu.y(), ve, vn;
+    v << enu.x(), enu.y(), vel.velocity.x(), vel.velocity.y();
     m.value = v;
-
-    // Velocity covariance via the polar Jacobian of v = SOG·[sin,cos] w.r.t.
-    // (SOG, COG): J = [[sin, SOG·cos], [cos, −SOG·sin]] (cols d/dSOG, d/dCOG).
-    // At low SOG the COG column vanishes, leaving a rank-1 (overconfident cross-
-    // track) block — the isotropic floor prevents that degeneracy.
-    const double s_sog = cfg_.sog_std_mps;
-    const double s_cog = cfg_.cog_std_deg * kDeg2Rad;
-    Eigen::Matrix2d J;
-    J << s, sog_mps * c, c, -sog_mps * s;
-    Eigen::Matrix2d D = Eigen::Vector2d(s_sog * s_sog, s_cog * s_cog).asDiagonal();
-    Eigen::Matrix2d cov_v = J * D * J.transpose() +
-                            Eigen::Matrix2d::Identity() *
-                                (cfg_.velocity_iso_floor_mps *
-                                 cfg_.velocity_iso_floor_mps);
     Eigen::MatrixXd R = Eigen::MatrixXd::Zero(4, 4);
     R.topLeftCorner<2, 2>() = Eigen::Matrix2d::Identity() * (sigma * sigma);
-    R.bottomRightCorner<2, 2>() = cov_v;
+    R.bottomRightCorner<2, 2>() = vel.covariance;
     m.covariance = R;
   } else {
     m.model = MeasurementModel::Position2D;

@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/estimation/PolarVelocity.hpp"
 #include "core/types/Ids.hpp"
 #include "core/types/Timestamp.hpp"
 
@@ -47,6 +48,9 @@ struct ColumnMap {
   int mmsi{-1};
   int lat{-1};
   int lon{-1};
+  int sog{-1};         // m/s (backlog #20; only read when emit_velocity)
+  int cog{-1};         // deg, marine/true (N=0 CW)
+  int nav_status{-1};  // AIS navigational status code 0..15
 };
 
 ColumnMap detectColumns(const std::vector<std::string>& header) {
@@ -62,6 +66,13 @@ ColumnMap detectColumns(const std::vector<std::string>& header) {
       m.lat = i;
     else if (m.lon < 0 && (h == "lon" || h == "longitude" || h == "longitude_degrees"))
       m.lon = i;
+    else if (m.sog < 0 && (h == "sog" || h == "sog_mps" || h == "sog_ms"))
+      m.sog = i;
+    else if (m.cog < 0 && (h == "cog" || h == "cog_deg"))
+      m.cog = i;
+    else if (m.nav_status < 0 && (h == "nav_status" || h == "navstatus" ||
+                                  h == "status"))
+      m.nav_status = i;
   }
   return m;
 }
@@ -108,7 +119,8 @@ bool parseTimeString(const std::string& s, Timestamp& out) {
 
 std::vector<Measurement> loadAisCsv(const std::string& path,
                                     const geo::Datum& datum,
-                                    std::string source_id) {
+                                    std::string source_id,
+                                    bool emit_velocity) {
   std::vector<Measurement> out;
   std::ifstream f(path);
   if (!f) return out;
@@ -119,10 +131,16 @@ std::vector<Measurement> loadAisCsv(const std::string& path,
   splitLine(line, fields);
   const ColumnMap cols = detectColumns(fields);
   if (cols.time < 0 || cols.lat < 0 || cols.lon < 0) return out;
+  // Velocity content only when explicitly requested AND the CSV carries both
+  // SOG and COG. Off (or missing columns) reproduces the historical Position2D
+  // output bit-for-bit — the default-off byte-identical contract (#20).
+  const bool want_velocity = emit_velocity && cols.sog >= 0 && cols.cog >= 0;
 
   while (std::getline(f, line)) {
     if (!splitLine(line, fields)) continue;
-    const int max_col = std::max({cols.time, cols.mmsi, cols.lat, cols.lon});
+    int max_col = std::max({cols.time, cols.mmsi, cols.lat, cols.lon});
+    if (want_velocity) max_col = std::max({max_col, cols.sog, cols.cog});
+    if (cols.nav_status >= 0) max_col = std::max(max_col, cols.nav_status);
     if (max_col >= static_cast<int>(fields.size())) continue;
     Timestamp t;
     if (!parseTimeString(fields[cols.time], t)) continue;
@@ -141,10 +159,49 @@ std::vector<Measurement> loadAisCsv(const std::string& path,
     m.time = t;
     m.sensor = SensorKind::Ais;
     m.source_id = source_id;
-    m.model = MeasurementModel::Position2D;
-    m.value = Eigen::Vector2d(enu.x(), enu.y());
-    m.covariance = Eigen::Matrix2d::Identity() * (kAisDefaultSigma * kAisDefaultSigma);
+
+    // #20 velocity content: same rules as AisAdapter increment 2 — SOG/COG from
+    // the target's own GPS become PositionVelocity2D above the SOG threshold
+    // (below it COG is meaningless → Position2D). CSV SOG is already m/s, so no
+    // knots conversion; the polar-Jacobian + isotropic-floor math is the SHARED
+    // helper so replay and NMEA paths cannot diverge.
+    const double sog_mps =
+        (want_velocity) ? std::strtod(fields[cols.sog].c_str(), nullptr) : 0.0;
+    const double cog_deg =
+        (want_velocity) ? std::strtod(fields[cols.cog].c_str(), nullptr) : 0.0;
+    const bool use_velocity = want_velocity && sog_mps >= kAisSogVelocityMinMps &&
+                              cog_deg >= 0.0 && cog_deg < 360.0;
+    if (use_velocity) {
+      const double cog_rad = cog_deg * (M_PI / 180.0);
+      const EnuVelocity2D vel = sogCogToEnuVelocity(
+          sog_mps, cog_rad, kAisSogStdMps, kAisCogStdDeg * (M_PI / 180.0),
+          kAisVelocityIsoFloorMps);
+      m.model = MeasurementModel::PositionVelocity2D;
+      Eigen::VectorXd v(4);
+      v << enu.x(), enu.y(), vel.velocity.x(), vel.velocity.y();
+      m.value = v;
+      Eigen::MatrixXd R = Eigen::MatrixXd::Zero(4, 4);
+      R.topLeftCorner<2, 2>() =
+          Eigen::Matrix2d::Identity() * (kAisDefaultSigma * kAisDefaultSigma);
+      R.bottomRightCorner<2, 2>() = vel.covariance;
+      m.covariance = R;
+    } else {
+      m.model = MeasurementModel::Position2D;
+      m.value = Eigen::Vector2d(enu.x(), enu.y());
+      m.covariance =
+          Eigen::Matrix2d::Identity() * (kAisDefaultSigma * kAisDefaultSigma);
+    }
     if (mmsi != 0) m.hints.mmsi = mmsi;
+    // nav_status corroboration cue (ADR 0002 / R3): surface it when the column
+    // is present and requested. Gated with the velocity toggle (same flag) so
+    // default-off stays byte-identical; 15 = undefined is dropped at the edge.
+    if (emit_velocity && cols.nav_status >= 0) {
+      char* end = nullptr;
+      const long ns = std::strtol(fields[cols.nav_status].c_str(), &end, 10);
+      if (end != fields[cols.nav_status].c_str() && ns >= 0 && ns <= 14) {
+        m.hints.nav_status = static_cast<std::uint8_t>(ns);
+      }
+    }
     out.push_back(std::move(m));
   }
   std::sort(out.begin(), out.end(),
