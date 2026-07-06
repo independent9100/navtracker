@@ -8,6 +8,83 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-06 — D8 R-BAD berthing dataset: feasibility GO (with a regime caveat) [Cl-3 feasibility; no extraction done]
+
+Feasibility-only assessment of the R-BAD dataset (pre-water item 8,
+`docs/superpowers/plans/2026-07-02-data-expansion-todos.md` §D8). Verdict:
+**GO** — proceed to the D8 next step (extract 1–2 station-hours as fixtures +
+a label-scored replay). No extraction performed here; this is a desk check
+against the authoritative Zenodo record + the paper abstract. The MDPI paper
+full text was bot-blocked (403), so four specifics below are flagged
+"confirm-at-extraction" rather than asserted.
+
+**What it is.** "A Comprehensive Radar-Based Berthing-Aid Dataset (R-BAD)",
+MDPI *Electronics* 14(20):4065 (2025), doi:10.3390/electronics14204065.
+Data on Zenodo record 16936465 (doi:10.5281/zenodo.16936465). 69+ h of
+synchronized **FMCW mmWave radar point clouds + video**, collected onboard an
+operational Ro-Ro/Passenger ferry across **13 ports**, covering arrivals,
+departures, port-idle, and cruising.
+
+**License — commercial: GO.** Zenodo license is **CC-BY-4.0** (confirmed via
+the record's API metadata; no NonCommercial clause). Commercial use is
+permitted with attribution — the decisive gate for a TKMS product, and the
+cleanest possible outcome. (Contrast philos: form-gated, research-scoped.)
+
+**Format vs our model: GO, with a sensor-regime caveat.** Two files:
+- `Raw Aggregated Frames Data.zip` (**31.6 GB**): structured radar detections
+  as **CSV** paired with synced **MP4** video. CSV detections parse straight
+  into the `radar_plots.csv` shape the replay adapters already consume — no
+  rosbag/proprietary decode needed (unlike the philos `.bag` or DLR HDF5).
+- `Labelled Buffers Data.zip` (**31.2 MB**): annotated radar detections grouped
+  into buffers for clustering/tracking/classification ML.
+
+  **The caveat that reframes the dataset:** R-BAD is **automotive-band mmWave
+  FMCW radar (60–67 + 77–81 GHz)**, NOT marine X-band. That is a *different
+  sensor class* from philos (Navico broadband ~9 GHz) and HAXR (marine radar):
+  short berthing-range, dense point clouds, different clutter/multipath. So
+  R-BAD corroborates the philos *scene* (piers, moored vessels, near-shore
+  structure) on a *new sensor*, NOT a second marine-radar geography. Its
+  occupancy/clutter numbers will need fresh characterization; philos/HAXR
+  tuning will not transfer. This is the headline: value is a genuinely
+  non-AIS-labelled berthing scene + an hours-scale video substrate, not a
+  marine-radar transfer test.
+
+**Truth honestly available: GO — two independent routes.** (1) Provided
+annotations (the labelled buffers: clustering/tracking/classification labels) —
+real non-AIS labelled truth, the exact "false track actually means false" gap
+D7/D8 target. (2) Synced MP4 supports an independent manual label pass (the
+philos R8 sunset_cruise/close_approach workflow) at hours-scale. Route (2)
+sidesteps the circularity risk in route (1): if the provided labels were
+radar-derived/self-labelled, scoring the detector against them shares a source
+(the standing circularity rule) — so label provenance must be checked before
+any accuracy claim, and video-labelling is the clean fallback.
+
+**Download/storage cost: GO.** ~**31.6 GB** total (31.6 GB raw + 31 MB labels)
+— smaller than the philos tarball set (~25 GB) or a HAXR hour, trivially
+storable. Extracting 1–2 station-hours as fixtures is cheap.
+
+**Confirm-at-extraction (unresolved from metadata + abstract; all live in the
+CSV headers / zip README, i.e. the first extraction hour, not a blocker):**
+(a) detection CSV columns + coordinate frame (Cartesian x/y vs range/azimuth —
+our adapter wants range/azimuth body-frame); (b) annotation schema + label
+provenance (classes? track IDs? manual-from-video vs auto?) — the circularity
+determinant; (c) own-ship **GPS/ego-pose** presence in the released CSVs
+(needed to project body-frame detections to a world/occupancy frame — the
+platform is a *moving* ferry, so the ego-motion-smear question, cf. D4/Reeds,
+applies, though berthing speeds are low); (d) radar max range + scan rate.
+
+**Net.** GO. License is clean for commercial use, data is accessible + cheap +
+CSV-friendly, and honest non-AIS truth exists two ways. The single substantive
+caveat is that R-BAD is a *new sensor regime* (mmWave), so it earns its place
+as a non-AIS-labelled berthing-scene probe and a video-labelling substrate —
+not as a marine-radar tuning confirmation. Recommend it over philos-style
+effort only where the berthing-scene labels or hours-scale duration are the
+point; keep expectations off direct philos/HAXR number transfer.
+
+Sources: Zenodo record 16936465 (CC-BY-4.0, file sizes, description);
+abstract of doi:10.3390/electronics14204065 (mmWave bands, ferry platform,
+detection/tracking/classification scope). Paper full text not accessed (403).
+
 ## 2026-07-06 — Multi-sensor simulation battery: first controlled fusion accuracy gate [Cl-3]
 
 First fusion-accuracy measurement scored against truth INDEPENDENT of every
