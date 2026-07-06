@@ -8,6 +8,55 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-06 — Perf round 2: fresh profile + per-scan latency; no single safe lever left, extraction stays mandatory (batch), but per-scan keeps up [Cl-3]
+
+Branch `perf-round-2` (worktree, off master `ceee0bf`). Ticket
+`docs/superpowers/plans/2026-07-06-perf-round2-ticket.md`. Full writeup +
+tables: `docs/baselines/2026-07-06_perf_round2.{md,csv}`. Motivation: the Murty
+K=1 fix (`45a504d`) removed the old 85 % bucket, so the 2026-07-05 profile is
+obsolete. perf unavailable (`perf_event_paranoid=4`, no TTY sudo) → gprof on a
+separate `-pg` build; **gprof is bucket-ranking only** (demonstrated ~4–15×
+over-attribution of the harness-metrics Hungarian, plus inlining/ICF folding
+artifacts — `gate→initiate` and a 140 M/417 M `CoordinatedTurn::~` bucket that
+the source does not produce).
+
+**Per-scan latency instrumentation shipped** (bench columns `scan_proc_ms_{mean,
+p95,p99,max}` + `scan_interval_s` + `n_scans`; byte-identical, determinism check
+extended to skip the wall-derived `scan_proc_ms_*` like `wall_seconds`). Closes
+the worst-scan blind spot. **Both workloads keep up scan-by-scan**: dec max
+41.1 ms and raw max 101.7 ms both fit inside the 148 ms scan interval (3.6× /
+**1.45×** margin). Scan interval, mean/p95/p99/max in the CSV.
+
+**Fresh profile.** Accurate (chrono / with-without): tracker `processBatch` is
+94 % (dec) / 90 % (raw) of wall; harness metric scoring is 1.7 % (dec) / **10.3 %
+(raw)** — NOT the 27 %/46 % gprof claimed. gprof relative ranking within the
+tracker: the **IMM per-mode measurement update** (`gate` + `predictMeasurement`
+building `H`, `S=HPHᵀ+R`, `S⁻¹`, `det` via LU/LDLT) is the dominant bucket,
+scaling with measurements × Bernoullis × modes; PMBM `bhattacharyya` merge/prune
+~2 %; birth ~1 %; **tracker `murtyKBest` is now 1998 calls / a few % — the 85 %
+bucket is gone** (of 22 479 total Hungarian calls, 20 481 are the metric harness,
+not the tracker). RAW top lever = that IMM measurement-update linear algebra.
+
+**Safe fixes implemented (harness-only, byte-identical):** (1) the latency
+instrumentation above; (2) `--fast-metrics` (skip OSPA/GOSPA/T-GOSPA/RMSE/NEES/
+NIS scoring) → **raw 163.4→146.5 s (−10.3 %)**, dec within noise; default-off
+reproduces baseline metrics exactly. Full suite **1044/1044** green.
+
+**Priced findings (arbiter, NOT implemented):** Position2D `H`-elision
+(`H·P·Hᵀ ≡ P.topLeft(2,2)` bit-for-bit; ~5–8 % but blast radius = all estimators,
+own ticket); coarse position-box gate prefilter (bigger win but changes gating →
+result-affecting); sparse/gated LSAP **deprioritised** (tracker assignment no
+longer hot post-fix).
+
+**Verdict (unchanged, refined):** code-only SAFE fixes **cannot** bring raw
+under 57 s — the tracker `processBatch` floor alone is ~147 s (needs ~2.6×,
+only via result-changing algorithm). **Front-end extraction stays
+deployment-MANDATORY for the ≥5× batch-throughput margin gate.** Refinement for
+the arbiter: that gate is a *throughput margin*, not a *streaming-feasibility*
+bound — per-scan the worst scan fits the interval (1.45×) at raw density, so the
+tracker keeps up live without extraction. North-star verdict cell left unchanged
+(nuance flagged, not edited).
+
 ## 2026-07-06 — D2 GOSPA cross-validation: navtracker == Stone Soup to FP epsilon on one sim + one real run [measurement integrity]
 
 Question: after two truth-fragmentation bugs (autoferry 2026-06-10, harbor

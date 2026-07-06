@@ -48,6 +48,20 @@ struct BenchStep {
 struct BenchResult {
   std::vector<BenchStep> steps;
   std::vector<BenchSink::Event> sink_events;  // full lifecycle stream
+
+  // Per-scan latency instrumentation (perf round 2). One entry per scan
+  // (= one processBatch call) across the whole run, both the truth-tick
+  // flushes and the post-truth drain. `scan_process_seconds[i]` is the
+  // wall-clock time the tracker spent on that scan (processBatch only —
+  // the post-scan bias hook is excluded, it is harness bookkeeping not
+  // tracker work). `scan_time_sec[i]` is the scan's DATA timestamp in
+  // seconds; consecutive deltas give the scan interval. Replay means hide
+  // density-spike stalls, so live-realtime cares about the worst scan —
+  // downstream reports mean/p95/p99/max of scan_process_seconds and
+  // whether max fits inside one scan interval. Purely additive: does not
+  // touch tracker output, so bench metrics stay byte-identical.
+  std::vector<double> scan_process_seconds;
+  std::vector<double> scan_time_sec;
 };
 
 /**
