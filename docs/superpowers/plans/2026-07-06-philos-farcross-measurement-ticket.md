@@ -1,6 +1,6 @@
 # Implementer prompt — ais_ferry_far + almost_cross measurement pass (pre-water Tier 2 #10)
 
-Status: ready to hand off. Paste everything below the line to the implementer
+Status: DONE 2026-07-06 (09edb64, suite 1052/1052). Headline: PMBM ~46-54 m position accuracy (radar-only vs AIS truth, 19 s spot check, missed-dominated); radartruth relabeled everywhere (AIS-in-radar-frame, consistency check only); independence audit CLEAN (no shipped result was load-bearing on it); almost_cross ADR-0002 canary PASS. Findings for arbiter: #20 SOG/CoG unreachable via replay (loadAisCsv Position2D-only); bench cannot score truthless clips. Paste everything below the line to the implementer
 agent. Origin: pre-water window item 10 (`docs/superpowers/plans/
 2026-07-05-pre-water-window.md`). Held-out duty was discharged on
 sailboats_busy (2026-07-05, 3H/1M/4P), so these two philos clips are released

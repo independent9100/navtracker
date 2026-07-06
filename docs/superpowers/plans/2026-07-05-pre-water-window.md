@@ -38,10 +38,13 @@ when the water date firms.
    OPEN (verified 2026-07-05); the shadowing test for the decay sector
    model. Extractor fallbacks + fail-loud guard per ticket. ~1 day
    (video pass = user + analyst).
-10. **ais_ferry_far + almost_cross measurement pass** — held-out duty is
-    discharged (sailboats_busy scored); these two are now usable.
-    `ais_ferry_far` HAS AIS → the only philos clip where accuracy-vs-
-    truth is honestly measurable. ~1 day.
+10. **ais_ferry_far + almost_cross measurement pass** — DONE 2026-07-06
+    (09edb64): PMBM ~46-54 m radar-only vs AIS truth (19 s spot check,
+    stated weight); AIS fusion transforms mechanics (MHT lifetime 0->0.42);
+    almost_cross ADR-0002 persistence canary PASS. Side finding: the
+    "independent" philos_radartruth was AIS-in-radar-frame all along —
+    relabeled everywhere, independence audit CLEAN (nothing shipped was
+    load-bearing on it). See docs/baselines/2026-07-06_philos_farcross.md.
 
 ## Tier 3 — bigger quality fronts (pick AT MOST ONE, design-first)
 
