@@ -81,6 +81,12 @@ KBestResult murtyKBest(const Eigen::MatrixXd& C0, int K) {
     out.assignments.push_back(popped.assignment);
     out.costs.push_back(popped.total_cost);
 
+    // The K-th accepted assignment needs no children: they would only feed
+    // the heap for pops that never happen. At K=1 this skips one LSAP solve
+    // per assigned row per call — the dominant PMBM cost on real workloads
+    // (2026-07-05 runtime probe, docs/baselines/2026-07-05_pmbm_runtime_frontier.md).
+    if (static_cast<int>(out.assignments.size()) == K) break;
+
     Eigen::MatrixXd C_locked = popped.cost;
     const int N = static_cast<int>(popped.assignment.size());
 

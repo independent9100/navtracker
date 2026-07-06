@@ -191,3 +191,22 @@ wants perf-grade confirmation before spending Step-3 effort, re-run once
 call-count attribution (165 721 of 186 202 solves from `murtyKBest`) make the
 conclusion robust to gprof's distortion.
 </content>
+
+## Addendum (2026-07-06) — Step 3 implemented, projection confirmed
+
+The recommended early-exit landed on master the next day (one guarded `break`
+in `Murty.cpp` after the K-th accepted assignment). Re-measured on the same
+workload/invocation (md5-verified fixture, main-tree Release build):
+
+| quantity | probe baseline (RelWithDebInfo) | post-fix (Release) |
+|---|---|---|
+| wall | ~515 s steady-state | **41.6 s** (12.4×) |
+| peak RSS | ~83 MB | 93 MB (build-type delta) |
+| gospa / card_err / lifetime / id | 104.26 / 48.76 / 0.104 / 0 | **104.262 / 48.7626 / 0.104497 / 0** (identical) |
+
+Realtime ratio on this decimated feed: 1.8× slower → **~6.8× faster** than
+realtime. The 12.4× vs the ~6× projection: Release-vs-RelWithDebInfo plus the
+eliminated per-child cost-matrix copies (memory traffic gprof under-attributed).
+Follow-ups (a)/(b) above stay open but non-blocking; the 85 % bucket is gone, so
+re-profile before spending effort on either. Full entry:
+`docs/algorithms/evaluation-log.md` (2026-07-06).

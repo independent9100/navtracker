@@ -8,6 +8,30 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-06 — Murty K-th-assignment early exit: 515 s → 41.6 s (12.4×), output-identical [Cl-3]
+
+Step 3 of the runtime probe, implemented same-day because the fix is one
+guarded `break` in `Murty.cpp` (skip child generation once the K-th assignment
+is accepted — children only feed heap pops that never happen; also removes the
+per-child full cost-matrix copies). Bit-identical by construction at every K;
+the existing Murty tests pin it (K=1 ≡ Hungarian on a 30-trial random batch,
+full K=6 enumeration vs brute force). Full suite **1042/1042** green.
+
+**Re-measure** (same workload/invocation as the probe, md5-verified fixture,
+main-tree Release build): wall **41.6 s** vs the probe's 515 s RelWithDebInfo
+steady-state baseline → **12.4×** (projection was ~6×; the extra factor is
+Release-vs-RelWithDebInfo plus the eliminated child cost-matrix copies, which
+gprof under-attributed). Peak RSS 93 MB (vs 83 — build-type delta, still a
+non-issue). Accuracy **identical to the 6-decimal print**: gospa_mean 104.262 /
+card_err_mean 48.7626 / lifetime_ratio 0.104497 / id_switches 0.
+
+**Takeaway:** PMBM+occupancy on the decimated 285 s kattwyk_08 feed now runs
+**~6.8× faster than realtime** (was 1.8× *slower*) — the deployment realtime
+gate (≥5× margin at 60–100 plots/scan) is met on this workload with room. The
+probe's two named follow-ups (sparse/gated LSAP; `--fast-metrics` bench stride)
+remain open but are no longer blocking anything; re-profile before spending on
+them, since the 85 % bucket is gone and the landscape underneath is unmeasured.
+
 ## 2026-07-05 — PMBM runtime probe: profile + knob sweep (measurement only) [Cl-3]
 
 Branch `pmbm-runtime-probe` (worktree). Ticket
