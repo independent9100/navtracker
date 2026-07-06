@@ -207,14 +207,85 @@ benefits without per-target adaptation.
 - `docs/baselines/2026-06-12_clutter_map*.md` — empirical impact
   of the clutter map.
 
-## 9. What we did not pick, and why
+## 9. Compound-K clutter: when "flat Poisson" is a lie
+
+Everything above assumes clutter is **homogeneous Poisson**: false
+alarms scattered with the same intensity `λ_C` everywhere, each
+cell independent. Real **sea clutter is not like that.** Waves
+come in groups; a swell, a rain cell, or a patch of choppy water
+throws back many returns from one small area for a few seconds,
+then that patch calms and another lights up. The returns are
+**clumpy in space and bursty in time** — the opposite of "spread
+out evenly."
+
+The standard model for this is **compound-K** clutter. Think of it
+as clutter with *two* layers of randomness:
+
+- a slow **texture**: the local clutter power drifts up and down
+  across the picture, patch by patch. We draw it from a **gamma**
+  distribution (a positive, skewed distribution — mostly small
+  with an occasional big spike). A shape parameter `ν` (nu) sets
+  the spikiness: small `ν` = very spiky, large `ν` → back to flat.
+- a fast **speckle**: given a patch's current power, the actual
+  number of returns is a Poisson draw around it.
+
+Multiply the two — gamma texture × Poisson speckle — and the count
+you observe per patch is no longer Poisson but **negative-binomial**:
+same *average* as Poisson, but a much **heavier tail**. Some patches
+are empty; a few are packed.
+
+![Poisson vs compound-K clutter](figures/13-compound-k-clutter.png)
+
+Both panels above have the *same expected number* of false plots.
+The left (Poisson) is evenly spread. The right (compound-K) has the
+same average but forms **clumps** — and a few clumps are dense
+enough to look like a cluster of detections from a real target.
+
+**Why this matters — why it is not just a detail.** A tracker whose
+`λ_C` term assumes flat Poisson sees a compound-K clump and cannot
+explain it as "background": too many points, too close together, for
+the uniform rate it believes in. So it does what it was told to do
+with a surprising pile of detections — it **births tracks**. The
+result is **over-counting**: phantom tracks that flicker in and out
+where the clutter happened to bunch. The uniform-`λ_C` assumption
+does not fail loudly; it fails as a steady stream of false tracks.
+
+**Assumptions of the compound-K model.** (1) The texture varies
+*slowly* relative to the scan rate (it is "frozen" within a patch
+for the dwell). (2) Patches are drawn independently — a real sea
+has spatial correlation the simple per-patch draw omits (a "ways to
+improve" below). (3) The gamma shape `ν` is a property of the sea
+state and radar, not a tuning knob you turn to make a scenario pass.
+
+**Why it is here (the sim-gate rationale).** The multi-sensor
+simulation battery (chapter 17 / `docs/baselines/2026-07-06_sim_multisensor_battery.md`)
+uses compound-K on purpose in its `sim_ms_clutter_burst` scenario.
+A simulation gate that fed the tracker *flat Poisson* clutter would
+be **model-matched**: it would flatter exactly the assumption the
+tracker already makes, and report falsely reassuring accuracy. The
+gate exists to stress the assumption, so it must generate the
+clutter the assumption gets *wrong*. And it does: on that scenario
+both the MHT and PMBM trackers over-count (positive cardinality
+error) precisely because their `λ_C` is uniform — the measured
+signal that a **spatially-varying-λ_C** model (the adaptive clutter
+map, §3.3) is the next thing to test there.
+
+**Ways to improve / test next.** (1) Correlated texture (a smoothed
+random field instead of independent patches) — closer to real sea
+clutter's spatial correlation. (2) Score a spatially-varying-λ_C
+tracker against `sim_ms_clutter_burst` and confirm it beats
+uniform-λ_C on cardinality error (the designed A/B). (3) Tie the
+gamma `ν` to a named sea state so scenarios are labelled by
+condition, not by an opaque number.
+
+## 10. What we did not pick, and why
 
 - **Non-homogeneous Poisson cluster process** — better statistical
   model for clumpy clutter, but estimation is fragile and the
   cost rarely pays back. The clutter map captures most of the
-  benefit.
-- **Negative-binomial clutter** — accounts for overdispersion;
-  same fragility concern.
+  benefit. (Compound-K, §9, is how we *generate* clumpy clutter
+  for the sim gate; estimating it online is the harder problem
+  this bullet is about.)
 - **Per-target adaptive `P_D`** — backlog item; needs careful
   identifiability analysis to avoid feedback loops with the
   tracker's own state.

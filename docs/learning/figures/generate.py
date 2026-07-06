@@ -763,6 +763,58 @@ def fig_clutter_map():
     save(fig, "13-clutter-map.png")
 
 
+def fig_compound_k_clutter():
+    """Poisson vs compound-K radar clutter over a coverage annulus.
+
+    Left: homogeneous Poisson — the flat clutter every tracker's λ_C term
+    assumes. Right: compound-K (gamma texture × Poisson speckle) — spatially
+    clumpy, heavy-tailed, the same expected count. A uniform-λ tracker
+    over-counts on the right (spikes look like target births). This is why the
+    sim battery's clutter scenario uses compound-K (anti-model-matched-optimism).
+    """
+    rng = np.random.default_rng(7)
+    r_min, r_max = 0.3, 8.0  # km
+    n_wedges = 24
+    lam_mean = 60.0 / n_wedges  # expected clutter points per wedge
+
+    def annulus(n, a_lo, a_hi):
+        r = np.sqrt(rng.random(n) * (r_max**2 - r_min**2) + r_min**2)
+        a = rng.uniform(a_lo, a_hi, n)
+        return r * np.cos(a), r * np.sin(a)
+
+    edges = np.linspace(0, 2 * np.pi, n_wedges + 1)
+    # Poisson: uniform intensity per wedge.
+    px, py = [], []
+    for k in range(n_wedges):
+        n = rng.poisson(lam_mean)
+        x, y = annulus(n, edges[k], edges[k + 1]); px.append(x); py.append(y)
+    px, py = np.concatenate(px), np.concatenate(py)
+    # Compound-K: gamma texture (shape nu) modulates each wedge's rate.
+    nu = 0.5
+    tex = rng.gamma(nu, 1.0 / nu, n_wedges)
+    kx, ky = [], []
+    for k in range(n_wedges):
+        n = rng.poisson(lam_mean * tex[k])
+        x, y = annulus(n, edges[k], edges[k + 1]); kx.append(x); ky.append(y)
+    kx, ky = np.concatenate(kx), np.concatenate(ky)
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5.4))
+    for ax, (xx, yy, title) in zip(axes, [
+            (px, py, f"Homogeneous Poisson\n(n={len(px)}, uniform λ_C)"),
+            (kx, ky, f"Compound-K (ν={nu})\n(n={len(kx)}, gamma-modulated λ_C — clumpy)")]):
+        ax.scatter(xx, yy, s=10, c="#aa3333", alpha=0.7, edgecolors="none")
+        ax.scatter([0], [0], marker="^", s=120, c="#1f3a5f", zorder=5)
+        ax.annotate("own-ship", (0, 0), (0.3, 0.6), color="#1f3a5f", fontsize=9)
+        circ = plt.Circle((0, 0), r_max, fill=False, ls="--", color="#999")
+        ax.add_patch(circ)
+        ax.set_xlim(-r_max * 1.1, r_max * 1.1); ax.set_ylim(-r_max * 1.1, r_max * 1.1)
+        ax.set_aspect("equal"); ax.set_title(title)
+        ax.set_xlabel("east (km)"); ax.set_ylabel("north (km)")
+    fig.suptitle("Same expected clutter count, very different spatial structure",
+                 fontsize=12)
+    save(fig, "13-compound-k-clutter.png")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 14 MHT tree
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1559,6 +1611,7 @@ def main():
     fig_gating_ellipse()
     fig_jpda_soft()
     fig_clutter_map()
+    fig_compound_k_clutter()
     fig_mht_tree()
     fig_nis_regimes()
     fig_nis_timeseries()

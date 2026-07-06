@@ -8,6 +8,62 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-06 — Multi-sensor simulation battery: first controlled fusion accuracy gate [Cl-3]
+
+First fusion-accuracy measurement scored against truth INDEPENDENT of every
+sensor by construction (seeded simulation, not AIS-as-truth). Six scenarios,
+seed 0, radar+AIS(+camera). Fixtures: `tests/fixtures/sim_multisensor/` (Python
+generator, local-only/git-ignored; `--with-simms` bench flag,
+`SimMultisensorScenarioRun`). Full table + reproduce commands in
+`docs/baselines/2026-07-06_sim_multisensor_battery.md`. GOSPA c=20 p=α=2.
+No defaults changed; the sim scenarios are additive and self-skip when fixtures
+are absent (bench + suite bit-identical without `--with-simms` / `SIMMS_DIR`).
+
+**Determinism (a deliverable):** trafficgen (COLREG encounter geometry) uses
+stdlib `random`, seeded at the wrapper level (`random.seed`); all numpy draws
+from per-`(scenario,sensor)` `default_rng([seed,salt])`. Generation is a pure
+function of `(scenario,seed)` — byte-identical across processes (verified under
+a changed `PYTHONHASHSEED`) and on-disk fixtures reproduce a fresh regen exactly.
+
+**Headline (MHT `imm_cv_ct_mht`, fusion vs radar-only, OSPA m):** fusion beats
+radar-only where continuity / absolute position matter — `ais_dropout` 33.1 vs
+67.2 (~2×; AIS anchors identity, radar carries the track through the dropout,
+lifetime 0.99 / 0.5 id-switches), `headon` 39.9 vs 61.4, `overtaking` 74.5 vs
+87.2. Radar-only is slightly better on `crossing` (73.4 vs 89.1) and on the
+clutter scenario (127.9 vs 183.8). This is the first controlled
+fusion-vs-single-sensor delta the project has.
+
+**Anti-model-matched-optimism bit (by design):** `sim_ms_clutter_burst`
+(compound-K clutter, NOT flat Poisson) is the only scenario where BOTH trackers
+over-count — MHT `card_err +2.51`, PMBM `+3.48` — because their clutter term
+assumes uniform Poisson. Radar-only over-counts less (+0.93) than fusion. This
+is the designed discrimination target for the clutter/birth-model campaign: a
+spatially-varying-λ model should measurably beat uniform-λ here. The
+rudder-rate-limited maneuvers (outside the CV/CT IMM set) cost identity not
+position: `overtaking` 12.5 id-switches / 16 breaks, `crossing` 7.3 / 8.3, with
+RMSE steady ~25 m.
+
+**ADR-0002 canary:** the radar-silent + AIS-silent camera-only contact in
+`sim_ms_anchored_camera` is present in truth throughout and produces camera
+bearings, but bearing-only cannot birth a track (corroborate-never-initiate), so
+it surfaces as the wedge/hazard channel, not a kinematic track (OSPA ~309 / card
+slightly negative reflect the un-localized contact). Never suppressed to nothing.
+
+**#20 note:** the AIS fixtures carry `sog_mps/cog_deg/nav_status`, but
+`loadAisCsv` still reads only `time/mmsi/lat/lon` (Position2D) — the sim
+scenario-run hits the same SOG/COG-drop gap as the replay loaders. Reported, not
+worked around (out of this ticket's scope).
+
+Fixture checksums (sha256 prefix; own / ais / radar / cam / truth):
+`sim_ms_headon` a4ecaba3 / 68b0c5d4 / 0dc18133 / b12a6528 / d1cfdbb7;
+`sim_ms_crossing` a4ecaba3 / 0a8223d4 / fe0d873a / b12a6528 / 8fb0fb81;
+`sim_ms_overtaking` ef3c5a36 / 8e7e4364 / 05d581a5 / b12a6528 / 5dd53cd0;
+`sim_ms_ais_dropout` a4ecaba3 / 9e8a4f5c / 6f78d623 / b12a6528 / 43bce1cf;
+`sim_ms_clutter_burst` a4ecaba3 / edf43927 / c0513ab2 / b12a6528 / 40b568a0;
+`sim_ms_anchored_camera` b96e109f / 8c870b55 / cf193727 / 9b72a5a9 / 091f23e7.
+(`b12a6528` = header-only empty camera file; only anchored_camera has real
+camera rows. Regenerate: `tests/fixtures/sim_multisensor/README.md`.)
+
 ## 2026-07-06 — CORRECTION: `philos_radartruth` is AIS-derived, not independent radar truth [measurement integrity]
 
 Standing correction (an observation too). Since the `philos_radartruth`
