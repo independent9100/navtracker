@@ -39,8 +39,13 @@ void AisAdapter::ingest(const AisDynamicReport& r) {
   const bool has_course = r.cog_deg.has_value() && *r.cog_deg >= 0.0 &&
                           *r.cog_deg < 360.0;  // 3600 sentinel already > 360
   const double sog_mps = has_speed ? *r.sog_knots * kKnotsToMps : 0.0;
+  // #20 sub-item b: an anchored/moored vessel's watch-circle swing is not a
+  // track velocity — suppress PV content for those nav_status codes (shared
+  // gate with the replay loader, core/estimation/PolarVelocity.hpp).
+  const bool nav_status_static =
+      r.nav_status.has_value() && aisNavStatusSuppressesVelocity(*r.nav_status);
   if (cfg_.emit_velocity_from_sog_cog && has_speed && has_course &&
-      sog_mps >= cfg_.sog_velocity_min_mps) {
+      sog_mps >= cfg_.sog_velocity_min_mps && !nav_status_static) {
     // SOG/COG → ENU velocity + covariance via the shared polar-Jacobian helper
     // (core/estimation/PolarVelocity.hpp) — the identical math the replay
     // loadAisCsv path uses, so the two cannot drift (backlog #20).

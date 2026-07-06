@@ -34,6 +34,19 @@ inline constexpr double kAisSogStdMps = 0.5;           // SOG 1-σ (m/s)
 inline constexpr double kAisCogStdDeg = 5.0;           // COG 1-σ (deg)
 inline constexpr double kAisVelocityIsoFloorMps = 0.3; // isotropic vel-σ floor (m/s)
 
+// AIS navigational-status codes for which target-reported SOG/COG must NOT be
+// turned into PositionVelocity2D content, even above kAisSogVelocityMinMps: an
+// anchored (1) or moored (5) vessel swinging within its watch circle reports
+// transient SOG above the threshold, but that swing is not a track velocity —
+// a PV update pulls the (correctly near-static) track and destabilizes it
+// (#20 sub-item b; priced on the anchored sim gate, see the 2026-07-06 eval-log
+// entry). BOTH the NMEA AisAdapter and the replay loadAisCsv gate on this so
+// the two paths stay identical. Codes: 1 = at anchor, 5 = moored. A negative
+// argument (nav_status absent) never suppresses.
+inline constexpr bool aisNavStatusSuppressesVelocity(int nav_status) {
+  return nav_status == 1 || nav_status == 5;
+}
+
 struct EnuVelocity2D {
   Eigen::Vector2d velocity;    // ENU (east, north), m/s
   Eigen::Matrix2d covariance;  // 2×2, m²/s²

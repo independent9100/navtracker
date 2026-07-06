@@ -8,6 +8,67 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-06 — nav_status-gated velocity suppression (#20 sub-item b): correct guard; proof re-pinned to the right level [Cl-3]
+
+Ships the fix candidate the velocity-path pricing surfaced: an anchored (1) /
+moored (5) vessel's watch-circle SOG must not become PositionVelocity2D content.
+Implemented as a shared predicate `aisNavStatusSuppressesVelocity` in
+`core/estimation/PolarVelocity.hpp`, gated at BOTH call sites (NMEA `AisAdapter`
+and replay `loadAisCsv`) so the paths stay locked together. TDD'd (RED→GREEN):
+`AisAdapter.AnchoredNavStatusSuppressesVelocity`,
+`AisAdapter.MooredSuppressesButUnderwayStillEmitsVelocity`,
+`AisCsvReplay.AnchoredNavStatusSuppressesVelocityWhenOn`, plus the invariant
+pin `AisCsvReplay.AnchoredVesselKinematicsIdenticalOnVsOff`. Full suite
+**1067/1067**.
+
+**Proof, stated at both levels honestly (the acceptance level was corrected —
+see ruling below):**
+
+- **Per-target MEASUREMENT identity for the anchored vessel — MET (the
+  correct-level proof).** With the gate, anchored vessel 601's (nav_status=1)
+  kinematic measurement content — model `Position2D`, position value,
+  covariance — is byte-identical velocity-ON vs velocity-OFF, even on the rows
+  above the SOG threshold (unit-pinned by `AnchoredVesselKinematicsIdenticalOnVsOff`).
+  The only ON/OFF difference is the surfaced `nav_status` hint, which in the
+  `imm_cv_ct_mht` path is metadata-only (copied to `tree_attributes_`, not a
+  veto — verified). So an anchored vessel can no longer destabilize its OWN
+  track via velocity. This is stricter evidence than any aggregate row.
+
+- **Scenario-row inertness — NOT achievable on this fixture (and not by any
+  nav_status gate).** The `sim_ms_anchored_camera` row does not go inert:
+
+  | metric (Δ = ON − OFF, `imm_cv_ct_mht`) | pre-gate | with gate |
+  |---|---|---|
+  | anchored ospa_mean | +10.5 | **+8.5** |
+  | anchored track_breaks | +5.3 | **+5.3 (unchanged)** |
+
+  Decomposition explains why. The fixture bundles anchored 601 (4 AIS rows, only
+  2 above threshold at 0.51/0.59 m/s) with an UNDERWAY vessel 603 (100 rows at
+  9.9 m/s, nav_status=0). The gate suppresses 601's 2 spurious emissions — that
+  is the entire 10.5→8.5 improvement — but 603's velocity is legitimate and
+  correctly untouched. Per-target, 601 still regresses ON (breaks +7, sog_rmse
+  30→87) despite its own stream being identical ON/OFF: pure **cross-target
+  coupling** — 603's velocity churns the shared MHT hypothesis/association state
+  and drags the anchored track with it. That residual is the general continuity
+  regression, **#20 sub-item (a)**, explicitly out of this ticket's scope and
+  not addressable by nav_status gating.
+
+**Ruling (arbiter, 2026-07-06):** the assignment's acceptance criterion ("the
+anchored sim scenario must go inert") was pinned at the wrong level — the
+scenario row measures two things at once (the anchored vessel's emissions AND
+the underway vessel's cross-coupling). The gate's actual promise is that the
+anchored vessel's spurious emissions stop, and the per-target measurement
+identity above proves exactly that. Recorded here so the correction is
+traceable to the arbiter, not silently absorbed.
+
+**Default behavior priced.** `loadAisCsv` default-off (emit_velocity=false):
+byte-identical (gate never fires; confirmed gate_off == pre-gate off on all
+deterministic rows). `AisAdapter` (NMEA, velocity default-on): now suppresses
+velocity for nav_status ∈ {1,5} + SOG>threshold — accepted as the semantically
+correct behavior (watch-circle jitter is not a track velocity); change surface
+is exactly that corner. The gate is narrow: the underway scenarios
+(`sim_ms_headon`, `sim_ms_overtaking`) are byte-identical pre/post gate.
+
 ## 2026-07-06 — Replay AIS loader velocity path (#20) first measured against honest truth [Cl-3]
 
 `loadAisCsv` can now emit PositionVelocity2D (SOG/COG) + `hints.nav_status` from
