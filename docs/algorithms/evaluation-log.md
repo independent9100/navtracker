@@ -39,6 +39,100 @@ single-knob isolation. **Net: no shipped accuracy result was ever load-bearing
 on radartruth independence** — the good outcome. Detail:
 `docs/baselines/2026-07-06_philos_farcross.md`.
 
+## 2026-07-06 — DATA INTEGRITY: `car_carrier_near` rotated-clip fix + fail-loud extractor guard + R4 chart re-check [measurement integrity]
+
+**The bug (established 2026-07-03, R8.8).** `tests/fixtures/philos/out/
+car_carrier_near/` (2020-10-22 bag) had `heading_deg = 0.000` constant and
+only **26 own-ship rows over 120 s** (0.22 Hz). `extract_section.py`'s topic
+lists were written for the 2022 bags: they matched the 2020 bag's sparse
+0.2 Hz `/gnss` decoy for position, found no `Vector3Stamped` heading topic,
+and emitted a `0.0` heading placeholder. Every world-projected radar return
+from the clip was therefore rotated about own-ship by the true heading
+(GPS course ≈ 300°). The bag actually carries dense streams the old lists
+missed: `/sensor/gps/fix` (72 Hz NavSatFix), `/filter/positionlla` (59 Hz),
+`/filter/quaternion` + `/imu/data` (59 Hz attitude).
+
+**Extractor fix + fail-loud guard.** `extract_section.py` now (a) takes
+position from the *single densest* NavSatFix topic present (never a merge,
+so a sparse decoy can't dilute a dense source), `/filter/positionlla`
+(Vector3Stamped `x=lat,y=lon`) only if no NavSatFix exists; (b) derives
+heading from the attitude quaternion `heading = (90 − yaw_ENU) mod 360`
+when no direct heading topic exists. The quaternion convention was verified
+on `ais_ferry_near`, which carries **both** sources: quaternion-derived
+heading equals `/xsens_heading` to **0.2°** (same Xsens filter) and
+`/philos/sbg_heading` to **~2.2°** (known SBG/Xsens inter-unit offset).
+(c) A guard `ownship_integrity_errors` runs *before any file is written* and
+hard-errors — naming the clip and offending series, no placeholder CSV — if
+heading has ≤1 distinct value OR row rate < 1 Hz over the clip span. This is
+the exact failure class that produced the rotated clip; it is now
+impossible to repeat silently. `check_ownship.py --all` runs the same guard
+over every existing `out/*/ownship.csv`. **Demonstrated:** guard FAILS
+loudly on the stashed broken output (0.217 Hz + constant 0.0, both checks
+fire) and PASSES on all seven clips post-fix.
+
+**Re-extraction result.** `car_carrier_near`: **8739 own-ship rows** (72 Hz
+from `/sensor/gps/fix` — denser than the ticket's ~7k estimate, which
+assumed the 59 Hz positionlla), heading **287.9–304.2°, 2179 distinct**,
+consistent with GPS course ≈ 300°. Position source `/sensor/gps/fix`,
+heading source `/filter/quaternion (quaternion yaw)` (recorded in
+`meta.txt`). AIS = **0 rows** (expected — see AIS note). Projection sanity:
+the radar-return centroid world bearing rotates **59.8° → 359.8°** (the
+~300° heading, i.e. the corruption undone) and median distance-to-charted-
+shore drops **121 m → 50 m** (returns-within-100 m-of-shore 44% → 64%) —
+returns now land on the Boston shoreline as near-shore harbour radar must.
+
+Emitted-file sha256 (tracked drift-guard; fixtures are gitignored):
+```
+ownship.csv 6ee33be5d2a5524261c4d16fe731b67afa2dd5325f1e95abced0a0c4330915a2  (8739 rows)
+ais.csv     19899e5e258cb8899be2ea1acee8152bc054169fe7508ad0105bf3c33d22b2be  (0 rows)
+meta.txt    d5a2fbba6aaa019fcedac250fc72bddfbbc19ac25e7464bcc8759812177d5248
+```
+(`radar_plots.csv`, 5117 rows, unchanged — `extract_radar.py` untouched.)
+
+**R4 chart-corroboration re-check** (`charts/philos_chart_coverage.py`,
+pools all 7 clips; car_carrier's rotated cells had contaminated it).
+Before → after (broken vs corrected car_carrier ownship; PNG regenerated):
+
+| metric | before (broken) | after (corrected) |
+|---|---|---|
+| occupied 25 m cells | 6620 | 5796 |
+| expected fixed-structure cells | 1727 | 1755 |
+| obstacles ≤50 m (cells / by-plots) | 51.7% / 48.6% | 58.2% / 52.5% |
+| shoreline ≤50 m (cells) | 39.8% | 45.4% |
+| UNION ≤50 m (cells / by-plots) | 53.6% / 50.0% | 59.5% / 53.5% |
+| UNION ≤75 m (cells / by-plots) | 61.4% / 56.5% | 67.0% / 60.2% |
+
+The rotation had scattered car_carrier's returns into ~824 spurious cells;
+correcting concentrates them onto charted structure/shore, so coverage
+*rises* across the board. The historical R4 headline "**~49.5% chart-
+confirmed structure mass**" (eval-log 2026-07-04 entry, line ~726) was
+computed with the contaminated clip and maps to the *before* UNION@50 m
+by-plots (50.0%); the corrected figure is **~53.5%**. The qualitative claim
+(chart owns the single largest measured target) is unchanged and slightly
+strengthened; the 2026-07-04 entry's `~49.5%` is left as the dated record,
+superseded by this entry.
+
+**The in-coverage UNKNOWN at (42.3583, −71.0464) SURVIVES** — overturning
+the ticket's prior assumption that only `ais_ferry_far` validly supported
+it. Under the broken heading it was a weak 2-clip coincidence (1 + 1
+instantaneous returns). Under corrected geometry `car_carrier_near`
+contributes a **persistent longspan cluster** there: 16 returns within 25 m
+spanning **105 s / 121 s (87%)** of the clip (was 9 returns / 40 s). So the
+cell now qualifies as an expected fixed-structure cell on car_carrier alone
+(longspan) plus the ais_ferry_far return, and remains uncharted + in-
+coverage. The correction did not dissolve the UNKNOWN — it firmed it up.
+It stays a genuine candidate for the occlusion / satellite-resolution pass.
+
+**Standing AIS note.** The 2020 (`car_carrier_near`) and 2021 (`sunset_
+cruise`, prodromos) philos campaigns carry **NO AIS at all** (no receiver
+in the bag — `car_carrier_near` ais.csv is empty from 0 N2K sentences).
+The AIS-veto's real-data validation must therefore come from **HAXR**, not
+philos.
+
+**Suite:** untouched — this is Python fixture tooling + docs only, no C++,
+no config struct, no defaults; the C++ test suite and the integration-guide
+config-coverage test are unaffected.
+
 ## 2026-07-06 — Philos `ais_ferry_far` + `almost_cross` measurement pass (pre-water Tier-2 #10) [Cl-3]
 
 Measurement-only pass on the two released philos clips (held-out duty discharged
