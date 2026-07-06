@@ -899,3 +899,13 @@ for threads.
 
 Raised 2026-07-06 (post-round-3 review: "sure there are no more performance
 gains?"). Cross-ref: north-star runtime row; `docs/baselines/2026-07-06_perf_round3.md`.
+
+**#20 follow-up (2026-07-06, from the philos farcross pass):** the SOG/COG
+velocity path (increment 2) is unreachable via replay — `loadAisCsv` emits
+Position2D only and drops the SOG/COG columns the fixtures carry; #20 lives in
+`AisAdapter` (NMEA path). Follow-up: populate `AisAdapterConfig`-equivalent
+velocity emission in the replay loader behind a default-off toggle
+(default = bit-identical), so the increment-2 path gets its first real-data
+exercise. Not bit-identical when ON → prices through the standing gates.
+Natural companion to the multi-sensor sim Layer-2 AIS emitter (which will
+also carry SOG/COG).
