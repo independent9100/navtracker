@@ -857,6 +857,41 @@ point, per the freeze-commit rule), or nudge that config's birth threshold off
 the borderline so the decision is not epsilon-sensitive. Cheap; do it before
 the clutter/birth investigation so its replays don't trip on this.
 
+**DIAGNOSED + ADDRESSED 2026-07-06 (clutter/birth campaign, Phase 0).** The
+fragile lever is **`lambda_birth`**, NOT `min_new_bernoulli_existence` (a fine
+sweep of the gate over {0.03…0.10} leaves harbor `card_err` bit-flat — it never
+bites here). `adapt_k3` ships `lambda_birth = 1e-5`, which sits exactly on a
+`card_err` cliff (10 seeds, harbor_complete_truth):
+
+| `lambda_birth` | card_err | gospa_false | gospa_missed | lifetime |
+|---|---|---|---|---|
+| ≤ 9.7e-6 | 7.165 (flat, 8 samples) | 1512 | 79 | 0.924 |
+| **1.0e-5 (ships)** | **10.90 (on the cliff)** | 2225 | 45.5 | 0.9615 |
+| ≥ 1.05e-5 | 11.82–11.86 (flat) | 2408 | 36.5 | 0.9725 |
+
+The default is wedged between the 7.165 and 11.82 plateaus, so a ~1e-15 estimator
+perturbation tips one borderline harbor birth across `confirm_threshold` and flips
+the metrics by the small #21 amounts. (Current-master card_err is ~10.9, not the
+9.85/9.375 in the note above — intervening commits `nav_status`/`coverage-decay`
+shifted the harbor scene since perf-r3 priced it; the *fragility mechanism* is
+unchanged.)
+
+**Fix taken (option 1, robust assertion):** the cardinality-band guard test
+`tests/benchmark/test_adapt_k3_harbor_knife_guard.cpp` asserts adapt_k3 harbor
+`card_err`/`gospa_false` stay in bands that bracket the fp-tie with margin; a
+harmless epsilon flip stays green, a real spiral (past the band) or collapse (onto
+the 7.165 low plateau = births over-suppressed / real boats dropped) goes red.
+Zero behavior change → no cross-scenario cascade. During pricing, treat adapt_k3
+harbor rows that move WITHIN the band as fp-tie noise, not drift.
+
+**Option 2 (nudge, NOT taken — left as an arbiter choice):** move `lambda_birth`
+off the cliff. Smallest target-preserving nudge is UP to ~1.1e-5 (card_err
+10.90→11.82, keeps more real targets: gospa_missed 45.5→36.5, lifetime →0.9725).
+DOWN to ≤9.7e-6 reaches 7.165 but drops real anchored boats (gospa_missed 45.5→79)
+— a presence-over-classification regression, not recommended. A nudge changes
+adapt_k3 on every scenario and needs a cross-scenario re-price, so it is a
+deliberate config decision rather than a mechanical Phase-0 defusing.
+
 ---
 
 ## 22. Parallelize the PMBM hot loop (design item — determinism is the hard part)

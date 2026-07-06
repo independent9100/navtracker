@@ -1230,6 +1230,12 @@ std::vector<Config> defaultConfigs() {
       cfg.adaptive_birth = true;
       cfg.adaptive_k_best = true;
       cfg.k_best_per_hypothesis = 3;
+      // NB: this lambda_birth=1e-5 sits on a harbor_complete_truth card_err
+      // CLIFF (7.165 plateau at <=9.7e-6, 11.82 plateau at >=1.05e-5), which is
+      // the backlog #21 knife-edge — an epsilon-class estimator change flips the
+      // harbor row. Left on the cliff on purpose (a nudge re-tunes adapt_k3 on
+      // every scenario); the fragility is fenced by the robust band guard in
+      // tests/benchmark/test_adapt_k3_harbor_knife_guard.cpp. See backlog #21.
       cfg.lambda_birth = 1e-5;
       cfg.min_new_bernoulli_existence = 0.05;
       // Phase 9 S4: cross-parent birth-id cache. Folded in 2026-06-23
