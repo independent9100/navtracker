@@ -8,6 +8,80 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-06 — D7 MOANA dataset: feasibility NO-GO for our (commercial) context [Cl-3 feasibility; no extraction done]
+
+Feasibility-only assessment of the MOANA dataset (pre-water item 7,
+`docs/superpowers/plans/2026-07-02-data-expansion-todos.md` §D7). Verdict:
+**NO-GO** for navtracker's commercial context — two independent hard reasons
+(non-commercial license; no Doppler in the published data), plus a format
+mismatch. Desk check only, no extraction. Sources are the arXiv full text and
+the dataset's own download page (both accessible, unlike the D8 MDPI paper).
+
+**What it is.** "MOANA: Multi-Radar Dataset for Maritime Odometry and
+Autonomous Navigation Application", arXiv 2412.03887 (IJRR 2025), KAIST RPM
+lab. 7 sequences (2 port, 5 island). Sensors (Table 2): X-band **SIMRAD
+HALO4** (9.41–9.50 GHz, 2498 m, 2.44 m/px) + W-band **Navtech RAS6**
+(76–77 GHz, 600 m, 0.175 m/px) + short-range LiDAR + stereo camera +
+Hemisphere V500 RTK GNSS (position + heading). Project:
+sites.google.com/view/rpmmoana; code: github.com/hyesu-jang/LodeStar.
+
+**License — commercial: NO-GO (decisive).** The dataset download page states
+**CC BY-NC-SA 4.0** — "you may not use the work for commercial purposes."
+This is the dataset's OWN license (not merely the arXiv paper's submission
+license — I checked the project page directly, the D8 paper-vs-dataset lesson).
+For a TKMS product this is a hard blocker: NonCommercial disallows
+product-directed use, and ShareAlike would virally require any distributed
+derivative (e.g. fixtures baked into this repo) to be CC-BY-NC-SA —
+incompatible with a proprietary codebase. (Contrast D8 R-BAD: CC-BY-4.0,
+commercial OK.) The only lawful path to MOANA for us would be a separate
+commercial-license grant negotiated with the authors — out of scope here.
+
+**Per-detection Doppler (the arbiter's question b): NO — and this corrects
+the roadmap.** Both radars are *imaging* radars whose released data are PNG
+intensity images: X-band as Cartesian intensity maps, W-band (Navtech RAS6)
+as polar→Cartesian 1024×1024 PNG. Neither exports per-detection radial
+velocity; the W-band is a scanning imaging radar, **not** a 4D
+(range-azimuth-elevation-Doppler) automotive radar. The published data has no
+Doppler channel — the increment-8 Doppler/MTI direction **cannot** be
+prototyped on MOANA. This contradicts the pre-water-window plan (§ item 7,
+"a Doppler-capable radar (W-band)") and the comparison-baselines row that both
+sell D7 partly on Doppler; that premise is mistaken and should be struck.
+
+**Truth / AIS-independence (the arbiter's question a): YES — the one real
+positive.** Object labels are 2D bounding boxes produced by radar + stereo-
+camera visual inspection (X-band, W-band, and stereo), and pose ground truth
+is Hemisphere V500 RTK GNSS with heading. **AIS is used nowhere in MOANA** (the
+single "AIS" mention in the paper cites a *different* dataset). So MOANA genuinely
+is the AIS-independent labelled marine radar we lack — but the bounding-box
+labels are provided for **only the Single Island sequence** (1 of 7), so the
+labelled coverage is thin, and it is legally unusable for us regardless.
+
+**Format vs our model: poor fit (hits the parked extraction boundary).** The
+X-band output is a Cartesian **intensity image** (PNG), not a range/azimuth
+detection/plot list. Our replay adapters consume `radar_plots.csv`
+(range/azimuth *plots*). Turning MOANA imagery into plots requires CFAR/
+detection + clustering on the raw image — i.e. front-end extraction, which
+the 2026-07-06 ruling parked as upstream's job, not navtracker's. This is
+strictly heavier than D8's ready-made CSV detections.
+
+**Download/storage cost: not confirmed (moot).** The download subpage was not
+read; multi-radar PNG imagery + LiDAR + stereo across 7 sequences is likely
+tens–hundreds of GB. Moot given the license NO-GO.
+
+**Net.** NO-GO. MOANA does fill the sorest gap on paper — AIS-independent
+labelled marine (X-band) radar with anchored large vessels — but (1) its
+CC-BY-NC-SA license bars commercial use, (2) it has no per-detection Doppler,
+so the second half of D7's rationale is void, and (3) its raw-imagery format
+needs front-end extraction we've deliberately parked. If AIS-independent
+marine-radar truth ever becomes essential, the action is a commercial-license
+conversation with KAIST, not extraction under the current terms. Net effect on
+the queue: D7 does **not** unblock the increment-8 Doppler direction; that
+still waits on deployment-hardware answers.
+
+Sources: arXiv 2412.03887 full text (sensor Table 2, PNG image formats, GNSS
+truth, labels on Single Island, no AIS); dataset page sites.google.com/view/
+rpmmoana (CC-BY-NC-SA 4.0, "no commercial use").
+
 ## 2026-07-06 — Replay AIS loader velocity path (#20) first measured against honest truth [Cl-3]
 
 `loadAisCsv` can now emit PositionVelocity2D (SOG/COG) + `hints.nav_status` from
