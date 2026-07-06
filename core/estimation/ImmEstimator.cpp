@@ -252,11 +252,12 @@ void ImmEstimator::update(Track& track, const Measurement& z) const {
     track.imm_means.col(j) = x_new;
     track.imm_covariances[j] = P_new;
 
-    const Eigen::MatrixXd S_inv = S.inverse();
-    const double det = S.determinant();
-    const double safe_det = (det > 0.0 && std::isfinite(det)) ? det : 1e-300;
-    log_lambda(j) = -0.5 * std::log(safe_det) -
-                    0.5 * y.transpose() * S_inv * y;
+    // Per-mode measurement likelihood for the mode-probability update. One
+    // decomposition (mahalanobis via solve, log|S| from the same LU) replaces
+    // the separate S.inverse() + S.determinant(); guard unchanged. (perf R3
+    // Class-B package: state-path fp reorder.)
+    const GaussianScore s = gaussianScore(y, S);
+    log_lambda(j) = -0.5 * s.log_det_safe - 0.5 * s.mahalanobis;
   }
 
   // Mode-probability update (log-sum-exp).
@@ -358,14 +359,18 @@ void ImmEstimator::softUpdate(Track& track,
         predictMeasurement(z0.model, x_j, z0.sensor_position_enu);
     const Eigen::MatrixXd& H = pred.H;
     const Eigen::MatrixXd S = H * P_j * H.transpose() + z0.covariance;
-    const Eigen::MatrixXd S_inv = S.inverse();
+    // One decomposition: S⁻¹ (reused across the gated measurements below) and
+    // det(S) from the same LU, replacing S.inverse() + S.determinant(). (perf
+    // R3 Class-B package.)
+    const InverseAndDet sd = luInverseDet(S);
+    const Eigen::MatrixXd& S_inv = sd.inverse;
     const Eigen::MatrixXd K_gain = P_j * H.transpose() * S_inv;
 
     Eigen::VectorXd y_combined = Eigen::VectorXd::Zero(z0.value.size());
     Eigen::MatrixXd spread_sum =
         Eigen::MatrixXd::Zero(z0.value.size(), z0.value.size());
     double f_sum = 0.0;   // Σ_m β_m N(y_{m,j}; 0, S_j)
-    const double det = S.determinant();
+    const double det = sd.det;  // from the shared LU above (was S.determinant())
     const double safe_det = (det > 0.0 && std::isfinite(det)) ? det : 1e-300;
     const int d = static_cast<int>(z0.value.size());
     const double norm =
@@ -492,16 +497,29 @@ bool ImmEstimator::gate(const Track& track,
     return IEstimator::gate(track, z, gate_threshold);
   }
   const int K = static_cast<int>(track.imm_means.cols());
+  // Position2D fast path (perf R3 T3): H = [I₂|0] is a selector, so the
+  // innovation covariance is S = P[0:2,0:2] + R on the stack — no dynamic H,
+  // no matmul, no LU. Other models keep the general predictMeasurement path.
+  const bool fast2d = (z.model == MeasurementModel::Position2D);
   for (int j = 0; j < K; ++j) {
-    const Eigen::VectorXd x_j = track.imm_means.col(j);
-    const Eigen::MatrixXd& P_j = track.imm_covariances[j];
-    const MeasurementPrediction pred =
-        predictMeasurement(z.model, x_j, z.sensor_position_enu);
-    const Eigen::VectorXd y =
-        measurementResidual(z.model, z.value, pred.z_pred);
-    const Eigen::MatrixXd S =
-        pred.H * P_j * pred.H.transpose() + z.covariance;
-    const double d2 = y.transpose() * S.inverse() * y;
+    double d2;
+    if (fast2d) {
+      const Eigen::Vector2d y =
+          z.value.head<2>() - track.imm_means.col(j).head<2>();
+      Eigen::Matrix2d S = track.imm_covariances[j].topLeftCorner<2, 2>();
+      S += z.covariance;
+      d2 = mahalanobis2x2(y, S);
+    } else {
+      const Eigen::VectorXd x_j = track.imm_means.col(j);
+      const Eigen::MatrixXd& P_j = track.imm_covariances[j];
+      const MeasurementPrediction pred =
+          predictMeasurement(z.model, x_j, z.sensor_position_enu);
+      const Eigen::VectorXd y =
+          measurementResidual(z.model, z.value, pred.z_pred);
+      const Eigen::MatrixXd S =
+          pred.H * P_j * pred.H.transpose() + z.covariance;
+      d2 = y.transpose() * S.inverse() * y;
+    }
     if (d2 <= gate_threshold) return true;
   }
   return false;
@@ -523,17 +541,30 @@ double ImmEstimator::logLikelihood(const Track& track,
   const double log_2pi_term =
       -0.5 * static_cast<double>(d) * std::log(2.0 * M_PI);
   Eigen::VectorXd log_ell(K);
+  // Position2D fast path (perf R3 T3): stack-only 2×2 innovation covariance
+  // (S = P[0:2,0:2] + R) with a closed-form 2×2 score. Other models keep the
+  // general predictMeasurement + single-decomposition path.
+  const bool fast2d = (z.model == MeasurementModel::Position2D);
   for (int j = 0; j < K; ++j) {
-    const Eigen::VectorXd x_j = track.imm_means.col(j);
-    const Eigen::MatrixXd& P_j = track.imm_covariances[j];
-    const MeasurementPrediction pred =
-        predictMeasurement(z.model, x_j, z.sensor_position_enu);
-    const Eigen::VectorXd y =
-        measurementResidual(z.model, z.value, pred.z_pred);
-    const Eigen::MatrixXd S =
-        pred.H * P_j * pred.H.transpose() + z.covariance;
-    // One decomposition (not determinant() + inverse()); guard unchanged.
-    const GaussianScore s = gaussianScore(y, S);
+    GaussianScore s;
+    if (fast2d) {
+      const Eigen::Vector2d y =
+          z.value.head<2>() - track.imm_means.col(j).head<2>();
+      Eigen::Matrix2d S = track.imm_covariances[j].topLeftCorner<2, 2>();
+      S += z.covariance;
+      s = gaussianScore2x2(y, S);
+    } else {
+      const Eigen::VectorXd x_j = track.imm_means.col(j);
+      const Eigen::MatrixXd& P_j = track.imm_covariances[j];
+      const MeasurementPrediction pred =
+          predictMeasurement(z.model, x_j, z.sensor_position_enu);
+      const Eigen::VectorXd y =
+          measurementResidual(z.model, z.value, pred.z_pred);
+      const Eigen::MatrixXd S =
+          pred.H * P_j * pred.H.transpose() + z.covariance;
+      // One decomposition (not determinant() + inverse()); guard unchanged.
+      s = gaussianScore(y, S);
+    }
     log_ell(j) = log_2pi_term - 0.5 * s.log_det_safe - 0.5 * s.mahalanobis;
   }
   // log Σⱼ μⱼ exp(log_ell_j) via log-sum-exp.
