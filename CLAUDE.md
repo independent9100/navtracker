@@ -14,6 +14,16 @@ an acceptable degraded mode; suppressing an object into *nothing* is the
 forbidden failure. Anything represented as static must be promoted to a moving
 track within bounded latency once it starts moving.
 
+## Parallel work convention (implementer sessions)
+
+Implementer/agent sessions do their work in a **git worktree on their own
+branch** (`git worktree add ../navtracker-<task> -b <task-branch>`, own build
+dir) — never by switching the main tree's checkout. The main working tree
+belongs to the user/arbiter; a branch switch under a concurrent session makes
+whoever commits next land on the wrong branch (it happened twice on
+2026-07-06). Hand your branch to the arbiter for merge; don't merge or push
+master yourself.
+
 ## Tech stack
 
 - **C++17** (no later standard without discussion).
