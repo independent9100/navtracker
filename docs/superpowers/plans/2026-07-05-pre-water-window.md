@@ -34,10 +34,16 @@ when the water date firms.
    arrive. ~half day go/no-go.
 8. **D8 R-BAD feasibility** — 69 h berthing radar + synced video
    (hour-scale steady state on a 3rd geography + label passes). ~half day.
-9. **R8.8 car_carrier_near re-extraction + occlusion video pass** — still
-   OPEN (verified 2026-07-05); the shadowing test for the decay sector
-   model. Extractor fallbacks + fail-loud guard per ticket. ~1 day
-   (video pass = user + analyst).
+9. **R8.8 car_carrier_near re-extraction + occlusion video pass** — CODE
+   HALF DONE 2026-07-06 (3855efd): extractor fallbacks (densest NavSatFix +
+   quaternion-yaw heading, convention verified to 0.2-2.2 deg) + fail-loud
+   guard (fails on old broken output, passes all 7 clips, check_ownship.py
+   --all); re-extracted 8739 rows, rotation undone (shore-median 121->50 m);
+   R4 re-check: coverage IMPROVES (UNION@50m 53.6->59.5%), the
+   (42.3583,-71.0464) UNKNOWN SURVIVES with robust support (16 returns/25 m,
+   87% of clip) — now the top question for the video pass. REMAINING: the
+   occlusion labelling session (user + analyst; clip ready, closest approach
+   t_rel 110-120 s, no AIS on 2020 bags).
 10. **ais_ferry_far + almost_cross measurement pass** — DONE 2026-07-06
     (09edb64): PMBM ~46-54 m radar-only vs AIS truth (19 s spot check,
     stated weight); AIS fusion transforms mechanics (MHT lifetime 0->0.42);
