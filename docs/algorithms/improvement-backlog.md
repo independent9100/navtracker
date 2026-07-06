@@ -832,3 +832,27 @@ independence rule (guide §3 "derived data and double-counting"):
   when they diverge hard). Mind stabilization (ground vs water course).
 **Effort.** ~1–2 days. Consumer surface ⇒ guide + output-contract sync.
 Raised 2026-07-04, queued 2026-07-05 (pre-water window).
+
+## 21. Benchmark-config fragility: harbor/pmbm_adapt_k3 knife-edge birth decision
+
+**Raised 2026-07-06** during perf round 3 (hot-path mechanical sympathy). Same
+class as the freeze-rule fragile-assertion problem — this is a *benchmark
+config* fragility, not a tracker defect.
+
+**Problem.** On `harbor_complete_truth` the `imm_cv_ct_pmbm_adapt_k3` config has
+a cardinality/birth decision sitting on a knife edge that a **1e-15**
+floating-point perturbation flips: any epsilon-class change to the estimator hot
+path (the perf round-3 state-path single-decomposition and 2×2 kernels, and any
+future one) tips it, moving `card_err_mean` 9.85↔9.375 and `gospa_false`
+2005↔1910 with a cascade into that config's derived per-truth metrics. It is
+isolated to this one config — `dense_clutter_datum` (all configs), the `philos`
+KEEP replays, and all other harbor configs stayed byte-identical under the same
+changes — so it is a single borderline decision, not drift. It will re-flip
+under every future epsilon-class change (and the clutter/birth-model campaign
+will run many), each time re-raising a spurious "did the math change?" question.
+
+**Fix direction (decided later, not by the perf tickets).** Either make the
+scenario's assertion robust (tolerance / cardinality band instead of a pinned
+point, per the freeze-commit rule), or nudge that config's birth threshold off
+the borderline so the decision is not epsilon-sensitive. Cheap; do it before
+the clutter/birth investigation so its replays don't trip on this.
