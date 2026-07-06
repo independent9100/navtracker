@@ -70,6 +70,13 @@ struct ScanTracks {
   // scan — INDEPENDENT of structure membership / hazard emission (the raw "camera
   // proved this cell empty" fact). Empty unless an occupancy model + camera wired.
   std::vector<Eigen::Vector2d> camera_empty_cells;
+  // Raw per-cell EWMA occupancy mass this scan (anchor-ENU centre, persistence),
+  // exactly LiveOccupancyModel::persistenceCells(). Captured ONLY when runClip's
+  // `capture_persistence` is set (default off ⇒ empty ⇒ byte-identical for every
+  // existing caller); the LOS/shadow probe reads it to watch a labelled cell's mass
+  // decay across a shadow interval. Snapshot is taken AFTER observe() has applied
+  // this scan's coverage-aware decay + touch update.
+  std::vector<std::pair<Eigen::Vector2d, double>> persistence_cells;
 };
 struct ClipRun {
   geo::Datum datum{geo::Geodetic{0, 0, 0}};
@@ -164,13 +171,28 @@ inline std::vector<LiveOccupancyModel::CameraObservation> buildCameraFrames(
   return frames;
 }
 
-inline ClipRun runClip(const std::string& clip_name,
-                       const std::string& config_label,
-                       bool load_chart_structure = false,
-                       bool load_camera = false, bool evict_camera = false) {
+// Explicit clip source so a non-philos clip (e.g. a sim_multisensor scenario dir)
+// can reuse the SAME wiring as the philos label replays. Every existing caller
+// goes through runClip(clip_name, ...), which fills this from the philos fixture
+// layout and reproduces the historical behaviour byte-for-byte.
+struct ClipInputs {
+  std::string ownship_csv;
+  std::string plots_csv;
+  std::string camera_csv;          // "" ⇒ no camera even if load_camera set
+  std::string coastline_geojson;   // "" ⇒ no land model even if config asks
+  std::string chart_structure_geojson;  // "" ⇒ no chart even if load_chart set
+  std::string radar_source_id = "philos_radar";
+  double radar_max_range_m = 1000.0;  // detection-model coverage range
+};
+
+inline ClipRun runClipInputs(const ClipInputs& in,
+                             const std::string& config_label,
+                             bool load_chart_structure = false,
+                             bool load_camera = false, bool evict_camera = false,
+                             bool capture_persistence = false) {
   ClipRun run;
-  const std::string own = clipDir(clip_name) + "/ownship.csv";
-  const std::string plots = clipDir(clip_name) + "/radar_plots.csv";
+  const std::string& own = in.ownship_csv;
+  const std::string& plots = in.plots_csv;
   if (!fileExists(own) || !fileExists(plots)) return run;  // fixtures absent
 
   const auto poses = navtracker::replay::loadOwnshipCsv(own);
@@ -181,7 +203,7 @@ inline ClipRun runClip(const std::string& clip_name,
 
   Scenario scen;
   scen.measurements = navtracker::replay::loadPlotCsvBodyFrame(
-      plots, provider, SensorKind::ArpaTtm, "philos_radar");
+      plots, provider, SensorKind::ArpaTtm, in.radar_source_id);
   if (scen.measurements.empty()) return run;
   std::sort(scen.measurements.begin(), scen.measurements.end(),
             [](const Measurement& a, const Measurement& b) {
@@ -200,12 +222,12 @@ inline ClipRun runClip(const std::string& clip_name,
   pmbm::PmbmTracker::Config cfg =
       c->pmbm_config ? c->pmbm_config() : pmbm::PmbmTracker::Config{};
 
-  // Philos radar detection table (same as the philos replay descriptor).
+  // Radar detection table (philos replay descriptor; max range per clip source).
   benchmark::ScenarioDescriptor desc;
-  desc.label = clip_name;
+  desc.label = in.radar_source_id;
   desc.detection_table = {
       {SensorKind::ArpaTtm, MeasurementModel::Position2D,
-       DetectionParams{0.07, 2.7e-6, /*max_range_m=*/1000.0}}};
+       DetectionParams{0.07, 2.7e-6, in.radar_max_range_m}}};
   MhtTracker::Config carrier;
   carrier.probability_of_detection = cfg.probability_of_detection;
   carrier.clutter_density = cfg.clutter_intensity;
@@ -215,8 +237,8 @@ inline ClipRun runClip(const std::string& clip_name,
   if (det) tracker.setSensorDetectionModel(det);
 
   std::shared_ptr<CoastlineModel> land;
-  if (c->use_land_model) {
-    const std::string coast = srcDir() + "/tests/fixtures/philos/boston.geojson";
+  if (c->use_land_model && !in.coastline_geojson.empty()) {
+    const std::string& coast = in.coastline_geojson;
     if (fileExists(coast)) {
       auto geom = loadCoastlineGeoJson(coast, CoastlinePriorParams{});
       land = std::make_shared<CoastlineModel>(std::move(geom), *scen.datum);
@@ -243,9 +265,8 @@ inline ClipRun runClip(const std::string& clip_name,
     // structure so emitted live hazards can be confirmed. Label only — no effect
     // on hazards/suppression/tracks (so occupancy-config runs stay bit-identical
     // with load_chart_structure=false).
-    if (load_chart_structure) {
-      const std::string charts =
-          srcDir() + "/tests/fixtures/philos/charts/radar_structure_points.geojson";
+    if (load_chart_structure && !in.chart_structure_geojson.empty()) {
+      const std::string& charts = in.chart_structure_geojson;
       if (fileExists(charts))
         occ->setChartedStructure(loadStaticObstaclesGeoJson(charts));
     }
@@ -255,8 +276,8 @@ inline ClipRun runClip(const std::string& clip_name,
   // flag lags by at most one scan — negligible vs the sustain window).
   std::vector<LiveOccupancyModel::CameraObservation> cam_frames;
   std::size_t cam_cursor = 0;
-  if (load_camera && occ) {
-    const std::string campath = clipDir(clip_name) + "/camera_bearings.csv";
+  if (load_camera && occ && !in.camera_csv.empty()) {
+    const std::string& campath = in.camera_csv;
     if (fileExists(campath))
       cam_frames = buildCameraFrames(
           navtracker::replay::loadCameraBearingsCsv(campath, provider), provider);
@@ -294,12 +315,37 @@ inline ClipRun runClip(const std::string& clip_name,
                               occ->obstacleCameraObservedEmpty(i)});
       }
       st.camera_empty_cells = occ->cameraObservedEmptyCells();  // raw per-cell streak
+      // Raw per-cell EWMA occupancy mass (opt-in; default off ⇒ byte-identical for
+      // every existing caller). The LOS/shadow probe watches a labelled cell's mass
+      // across a shadow interval. Snapshot AFTER this scan's decay + touch update.
+      if (capture_persistence) st.persistence_cells = occ->persistenceCells();
     }
     run.history.push_back(std::move(st));
   };
   benchmark::runBenchPmbm(scen, tracker, hook);
   run.valid = true;
   return run;
+}
+
+// Philos label-replay entry point (unchanged signature; byte-identical to the
+// historical behaviour for every existing caller). Fills ClipInputs from the
+// philos fixture layout and delegates to runClipInputs.
+inline ClipRun runClip(const std::string& clip_name,
+                       const std::string& config_label,
+                       bool load_chart_structure = false,
+                       bool load_camera = false, bool evict_camera = false,
+                       bool capture_persistence = false) {
+  ClipInputs in;
+  in.ownship_csv = clipDir(clip_name) + "/ownship.csv";
+  in.plots_csv = clipDir(clip_name) + "/radar_plots.csv";
+  in.camera_csv = clipDir(clip_name) + "/camera_bearings.csv";
+  in.coastline_geojson = srcDir() + "/tests/fixtures/philos/boston.geojson";
+  in.chart_structure_geojson =
+      srcDir() + "/tests/fixtures/philos/charts/radar_structure_points.geojson";
+  in.radar_source_id = "philos_radar";
+  in.radar_max_range_m = 1000.0;
+  return runClipInputs(in, config_label, load_chart_structure, load_camera,
+                       evict_camera, capture_persistence);
 }
 
 inline std::vector<benchmark::ExistenceLabel> loadLabels(

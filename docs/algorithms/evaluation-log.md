@@ -8,6 +8,95 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-06 — LOS/shadow probe (R8.8 payoff): coverage-aware decay DOES erode a shadowed moored vessel — bounded, self-healing false-fire (verdict b) [Cl-3 / ADR 0002]
+
+MEASUREMENT ONLY (ticket `docs/superpowers/plans/2026-07-06-los-shadow-probe-ticket.md`).
+Wires the R8.8 occlusion clip `car_carrier_near` through the coverage-aware
+occupancy-decay arm and asks, against measured truth, whether the shadowed moored
+yachts (`unknown_w860`, radar-silent t 50-85 s while GENTLE LEADER crosses their
+bearing at 150-250 m) are treated as "observed-empty" and lose occupancy evidence.
+No decay-model behaviour changed; the probe reads `persistenceCells()` + the
+recorded coverage sectors via an **additive, opt-in, default-inert** capture in the
+shared label-replay harness (`tests/replay/PhilosLabelReplay.hpp`,
+`capture_persistence`, off for every existing caller ⇒ byte-identical).
+
+**Ticket config-name correction (load-bearing).** The ticket names
+`imm_cv_ct_pmbm_coverage_land` as the layer to exercise. That config wires the
+sensor-activity **duty-cycle** coverage model + land prior and NEVER the
+`LiveOccupancyModel` / coverage-sector decay (`Config.cpp:1142`) — running it would
+falsely read as verdict (c) "layer doesn't fire". The coverage-aware occupancy
+**decay** arm is `imm_cv_ct_pmbm_occupancy_detector_coverage` (`Config.cpp:903`,
+`use_live_occupancy_model` + `estimate_coverage_sector`). The probe uses the config
+that actually exercises the layer under test.
+
+**Result — unknown_w860 yacht cell (ENU (−1014, 97) m, range ≈ 1018 m; cell 100 m):**
+
+| interval        |   n | mass0 | massT | mean  |  max  | swept | hazard | touch | decay |
+|-----------------|----:|------:|------:|------:|------:|------:|-------:|------:|------:|
+| pre  5-50 s     | 407 | 0.108 | 0.141 | 0.091 | 0.195 |  4.7% |  72.0% |     8 |    10 |
+| **shadow 50-85 s** | 317 | 0.141 | **0.006** | 0.073 | 0.168 | **3.8%** | **50.8%** | **2** | 10 |
+| post 85-120 s   | 323 | 0.006 | **0.191** | 0.110 | 0.191 |  5.0% | **99.7%** |    10 |     6 |
+
+Coverage sectors: 1102 valid, **median width 13°**, 0 full-circle.
+
+**Sim control** `sim_ms_anchored_camera` (anchored vessel, NO occluder; ENU
+(−1602, 1079) m). Confirms the decay mechanism operates absent any occlusion, but
+this cell is a low-mass / sparse-touch regime (never a stable hazard) — a weaker
+magnitude baseline than the within-clip pre/post:
+
+| window          |  n | mass0 | massT | mean  |  max  | swept | hazard | touch | decay |
+|-----------------|---:|------:|------:|------:|------:|------:|-------:|------:|------:|
+| 5-50 s          | 18 | 0.064 | 0.005 | 0.021 | 0.064 | 38.9% |  27.8% |     0 |     7 |
+| 50-85 s         | 14 | 0.005 | 0.003 | 0.003 | 0.005 | 42.9% |   0.0% |     1 |     5 |
+| 85-120 s        | 14 | 0.003 | 0.001 | 0.002 | 0.003 | 14.3% |   0.0% |     0 |     2 |
+
+**Cross-check (validates the probe + the coverage gate).** Mass changes ONLY on
+swept scans, exactly as `LiveOccupancyModel.cpp:111-122` specifies: touch+decay per
+interval ≈ swept count (car_carrier pre 8+10≈19, shadow 2+10≈12, post 10+6≈16; sim
+same). Decay events ARE "observed-empty" calls; touches are returns reinforcing the
+cell.
+
+**Finding.** (1) The occluder does **not** inflate the observed-empty rate: decay
+events are flat across intervals (10 pre / 10 shadow / 6 post), and the shadow
+swept-fraction (3.8%) is if anything *below* pre/post (4.7%/5.0%). The narrow
+per-burst sectors (median 13°) that range-truncate at the carrier keep the shadowed
+cell mostly un-swept — so the sector estimator is NOT mistaking the shadow for open
+water at scale. (2) But the residual ~10 observed-empty decays over the 35 s are
+now **unopposed**: the shadow converts touches to decays (8→2) by removing returns,
+so the yacht cell's mass collapses **24×** (0.141 → 0.006) and its emitted hazard's
+presence drops **72% → 51%**. Those ~10 decays are observed-empty calls on a
+physically-occluded cell — the LOS-guard's exact target. (3) The degradation is
+**transient and self-healing**: within ~35 s post-shadow the mass recovers to 0.191
+and hazard presence to 99.7%. The ADR-0002 presence channel is degraded during the
+passage but not lost, and rebuilds once returns resume.
+
+**Verdict (b): a real but bounded, self-healing shadow false-fire.** Magnitude:
+~10 observed-empty decays / 35 s → cell mass 24× erosion + hazard presence 72%→51%,
+recovering fully after the occluder clears. It is NOT the clean "excluded by
+construction" (a) — the cell IS decayed as observed-empty on the scans a sector
+covers it — but it is far from catastrophic: the occluder doesn't inflate the decay
+rate, and the effect self-heals. **Arbiter's call** whether the sketch below is
+worth it against this bounded magnitude (per the ticket, no LOS guard implemented).
+
+**LOS-guard design sketch (for the arbiter — NOT implemented).** In the coverage
+decay loop (`LiveOccupancyModel::observe`, `.cpp:110-122`), before decaying a cell
+that a sector covers, suppress the decay if the sensor recorded a **strong closer
+return on the same bearing** this scan (a shadow: the echo truncated before the
+cell). Concretely: carry per-scan (bearing, range) returns alongside the
+`CoverageSector`; a cell at (θ_cell, r_cell) is shadowed — skip its decay — if some
+return exists at |θ − θ_cell| ≤ ~half a beamwidth with range r < r_cell − margin.
+Cost: one extra per-cell bearing test against the swept returns; safe direction
+(skipping a decay only holds a hazard longer, never emits a false one — same safety
+argument as the existing under-estimated-coverage design, `ISensorDetectionModel.hpp:160`).
+
+**Acceptance:** interval table (pre/shadow/post + sim control) committed here;
+diagnostics additive + default-inert (existing occupancy/label tests byte-identical);
+no decay-model behaviour changed; full suite green; probe skip-guards on fixture
+absence. Test `tests/replay/test_philos_los_shadow_probe.cpp`
+(`LosShadowProbe.CarCarrierNearYachtCell` / `.SimAnchoredControl`). Fixtures
+local-only (`car_carrier_near`, `sim_ms_anchored_camera_s0`). See the R8.8 labelling
+pass entry below (same date) for the ground-truth provenance.
+
 ## 2026-07-06 — Replay AIS loader velocity path (#20) first measured against honest truth [Cl-3]
 
 `loadAisCsv` can now emit PositionVelocity2D (SOG/COG) + `hints.nav_status` from
