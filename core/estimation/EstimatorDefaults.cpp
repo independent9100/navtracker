@@ -5,6 +5,7 @@
 
 #include <Eigen/Dense>
 
+#include "core/estimation/GaussianScore.hpp"
 #include "core/estimation/MeasurementModels.hpp"
 
 namespace navtracker {
@@ -50,12 +51,12 @@ double IEstimator::logLikelihood(const Track& track,
       measurementResidual(z.model, z.value, pred.z_pred);
   const Eigen::MatrixXd S =
       pred.H * track.covariance * pred.H.transpose() + z.covariance;
-  const double det = S.determinant();
-  const double safe_det = (det > 0.0 && std::isfinite(det)) ? det : 1e-300;
+  // One decomposition (not S.determinant() + S.inverse()): mahalanobis via a
+  // solve, log|S| from the same factorization. Guard semantics unchanged.
+  const GaussianScore s = gaussianScore(y, S);
   const int d = static_cast<int>(z.value.size());
-  const double mahal = y.transpose() * S.inverse() * y;
   return -0.5 * static_cast<double>(d) * std::log(2.0 * M_PI) -
-         0.5 * std::log(safe_det) - 0.5 * mahal;
+         0.5 * s.log_det_safe - 0.5 * s.mahalanobis;
 }
 
 }  // namespace navtracker

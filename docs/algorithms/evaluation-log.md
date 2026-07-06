@@ -8,6 +8,51 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-06 — Perf round 3: hot-path mechanical sympathy — 1.5–1.66× on the PMBM/IMM likelihood path, output preserved [Cl-3]
+
+Branch `hotpath-mech-sympathy` (worktree, off master `3108d0f`). Ticket
+`docs/superpowers/plans/2026-07-06-hotpath-mechanical-sympathy-ticket.md`. Full
+writeup + pricing: `docs/baselines/2026-07-06_perf_round3.md`. Target: the
+round-2 hot bucket (IMM per-mode measurement update), arbiter-verified by
+code-read (the `S.determinant()` + `S.inverse()` double-decomposition).
+
+**Shipped (2 commits):** (1) `f7b0914` logLikelihood single-decomposition
+(`IEstimator` + `ImmEstimator`) — **byte-identical** (Eigen already LU-decomposes
+a dynamic 2×2, so one `PartialPivLU` == `.inverse()`+`.determinant()` bit-for-bit;
+verified 0 rows moved on all four gate sets + both haxr workloads). (2) `3fe5d1e`
+Class-B package = the parked state-path remainder (`update`/`softUpdate` single
+LU) folded with T3 fixed-size 2×2 stack kernels (`gate`/`logLikelihood`
+Position2D fast path: H=[I₂|0] selector ⇒ S = P[0:2,0:2]+R on the stack,
+closed-form 2×2 score, no heap/matmul/LU per track×meas×mode). New helper
+`core/estimation/GaussianScore.hpp`.
+
+**T2 (hoist prediction across measurements): blocked by design, benefit subsumed
+by T3.** `PmbmTracker` reaches the estimator only through `IEstimator&`; hoisting
+needs a port method, which the pluggable-hot-path invariant forbids (a
+predict-once/score-with-R hook would leak the cost-loop's batching into every
+estimator). With the 2×2 stack kernels each recompute is a few stack flops, so
+avoiding it buys ~nothing. Do not add the port method.
+
+**Numbers (clean Release, warm):** decimated **42.34→28.30 s (1.50×)**, p99
+27.9→21.0 / max 35.2→22.9 ms; raw-density **154.2→92.9 s (1.66×)**, p99
+123.6→**66.6** / max 137.9→**76.7 ms** — worst-case scan goes from 1.07× to
+**1.93×** inside the 148 ms interval.
+
+**Gate-suite pricing (single run on the final package):** philos KEEP (both PMBM
+configs) **byte-identical** incl. `lifetime_ratio` (KEEP safety absolute);
+dense_clutter_datum 1/1627 moved (one `pos_rmse` @1.17e-6, fp noise);
+harbor_complete_truth 25/2686 moved, **all confined to the single non-KEEP config
+`imm_cv_ct_pmbm_adapt_k3`** — the known 1e-15 knife-edge birth decision tipping
+(`card_err` 9.85→9.375), isolated, not a pattern. haxr primary metrics
+(gospa/card/id/ospa/tgospa) unchanged; derived COG/SOG RMSE move at
+recursive-filter fp scale. Suite **1050/1050**; no print-pinned test tripped. The
+harbor/adapt_k3 knife-edge → improvement-backlog **#21** (benchmark-config
+fragility, freeze-rule class).
+
+**Verdict:** campaign-replay goal met (pays for the upcoming clutter/birth-model
+campaign's hundreds of replays); the 57 s deployment margin stays with upstream
+extraction (round-2 ruling, not gated by this).
+
 ## 2026-07-06 — Perf round 2: fresh profile + per-scan latency; no single safe lever left, extraction stays mandatory (batch), but per-scan keeps up [Cl-3]
 
 Branch `perf-round-2` (worktree, off master `ceee0bf`). Ticket
