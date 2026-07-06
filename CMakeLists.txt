@@ -322,6 +322,7 @@ add_executable(navtracker_tests
   tests/replay/test_philos_close_approach_cpa.cpp
   tests/replay/test_heldout_sailboats_probe.cpp
   tests/replay/test_philos_occupancy_coverage_6c.cpp
+  tests/replay/test_philos_los_shadow_probe.cpp
   tests/replay/test_radar_truth_loader.cpp
   tests/replay/test_camera_bearing_loader.cpp
   tests/replay/test_ais_csv_replay_adapter.cpp
