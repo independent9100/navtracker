@@ -1,6 +1,6 @@
 # Implementer prompt — replay AIS loader: emit SOG/COG velocity (backlog #20 follow-up)
 
-Status: ready to hand off. Paste everything below the line. Origin: backlog
+Status: DONE 2026-07-06 (5104652, merged; verified by a second implementer on the 5-point checklist; suite 1064/1064 on merge). PolarVelocity.hpp shared helper + no-drift proof; default-off byte-identical; ON-pricing verdict: NOT a promotion candidate (cuts MHT id-switches on maneuvering targets, regresses continuity broadly). Finding: anchored scenario NOT inert (watch-circle SOG peaks 0.85 m/s > 0.5 threshold) -> nav_status-gated suppression is the named fix candidate (backlog #20). Paste everything below the line. Origin: backlog
 #20 follow-up (filed 2026-07-06, `docs/algorithms/improvement-backlog.md`) —
 reproduced twice: the philos farcross pass and the sim-gates battery both
 carry `sog/cog/nav_status` columns that `loadAisCsv` silently drops, so the
