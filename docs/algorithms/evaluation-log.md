@@ -8,6 +8,32 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-06 — Raw-density (undecimated) realtime check post-Murty-fix: keeps up (2.0×), fails the ≥5× margin gate [Cl-3]
+
+Question: after the Murty fix, is clustering-first decimation still a
+deployment-REQUIRED front-end stage, or just an accuracy lever? Workload: the
+same kattwyk_08 285 s window UNDECIMATED (169 plots/scan regime), cut from
+`kattwyk_08_full.csv` by the decimated fixture's exact tod bounds
+[29096.383, 29380.922] → 299 981 rows (1.83× the decimated 163 723; not an
+md5-pinned fixture — regenerate with that filter). Same config/invocation as
+the probe (`imm_cv_ct_pmbm_coverage_land`, Release build).
+
+**Result: wall 141.4 s for 285 s of data → 2.0× faster than realtime** (peak
+RSS 168 MB). Pre-fix this regime was ~20× SLOWER (95 min). So raw density now
+*keeps up* in absolute terms but **fails the ≥5× margin gate** (needs ≤57 s).
+Cost is superlinear in density as expected (3.4× wall for 1.83× rows — per-scan
+cost ~ rows × Bernoullis, and the phantom population grows with density too:
+card_err 100.5 vs 48.8 decimated, the known undecimated over-count 2×).
+
+**Verdict: front-end extraction stays deployment-MANDATORY under the margin
+standard** — but the failure mode changed from "hopeless" to "margin-short",
+so a weaker/cheaper front end than eps-50 clustering could also close it.
+Corollary: the extraction stage itself now needs its own realtime budget
+measured before deployment (a too-slow preprocessor just moves the lag
+upstream). Remaining realtime blind spot (both regimes): per-scan WORST-CASE
+latency (max/p99) — replay means hide density-spike stalls; add per-scan
+timing columns to the bench next time it's touched.
+
 ## 2026-07-06 — Murty K-th-assignment early exit: 515 s → 41.6 s (12.4×), output-identical [Cl-3]
 
 Step 3 of the runtime probe, implemented same-day because the fix is one
