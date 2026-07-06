@@ -28,10 +28,12 @@ when the water date firms.
    truth-grouping faults UPSTREAM of the now-validated kernel. Exporter +
    re-runnable tool shipped (`tools/stonesoup_gospa_crosscheck.py`).
    See `docs/algorithms/gospa-crosscheck.md`.
-7. **D7 MOANA feasibility** — the only in-hand path to (a) real radar
-   with NON-AIS truth and (b) a **Doppler-capable radar** (W-band) to
-   prototype the increment-8 Doppler direction before hardware answers
-   arrive. ~half day go/no-go.
+7. **D7 MOANA feasibility** — NO-GO 2026-07-06 (b711258): CC-BY-NC-SA
+   (commercial gate FAILS); no per-detection Doppler in the published data
+   (corrects this item's own premise — the Doppler prototype path is dead
+   until deployment hardware facts); raw PNG imagery would need the parked
+   front-end extraction anyway. Non-AIS truth exists on only 1 of 7
+   sequences and is legally unusable for us.
 8. **D8 R-BAD feasibility** — GO 2026-07-06 (30323ac, merged e807cb6):
    CC-BY-4.0 (commercial OK), radar-detection CSVs + synced video, 31.6 GB,
    non-AIS labels + video for independent label passes. REGIME CAVEAT:
