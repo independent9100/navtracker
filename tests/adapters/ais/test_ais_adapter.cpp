@@ -188,3 +188,59 @@ TEST(AisAdapter, ParsesHeadingAndNavStatusAndDropsSentinels) {
   EXPECT_FALSE(out3[0].hints.heading_deg.has_value());
   EXPECT_FALSE(out3[0].hints.nav_status.has_value());
 }
+
+// #20 sub-item b: an anchored (nav_status 1) or moored (nav_status 5) vessel
+// swinging within its watch circle can report SOG above the velocity threshold,
+// but that swing is NOT a track velocity — feeding it destabilizes the
+// (correctly near-static) track. Suppress it to Position2D even above threshold.
+TEST(AisAdapter, AnchoredNavStatusSuppressesVelocity) {
+  Datum datum({53.5, 8.0, 0.0});
+  AisAdapter adapter(datum);
+  AisDynamicReport r;
+  r.time = Timestamp::fromSeconds(0.0);
+  r.lat_deg = 53.5;
+  r.lon_deg = 8.0;
+  r.sog_knots = 2.0;  // ~1.03 m/s, well above the 0.5 m/s threshold
+  r.cog_deg = 90.0;
+  r.nav_status = std::uint8_t{1};  // at anchor
+  adapter.ingest(r);
+  auto out = adapter.poll();
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].model, navtracker::MeasurementModel::Position2D)
+      << "anchored (nav_status 1) must not emit watch-circle SOG as velocity";
+  EXPECT_EQ(out[0].value.size(), 2);
+  ASSERT_TRUE(out[0].hints.nav_status.has_value());  // still surfaced
+  EXPECT_EQ(*out[0].hints.nav_status, 1u);
+}
+
+// The gate is narrow: nav_status 5 (moored) suppresses too, but an underway
+// vessel (nav_status 0) above threshold still emits legitimate velocity.
+TEST(AisAdapter, MooredSuppressesButUnderwayStillEmitsVelocity) {
+  Datum datum({53.5, 8.0, 0.0});
+  AisAdapter adapter(datum);
+
+  AisDynamicReport moored;
+  moored.time = Timestamp::fromSeconds(0.0);
+  moored.lat_deg = 53.5;
+  moored.lon_deg = 8.0;
+  moored.sog_knots = 2.0;
+  moored.cog_deg = 90.0;
+  moored.nav_status = std::uint8_t{5};  // moored
+  adapter.ingest(moored);
+  auto out = adapter.poll();
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].model, navtracker::MeasurementModel::Position2D);
+
+  AisDynamicReport underway;
+  underway.time = Timestamp::fromSeconds(1.0);
+  underway.lat_deg = 53.5;
+  underway.lon_deg = 8.0;
+  underway.sog_knots = 2.0;
+  underway.cog_deg = 90.0;
+  underway.nav_status = std::uint8_t{0};  // underway using engine
+  adapter.ingest(underway);
+  auto out2 = adapter.poll();
+  ASSERT_EQ(out2.size(), 1u);
+  EXPECT_EQ(out2[0].model, navtracker::MeasurementModel::PositionVelocity2D)
+      << "underway vessel above threshold still emits velocity";
+}

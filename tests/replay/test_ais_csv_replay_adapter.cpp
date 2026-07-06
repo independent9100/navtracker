@@ -138,3 +138,51 @@ TEST(AisCsvReplay, MatchesAisAdapterVelocityContent) {
   // Position blocks are both the 30 m default.
   EXPECT_DOUBLE_EQ(ms[0].covariance(0, 0), am[0].covariance(0, 0));
 }
+
+// #20 sub-item b: nav_status 1 (at anchor) / 5 (moored) forces Position2D even
+// above the SOG threshold when velocity is ON — the watch-circle swing is not a
+// track velocity. An underway vessel (nav_status 0) above threshold still emits
+// it. Shares the AisAdapter gate via core/estimation/PolarVelocity.hpp.
+TEST(AisCsvReplay, AnchoredNavStatusSuppressesVelocityWhenOn) {
+  const std::string p = writeTemp("ais_anchored.csv",
+      "unix_time,mmsi,lat,lon,sog_mps,cog_deg,nav_status,name\n"
+      "0.000,257000001,63.4010,10.4000,1.000,90.0,1,ANCH\n"    // at anchor
+      "1.000,257000002,63.4020,10.4000,1.000,90.0,5,MOOR\n"    // moored
+      "2.000,257000003,63.4030,10.4000,1.000,90.0,0,UNDER\n"); // underway
+  const auto ms = loadAisCsv(p, testDatum(), "ais", /*emit_velocity=*/true);
+  ASSERT_EQ(ms.size(), 3u);
+  EXPECT_EQ(ms[0].model, MeasurementModel::Position2D) << "anchor suppressed";
+  EXPECT_EQ(ms[1].model, MeasurementModel::Position2D) << "moored suppressed";
+  EXPECT_EQ(ms[2].model, MeasurementModel::PositionVelocity2D)
+      << "underway above threshold still emits velocity";
+  EXPECT_EQ(ms[0].hints.nav_status.value_or(255), 1u);  // still surfaced
+}
+
+// #20 sub-item b — the load-bearing invariant (arbiter ruling 2026-07-06): for
+// an anchored vessel the gate makes velocity-ON KINEMATICALLY identical to
+// velocity-OFF (same model/value/covariance), even on rows above the SOG
+// threshold. So an anchored vessel cannot destabilize its OWN track via velocity
+// — measurement-level inertness, stronger than any aggregate metric row. The
+// only ON-vs-OFF difference is the surfaced nav_status hint (metadata for the
+// veto path; it carries no kinematics).
+TEST(AisCsvReplay, AnchoredVesselKinematicsIdenticalOnVsOff) {
+  const std::string p = writeTemp("ais_anchor_identity.csv",
+      "unix_time,mmsi,lat,lon,sog_mps,cog_deg,nav_status,name\n"
+      "0.000,257000001,63.4010,10.4000,0.510,64.0,1,ANCH\n"     // above threshold
+      "1.000,257000001,63.4020,10.4010,0.590,351.6,1,ANCH\n");  // above threshold
+  const auto off = loadAisCsv(p, testDatum(), "ais", /*emit_velocity=*/false);
+  const auto on = loadAisCsv(p, testDatum(), "ais", /*emit_velocity=*/true);
+  ASSERT_EQ(off.size(), 2u);
+  ASSERT_EQ(on.size(), 2u);
+  for (std::size_t i = 0; i < off.size(); ++i) {
+    EXPECT_EQ(on[i].model, MeasurementModel::Position2D);
+    EXPECT_EQ(on[i].model, off[i].model);
+    ASSERT_EQ(on[i].value.size(), off[i].value.size());
+    EXPECT_TRUE(on[i].value.isApprox(off[i].value)) << "position content differs";
+    EXPECT_TRUE(on[i].covariance.isApprox(off[i].covariance))
+        << "covariance content differs";
+  }
+  // The one intended difference: ON surfaces the nav_status hint, OFF does not.
+  EXPECT_EQ(on[0].hints.nav_status.value_or(255), 1u);
+  EXPECT_FALSE(off[0].hints.nav_status.has_value());
+}

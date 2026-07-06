@@ -169,8 +169,22 @@ std::vector<Measurement> loadAisCsv(const std::string& path,
         (want_velocity) ? std::strtod(fields[cols.sog].c_str(), nullptr) : 0.0;
     const double cog_deg =
         (want_velocity) ? std::strtod(fields[cols.cog].c_str(), nullptr) : 0.0;
+    // Parse nav_status once (used both to gate velocity and to surface the
+    // hint below). -1 = absent/invalid. Range-checked to 0..255; the hint keeps
+    // its own 0..14 validity (15 = undefined dropped).
+    int nav_status = -1;
+    if (cols.nav_status >= 0) {
+      char* ns_end = nullptr;
+      const long ns = std::strtol(fields[cols.nav_status].c_str(), &ns_end, 10);
+      if (ns_end != fields[cols.nav_status].c_str() && ns >= 0 && ns <= 255)
+        nav_status = static_cast<int>(ns);
+    }
+    // #20 sub-item b: an anchored (1) / moored (5) vessel's watch-circle swing
+    // is not a track velocity — force Position2D even above the SOG threshold
+    // (shared gate with AisAdapter, core/estimation/PolarVelocity.hpp).
     const bool use_velocity = want_velocity && sog_mps >= kAisSogVelocityMinMps &&
-                              cog_deg >= 0.0 && cog_deg < 360.0;
+                              cog_deg >= 0.0 && cog_deg < 360.0 &&
+                              !aisNavStatusSuppressesVelocity(nav_status);
     if (use_velocity) {
       const double cog_rad = cog_deg * (M_PI / 180.0);
       const EnuVelocity2D vel = sogCogToEnuVelocity(
@@ -195,12 +209,8 @@ std::vector<Measurement> loadAisCsv(const std::string& path,
     // nav_status corroboration cue (ADR 0002 / R3): surface it when the column
     // is present and requested. Gated with the velocity toggle (same flag) so
     // default-off stays byte-identical; 15 = undefined is dropped at the edge.
-    if (emit_velocity && cols.nav_status >= 0) {
-      char* end = nullptr;
-      const long ns = std::strtol(fields[cols.nav_status].c_str(), &end, 10);
-      if (end != fields[cols.nav_status].c_str() && ns >= 0 && ns <= 14) {
-        m.hints.nav_status = static_cast<std::uint8_t>(ns);
-      }
+    if (emit_velocity && nav_status >= 0 && nav_status <= 14) {
+      m.hints.nav_status = static_cast<std::uint8_t>(nav_status);
     }
     out.push_back(std::move(m));
   }

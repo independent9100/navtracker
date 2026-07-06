@@ -919,6 +919,11 @@ cuts MHT id-switches on maneuvering targets but REGRESSES continuity (track
 breaks / lifetime / OSPA) broadly, worst on clean head-on (0.5→30.5 breaks); no
 id-switch benefit for PMBM. See eval-log 2026-07-06. Open sub-items surfaced:
 (a) root-cause the continuity regression (hypothesis: velocity R too tight vs
-sparse AIS + noisy radar position); (b) nav_status-gated velocity suppression
-(force Position2D when nav_status ∈ {1,5}) so anchored vessels stay inert — the
-loader now surfaces nav_status to enable it.
+sparse AIS + noisy radar position) — STILL OPEN; (b) nav_status-gated velocity
+suppression (force Position2D when nav_status ∈ {1,5}) — **SHIPPED 2026-07-06**
+(shared predicate `aisNavStatusSuppressesVelocity` in `PolarVelocity.hpp`, both
+paths). Delivers measurement-level inertness for the anchored vessel (its
+kinematic content is identical ON vs OFF); it does NOT make the anchored sim
+scenario row inert, because that row's residual is cross-target coupling from
+the underway vessel's legitimate velocity — i.e. sub-item (a). See eval-log
+2026-07-06.
