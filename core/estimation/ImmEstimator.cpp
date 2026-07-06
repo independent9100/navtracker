@@ -9,6 +9,7 @@
 
 #include "core/estimation/BearingRangeGuard.hpp"
 #include "core/estimation/CoordinatedTurn.hpp"
+#include "core/estimation/GaussianScore.hpp"
 #include "core/estimation/MeasurementModels.hpp"
 #include "core/estimation/SigmaPoints.hpp"
 
@@ -531,10 +532,9 @@ double ImmEstimator::logLikelihood(const Track& track,
         measurementResidual(z.model, z.value, pred.z_pred);
     const Eigen::MatrixXd S =
         pred.H * P_j * pred.H.transpose() + z.covariance;
-    const double det = S.determinant();
-    const double safe_det = (det > 0.0 && std::isfinite(det)) ? det : 1e-300;
-    const double mahal = y.transpose() * S.inverse() * y;
-    log_ell(j) = log_2pi_term - 0.5 * std::log(safe_det) - 0.5 * mahal;
+    // One decomposition (not determinant() + inverse()); guard unchanged.
+    const GaussianScore s = gaussianScore(y, S);
+    log_ell(j) = log_2pi_term - 0.5 * s.log_det_safe - 0.5 * s.mahalanobis;
   }
   // log Σⱼ μⱼ exp(log_ell_j) via log-sum-exp.
   const Eigen::VectorXd& mu = track.imm_mode_probabilities;
