@@ -1,0 +1,16 @@
+# navtracker multi-sensor sim-fixture generator — direct dependencies.
+#
+# Determinism depends on these EXACT versions (the checksum contract). Pinned,
+# not floated. trafficgen pulls its own transitive closure (click, pydantic,
+# pyproj, matplotlib, ...) — the fully frozen closure is in requirements.lock.txt
+# for exact reproduction.
+
+# --- generation (determinism-critical) ---
+trafficgen==0.9.0
+numpy==2.5.1
+
+# --- analysis / learning-doc figures (NOT part of generation determinism) ---
+pandas==2.3.3
+
+# --- reserved for the AIS M.1371 follow-up ticket (NMEA emission); unused here ---
+# pyais==3.1.0

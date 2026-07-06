@@ -6,6 +6,7 @@
 #include <string>
 
 #include "adapters/benchmark/ReplayScenarioRun.hpp"
+#include "adapters/benchmark/SimMultisensorScenarioRun.hpp"
 #include "adapters/benchmark/SimScenarioRun.hpp"
 #include "core/benchmark/Config.hpp"
 #include "core/benchmark/CsvWriter.hpp"
@@ -42,7 +43,7 @@ int main(int argc, char** argv) {
     std::cout
         << "Usage: navtracker_bench_baseline [--run-id ID] [--out DIR]\n"
            "                                 [--seeds N] [--skip-replays]\n"
-           "                                 [--with-haxr]\n"
+           "                                 [--with-haxr] [--with-simms]\n"
            "                                 [--config-filter SUBSTR]\n"
            "                                 [--scenario-filter SUBSTR]\n"
            "                                 [--config-eq LABEL]\n"
@@ -63,6 +64,13 @@ int main(int argc, char** argv) {
            "off by default because the full-enumeration JPDA / MHT configs\n"
            "are intractable on it without cluster decomposition; pass\n"
            "--with-haxr to include it (expect long runtime / high memory).\n"
+           "\n"
+           "--with-simms adds the multi-sensor SIMULATION battery (radar+AIS\n"
+           "+camera over seeded synthetic truth). Fixtures are local-only\n"
+           "(tests/fixtures/sim_multisensor/, git-ignored) — generate them\n"
+           "first (see that dir's README); absent fixtures are skipped. This\n"
+           "is the first controlled fusion-accuracy gate (truth independent\n"
+           "of every sensor by construction).\n"
            "\n"
            "--export-states-dir DIR writes, per run, the per-scan (truth,\n"
            "track) states and our per-scan GOSPA to DIR for the D2 Stone\n"
@@ -100,6 +108,13 @@ int main(int argc, char** argv) {
                         : static_cast<std::uint32_t>(std::stoul(seeds_arg));
   const bool skip_replays = has_flag(argc, argv, "--skip-replays");
   const bool with_haxr = has_flag(argc, argv, "--with-haxr");
+  // Multi-sensor SIMULATION battery (seeded Python-generated fixtures under
+  // tests/fixtures/sim_multisensor/). Off by default because the fixtures are
+  // local-only (git-ignored) and must be generated first; pass --with-simms to
+  // include them. This is the first controlled fusion-accuracy gate (truth is
+  // independent of every sensor by construction). Absent fixtures => the
+  // scenarios generate empty and are skipped by the Sweep.
+  const bool with_simms = has_flag(argc, argv, "--with-simms");
   // Dev-loop knob: skip per-cell accuracy/consistency scoring (OSPA/GOSPA/
   // T-GOSPA/RMSE/NEES/NIS), emit only wall + per-scan latency. See SweepParams.
   const bool fast_metrics = has_flag(argc, argv, "--fast-metrics");
@@ -133,6 +148,12 @@ int main(int argc, char** argv) {
   std::vector<std::unique_ptr<ScenarioRun>> all;
   for (auto& s : sim_scenarios) all.push_back(std::move(s));
   for (auto& s : replay_scenarios) all.push_back(std::move(s));
+  // Multi-sensor simulation battery (opt-in via --with-simms; fixtures are
+  // local-only). Each generate() self-skips (empty Scenario) when its fixture
+  // dir is missing, so this is safe to enable without the fixtures present.
+  if (with_simms) {
+    for (auto& s : defaultSimMultisensorScenarios()) all.push_back(std::move(s));
+  }
 
   // Apply optional filters (substring match on labels). Lets the user
   // re-measure a small slice against an existing pinned baseline

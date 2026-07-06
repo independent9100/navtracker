@@ -26,8 +26,20 @@ CMakeUserPresets.json
 # Local datasets / fixtures / renders — multi-GB, never committed.
 /data/
 /vids/
-/tests/fixtures/
+/tests/fixtures/*
 /.claude/
+
+# EXCEPTION: the multi-sensor sim generator is committed SOURCE (it produces
+# the local fixtures on demand). Keep the generator package + its docs/pins
+# tracked, while the venv, generated CSVs, checksums, and meta stay ignored.
+!/tests/fixtures/sim_multisensor/
+/tests/fixtures/sim_multisensor/*
+!/tests/fixtures/sim_multisensor/generator/
+!/tests/fixtures/sim_multisensor/README.md
+!/tests/fixtures/sim_multisensor/requirements.txt
+!/tests/fixtures/sim_multisensor/requirements.lock.txt
+/tests/fixtures/sim_multisensor/generator/*
+!/tests/fixtures/sim_multisensor/generator/*.py
 
 # External reference implementations — read-only cross-check material
 # (e.g. Garcia-Fernandez MTT MATLAB toolbox for PMBM port). Fetched per
