@@ -32,8 +32,12 @@ when the water date firms.
    with NON-AIS truth and (b) a **Doppler-capable radar** (W-band) to
    prototype the increment-8 Doppler direction before hardware answers
    arrive. ~half day go/no-go.
-8. **D8 R-BAD feasibility** — 69 h berthing radar + synced video
-   (hour-scale steady state on a 3rd geography + label passes). ~half day.
+8. **D8 R-BAD feasibility** — GO 2026-07-06 (30323ac, merged e807cb6):
+   CC-BY-4.0 (commercial OK), radar-detection CSVs + synced video, 31.6 GB,
+   non-AIS labels + video for independent label passes. REGIME CAVEAT:
+   automotive mmWave FMCW (60-81 GHz), NOT marine X-band — corroborates the
+   berthing scene on a new sensor class, not a 3rd marine geography. Next
+   step when picked up: extract 1-2 station-hours + label-scored replay.
 9. **R8.8 car_carrier_near re-extraction + occlusion video pass** — CODE
    HALF DONE 2026-07-06 (3855efd): extractor fallbacks (densest NavSatFix +
    quaternion-yaw heading, convention verified to 0.2-2.2 deg) + fail-loud
