@@ -8,6 +8,50 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-05 — PMBM runtime probe: profile + knob sweep (measurement only) [Cl-3]
+
+Branch `pmbm-runtime-probe` (worktree). Ticket
+`docs/superpowers/plans/2026-07-05-pmbm-runtime-probe-ticket.md`. Motivation:
+PMBM wall time throttles dev (increment-8: EKF+GNN 33 s vs PMBM+occupancy on the
+decimated `kattwyk_08` 285 s window). MEASUREMENT ONLY — no default touched, no
+algorithm changed; the only code is an env-gated compute-knob override block in
+`Config.cpp::makePmbmConfig()` (default-unset = bit-identical). Full results +
+frontier CSV: `docs/baselines/2026-07-05_pmbm_runtime_frontier.{md,csv}`.
+
+**Baseline** (`imm_cv_ct_pmbm_coverage_land`, decimated `kattwyk_08_dec50_w285`,
+md5 `304cdeb8…`, single-threaded, RelWithDebInfo): ~515 s steady-state wall
+(cold-start first run 640 s — CPU frequency drift; batches settle to ±0.2 %),
+**83 MB peak RSS**, gospa 104.26 / card_err 48.76 / lifetime 0.104 / 0 id-switch.
+~1.8× slower than realtime on this decimated feed (the ~20× figure was raw
+density). RSS is a non-issue.
+
+**Step 1 (profile, gprof — perf blocked by `perf_event_paranoid=4`, no root):**
+the Murty-vs-cost-matrix question is **neither**. `hungarianAssignment` is
+**85.2 % of runtime from the tracker's `murtyKBest`** (165 721 of 186 202 solves;
+cost-matrix construction ~2.7 %, occupancy layer < 0.1 %). Root cause: a **K=1
+inefficiency** in `Murty.cpp:75-116` — the child-generation loop runs one
+Hungarian solve per assigned row (**N≈82/scan**) and then exits because
+`size==K==1`, discarding every child. ~98.8 % of solves are wasted. A separate
+**~10.5 %** of wall is the bench's own per-scan OSPA/GOSPA/TGOSPA assignment
+scoring (harness cost, not the tracker).
+
+**Step 2 (knob sweep, OFAT):** the frontier is **flat** — no config knob buys a
+fast-dev-grade win, because the dominant cost scales with per-scan
+measurement/birth rows, which no knob controls. Best: `r_min = 1e-2` → −5.8 %
+haxr / −7.2 % philos, **byte-identical accuracy** on haxr *and* on the gate suite
+(harbor_complete_truth, dense_clutter_datum, philos — all unchanged; KEEP-safe by
+the OSPA/card/lifetime proxy). `gate`/`max_ppp` in the noise; `trajectory_window`
+cold; `max_global_hypotheses` **excluded (inert under K=1**, verified).
+
+**Recommendations.** Fast-dev config: `r_min = 1e-2` for a free ~6 % (marginal;
+NOT a fast-dev multiplier — none exists at the config level). Candidate default:
+same, gate-green, flagged for the arbiter (should still clear the philos
+KEEP-label test + determinism before promotion). **Step 3: strongly FOR** — a
+~1-line early-exit before Murty's child loop (`if ((int)out.assignments.size()
+== K) break;`) is bit-identical at K=1 and projects ~83× on the dominant bucket,
+~515 s → **~70–90 s (~6×)**. The flat frontier is the proof tuning can't reach
+it. Determinism + full ctest suite green on the branch with the flag added.
+
 ## 2026-07-05 — Held-out pass: sailboats_busy scored against the locked pre-registration [Cl-3]
 
 First frozen-detector held-out validation. Detector frozen as
