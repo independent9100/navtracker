@@ -53,9 +53,11 @@ TEST(Sweep, RowCountMatchesMatrix) {
   // + 6 NIS metrics per (sensor, model, source_id) source key
   // + 7 per-truth metrics (lifetime/breaks/switches/RMSE × 4 + rmse_n)
   //   per truth_id.
+  // + 6 per-scan latency rows (perf round 2): scan_proc_ms mean/p95/p99/max
+  //   + scan_interval_s + n_scans (emitted whenever the run had ≥1 scan).
   // TinyStraightLine has one source and one truth target;
-  // total per seed = 18 + 8 + 6 + 7 = 39.
-  EXPECT_EQ(rows.size(), 2u * 39u);
+  // total per seed = 18 + 8 + 6 + 7 + 6 = 45.
+  EXPECT_EQ(rows.size(), 2u * 45u);
   std::size_t nees_seen = 0;
   std::size_t nis_seen = 0;
   std::size_t per_truth_seen = 0;

@@ -155,6 +155,8 @@ void emit(std::vector<MetricRow>& out,
     out.push_back({p.run_id, config, scenario, seed,
                    "rmse_n" + sfx, static_cast<double>(pt.rmse_n), "count"});
   }
+  // (per-scan latency rows are emitted separately by emitScanTiming — they
+  //  need the BenchResult, which is not threaded into this metric emitter.)
   // NEES aggregate (position, Confirmed-only via BenchStep::tracks).
   out.push_back({p.run_id, config, scenario, seed, "nees_mean", c.nees.mean, "ratio"});
   out.push_back({p.run_id, config, scenario, seed, "nees_median", c.nees.median, "ratio"});
@@ -184,6 +186,43 @@ void emit(std::vector<MetricRow>& out,
                    "nis_dropped_singular:" + sl,
                    static_cast<double>(s.dropped_singular), "count"});
   }
+}
+
+// Per-scan latency emitter (perf round 2). Turns the raw per-scan
+// processing times captured by BenchRunner into the operator-facing
+// realtime statistic: mean / p95 / p99 / max scan-processing time (ms)
+// plus the median scan interval (s) and scan count. Live operation cares
+// about the WORST scan, not the replay mean, so max/p99 are first-class.
+// Purely additive rows — no effect on any accuracy metric.
+void emitScanTiming(std::vector<MetricRow>& out, const SweepParams& p,
+                    const std::string& config, const std::string& scenario,
+                    std::uint64_t seed, const BenchResult& result) {
+  const auto& sps = result.scan_process_seconds;
+  if (sps.empty()) return;
+  double sum = 0.0;
+  for (double s : sps) sum += s;
+  const double mean_ms = 1000.0 * sum / static_cast<double>(sps.size());
+  out.push_back({p.run_id, config, scenario, seed, "scan_proc_ms_mean", mean_ms, "ms"});
+  out.push_back({p.run_id, config, scenario, seed, "scan_proc_ms_p95",
+                 1000.0 * percentile(sps, 0.95), "ms"});
+  out.push_back({p.run_id, config, scenario, seed, "scan_proc_ms_p99",
+                 1000.0 * percentile(sps, 0.99), "ms"});
+  out.push_back({p.run_id, config, scenario, seed, "scan_proc_ms_max",
+                 1000.0 * percentile(sps, 1.0), "ms"});
+  // Scan interval: median gap between consecutive scan data-timestamps.
+  // Robust to leading/trailing gaps in the feed; the honest "one scan
+  // worth of wall time" that max scan-processing must fit inside for the
+  // tracker to keep up in live operation.
+  std::vector<double> dt;
+  const auto& ts = result.scan_time_sec;
+  for (std::size_t i = 1; i < ts.size(); ++i) {
+    const double d = ts[i] - ts[i - 1];
+    if (d > 0.0) dt.push_back(d);
+  }
+  const double interval_s = dt.empty() ? 0.0 : percentile(dt, 0.5);
+  out.push_back({p.run_id, config, scenario, seed, "scan_interval_s", interval_s, "s"});
+  out.push_back({p.run_id, config, scenario, seed, "n_scans",
+                 static_cast<double>(sps.size()), "count"});
 }
 }  // namespace
 
@@ -539,6 +578,8 @@ std::vector<MetricRow> runSweep(
             computeConsistency(nis, result, params.metrics.assoc_gate_m);
         emit(rows, params, config.label, desc.label,
              static_cast<std::uint64_t>(seed), m, c, wall_seconds);
+        emitScanTiming(rows, params, config.label, desc.label,
+                       static_cast<std::uint64_t>(seed), result);
         // D2 GOSPA cross-validation export (inert unless a dir is set). Dump
         // the exact BenchResult the metrics just consumed so an external
         // scorer re-scores identical tracks. See GospaExport.hpp.

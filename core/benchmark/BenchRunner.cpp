@@ -1,5 +1,7 @@
 #include "core/benchmark/BenchRunner.hpp"
 
+#include <chrono>
+
 // BenchRunner — drives a Scenario through a Tracker, snapshotting full
 // truth + track state at each truth timestamp.
 //
@@ -51,6 +53,24 @@ struct TruthGroup {
   Timestamp time;
   std::vector<TruthStateSnapshot> snapshots;
 };
+
+// Time one processBatch call and record it into the result's per-scan
+// latency arrays. Templated over the tracker type (all three trackers
+// share the `void processBatch(const std::vector<Measurement>&)` signature)
+// so the timing site is identical for the JPDA, MHT and PMBM paths. Only
+// processBatch is timed — the post-scan bias hook is deliberately outside
+// the window (it is harness bookkeeping, not per-scan tracker cost).
+template <typename TrackerT>
+void timedProcessBatch(TrackerT& tracker,
+                       const std::vector<Measurement>& scan,
+                       const Timestamp& scan_t, BenchResult& result) {
+  const auto t0 = std::chrono::steady_clock::now();
+  tracker.processBatch(scan);
+  const auto t1 = std::chrono::steady_clock::now();
+  result.scan_process_seconds.push_back(
+      std::chrono::duration<double>(t1 - t0).count());
+  result.scan_time_sec.push_back(scan_t.seconds());
+}
 
 // RAII guard that ensures the manager's track sink is cleared even if a
 // downstream call (Tracker::process, etc.) throws. Without this the
@@ -127,7 +147,7 @@ BenchResult runBench(const Scenario& scenario,
         scan.push_back(meas[mi]);
         ++mi;
       }
-      tracker.processBatch(scan);
+      timedProcessBatch(tracker, scan, scan_t, result);
     }
   };
 
@@ -146,7 +166,7 @@ BenchResult runBench(const Scenario& scenario,
       scan.push_back(meas[mi]);
       ++mi;
     }
-    tracker.processBatch(scan);
+    timedProcessBatch(tracker, scan, scan_t, result);
   }
 
   result.sink_events = sink.events();
@@ -194,7 +214,7 @@ BenchResult runBenchMht(const Scenario& scenario, MhtTracker& tracker,
         scan.push_back(meas[mi]);
         ++mi;
       }
-      tracker.processBatch(scan);
+      timedProcessBatch(tracker, scan, scan_t, result);
       if (post_scan_hook) post_scan_hook(tracker, scan_t);
     }
   };
@@ -211,7 +231,7 @@ BenchResult runBenchMht(const Scenario& scenario, MhtTracker& tracker,
       scan.push_back(meas[mi]);
       ++mi;
     }
-    tracker.processBatch(scan);
+    timedProcessBatch(tracker, scan, scan_t, result);
     if (post_scan_hook) post_scan_hook(tracker, scan_t);
   }
   // sink_events intentionally empty: MhtTracker has no sink today.
@@ -260,7 +280,7 @@ BenchResult runBenchPmbm(const Scenario& scenario,
         scan.push_back(meas[mi]);
         ++mi;
       }
-      tracker.processBatch(scan);
+      timedProcessBatch(tracker, scan, scan_t, result);
       if (post_scan_hook) post_scan_hook(tracker, scan_t);
     }
   };
@@ -277,7 +297,7 @@ BenchResult runBenchPmbm(const Scenario& scenario,
       scan.push_back(meas[mi]);
       ++mi;
     }
-    tracker.processBatch(scan);
+    timedProcessBatch(tracker, scan, scan_t, result);
     if (post_scan_hook) post_scan_hook(tracker, scan_t);
   }
   return result;
