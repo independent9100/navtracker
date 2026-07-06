@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "core/estimation/PolarVelocity.hpp"
 #include "core/geo/Datum.hpp"
 #include "core/types/Measurement.hpp"
 #include "core/types/Timestamp.hpp"
@@ -58,17 +59,20 @@ struct AisAdapterConfig {
   bool emit_velocity_from_sog_cog = true;
   // Below this ground speed COG is meaningless (a near-stationary / drifting
   // target reports a random course), so the measurement stays Position2D — the
-  // "COG down-weighted at low SOG" rule in the limit. m/s.
-  double sog_velocity_min_mps = 0.5;
+  // "COG down-weighted at low SOG" rule in the limit. m/s. Defaults are the
+  // shared constants in core/estimation/PolarVelocity.hpp so the NMEA and replay
+  // paths share one source of truth (backlog #20); these remain per-deployment
+  // knobs.
+  double sog_velocity_min_mps = kAisSogVelocityMinMps;
   // 1-σ used to build the SOG/COG → ENU-velocity covariance (AIS carries no
   // velocity uncertainty of its own).
-  double sog_std_mps = 0.5;
-  double cog_std_deg = 5.0;
+  double sog_std_mps = kAisSogStdMps;
+  double cog_std_deg = kAisCogStdDeg;
   // Isotropic velocity-σ floor ADDED to the polar-Jacobian velocity covariance
   // so that even just above the SOG threshold a noisy COG cannot make the
   // velocity DIRECTION overconfident (the low-SOG down-weighting, continuous
   // form). m/s.
-  double velocity_iso_floor_mps = 0.3;
+  double velocity_iso_floor_mps = kAisVelocityIsoFloorMps;
   // Position 1-σ (m) for high-accuracy vs standard AIS fixes.
   double position_std_high_accuracy_m = 10.0;
   double position_std_standard_m = 30.0;

@@ -909,3 +909,16 @@ velocity emission in the replay loader behind a default-off toggle
 exercise. Not bit-identical when ON → prices through the standing gates.
 Natural companion to the multi-sensor sim Layer-2 AIS emitter (which will
 also carry SOG/COG).
+
+**#20 follow-up DONE (2026-07-06, branch `ais-loader-velocity`):** loadAisCsv
+now emits PositionVelocity2D + nav_status behind a default-off toggle, sharing
+the polar-velocity math with AisAdapter via `core/estimation/PolarVelocity.hpp`
+(no duplicated Jacobian). Default-off proven byte-identical. FIRST honest-truth
+measurement of the velocity path (sim gates): it is NOT a promotion candidate —
+cuts MHT id-switches on maneuvering targets but REGRESSES continuity (track
+breaks / lifetime / OSPA) broadly, worst on clean head-on (0.5→30.5 breaks); no
+id-switch benefit for PMBM. See eval-log 2026-07-06. Open sub-items surfaced:
+(a) root-cause the continuity regression (hypothesis: velocity R too tight vs
+sparse AIS + noisy radar position); (b) nav_status-gated velocity suppression
+(force Position2D when nav_status ∈ {1,5}) so anchored vessels stay inert — the
+loader now surfaces nav_status to enable it.

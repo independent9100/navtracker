@@ -151,6 +151,10 @@ class SimMultisensorScenarioRun : public ScenarioRun {
     // the first controlled fusion-vs-single-sensor accuracy delta this project
     // has had. Unset/empty ⇒ full radar+AIS(+camera) fusion, the default.
     const bool radar_only = !envOr("SIMMS_RADAR_ONLY", "").empty();
+    // #20 pricing: emit AIS SOG/COG velocity content (PositionVelocity2D) +
+    // nav_status from the fixtures. Default OFF (env unset) => Position2D,
+    // byte-identical to before. See docs/algorithms/evaluation-log.md.
+    const bool ais_velocity = !envOr("SIMMS_AIS_VELOCITY", "").empty();
 
     Scenario s;
     // Radar plots in the moving own-ship body frame.
@@ -161,7 +165,7 @@ class SimMultisensorScenarioRun : public ScenarioRun {
     // AIS absolute-position fixes (carry MMSI hint -> R11 identity surfacing).
     if (!radar_only && hasDataRows(ais_csv)) {
       const auto ais = navtracker::replay::loadAisCsv(ais_csv, provider.datum(),
-                                                      "sim_ais");
+                                                      "sim_ais", ais_velocity);
       s.measurements.insert(s.measurements.end(), ais.begin(), ais.end());
     }
 

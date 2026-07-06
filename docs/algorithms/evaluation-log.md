@@ -8,6 +8,60 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-06 — Replay AIS loader velocity path (#20) first measured against honest truth [Cl-3]
+
+`loadAisCsv` can now emit PositionVelocity2D (SOG/COG) + `hints.nav_status` from
+the columns the fixtures already carry, behind a **default-off** toggle
+(`emit_velocity` param; bench env `SIMMS_AIS_VELOCITY` / `PHILOS_AIS_VELOCITY`).
+The polar-Jacobian + isotropic-floor math is EXTRACTED into a shared helper
+`core/estimation/PolarVelocity.hpp` that both the NMEA `AisAdapter` (increment 2)
+and the replay loader call — no duplicated Jacobian, the paths cannot drift
+(unit test `AisCsvReplay.MatchesAisAdapterVelocityContent` pins them equal). This
+is the first time the #20 velocity path runs through the full MHT/PMBM pipeline
+scored against truth that is independent of AIS (sim gates).
+
+**Default-off byte-identical (proven):** unit test (default → Position2D); the 7
+`AisAdapter` tests stay green (the extraction is a mechanical, byte-identical
+move); bench byte-compare on the sim-ms battery (MHT, all 6) branch-vs-master is
+identical on every metric row; full suite green with the pinned philos replay
+tests (which drive `loadAisCsv` default-off) unchanged.
+
+**ON pricing — sim gates, honest truth by construction (Δ = ON − OFF):**
+
+MHT `imm_cv_ct_mht` — velocity trades id-switches for track continuity:
+| scenario | ospaΔ | id_swΔ | breaksΔ | lifeΔ | cardΔ |
+|---|---|---|---|---|---|
+| headon          | +59.3 |   0.0 | **+30.0** | −0.12 | +0.03 |
+| ais_dropout     | +59.2 |  +3.0 | +14.0 | −0.07 | +0.06 |
+| overtaking      | +28.4 | **−10.5** | +12.0 | −0.05 | +0.00 |
+| crossing        | −11.1 | **−6.3** |  −2.3 | +0.00 | −0.09 |
+| clutter_burst   | −25.2 | −1.5 |  +9.0 | −0.04 | −0.27 |
+| anchored_camera | +10.5 | −0.3 |  +5.3 | −0.05 | −0.15 |
+
+PMBM `imm_cv_ct_pmbm_coverage_land` — net small regression, NO id-switch benefit
+(PMBM identity is already structurally 0 switches): ospa worse everywhere (+3 to
++39), breaks mostly worse, `card_err` marginally better (−0.02..−0.12), lifetime
+slightly worse. philos ais_ferry_far (MECHANICS ONLY — AIS-derived truth, so a
+velocity arm scored against it is CIRCULAR, not an accuracy signal): same
+direction — lifetime 0.42→0.10, ospa 356→447, rmse 25→50.
+
+**Finding (for the arbiter; no default flipped, no config promoted):** correct
+velocity content — verified sane (AIS SOG 6–7 m/s; the loader matches AisAdapter
+to 1e-6) — is NOT a free win. It sharply cuts id-switches on MHT maneuvering
+targets (crossing −6.3, overtaking −10.5) but REGRESSES continuity broadly (track
+breaks, lifetime, OSPA), most starkly on the clean head-on (0.5→30.5 breaks). The
+huge `sog_rmse` ON is a downstream symptom of the extra break/rebirth transients,
+not the measurement. Hypothesis to root-cause before any promotion: the
+increment-2 velocity covariance (~0.6 m/s 1-σ) is tight relative to the sparse
+AIS cadence + the noisier radar-position stream it fuses with, so a PV update
+pulls the state and destabilizes subsequent radar gating → misses → M-of-N
+deletion. Separately, the anchored scenario is NOT inert (ospa +10.5): the
+watch-circle swing SOG peaks ~0.85 m/s, above the 0.5 m/s threshold, so the
+anchored vessel intermittently emits velocity — `nav_status`-gated suppression
+(force Position2D when nav_status ∈ {1,5}, now that the loader surfaces it) is
+the concrete fix candidate. Shared-helper reuse means whatever fix lands applies
+to both the NMEA and replay paths.
+
 ## 2026-07-06 — Multi-sensor simulation battery: first controlled fusion accuracy gate [Cl-3]
 
 First fusion-accuracy measurement scored against truth INDEPENDENT of every
