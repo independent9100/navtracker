@@ -9,6 +9,7 @@
 
 #include "core/geo/Datum.hpp"
 #include "core/own_ship/OwnShipProvider.hpp"  // IDatumChangeSink
+#include "core/static/ShadowMask.hpp"  // ShadowGuardParams — LOS/shadow guard
 #include "core/types/StaticObstacle.hpp"
 #include "ports/ILiveOccupancyFeed.hpp"
 #include "ports/IStaticObstacleModel.hpp"
@@ -110,6 +111,16 @@ struct LiveOccupancyParams {
   // re-suppressing an area — the safe direction. Default 600 s ≈ 3 missed
   // anchored reports. Set == veto_window_s to disable the anchored distinction.
   double anchored_veto_window_s = 600.0;
+  // LOS/shadow guard (verdict-b fix, 2026-07-06 shadow probe). When enabled, the
+  // coverage-aware decay does NOT decay a cell whose line of sight is blocked by
+  // a strong closer occluder on ~the same bearing this scan (a large ship
+  // crossing in front of a moored vessel): its returns truncate at the occluder,
+  // so "no return" there is not evidence of emptiness. Disabled by default ⇒
+  // byte-identical to pre-guard behaviour; the decay-enabled configs turn it on
+  // (it is a correctness fix wherever coverage-aware decay runs). Geometry +
+  // rationale: core/static/ShadowMask.hpp; only consulted when a bundle carries a
+  // valid coverage sector (have_cover) — universal-decay configs are unaffected.
+  ShadowGuardParams shadow_guard{};
 };
 
 /**
@@ -234,6 +245,16 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   int peakStructureCount() const { return peak_structure_count_; }
   double peakPersistence() const { return peak_persistence_; }
   /**
+   * Largest fraction of live occupancy cells the LOS/shadow guard protected
+   * (held out of decay AND out of the clutter-background median) in any single
+   * scan. Shadow sectors are narrow, so this should stay small; a large value
+   * means most of the scene reads as "shadowed", i.e. the occluder detection is
+   * mis-tuned for the sensor. 0 when the guard is disabled or never fires.
+   */
+  double peakGuardProtectedFraction() const {
+    return peak_guard_protected_frac_;
+  }
+  /**
    * Number of birthSuppression() queries that landed in a suppressed region
    * (returned > 0). Zero ⇒ the birth path never queried classified structure.
    */
@@ -329,6 +350,15 @@ class LiveOccupancyModel : public IStaticObstacleModel,
 
   std::map<Cell, double> persistence_;      // EWMA persistence per touched cell
   std::set<Cell> persistent_prev_;          // last scan's persistent set (hysteresis)
+  // Cells the LOS/shadow guard protected THIS scan (covered by a sector but
+  // shadowed by a closer occluder → decay skipped). State-scoped: cleared at the
+  // top of every observe(), repopulated by the decay loop. Excluded from the
+  // clutter-adaptive-bar median (persistentCells) — a cell held because the
+  // evidence says a real object is shadowed there is NOT part of the clutter
+  // background, so feeding its held mass into the background estimate is a
+  // category error. Their OWN persistence is still classified against the bar
+  // normally. Empty ⇒ guard off / not firing ⇒ median bit-identical to pre-guard.
+  std::set<Cell> guard_protected_scan_;
   // Emitted hazards + the geometry birthSuppression() is DERIVED from, so
   // suppression > 0 ⇒ inside some hazard's keep-clear ring (the ADR-0002
   // conservation invariant, structural). All three vectors are index-aligned.
@@ -351,6 +381,7 @@ class LiveOccupancyModel : public IStaticObstacleModel,
   std::vector<VesselFix> vessel_fixes_;
   int peak_structure_count_ = 0;
   double peak_persistence_ = 0.0;
+  double peak_guard_protected_frac_ = 0.0;  // max shadowed-cell fraction any scan
   mutable long suppression_hits_ = 0;
 };
 

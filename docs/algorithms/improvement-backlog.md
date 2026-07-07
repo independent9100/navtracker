@@ -1001,3 +1001,27 @@ place) showing **confirmed-phantom persistence in spatially-concentrated clutter
 upstream cannot fix.** Until then, tracker-level clutter work stays closed; a
 post-extraction-representative sim scenario (point-like false plots, over-dispersed
 counts, no duplicate disks) is the pull-based prerequisite if it re-opens.
+
+---
+
+## 24. Adaptive/threshold & feedback-coupled-A/B decision robustness (PARKED, pull-based)
+
+**Adaptive/threshold & feedback-coupled-A/B decision robustness (raised
+2026-07-07, LOS-guard work; pull-based, post-water):** four epsilon-fragility
+cases surfaced this week where a small mass/parameter change flips an output
+CLASS at a threshold: (1) harbor `adapt_k3` λ_birth cliff (backlog #21); (2) the
+6c emitted-hazard flip — the clutter-ADAPTIVE bar (median × factor) is
+non-monotone in persistence, so the LOS guard holding a little mass de-emitted a
+marginal region, and the failing region flipped midriver_grp↔astern_blob with the
+guard margin (50→0/15, 150→0/0, 250→93/0, 400→606/60); (3) the anchored SOG
+threshold (#20 nav_status gate); (4) cov-vs-uni per-cell persistence — NOT
+monotone because the occupancy layer is feedback-coupled to the tracker
+(persistence → suppression → tracker → 1−r weights → touches → persistence), so
+two full-pipeline configs see different inputs (measured deficit 0.064). Two
+shapes: **(a) median/cliff decisions over small populations are epsilon-fragile**
+(hysteresis or banded assertions wherever a median/cliff decides an output class);
+**(b) asserting a property of the DIFFERENCE between two full-pipeline runs of a
+feedback system pins an incidental, not an invariant** — such A/B gates should
+assert only isolated (fixed-input) invariants or robustly-banded aggregates. If
+picked up, rethinking what 6c-style A/B gates may validly assert is in scope.
+Evidence: the four cases with their tables (eval-log 2026-07-06 / 2026-07-07).
