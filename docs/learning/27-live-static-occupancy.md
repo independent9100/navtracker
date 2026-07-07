@@ -202,6 +202,66 @@ under-claiming coverage:**
    veto of §3.5 — because a reported position is exactly the kind of "we know a
    platform is here" evidence a veto wants.)
 
+### 3.2.1 The shadow trap: swept in azimuth, but the view is blocked
+
+Coverage-aware decay asks "was this cell inside the swept arc?" But being inside
+the arc is not the same as being **seen**. A big ship can sit between us and a
+cell. The radar beam sweeps *past* that bearing, but the echo comes back from the
+ship's hull — it never reaches the water behind it. The cell is swept in angle,
+yet the line of sight is **blocked**. If we treat "no return there" as "empty",
+we decay a real moored boat every single time a large ship crosses in front of
+it. We measured exactly this (the 2026-07-06 shadow probe): a moored yacht's
+occupancy score fell **24×** and its keep-clear hazard flickered off for half of
+a 35-second passing while a car carrier crossed its bearing. That is the
+[ADR-0002](../superpowers/specs/2026-05-28-maritime-sensor-fusion-design.md)
+presence channel breaking on a routine harbour event.
+
+![LOS/shadow guard: a swept cell behind a closer occluder is a shadow, not vacancy](figures/27-los-shadow-guard.png)
+
+The **LOS/shadow guard** (LOS = "line of sight") fixes this using only the
+scan's own returns. Wherever a group of returns sits *closer* on some bearing
+(a ship, a pier), it casts a **shadow wedge** out behind them. A cell inside a
+shadow wedge — swept in angle but blocked from view — is treated as **not
+observed**, so its decay is **skipped** and its score is frozen, exactly like a
+cell nobody looked at. In the picture, the green moored-yacht cell behind the car
+carrier is held; the dashed cell off to the side, swept and truly empty, still
+decays. Same safe direction as everything else here: if we are unsure, we do
+**not** decay.
+
+On our radar the returns are already **CFAR plots** — each plot is a detection
+the front-end has already decided is a real reflector (CFAR = the radar's own
+"is this above the noise?" test). So even a *single* closer plot on a bearing is
+enough to call a shadow (knob `min_occluder_returns = 1`). A sensor that instead
+streamed raw, un-thresholded cells would raise that number, so a stray speckle
+does not shield the sea behind it.
+
+**One trap we had to avoid — do not let the guard move the clutter bar.** The
+adaptive bar (§3.3) is the *median* score of live cells: its job is to estimate
+the **clutter** background. A cell the shadow guard is holding is, by the guard's
+own logic, a **real object we cannot currently see** — not clutter. If we let its
+held score count toward the median, holding a shadowed boat would quietly raise
+the bar and drop some *other* faint structure below it. So a guard-held cell is
+left **out of the median** while it is being held (it is still measured against
+the bar for its own classification — it just does not help *define* the
+background). This cannot spiral, because whether the guard fires is decided by
+**geometry alone** (is there a closer return on this bearing?) — it never looks at
+any cell's score or at the bar, so the bar can never feed back into the guard.
+
+**A note for the next reader — an invariant that is only true "with the lights
+held still".** It is tempting to say "the guard only ever *skips* a decay, so a
+cell's score can only go **up** — that's a guarantee". It is a guarantee, but
+only when the **input is identical**. In a live run it is not: this whole layer is
+a **loop** — the scores decide birth suppression, suppression changes which
+tracks live, that changes which returns are "claimed", which changes the weights
+fed back into the scores. So two *different* configurations (say, with and
+without coverage-aware decay) are two different loops seeing two different inputs;
+comparing their scores cell-by-cell is **not** a monotone thing, and asserting it
+is, pins luck, not a law (we learned this the hard way — a 6c test assertion that
+was true only by coincidence; see the eval-log 2026-07-07). The guard's real
+guarantee is proven where it holds: feed **one** fixed stream to the model twice,
+guard on versus off, and the guarded scores are pointwise ≥
+(`LiveOccupancyModel.ShadowGuardOnlyAddsMassOnFixedInputs`).
+
 ### 3.3 The test: persistent AND spatially extended
 
 A high persistence value alone is not enough to call something "structure."

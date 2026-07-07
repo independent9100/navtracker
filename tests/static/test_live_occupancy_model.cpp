@@ -946,5 +946,108 @@ TEST(LiveOccupancyModel, DeterministicAcrossIdenticalRuns) {
   EXPECT_DOUBLE_EQ(run(), run());
 }
 
+// ── LOS/shadow guard: the guard's TRUE invariant, proven on FIXED INPUTS ──────
+// The guard's contract is: given an identical scan stream, it only ever SKIPS a
+// decay (a cell shadowed by a closer occluder is not "observed empty"), so a
+// cell's persistence is pointwise ≥ the un-guarded run and STRICTLY greater on
+// any scan it shadowed a swept-but-empty cell. This is provable ONLY with the
+// inputs held fixed. It is NOT a property of the difference between two live
+// tracker configs (e.g. coverage vs universal in the 6c A/B): there the
+// occupancy layer is feedback-coupled to the tracker (persistence → suppression →
+// tracker → claim pattern → 1−r weights → touches → persistence), so the two runs
+// see DIFFERENT inputs and neither persistence nor emitted hazards is monotone
+// (see test_philos_occupancy_coverage_6c.cpp, assertion (2), removed 2026-07-07).
+// This test feeds ONE stream to two models differing only in guard on/off.
+namespace {
+// A scan with explicit position returns (what the LOS guard reads), optional
+// clutter-labeled touches (what builds persistence), and a coverage sector.
+std::vector<ISensorDetectionModel::ScanObservation> feedGuard(
+    const std::vector<Eigen::Vector2d>& positions,
+    const std::vector<std::pair<Eigen::Vector2d, double>>& clutter, double t_sec,
+    const ISensorDetectionModel::CoverageSector& cov) {
+  auto b = feed(clutter, t_sec);
+  b[0].positions = positions;
+  b[0].coverage = cov;
+  return b;
+}
+// EWMA persistence of the cell nearest `p` (0 if none within a cell — the
+// containing cell's centre can be up to a half-diagonal ≈ 0.71·cell away).
+double massAt(const LiveOccupancyModel& m, const Eigen::Vector2d& p,
+              double cell_m) {
+  double best = cell_m * 0.75, mass = 0.0;
+  for (const auto& [c, v] : m.persistenceCells()) {
+    const double d = (c - p).norm();
+    if (d < best) {
+      best = d;
+      mass = v;
+    }
+  }
+  return mass;
+}
+}  // namespace
+
+TEST(LiveOccupancyModel, ShadowGuardOnlyAddsMassOnFixedInputs) {
+  const Eigen::Vector2d sensor(0.0, 0.0);
+  const Eigen::Vector2d target(1000.0, 0.0);  // far cell, bearing 0
+  // A strong closer occluder cluster on the SAME bearing, ~200 m out.
+  const std::vector<Eigen::Vector2d> occ = {
+      {200.0, 0.0}, {200.0, 4.0}, {200.0, -4.0}};
+  const auto cov = disc(sensor, 1500.0);  // sweeps past the target (it is observed)
+
+  LiveOccupancyParams base;
+  base.cell_size_m = 100.0;
+  base.ewma_alpha = 0.3;
+  base.persistence_bar = 0.2;
+  base.extended_cells_min = 1;
+  LiveOccupancyParams off = base;  // guard OFF (default)
+  LiveOccupancyParams on = base;
+  on.shadow_guard.enabled = true;
+  on.shadow_guard.min_occluder_returns = 1;
+  on.shadow_guard.wedge_pad_rad = 0.10;
+  // > the 100 m cell's half-diagonal (≈ 71 m): in the no-occluder phase the
+  // target's OWN return (range 1000) must not degenerately self-shadow its cell
+  // centre (which sits up to ~71 m beyond it). The phase-2 occluder is 800 m
+  // closer, so the shadow still fires there.
+  on.shadow_guard.range_margin_m = 100.0;
+
+  LiveOccupancyModel m_off(anchorDatum(), off), m_on(anchorDatum(), on);
+
+  // Phase 1 (t 0..4): the target vessel returns every scan — mass accrues. No
+  // closer occluder present, so the guard cannot fire: the runs are identical.
+  for (int k = 0; k < 5; ++k) {
+    const auto b = feedGuard({target}, {{target, 1.0}}, k, cov);
+    m_off.observe(b);
+    m_on.observe(b);
+  }
+  const double m0_off = massAt(m_off, target, base.cell_size_m);
+  const double m0_on = massAt(m_on, target, base.cell_size_m);
+  EXPECT_GT(m0_off, 0.0);
+  EXPECT_DOUBLE_EQ(m0_off, m0_on)
+      << "with no occluder the guard must not change anything";
+
+  // Phase 2 (t 5..14): the target is OCCLUDED — no return there, but the sector
+  // still sweeps it (observed-empty) AND the closer occluder is present. Guard
+  // OFF decays it every scan; guard ON recognises the shadow and skips the decay.
+  for (int k = 5; k < 15; ++k) {
+    const auto b = feedGuard(occ, /*clutter=*/{}, k, cov);
+    m_off.observe(b);
+    m_on.observe(b);
+    // The invariant, checked EVERY shadowed scan: guarded ≥ unguarded.
+    EXPECT_GE(massAt(m_on, target, base.cell_size_m) + 1e-12,
+              massAt(m_off, target, base.cell_size_m));
+  }
+  const double m_off_end = massAt(m_off, target, base.cell_size_m);
+  const double m_on_end = massAt(m_on, target, base.cell_size_m);
+
+  // OFF eroded the occluded cell (observed-empty decay, ~0.7^10 of its mass).
+  EXPECT_LT(m_off_end, 0.1 * m0_off);
+  // ON held it: strictly greater than OFF, and unchanged from its pre-occlusion
+  // value (the guard skipped the decay on every shadowed scan).
+  EXPECT_GT(m_on_end, m_off_end);
+  EXPECT_DOUBLE_EQ(m_on_end, m0_on);
+  // And the guard reported protecting the cell.
+  EXPECT_GT(m_on.peakGuardProtectedFraction(), 0.0);
+}
+
 }  // namespace
 }  // namespace navtracker

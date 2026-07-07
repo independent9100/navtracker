@@ -235,19 +235,38 @@ TEST(PhilosCoverageDecay6c, SunsetCoverageAwareHoldsStructureAndProtectsUnsweptC
   EXPECT_LT(median(cov.sector_widths_rad) * kRad2Deg, 90.0)
       << "estimated sectors are not sub-circle → the coverage gate is inert";
 
-  // (2) MONOTONICITY (the structural property): coverage-aware decay forgets a
-  //     cell only when it is observed empty — a SUBSET of the scans universal
-  //     decays it — so per-cell persistence is pointwise ≥ universal, hence the
-  //     emitted hazard set is a superset and presence is held AT LEAST as long
-  //     over every labelled region. Coverage-aware can never LOSE presence vs
-  //     universal. Checked across all labels.
-  for (const auto& l : labels) {
-    const Eigen::Vector2d c = labelEnu(uni.datum, l);
-    EXPECT_GE(hazardCoverScans(cov, c, l.radius_m),
-              hazardCoverScans(uni, c, l.radius_m))
-        << "coverage-aware held region " << l.region_id
-        << " FEWER scans than universal — monotonicity violated";
-  }
+  // (2) [REMOVED 2026-07-07 — no valid full-pipeline monotonicity invariant.]
+  //
+  //     This PREVIOUSLY asserted "coverage-aware holds every labelled region for
+  //     ≥ as many EMITTED HAZARD-scans as universal", derived from per-cell
+  //     persistence "→ hazard superset". BOTH forms are wrong as full-pipeline
+  //     invariants:
+  //       (a) emitted-hazard: the clutter-ADAPTIVE bar (median × factor) is
+  //           NON-monotone in persistence — raising a cell's mass raises the
+  //           median → raises the bar → can DE-EMIT a marginal region whose mass
+  //           ROSE. The LOS guard exposed it: the failing region flipped between
+  //           midriver_grp and astern_blob as the guard range margin changed
+  //           (50→0/15, 150→0/0, 250→93/0, 400→606/60) — an epsilon-knife-edge.
+  //       (b) per-cell persistence: NOT monotone between these configs either —
+  //           the occupancy layer is FEEDBACK-COUPLED to the tracker: occupancy
+  //           persistence → birth suppression → tracker → which returns are
+  //           claimed → clutter weights (1−r) → the touches fed back into
+  //           occupancy. So `cov` and `uni` are different full-pipeline runs with
+  //           different touch sequences; per-cell mass diverges non-monotonically
+  //           (measured deficit 0.064 on this clip).
+  //
+  //     Asserting a property of the DIFFERENCE between two full-pipeline runs of a
+  //     feedback system pins an INCIDENTAL, not an invariant — the old check was
+  //     true by luck. The guard's genuine invariant (identical inputs ⇒ it only
+  //     skips decays ⇒ persistence only rises) is provable ONLY with inputs held
+  //     fixed, and is asserted where it holds:
+  //     LiveOccupancyModel.ShadowGuardOnlyAddsMassOnFixedInputs
+  //     (tests/static/test_live_occupancy_model.cpp). Checks (1)/(3)/(4) below are
+  //     honest measured expectations about SPECIFIC behaviours, not claimed
+  //     invariants — a legitimate thing for a gate to hold. KEEP conservation
+  //     gates (never lose a real vessel) remain absolute, untouched. See the
+  //     2026-07-07 eval-log entry + backlog "adaptive/threshold & feedback-coupled
+  //     A/B decision robustness".
 
   // (3) It STRICTLY improves real off-beam structure presence: astern_blob is a
   //     large real structure out of camera FOV, rarely swept as own-ship departs
