@@ -100,64 +100,26 @@ void LiveOccupancyModel::observe(
   //    Footprints arrive in the tracker's current-datum ENU; re-express the
   //    sensor position in the grid's anchor frame (sector angles are datum-
   //    relative — exact for a fixed datum, negligible inter-datum rotation).
-  // Each covering bundle carries its sector AND (when the LOS guard is on) the
-  // shadow wedges cast by the strong occluders it saw this scan. A cell is only
-  // "observed empty" by a bundle that covers it AND does not have its line of
-  // sight to it blocked by that bundle's occluders — otherwise the missing return
-  // is a shadow, not evidence of vacancy (verdict-b fix; see ShadowMask.hpp).
-  struct Cover {
-    ISensorDetectionModel::CoverageSector cs;
-    std::vector<ShadowWedge> wedges;
-  };
-  const bool guard = params_.shadow_guard.enabled;
-  std::vector<Cover> cover;
+  std::vector<ISensorDetectionModel::CoverageSector> cover;
   for (const auto& obs : by_sensor) {
     if (!obs.coverage.valid) continue;
-    Cover c;
-    c.cs = obs.coverage;
-    c.cs.sensor_enu = toAnchorEnu(c.cs.sensor_enu);
-    if (guard) {
-      std::vector<Eigen::Vector2d> ret_anchor;
-      ret_anchor.reserve(obs.positions.size());
-      for (const auto& p : obs.positions) ret_anchor.push_back(toAnchorEnu(p));
-      c.wedges =
-          computeShadowWedges(c.cs.sensor_enu, ret_anchor, params_.shadow_guard);
-    }
-    cover.push_back(std::move(c));
+    ISensorDetectionModel::CoverageSector cs = obs.coverage;
+    cs.sensor_enu = toAnchorEnu(cs.sensor_enu);
+    cover.push_back(cs);
   }
   const bool have_cover = !cover.empty();
-  // State-scoped: which cells the guard protects THIS scan (cleared every scan).
-  guard_protected_scan_.clear();
   for (auto& kv : persistence_) {
     bool observable = !have_cover;  // no footprint ⇒ full coverage
-    bool covered_but_shadowed = false;
     if (have_cover) {
       const Eigen::Vector2d center = cellCenter(kv.first);  // anchor ENU
-      for (const auto& c : cover)
-        if (c.cs.covers(center)) {
-          // LOS guard: a bundle whose sight to this cell is blocked by a closer
-          // occluder did NOT observe it empty — skip it (safe direction: an
-          // unobserved cell simply does not decay). Fire decision is PURELY
-          // geometric (occluder returns), independent of persistence or the bar,
-          // so it cannot form a bar→persistence→guard feedback loop.
-          if (guard && isShadowed(c.cs.sensor_enu, center, c.wedges,
-                                  params_.shadow_guard.range_margin_m)) {
-            covered_but_shadowed = true;
-            continue;
-          }
+      for (const auto& cs : cover)
+        if (cs.covers(center)) {
           observable = true;
           break;
         }
     }
-    if (observable)
-      kv.second *= (1.0 - a);
-    else if (covered_but_shadowed)  // held by the guard: not clutter background
-      guard_protected_scan_.insert(kv.first);
+    if (observable) kv.second *= (1.0 - a);
   }
-  if (!persistence_.empty())
-    peak_guard_protected_frac_ = std::max(
-        peak_guard_protected_frac_,
-        static_cast<double>(guard_protected_scan_.size()) / persistence_.size());
 
   // 2) Largest clutter weight touching each cell this scan (order-independent).
   std::map<Cell, double> touched;
@@ -239,23 +201,12 @@ LiveOccupancyModel::persistentCells() const {
   // own clutter, still classifies.
   double bar = params_.persistence_bar;
   if (params_.clutter_adaptive && !persistence_.empty()) {
-    // The median estimates the CLUTTER background. Exclude cells the LOS guard is
-    // protecting this scan: they are held precisely because the evidence says a
-    // real object is shadowed there (a moored vessel behind a crossing ship is
-    // not clutter), so feeding their held mass into the background median is a
-    // category error — it was invisible until the guard gave those cells mass
-    // worth noticing. Excluded cells are still classified against `bar` below;
-    // they just do not define the background. Guard off / not firing ⇒ the set is
-    // empty ⇒ this loop is bit-identical to the pre-guard median.
     std::vector<double> vals;
     vals.reserve(persistence_.size());
-    for (const auto& kv : persistence_)
-      if (!guard_protected_scan_.count(kv.first)) vals.push_back(kv.second);
-    if (!vals.empty()) {
-      std::sort(vals.begin(), vals.end());
-      const double median = vals[vals.size() / 2];
-      bar = std::max(bar, params_.clutter_reject_factor * median);
-    }
+    for (const auto& kv : persistence_) vals.push_back(kv.second);
+    std::sort(vals.begin(), vals.end());
+    const double median = vals[vals.size() / 2];
+    bar = std::max(bar, params_.clutter_reject_factor * median);
   }
   const double exit_bar = bar * params_.membership_exit_factor;
 

@@ -218,13 +218,6 @@
   actually swept this scan. The occupancy model self-estimates it
   (from scanning-source returns only) so it decays persistence *only*
   over ground it truly observed, never over unswept gaps. Chapters 24, 27.
-- **"LOS / shadow guard"** (LOS = line of sight) — the refinement that a
-  cell *inside* the swept sector but *behind* a closer occluder (a big
-  ship, a pier) was NOT observed: its return truncated at the occluder,
-  so "no return" there is a shadow, not vacancy. The guard casts a
-  shadow wedge behind each closer return cluster and skips decay of the
-  cells inside it. Prevents a moored vessel's occupancy eroding on every
-  close passage. Chapter 27 §3.2.1; `core/static/ShadowMask.hpp`.
 - **"conservation-by-construction"** — the ADR-0002 safety invariant:
   birth suppression at a location is legal *only* if that same
   location is simultaneously emitted as a static hazard. An object is

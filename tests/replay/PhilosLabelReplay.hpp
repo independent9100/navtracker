@@ -89,11 +89,6 @@ struct ClipRun {
   // clip assert the mechanism bit (median sector ≪ 360°) before trusting an A/B.
   std::vector<double> sector_widths_rad;
   long sector_full_circle = 0;
-  // Largest fraction of live cells the LOS/shadow guard protected in any scan
-  // (LiveOccupancyModel::peakGuardProtectedFraction). 0 unless an occupancy model
-  // with the guard enabled was wired. A robustness signal: shadow sectors are
-  // narrow, so a sane scene keeps this small.
-  double peak_guard_protected_frac = 0.0;
   // Per-scan sectors (current-datum ENU) so a point's OBSERVABILITY can be
   // reconstructed post-hoc — the bug-vs-correct discriminator for a cell that
   // stays pinned as a hazard (is it genuinely unswept, or swept-empty and not
@@ -101,11 +96,6 @@ struct ClipRun {
   struct ScanSectors {
     double t_unix;
     std::vector<ISensorDetectionModel::CoverageSector> sectors;
-    // This scan's raw position returns (ENU), so a probe can recompute the
-    // LOS/shadow wedges post-hoc and measure how often the guard fires on a
-    // labelled cell. Captured only when `capture_returns` is set on the recorder
-    // (the shadow-guard probe); empty otherwise ⇒ no memory cost for other tests.
-    std::vector<Eigen::Vector2d> returns;
   };
   std::vector<ScanSectors> sector_history;
 };
@@ -119,15 +109,11 @@ struct RecordingOccupancyFeed : ILiveOccupancyFeed {
   std::vector<double>* widths = nullptr;
   long* full_circle = nullptr;
   ClipRun* run = nullptr;  // for per-scan sector_history
-  bool capture_returns = false;  // LOS-guard probe: keep per-scan raw returns
   void observe(const std::vector<ISensorDetectionModel::ScanObservation>&
                    by_sensor) override {
     ClipRun::ScanSectors ss;
     ss.t_unix = by_sensor.empty() ? 0.0 : by_sensor.front().time.seconds();
     for (const auto& obs : by_sensor) {
-      if (capture_returns)
-        ss.returns.insert(ss.returns.end(), obs.positions.begin(),
-                          obs.positions.end());
       if (!obs.coverage.valid) continue;
       if (widths) widths->push_back(obs.coverage.sector_width_rad);
       if (full_circle &&
@@ -203,9 +189,7 @@ inline ClipRun runClipInputs(const ClipInputs& in,
                              const std::string& config_label,
                              bool load_chart_structure = false,
                              bool load_camera = false, bool evict_camera = false,
-                             bool capture_persistence = false,
-                             const LiveOccupancyParams* occ_params_override =
-                                 nullptr) {
+                             bool capture_persistence = false) {
   ClipRun run;
   const std::string& own = in.ownship_csv;
   const std::string& plots = in.plots_csv;
@@ -264,12 +248,7 @@ inline ClipRun runClipInputs(const ClipInputs& in,
   std::shared_ptr<LiveOccupancyModel> occ;
   RecordingOccupancyFeed rec;  // outlives runBenchPmbm; used only when occ wired
   if (c->use_live_occupancy_model) {
-    // occ_params_override lets a probe force a specific LiveOccupancyParams (e.g.
-    // toggle the LOS/shadow guard for an A/B on the same clip); nullptr ⇒ the
-    // config's params, byte-identical for every non-probe caller.
-    auto op = occ_params_override
-                  ? *occ_params_override
-                  : c->live_occupancy_params.value_or(LiveOccupancyParams{});
+    auto op = c->live_occupancy_params.value_or(LiveOccupancyParams{});
     if (c->occupancy_adaptive_clutter_bar) op.clutter_adaptive = true;
     // Increment-ii camera eviction (real-data DEMO only — promotion gates on the
     // synthetic model scenario). When on, a camera-observed-empty, chart-UNconfirmed
@@ -281,7 +260,6 @@ inline ClipRun runClipInputs(const ClipInputs& in,
     rec.widths = &run.sector_widths_rad;
     rec.full_circle = &run.sector_full_circle;
     rec.run = &run;
-    rec.capture_returns = capture_persistence;  // LOS-guard probe reuses this gate
     tracker.setLiveOccupancyFeed(&rec);  // transparent; records sector widths
     // Chart corroboration (increment 6): feed the densified charted radar-visible
     // structure so emitted live hazards can be confirmed. Label only — no effect
@@ -345,7 +323,6 @@ inline ClipRun runClipInputs(const ClipInputs& in,
     run.history.push_back(std::move(st));
   };
   benchmark::runBenchPmbm(scen, tracker, hook);
-  if (occ) run.peak_guard_protected_frac = occ->peakGuardProtectedFraction();
   run.valid = true;
   return run;
 }
@@ -357,8 +334,7 @@ inline ClipRun runClip(const std::string& clip_name,
                        const std::string& config_label,
                        bool load_chart_structure = false,
                        bool load_camera = false, bool evict_camera = false,
-                       bool capture_persistence = false,
-                       const LiveOccupancyParams* occ_params_override = nullptr) {
+                       bool capture_persistence = false) {
   ClipInputs in;
   in.ownship_csv = clipDir(clip_name) + "/ownship.csv";
   in.plots_csv = clipDir(clip_name) + "/radar_plots.csv";
@@ -369,7 +345,7 @@ inline ClipRun runClip(const std::string& clip_name,
   in.radar_source_id = "philos_radar";
   in.radar_max_range_m = 1000.0;
   return runClipInputs(in, config_label, load_chart_structure, load_camera,
-                       evict_camera, capture_persistence, occ_params_override);
+                       evict_camera, capture_persistence);
 }
 
 inline std::vector<benchmark::ExistenceLabel> loadLabels(

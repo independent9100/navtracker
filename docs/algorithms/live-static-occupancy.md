@@ -70,15 +70,14 @@ weight vector means weight `1.0` per return; non-positive weights are skipped.
 
 Let `α = ewma_alpha`. The update, in order, per scan:
 
-1. **Coverage-aware decay (with LOS/shadow guard).** For every stored cell,
-   decay `p ← (1 − α)·p` **only if the cell was observable this scan** — inside
-   some bundle's `CoverageSector` footprint **AND not line-of-sight-blocked by a
-   closer occluder** (§1.2.1). If no bundle carries a valid footprint, full
-   coverage is assumed and every cell decays (the legacy / synthetic behaviour,
-   bit-identical). Absence of returns where no sensor looked — or where the sight
-   line was blocked — is *not* evidence of vacancy. This is what separates a
-   departed vessel (returns cease while still in coverage and in view → decays
-   out) from a cell that merely left coverage (frozen) or was shadowed (frozen).
+1. **Coverage-aware decay.** For every stored cell, decay
+   `p ← (1 − α)·p` **only if the cell was observable this scan** — i.e. inside
+   some bundle's `CoverageSector` footprint. If no bundle carries a valid
+   footprint, full coverage is assumed and every cell decays (the legacy /
+   synthetic behaviour, bit-identical). Absence of returns where no sensor
+   looked is *not* evidence of vacancy — this is what separates a departed
+   vessel (returns cease while still in coverage → decays out) from a cell that
+   merely left coverage (frozen).
 2. **Touch weights.** For each cell touched this scan, take the **largest**
    feed weight `w_max` reaching it (order-independent, so replay is
    deterministic).
@@ -88,35 +87,6 @@ Let `α = ewma_alpha`. The update, in order, per scan:
 4. **Prune.** Drop any cell with `p < erase_floor` to bound memory; drop camera
    streaks whose cell no longer exists.
 
-### 1.2.1 LOS/shadow guard (`core/static/ShadowMask.hpp`)
-
-Coverage-aware decay treats a cell inside the swept sector but with no return as
-"observed empty". A cell can be swept in azimuth yet physically UNREACHABLE
-because a larger vessel is between it and the sensor — the return truncates at the
-occluder, so "no return" there is a *shadow*, not vacancy. Without a guard this
-erodes a real moored vessel's occupancy every time a big ship crosses in front of
-it (measured: 2026-07-06 shadow probe, verdict b — a 24× mass collapse + hazard
-presence 72%→51% over a 35 s passage).
-
-The guard, from the scan's own returns about the sensor `s`:
-
-- **Occluders.** Cluster the return bearings (split at gaps > `cluster_gap_rad`,
-  wraparound-aware); each cluster with ≥ `min_occluder_returns` returns is an
-  occluder. Its **shadow wedge** is the cluster's angular extent widened by
-  `wedge_pad_rad`, blocked beyond the cluster's NEAREST return range `r_occ`.
-- **Shadowed cell.** A cell at `(θ, r)` about `s` is shadowed iff its bearing is
-  within some wedge arc AND `r > r_occ + range_margin_m`. A shadowed cell is
-  treated as NOT observed this scan → its decay is skipped (frozen).
-
-`min_occluder_returns = 1` on the philos plot feed: the tracker feeds CFAR PLOTS
-(~4/scan), each already a thresholded detection, so a single closer plot on the
-bearing is a real reflector (n_cells/amp — the natural "strong" measure — does not
-survive to the occupancy feed; raise this for dense raw-cell feeds).
-Under-detecting an occluder just leaves the standing decay; over-detecting only
-HOLDS a cell longer — both are the safe direction (never a spurious decay).
-Disabled by default (`shadow_guard.enabled`); ON for the coverage-decay config.
-Plain-English intro + diagram: `docs/learning/27-live-static-occupancy.md` §3.2.1.
-
 ### 1.3 Structure classification (persistent AND extended)
 
 A cell is **persistent** when `p ≥ bar`. In the default (absolute-bar) mode
@@ -124,27 +94,13 @@ A cell is **persistent** when `p ≥ bar`. In the default (absolute-bar) mode
 raised above the estimated uniform-clutter background:
 
 ```
-bar = max( persistence_bar, clutter_reject_factor · median{ p : cell ∈ grid,
-                                             cell NOT LOS-guard-protected } )
+bar = max( persistence_bar, clutter_reject_factor · median{ p : cell ∈ grid } )
 ```
 
 The median over live cells estimates the clutter background because the feed is
 clutter-dominated; structure sits far above its *own* clutter density even where
 absolute persistence does not separate it, so dense clutter is rejected relative
 to itself (no death-spiral) while sparse structure still classifies.
-
-**LOS-guard cells are excluded from the median** (state-scoped: only while
-actively protected this scan). A cell the guard is holding is held precisely
-because the evidence says a real object is shadowed there — a moored yacht behind
-a car carrier is not clutter, so feeding its held mass into the clutter-background
-estimate is a category error (it became visible only once the guard gave those
-cells mass worth noticing: without exclusion the raised median de-emitted marginal
-structure elsewhere). Excluded cells are still classified against `bar` normally;
-they simply do not *define* the background. **No feedback loop is created:** the
-guard's fire decision is purely geometric (occluder returns), with zero dependence
-on any cell's persistence or on `bar`, so there is no persistence→guard edge for
-the bar to close a loop through. Guard off / not firing ⇒ the excluded set is
-empty ⇒ the median is byte-identical to the pre-guard formula.
 
 Persistent cells are grouped by **4-connected flood fill** (deterministic,
 key-sorted BFS). A component is **structure** iff its cell count
@@ -273,21 +229,6 @@ recenter.
    recovery latency against structure stability.
 6. **Datum recenters are wired** (`IDatumChangeSink`), or the anchor-frame cache
    drifts after a > 30 km own-ship move.
-7. **Line of sight, not just azimuth, gates "observed empty" (LOS guard).** A
-   cell swept in azimuth but behind a closer occluder was not observed; its decay
-   is skipped. The occluder proxy is a same-bearing closer return cluster — valid
-   because each philos return is a CFAR plot (a real reflector). If a sensor fed
-   raw sub-threshold cells instead of plots, `min_occluder_returns` must rise or
-   stray cells would over-shield.
-8. **The guard's invariant holds only on FIXED inputs.** "The guard only skips
-   decays, so persistence only rises" is true for a fixed scan stream — proven in
-   isolation (`LiveOccupancyModel.ShadowGuardOnlyAddsMassOnFixedInputs`). It is
-   NOT a property of the difference between two live tracker configs: the layer is
-   feedback-coupled to the tracker (persistence → birth suppression → tracker →
-   which returns are claimed → `1 − r` weights → touches → persistence), so two
-   configs see different inputs and neither persistence nor emitted hazards is
-   monotone between them (why the 6c A/B cannot assert cross-config monotonicity —
-   see that test's assertion (2), removed 2026-07-07, and the eval-log).
 
 ---
 
@@ -329,22 +270,6 @@ property, not a test we hope stays green: `suppression(q) > 0` can only happen
 inside an emitted hazard's keep-clear ring. One hazard per component, with a
 footprint that encloses every cell, keeps operator output clean while preserving
 conservation.
-
-### 3.3.1 Why the LOS guard is decoupled from the clutter-adaptive bar
-
-The guard holds a shadowed cell's mass. Fed naively into the median that sets the
-clutter-adaptive bar (§1.3), that held mass raises the background estimate and can
-de-emit unrelated marginal structure — measured as an epsilon-knife-edge on the
-sunset clip (the de-emitted region flipped with the guard's range margin). The
-correct framing is definitional, not a tuning patch: the median estimates the
-*clutter* background, and a cell the LOS guard is protecting is — by the guard's
-own criterion — a shadowed real object, not clutter. Excluding protected cells
-from the median is therefore removing a category error that only became visible
-once the guard gave those cells mass worth noticing. It cannot form a feedback
-loop because guarding is decided purely by scan geometry (a closer occluder
-return), never by persistence or the bar. The alternative — tuning the margin to a
-value that happened to keep a downstream gate green (400 m) — was rejected as
-overfit to one clip's knife-edge; see the eval-log 2026-07-07.
 
 ### 3.4 Why extent is interim and corroboration is the real discriminator
 
@@ -405,16 +330,6 @@ enduring value is the hazard/presence channel and the corroboration substrate,
    suppression. See §5.
 7. **Bench camera arm.** `observeCamera` is currently wired only in the replay
    harness; a bench `Config` evict arm lands when camera enters the Sweep.
-8. **LOS/shadow guard — SHIPPED 2026-07-07 (§1.2.1).** Coverage-aware decay no
-   longer counts a cell behind a closer occluder as observed-empty. Fixed the
-   verdict-b erosion (car_carrier: shadow hazard presence 51%→100%, mass 20.7×);
-   near-inert on the no-occluder sim; net-BENEFICIAL on real HAXR shore radar
-   (card_err 44.4→41.5, gospa 100.3→97.5, gospa_false 9707→9119, gospa_missed
-   flat — the guard holds shore structure through passing-ship occlusions and the
-   extra suppression falls on clutter, not vessels). Open follow-ups: (a) a
-   range-RATIO shadow criterion (scale-invariant vs the absolute `range_margin_m`)
-   if a wider range of scenes needs one; (b) an amplitude/n_cells "strong"
-   criterion if a sensor ever feeds raw sub-threshold cells rather than plots.
 
 ---
 
@@ -482,8 +397,3 @@ All values are the struct defaults in `core/static/LiveOccupancyModel.hpp`. The
 | `camera_empty_sustain_s` | `2.0` | s | Continuous observed-empty duration to flag a cell camera-empty. |
 | `evict_camera_empty` | `false` | bool | Enable eviction-by-camera as behaviour (spend persistence). |
 | `camera_empty_recency_window_s` | `5.0` | s | Max staleness of a streak's last frame for it to evict now. |
-| `shadow_guard.enabled` | `false` | bool | LOS/shadow guard (§1.2.1): skip decay of a cell behind a closer occluder. ON in `_occupancy_detector_coverage`. Off ⇒ byte-identical. |
-| `shadow_guard.min_occluder_returns` | `1` | count | Returns in a bearing cluster to count as an occluder. `1` suits CFAR plots (each is a real detection); raise for raw-cell feeds. |
-| `shadow_guard.cluster_gap_rad` | `0.105` | rad | Bearing gap that separates distinct occluders within a scan (~6°). |
-| `shadow_guard.wedge_pad_rad` | `0.10` | rad | Widen an occluder's angular extent by this (~5.7° ≈ 3σ_az beam slop). |
-| `shadow_guard.range_margin_m` | `50.0` | m | A cell must be this far BEYOND the occluder's nearest surface to be shadowed (occluder radial extent + ~1σ_r; not swept-to-green — see eval-log 2026-07-07). |

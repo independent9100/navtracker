@@ -838,22 +838,6 @@ vessel that pinned a cell:
   re-emit. Eviction is conservation-safe (suppression is re-derived from the
   post-eviction hazard set) and inert until `observeCamera` is fed.
 
-**LOS/shadow guard (`LiveOccupancyParams::shadow_guard`, `ShadowGuardParams`).**
-Coverage-aware decay (when `estimate_coverage_sector` is on, below) forgets a cell
-the sensor swept but got no return from. A cell swept in azimuth can be physically
-blocked by a closer vessel — the return truncates at the occluder — so "no return"
-is a *shadow*, not vacancy. The guard, from each scan's own returns, casts a
-shadow wedge behind every closer occluder cluster and SKIPS decay of cells inside
-it (holding a moored vessel's occupancy through a passing ship's crossing).
-Per-instance, **disabled by default** (so a default-constructed model is
-byte-identical); **ON in `imm_cv_ct_pmbm_occupancy_detector_coverage`**. Knobs:
-`enabled`, `min_occluder_returns` (1 for CFAR-plot feeds — each return is a real
-detection; raise for raw sub-threshold-cell feeds), `cluster_gap_rad`,
-`wedge_pad_rad`, `range_margin_m` (a cell must be this far beyond the occluder —
-occluder radial extent + range noise). Safe direction: an over-detected occluder
-only holds a cell longer, never causes a spurious decay. Geometry + rationale:
-`core/static/ShadowMask.hpp` and `docs/algorithms/live-static-occupancy.md` §1.2.1.
-
 > **Maturity.** This detector is under active development — its design of record
 > and remaining increments are in
 > `docs/superpowers/plans/2026-07-03-stage1b-ii-structure-detector.md` (and the
@@ -1232,10 +1216,8 @@ on `core/pmbm/PmbmTracker.hpp`; a flag off = the wired model/port does nothing):
 Non-`Config` tuning structs a consumer also touches: `DatumRecenterPolicy`
 (`core/own_ship/OwnShipProvider.hpp`, §2), `StaticObstacleParams`
 (`core/static/StaticObstacleModel.hpp`, §7), `CoastlinePriorParams`
-(`core/land/CoastlineGeometry.hpp`, §7), `LiveOccupancyParams` (incl. its nested
-`ShadowGuardParams shadow_guard` LOS/shadow-guard knobs,
-`core/static/ShadowMask.hpp`) (`core/static/LiveOccupancyModel.hpp`, §7),
-`BearingWedgeParams`
+(`core/land/CoastlineGeometry.hpp`, §7), `LiveOccupancyParams`
+(`core/static/LiveOccupancyModel.hpp`, §7), `BearingWedgeParams`
 (`core/static/BearingWedgeModel.hpp`, §7),
 `DeclaredSensorActivity::ChannelProfile`
 (`core/sensor_activity/DeclaredSensorActivity.hpp`, §7).

@@ -1513,87 +1513,6 @@ def fig_live_occupancy():
     save(fig, "27-live-occupancy.png")
 
 
-def fig_shadow_guard():
-    """LOS/shadow guard: a swept cell behind a closer occluder is NOT observed-empty."""
-    fig, ax = plt.subplots(figsize=(9, 8))
-
-    sx, sy = 0.0, 0.0  # own-ship / sensor
-    half = np.deg2rad(9.0)  # shadow half-angle (occluder extent + pad)
-    r_occ = 3.0             # occluder range (car carrier)
-    r_cov = 12.0            # coverage sector range (swept)
-
-    # Coverage sector (swept area) — a light disc out to r_cov.
-    cov = plt.Circle((sx, sy), r_cov, color="#85bbdb", alpha=0.14, zorder=1)
-    ax.add_patch(cov)
-    cov_edge = plt.Circle((sx, sy), r_cov, fill=False, edgecolor="#5a8fb0",
-                          linewidth=1.5, linestyle="--", zorder=2)
-    ax.add_patch(cov_edge)
-    ax.text(0.0, r_cov - 0.7, "swept coverage sector\n(observed this scan)",
-            fontsize=9, color="#33627d", ha="center", va="top", zorder=6)
-
-    # Shadow wedge behind the occluder (bearing ~ +90° here, i.e. straight up).
-    ang0 = np.pi / 2 - half
-    ang1 = np.pi / 2 + half
-    # wedge polygon from just beyond the occluder out to the coverage edge
-    r0, r1 = r_occ + 0.6, r_cov + 1.0
-    wedge_x = [r0 * np.cos(ang0), r1 * np.cos(ang0), r1 * np.cos(ang1),
-               r0 * np.cos(ang1)]
-    wedge_y = [r0 * np.sin(ang0), r1 * np.sin(ang0), r1 * np.sin(ang1),
-               r0 * np.sin(ang1)]
-    ax.add_patch(mpatches.Polygon(list(zip(wedge_x, wedge_y)), closed=True,
-                                  color="#555555", alpha=0.28, zorder=3))
-    ax.text(-3.4, 8.6, "SHADOW\n(line of sight blocked →\nnot 'observed empty')",
-            fontsize=10, color="#333333", ha="center", va="center", zorder=7,
-            fontweight="bold")
-
-    # Occluder cluster (car carrier) — a few closer returns on the bearing.
-    occ_x = np.array([-0.5, 0.0, 0.5, -0.25, 0.25]) * 0.9
-    occ_y = np.full_like(occ_x, r_occ)
-    ax.scatter(occ_x, occ_y, s=90, marker="s", color="#aa3333", zorder=6,
-               edgecolor="white", linewidth=0.8)
-    ax.text(1.4, r_occ, "closer occluder\n(car carrier — CFAR plots)", fontsize=9,
-            color="#aa3333", ha="left", va="center", zorder=7)
-
-    # Shadowed moored-yacht cell (behind the occluder) — HELD.
-    yx, yy = 0.0, 8.5
-    ax.add_patch(plt.Rectangle((yx - 0.6, yy - 0.6), 1.2, 1.2, color="#2d8659",
-                               alpha=0.75, zorder=6))
-    ax.text(yx + 1.0, yy, "moored yacht cell:\nswept but SHADOWED →\ndecay SKIPPED (held)",
-            fontsize=9, color="#1f6b46", ha="left", va="center", zorder=7)
-
-    # Control cell: swept, in the open (different bearing), no return → decays.
-    cxo = r_cov * 0.62 * np.cos(np.deg2rad(20.0))
-    cyo = r_cov * 0.62 * np.sin(np.deg2rad(20.0))
-    ax.add_patch(plt.Rectangle((cxo - 0.6, cyo - 0.6), 1.2, 1.2, fill=False,
-                               edgecolor="#c07a10", linewidth=2.0, linestyle=":",
-                               zorder=6))
-    ax.text(cxo + 0.9, cyo, "open swept cell,\nno return →\nobserved empty → decays",
-            fontsize=9, color="#9a6010", ha="left", va="center", zorder=7)
-
-    # Sight lines from the sensor.
-    ax.annotate("", xy=(0.0, r_occ - 0.2), xytext=(sx, sy),
-                arrowprops=dict(arrowstyle="->", color="#aa3333", lw=1.8), zorder=5)
-    ax.plot([0.0, 0.0], [r_occ + 0.2, yy - 0.7], color="#aa3333", lw=1.2,
-            linestyle=":", zorder=4)  # blocked continuation
-    ax.annotate("", xy=(cxo * 0.92, cyo * 0.92), xytext=(sx, sy),
-                arrowprops=dict(arrowstyle="->", color="#c07a10", lw=1.6), zorder=5)
-
-    # Own-ship marker.
-    ax.plot(sx, sy, marker="^", markersize=15, color="#1f3a5f", zorder=8)
-    ax.text(sx, sy - 0.8, "own-ship\n(sensor)", fontsize=9, color="#1f3a5f",
-            ha="center", va="top", zorder=8)
-
-    ax.set_xlim(-8, 9)
-    ax.set_ylim(-2, 14)
-    ax.set_aspect("equal")
-    ax.set_xlabel("East (rel. m, schematic)")
-    ax.set_ylabel("North (rel. m, schematic)")
-    ax.set_title("LOS / shadow guard: absence of a return behind an occluder\n"
-                 "is a shadow, not vacancy")
-    ax.grid(True, linestyle=":", alpha=0.30)
-    save(fig, "27-los-shadow-guard.png")
-
-
 def fig_bearing_wedge():
     """Camera-only contact → a bearing wedge from own-ship; handover by suppression."""
     fig, (axL, axR) = plt.subplots(1, 2, figsize=(13, 6.2), sharex=True, sharey=True)
@@ -1704,7 +1623,6 @@ def main():
     fig_coastline_ramp()
     fig_static_obstacle_zones()
     fig_live_occupancy()
-    fig_shadow_guard()
     fig_bearing_wedge()
     render_dot_figures()
     print("done.")

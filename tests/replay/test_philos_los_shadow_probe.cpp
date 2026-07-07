@@ -1,27 +1,35 @@
-// LOS / shadow probe + GUARD acceptance.
+// LOS / shadow probe (R8.8 payoff) — MEASUREMENT-ONLY.
 //
-// Origin: the 2026-07-06 LOS/shadow probe returned verdict (b) — coverage-aware
-// occupancy decay does NOT sweep-inflate behind an occluder, but the ~10 baseline
-// observed-empty decays go UNOPPOSED while the occluder removes the shadowed
-// object's returns, eroding a real moored vessel's occupancy mass 24×
-// (0.141→0.006) and its hazard presence 72%→51% during a 35 s passage. The
-// arbiter ruled: implement the LOS guard (docs/.../2026-07-06-los-guard-ticket.md).
+// Question (docs/superpowers/plans/2026-07-06-los-shadow-probe-ticket.md):
+// coverage-aware occupancy decay forgets a cell only when the sensor SWEPT it
+// this scan (the cell falls inside some bundle's self-estimated coverage sector,
+// LiveOccupancyModel.cpp:110-122). A radar-SHADOWED cell is swept in azimuth but
+// physically unreachable — the return stops at the occluder. If the sector model
+// counts shadowed cells as observed-empty, a real moored vessel's occupancy
+// evidence erodes every time a big ship crosses in front of it, degrading the
+// ADR-0002 presence channel.
 //
-// This file is the guard's acceptance instrument (ticket proof obligation #1).
-// It runs car_carrier_near through the coverage-aware occupancy-decay arm TWICE —
-// guard OFF (the verdict-b RED reference) and guard ON — and asserts the guard
-// substantially eliminates the shadow-interval erosion of the `unknown_w860`
-// yacht cell while leaving the un-shadowed pre/post intervals essentially
-// untouched. The sim control (sim_ms_anchored_camera, no occluder) asserts the
-// guard is INERT where nothing occludes (proof obligation #2 — no false
-// shielding). Ground truth: tests/fixtures/philos/labels/car_carrier_near_labels.csv
-// row unknown_w860 (radar-silent t 50-85 s behind GENTLE LEADER). Skip-guarded on
-// fixture absence.
+// Ground truth: tests/fixtures/philos/labels/car_carrier_near_labels.csv row
+// `unknown_w860` (42.3583, -71.0464, r=50 m): two moored yachts present the whole
+// clip, radar-SILENT t 50-85 s while NYK GENTLE LEADER crosses their bearing at
+// 150-250 m. Returns resume at the same cell after 85 s.
 //
-// Config: the coverage-aware occupancy-DECAY arm is
-// imm_cv_ct_pmbm_occupancy_detector_coverage (Config.cpp, use_live_occupancy_model
-// + estimate_coverage_sector + shadow_guard.enabled). Guard OFF is produced by an
-// occ-params override; the config default is guard ON.
+// This test WIRES car_carrier_near through the coverage-aware occupancy-decay arm
+// and records, per scan, for the labelled cell: EWMA occupancy mass, whether it
+// fell inside an estimated coverage sector (swept), and any emitted hazard. It
+// splits pre-shadow / shadow / post-shadow and prints an interval table; a sim
+// control (sim_ms_anchored_camera — anchored vessel, NO occluder) establishes the
+// no-shadow baseline decay. It changes NO decay-model behaviour (the probe reads
+// persistenceCells() and the recorded sectors; the additive capture is opt-in and
+// default-inert, PhilosLabelReplay.hpp). Skip-guarded on fixture absence.
+//
+// CONFIG NOTE (load-bearing): the coverage-aware occupancy-DECAY arm is
+// `imm_cv_ct_pmbm_occupancy_detector_coverage` (Config.cpp:903, sets
+// use_live_occupancy_model + estimate_coverage_sector). The ticket text names
+// `imm_cv_ct_pmbm_coverage_land`, but that config wires the sensor-activity
+// duty-cycle model + land prior and NEVER the LiveOccupancyModel / coverage-sector
+// decay (Config.cpp:1142) — running it would falsely read as verdict (c) "layer
+// doesn't fire". We use the config that actually exercises the layer under test.
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -32,15 +40,11 @@
 
 #include <Eigen/Core>
 
-#include "core/benchmark/Config.hpp"
 #include "core/geo/Wgs84.hpp"
-#include "core/static/LiveOccupancyModel.hpp"  // LiveOccupancyParams
-#include "core/static/ShadowMask.hpp"          // recompute wedges in the probe
 #include "tests/replay/PhilosLabelReplay.hpp"
 
 namespace {
 
-using navtracker::LiveOccupancyParams;
 using navtracker::geo::Geodetic;
 using navtracker::replay_test::ClipInputs;
 using navtracker::replay_test::ClipRun;
@@ -49,27 +53,25 @@ using navtracker::replay_test::runClipInputs;
 using navtracker::replay_test::srcDir;
 
 // Cell size of the occupancy grid on imm_cv_ct_pmbm_occupancy_detector_coverage
-// (LiveOccupancyParams::cell_size_m = 100 m). A label maps to the single cell
-// whose centre it falls in; half-diagonal ≈ 70.7 m.
+// (LiveOccupancyParams::cell_size_m = 100 m, Config.cpp:911). A label maps to the
+// single cell whose centre it falls in; half-diagonal ≈ 70.7 m.
 constexpr double kCellM = 100.0;
 constexpr const char* kCovConfig = "imm_cv_ct_pmbm_occupancy_detector_coverage";
 
-// The coverage-decay config's occupancy params (guard ON as shipped).
-LiveOccupancyParams coverageParams() {
-  for (const auto& c : navtracker::benchmark::defaultConfigs())
-    if (c.label == kCovConfig && c.live_occupancy_params)
-      return *c.live_occupancy_params;
-  return {};
-}
-
+// Per-scan probe of one labelled point: EWMA occupancy mass of the cell the point
+// falls in (nearest touched cell centre within `radius`, else 0), whether that
+// cell was swept this scan (any recorded coverage sector covers it), and whether
+// an emitted hazard sits within `hazard_radius` of the point.
 struct ScanProbe {
-  double t_rel;
-  double mass;
-  bool swept;
-  bool hazard;
-  bool has_cell;
+  double t_rel;   // seconds since clip start
+  double mass;    // EWMA occupancy mass of the cell (0 if untouched)
+  bool swept;     // cell inside some estimated coverage sector this scan
+  bool hazard;    // emitted hazard within hazard_radius of the point
+  bool has_cell;  // a touched cell was found near the point this scan
 };
 
+// Nearest recorded coverage-sector set to time `t` (sectors and tracks are pushed
+// per scan; pair by closest timestamp to be robust to any off-by-one in cadence).
 const std::vector<navtracker::ISensorDetectionModel::CoverageSector>* sectorsAt(
     const ClipRun& run, double t) {
   const std::vector<navtracker::ISensorDetectionModel::CoverageSector>* best =
@@ -93,7 +95,9 @@ std::vector<ScanProbe> probeCell(const ClipRun& run,
   for (const auto& scan : run.history) {
     ScanProbe p;
     p.t_rel = scan.t_unix - run.clip_start_unix;
-    double best_d = kCellM;
+
+    // Mass + cell centre: nearest touched cell within one cell of the target.
+    double best_d = kCellM;  // require the point to be within a cell of a centre
     Eigen::Vector2d cell_center = target;
     double mass = 0.0;
     bool has_cell = false;
@@ -108,9 +112,13 @@ std::vector<ScanProbe> probeCell(const ClipRun& run,
     }
     p.mass = mass;
     p.has_cell = has_cell;
+
+    // Swept: any coverage sector this scan covers the cell centre (or the target
+    // point if no touched cell yet). Absent sectors ⇒ full coverage assumed by the
+    // model (have_cover=false path) ⇒ swept = true.
     const auto* secs = sectorsAt(run, scan.t_unix);
     if (secs == nullptr || secs->empty()) {
-      p.swept = true;
+      p.swept = true;  // no valid footprint ⇒ model treats as fully observed
     } else {
       p.swept = false;
       for (const auto& s : *secs)
@@ -119,6 +127,8 @@ std::vector<ScanProbe> probeCell(const ClipRun& run,
           break;
         }
     }
+
+    // Downstream: any emitted hazard near the point.
     p.hazard = false;
     for (const auto& h : scan.hazards)
       if ((h.center - target).norm() <= hazard_radius) {
@@ -134,21 +144,23 @@ struct IntervalStat {
   int n = 0;
   int swept = 0;
   int hazard = 0;
-  int touch = 0;
-  int decay = 0;
+  int touch = 0;   // scans where the cell mass rose vs the previous scan (return)
+  int decay = 0;   // scans where it fell (swept-empty ⇒ "observed-empty" decay)
   double mean_mass = 0.0;
   double first_mass = 0.0;
   double last_mass = 0.0;
   double max_mass = 0.0;
 };
 
+// prev_mass carries the last mass seen BEFORE this interval so the first scan's
+// touch/decay classification is correct across the interval boundary.
 IntervalStat interval(const std::vector<ScanProbe>& ps, double t0, double t1) {
   IntervalStat s;
   double sum = 0.0;
   bool first_set = false;
   double prev = -1.0;
   for (const auto& p : ps) {
-    if (p.t_rel >= t0) {
+    if (p.t_rel >= t0) {  // establish pre-interval mass for the first delta
       if (p.t_rel >= t1) break;
     } else {
       prev = p.mass;
@@ -178,7 +190,7 @@ void printRow(const char* name, const IntervalStat& s) {
   const double swept_frac = s.n ? 100.0 * s.swept / s.n : 0.0;
   const double haz_frac = s.n ? 100.0 * s.hazard / s.n : 0.0;
   std::printf(
-      "| %-16s | %4d | %6.3f | %6.3f | %6.3f | %6.3f | %5.1f%% | %5.1f%% | %4d "
+      "| %-14s | %4d | %6.3f | %6.3f | %6.3f | %6.3f | %5.1f%% | %5.1f%% | %4d "
       "| %4d |\n",
       name, s.n, s.first_mass, s.last_mass, s.mean_mass, s.max_mass, swept_frac,
       haz_frac, s.touch, s.decay);
@@ -187,230 +199,138 @@ void printRow(const char* name, const IntervalStat& s) {
 void printHeader(const char* title) {
   std::printf("\n=== %s ===\n", title);
   std::printf(
-      "| interval         |    n | mass0  | massT  |  mean  |  max   | swept | "
+      "| interval       |    n | mass0  | massT  |  mean  |  max   | swept | "
       "hazrd | tch | dcy |\n");
   std::printf(
-      "|------------------|------|--------|--------|--------|--------|-------|-"
+      "|----------------|------|--------|--------|--------|--------|-------|-"
       "------|-----|-----|\n");
-}
-
-// Directly measure how often the LOS guard shadows `target` on the scans that
-// swept it, in [t0,t1): recompute the wedges from each scan's raw returns. This
-// is the definitive "did the guard fire behind the occluder" signal, independent
-// of the mass dynamics. Returns {fired, swept_scans}.
-std::pair<int, int> guardFireCount(const ClipRun& run,
-                                   const Eigen::Vector2d& target,
-                                   const navtracker::ShadowGuardParams& gp,
-                                   double t0, double t1) {
-  int swept = 0, fired = 0;
-  for (const auto& ss : run.sector_history) {
-    const double t_rel = ss.t_unix - run.clip_start_unix;
-    if (t_rel < t0 || t_rel >= t1) continue;
-    bool covers = false;
-    for (const auto& s : ss.sectors)
-      if (s.covers(target)) {
-        covers = true;
-        break;
-      }
-    if (!covers) continue;
-    ++swept;
-    const Eigen::Vector2d sensor =
-        ss.sectors.empty() ? Eigen::Vector2d::Zero() : ss.sectors.front().sensor_enu;
-    const auto wedges = navtracker::computeShadowWedges(sensor, ss.returns, gp);
-    if (navtracker::isShadowed(sensor, target, wedges, gp.range_margin_m)) ++fired;
-  }
-  return {fired, swept};
-}
-
-struct Windows {
-  IntervalStat pre, shadow, post;
-};
-
-Windows windows(const std::vector<ScanProbe>& ps) {
-  return {interval(ps, 5.0, 50.0), interval(ps, 50.0, 85.0),
-          interval(ps, 85.0, 120.0)};
 }
 
 }  // namespace
 
-// car_carrier_near: guard OFF (verdict-b reference) vs guard ON. The guard must
-// substantially eliminate the shadow-interval erosion of the unknown_w860 cell.
-TEST(LosShadowGuard, CarCarrierNearYachtCellGuardOnVsOff) {
-  LiveOccupancyParams on = coverageParams();
-  ASSERT_TRUE(on.shadow_guard.enabled)
-      << "coverage-decay config must ship with the LOS guard ON";
-  LiveOccupancyParams off = on;
-  off.shadow_guard.enabled = false;
+// car_carrier_near: the occlusion clip. Reports pre-shadow (5-50 s) /
+// shadow (50-85 s) / post-shadow (85-120 s) for the unknown_w860 yacht cell.
+TEST(LosShadowProbe, CarCarrierNearYachtCell) {
+  ClipRun run = runClip("car_carrier_near", kCovConfig,
+                        /*load_chart_structure=*/false, /*load_camera=*/false,
+                        /*evict_camera=*/false, /*capture_persistence=*/true);
+  if (!run.valid) GTEST_SKIP() << "car_carrier_near fixture absent";
 
-  ClipRun run_off =
-      runClip("car_carrier_near", kCovConfig, false, false, false,
-              /*capture_persistence=*/true, &off);
-  if (!run_off.valid) GTEST_SKIP() << "car_carrier_near fixture absent";
-  ClipRun run_on =
-      runClip("car_carrier_near", kCovConfig, false, false, false,
-              /*capture_persistence=*/true, &on);
-  ASSERT_TRUE(run_on.valid);
-  ASSERT_FALSE(run_on.sector_widths_rad.empty())
-      << "coverage-sector mechanism must engage (finding-c guard)";
-
-  const Eigen::Vector3d e = run_on.datum.toEnu(Geodetic{42.3583, -71.0464, 0.0});
+  // unknown_w860 label centre → ENU in the clip's fixed datum.
+  const Eigen::Vector3d e =
+      run.datum.toEnu(Geodetic{42.3583, -71.0464, 0.0});
   const Eigen::Vector2d target(e.x(), e.y());
 
-  const Windows w_off = windows(probeCell(run_off, target, 150.0));
-  const Windows w_on = windows(probeCell(run_on, target, 150.0));
+  // Wiring sanity: the coverage-sector mechanism engaged (finding (c) guard).
+  ASSERT_FALSE(run.sector_widths_rad.empty())
+      << "no valid coverage sector recorded — occupancy/coverage layer not wired";
 
-  printHeader("car_carrier_near unknown_w860 — GUARD OFF (verdict-b reference)");
-  std::printf("# target ENU = (%.1f, %.1f) m\n", target.x(), target.y());
-  printRow("pre  5-50s", w_off.pre);
-  printRow("shadow 50-85s", w_off.shadow);
-  printRow("post 85-120s", w_off.post);
-  printHeader("car_carrier_near unknown_w860 — GUARD ON (fix)");
-  printRow("pre  5-50s", w_on.pre);
-  printRow("shadow 50-85s", w_on.shadow);
-  printRow("post 85-120s", w_on.post);
-  // DIAGNOSTIC: on swept-shadow scans, characterise the returns on the yacht
-  // bearing — is a closer occluder (carrier) actually present in the captured
-  // returns, and how many returns does it produce? Calibrates min_occluder_returns.
-  {
-    int scans = 0, with_closer = 0, tot_closer = 0, min_closer = 1000000;
-    double sum_returns = 0;
-    for (const auto& ss : run_on.sector_history) {
-      const double t_rel = ss.t_unix - run_on.clip_start_unix;
-      if (t_rel < 50.0 || t_rel >= 85.0) continue;
-      bool covers = false;
-      for (const auto& s : ss.sectors)
-        if (s.covers(target)) { covers = true; break; }
-      if (!covers) continue;
-      ++scans;
-      sum_returns += ss.returns.size();
-      const Eigen::Vector2d sensor =
-          ss.sectors.empty() ? Eigen::Vector2d::Zero() : ss.sectors.front().sensor_enu;
-      const Eigen::Vector2d td = target - sensor;
-      const double tb = std::atan2(td.y(), td.x()), tr = td.norm();
-      int closer = 0;
-      for (const auto& q : ss.returns) {
-        const Eigen::Vector2d d = q - sensor;
-        const double off = std::remainder(std::atan2(d.y(), d.x()) - tb, 6.283185307);
-        if (std::abs(off) <= 0.175 && d.norm() < tr - 50.0) ++closer;  // within ~10 deg, closer
-      }
-      if (closer > 0) { ++with_closer; tot_closer += closer; min_closer = std::min(min_closer, closer); }
-    }
-    std::printf(
-        "# DIAG shadow swept scans=%d, mean returns/scan=%.1f, scans w/ closer "
-        "return on yacht bearing=%d, min/mean closer-count=%d/%.1f\n",
-        scans, scans ? sum_returns / scans : 0.0, with_closer,
-        with_closer ? min_closer : 0,
-        with_closer ? 1.0 * tot_closer / with_closer : 0.0);
-  }
+  const auto ps = probeCell(run, target, /*hazard_radius=*/150.0);
 
-  // Direct guard-fire measurement on the swept scans behind the occluder.
-  const auto fire = guardFireCount(run_on, target, on.shadow_guard, 50.0, 85.0);
-  const double fire_frac = fire.second ? 1.0 * fire.first / fire.second : 0.0;
-  const double haz_on =
-      w_on.shadow.n ? 1.0 * w_on.shadow.hazard / w_on.shadow.n : 0.0;
-  const double haz_off =
-      w_off.shadow.n ? 1.0 * w_off.shadow.hazard / w_off.shadow.n : 0.0;
+  const IntervalStat pre = interval(ps, 5.0, 50.0);
+  const IntervalStat shadow = interval(ps, 50.0, 85.0);
+  const IntervalStat post = interval(ps, 85.0, 120.0);
+
+  printHeader("car_carrier_near — unknown_w860 yacht cell (target ENU relative)");
+  std::printf("# target ENU = (%.1f, %.1f) m; datum=clip; cell=%.0f m\n",
+              target.x(), target.y(), kCellM);
+  printRow("pre  5-50s", pre);
+  printRow("shadow 50-85s", shadow);
+  printRow("post 85-120s", post);
+
+  // Sector mechanism summary.
+  std::vector<double> w = run.sector_widths_rad;
+  std::sort(w.begin(), w.end());
+  const double med_deg =
+      w.empty() ? 0.0 : w[w.size() / 2] * 180.0 / 3.14159265358979323846;
   std::printf(
-      "# shadow mean mass: OFF=%.3f ON=%.3f (%.1fx) | shadow hazard: OFF=%.0f%% "
-      "ON=%.0f%% | guard fired on %d/%d swept-shadow scans (%.0f%%)\n",
-      w_off.shadow.mean_mass, w_on.shadow.mean_mass,
-      w_off.shadow.mean_mass > 0 ? w_on.shadow.mean_mass / w_off.shadow.mean_mass
-                                 : 0.0,
-      100.0 * haz_off, 100.0 * haz_on, fire.first, fire.second, 100.0 * fire_frac);
+      "# coverage sectors: %zu valid, median width %.1f deg, %ld full-circle\n",
+      w.size(), med_deg, run.sector_full_circle);
+  // Cross-check: mass changes ONLY on swept scans (the coverage gate), so
+  // touch+decay per interval ≈ swept count — decay events ARE observed-empty
+  // calls. The occluder does not inflate the decay rate (flat across intervals);
+  // it removes returns (touches collapse), leaving the baseline decays unopposed.
+  std::printf(
+      "# decay events (observed-empty calls): pre=%d shadow=%d post=%d  |  "
+      "touches: pre=%d shadow=%d post=%d\n",
+      pre.decay, shadow.decay, post.decay, pre.touch, shadow.touch, post.touch);
+  std::printf(
+      "# shadow: mass %.3f->%.3f (%.1fx), hazard-presence %.1f%%->%.1f%% (pre->"
+      "shadow), recovers to %.3f / %.1f%% post => bounded, self-healing "
+      "false-fire (verdict b)\n",
+      pre.last_mass, shadow.last_mass,
+      shadow.last_mass > 0 ? pre.last_mass / shadow.last_mass : 0.0,
+      pre.n ? 100.0 * pre.hazard / pre.n : 0.0,
+      shadow.n ? 100.0 * shadow.hazard / shadow.n : 0.0, post.max_mass,
+      post.n ? 100.0 * post.hazard / post.n : 0.0);
 
-  // RED reference: without the guard, the shadow interval decays the cell
-  // repeatedly (observed-empty behind the occluder) — the verdict-b erosion that
-  // collapsed the mass ~24× and dropped hazard presence to ~51%.
-  ASSERT_GE(w_off.shadow.decay, 5)
-      << "expected the pre-guard verdict-b erosion as the RED reference";
-  ASSERT_LT(haz_off, 0.7)
-      << "pre-guard hazard presence should be degraded through the shadow";
-
-  // GREEN #1 — the guard actually fires behind the occluder: on the scans that
-  // swept the yacht cell during the core shadow, the strong closer carrier casts
-  // a shadow that blocks the decay on the large majority of them.
-  EXPECT_GE(fire_frac, 0.7)
-      << "guard should shadow the yacht cell on most swept scans behind the "
-         "carrier (fired " << fire.first << "/" << fire.second << ")";
-
-  // GREEN #2 — mass retained through the shadow (no ~24× collapse); the guarded
-  // mean stays the same order as (here, above) the pre-shadow mean.
-  EXPECT_GT(w_on.shadow.mean_mass, 2.0 * w_off.shadow.mean_mass);
-  EXPECT_GE(w_on.shadow.mean_mass, 0.5 * w_on.pre.mean_mass);
-
-  // GREEN #3 — the ADR-0002 presence channel is preserved: the emitted hazard
-  // stays present through the passage instead of degrading to ~51%.
-  EXPECT_GT(haz_on, haz_off);
-  EXPECT_GE(haz_on, 0.8)
-      << "guarded hazard presence should stay high through the shadow";
-
-  // GREEN #4 — the guard protects a SMALL fraction of cells (shadow sectors are
-  // narrow), so it does not broadly freeze the scene. This is also the robustness
-  // signal for the clutter-background decoupling: only a small population is
-  // excluded from the adaptive-bar median.
-  std::printf("# peak guard-protected cell fraction (car_carrier) = %.1f%%\n",
-              100.0 * run_on.peak_guard_protected_frac);
-  EXPECT_LT(run_on.peak_guard_protected_frac, 0.2)
-      << "guard protected an implausibly large fraction of cells — occluder "
-         "detection mis-tuned for this sensor";
+  // Measurement-only: the cell must at least accrue occupancy mass somewhere in
+  // the clip (else the layer never saw the yachts — a wiring finding, surfaced).
+  bool ever_mass = false;
+  for (const auto& p : ps)
+    if (p.mass > 0.0) {
+      ever_mass = true;
+      break;
+    }
+  EXPECT_TRUE(ever_mass)
+      << "unknown_w860 cell never accrued occupancy mass on this clip";
 }
 
-// Sim control (no occluder anywhere): the guard must be INERT — decay behaviour
-// unchanged, since no strong closer occluder ever casts a shadow.
-TEST(LosShadowGuard, SimAnchoredControlGuardInert) {
-  LiveOccupancyParams on = coverageParams();
-  LiveOccupancyParams off = on;
-  off.shadow_guard.enabled = false;
-
+// Sim control: anchored vessel, NO occluder. Establishes the no-shadow baseline
+// decay over an equal-length window for comparison against the shadow interval.
+TEST(LosShadowProbe, SimAnchoredControl) {
   ClipInputs in;
   const std::string dir =
       srcDir() + "/tests/fixtures/sim_multisensor/sim_ms_anchored_camera_s0";
   in.ownship_csv = dir + "/ownship.csv";
   in.plots_csv = dir + "/radar_plots.csv";
   in.radar_source_id = "sim_radar";
-  in.radar_max_range_m = 2500.0;
+  in.radar_max_range_m = 2500.0;  // sim returns extend to ~2 km
+  // No coastline / chart / camera fixtures for the sim scenario (chartless).
 
-  ClipRun run_off = runClipInputs(in, kCovConfig, false, false, false, true, &off);
-  if (!run_off.valid) GTEST_SKIP() << "sim_ms_anchored_camera fixture absent";
-  ClipRun run_on = runClipInputs(in, kCovConfig, false, false, false, true, &on);
-  ASSERT_TRUE(run_on.valid);
+  ClipRun run =
+      runClipInputs(in, kCovConfig, /*load_chart_structure=*/false,
+                    /*load_camera=*/false, /*evict_camera=*/false,
+                    /*capture_persistence=*/true);
+  if (!run.valid) GTEST_SKIP() << "sim_ms_anchored_camera fixture absent";
+  ASSERT_FALSE(run.sector_widths_rad.empty())
+      << "no valid coverage sector recorded on sim control";
 
+  // Anchored vessel (mmsi 257000601 "ANCHORED") initial truth position; it barely
+  // moves (sog ≈ 0.26 m/s). Datum = 63.45,10.35 (meta.txt).
   const Eigen::Vector3d e =
-      run_on.datum.toEnu(Geodetic{63.45968312, 10.31795823, 0.0});
+      run.datum.toEnu(Geodetic{63.45968312, 10.31795823, 0.0});
   const Eigen::Vector2d target(e.x(), e.y());
 
-  const Windows w_off = windows(probeCell(run_off, target, 150.0));
-  const Windows w_on = windows(probeCell(run_on, target, 150.0));
+  const auto ps = probeCell(run, target, /*hazard_radius=*/150.0);
 
-  printHeader("sim_ms_anchored_camera CONTROL — guard OFF");
-  printRow("win 5-50s", w_off.pre);
-  printRow("win 50-85s", w_off.shadow);
-  printHeader("sim_ms_anchored_camera CONTROL — guard ON (must match OFF)");
-  printRow("win 5-50s", w_on.pre);
-  printRow("win 50-85s", w_on.shadow);
-  // How often does the guard fire on the anchored cell across the whole clip?
-  const auto fire = guardFireCount(run_on, target, on.shadow_guard, 5.0, 120.0);
-  const double fire_frac = fire.second ? 1.0 * fire.first / fire.second : 0.0;
+  // Equal-length windows to mirror the car_carrier intervals (35 s shadow).
+  const IntervalStat a = interval(ps, 5.0, 50.0);
+  const IntervalStat b = interval(ps, 50.0, 85.0);
+  const IntervalStat c = interval(ps, 85.0, 120.0);
+
+  printHeader("sim_ms_anchored_camera CONTROL — anchored vessel cell (no occluder)");
+  std::printf("# target ENU = (%.1f, %.1f) m; datum=63.45,10.35; cell=%.0f m\n",
+              target.x(), target.y(), kCellM);
+  printRow("win 5-50s", a);
+  printRow("win 50-85s", b);
+  printRow("win 85-120s", c);
+  // Secondary control: no occluder anywhere. Same cross-check holds
+  // (touch+decay ≈ swept). This cell is a LOW-MASS / sparse-touch regime (never a
+  // stable hazard), so it is a weaker magnitude baseline than the within-clip
+  // pre/post on car_carrier_near; it confirms the decay mechanism operates
+  // without any occluder (mass needs continuous re-touch to persist).
   std::printf(
-      "# guard fired on %d/%d swept scans (%.0f%%) — near-inert (no persistent "
-      "occluder); mass Δ pre=%.4f shadow=%.4f post=%.4f\n",
-      fire.first, fire.second, 100.0 * fire_frac,
-      w_on.pre.mean_mass - w_off.pre.mean_mass,
-      w_on.shadow.mean_mass - w_off.shadow.mean_mass,
-      w_on.post.mean_mass - w_off.post.mean_mass);
+      "# no-occluder control: decays w/o shadow win50-85s=%d touches=%d "
+      "swept=%.1f%% (decay operates absent any occlusion)\n",
+      b.decay, b.touch, b.n ? 100.0 * b.swept / b.n : 0.0);
 
-  // No PERSISTENT occluder in front of the anchored vessel ⇒ the guard is
-  // near-inert: it fires only on the rare scan where another sim vessel/clutter
-  // genuinely crosses closer on the cell's bearing (correct, not false
-  // shielding), so the anchored cell's decay is essentially unchanged. Contrast
-  // car_carrier (100% fire, mass 20.7×). This is the "unchanged where no occluder"
-  // proof (obligation #2); the default-config (occupancy OFF) byte-identity is
-  // covered by the standing suite, which does not wire the guard at all.
-  EXPECT_LT(fire_frac, 0.2)
-      << "guard should be near-inert on the no-occluder control (fired "
-      << fire.first << "/" << fire.second << ")";
-  EXPECT_NEAR(w_on.pre.mean_mass, w_off.pre.mean_mass, 0.02);
-  EXPECT_NEAR(w_on.shadow.mean_mass, w_off.shadow.mean_mass, 0.02);
-  EXPECT_NEAR(w_on.post.mean_mass, w_off.post.mean_mass, 0.02);
-  EXPECT_LE(std::abs(w_on.shadow.decay - w_off.shadow.decay), 1);
+  bool ever_mass = false;
+  for (const auto& p : ps)
+    if (p.mass > 0.0) {
+      ever_mass = true;
+      break;
+    }
+  EXPECT_TRUE(ever_mass)
+      << "anchored control cell never accrued occupancy mass";
 }
