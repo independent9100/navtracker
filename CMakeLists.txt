@@ -354,6 +354,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_harbor_complete_truth.cpp
   tests/benchmark/test_harbor_complete_truth_baseline.cpp
   tests/benchmark/test_adapt_k3_harbor_knife_guard.cpp
+  tests/benchmark/test_clutter_burst_birth_confirm_probe.cpp
   tests/benchmark/test_gospa_export.cpp
   tests/benchmark/test_harbor_boat_near_pier.cpp
   tests/benchmark/test_harbor_gate_scenarios.cpp

@@ -1,9 +1,16 @@
 # Clutter/birth-model campaign — design note (Phase A → ARBITER CHECKPOINT 1)
 
-**Status: awaiting arbiter approval. No implementation (Phase B) until this is signed off.**
-Date: 2026-07-06 · Branch: `clutter-birth-campaign` (worktree `../navtracker-clutter`, off master `7cbfe9d`)
+**STATUS UPDATE 2026-07-07 — Phase B halted at the binding §5.0 gate. The
+birth-vs-confirm probe fired STOP: birth-side suppression is structurally
+insufficient for the dominant (burst) over-count. Neither candidate was built.
+See "## Phase B result" at the end of this note. This is now the Checkpoint-2
+deliverable (an early, honest negative — the binding probe working as designed).**
+
+Original status (Phase A): awaiting arbiter approval — APPROVED 2026-07-07 with 5
+rulings (recorded in "## Checkpoint 1 rulings" below).
+Date: 2026-07-06 · Branch: `clutter-birth-campaign` (worktree `../navtracker-clutter`, off master `7cbfe9d`, rebased onto `fb7782c`)
 Ticket: `docs/superpowers/plans/2026-07-06-clutter-birth-campaign-ticket.md`
-Phase 0 (backlog #21) is committed separately ahead of this note.
+Phase 0 (backlog #21) committed separately, now on master as `fb7782c`.
 
 Grounding: a 7-agent code+doc research sweep (all claims file:line-verified) plus a
 direct `lambda_birth` sweep on `harbor_complete_truth`. The load-bearing citations
@@ -449,3 +456,96 @@ If A does **not** separate from uniform-λ here, that is a gate finding → stop
 - Doc landing spots: `13-clutter-and-detection.md` §3.3/§9/§10; `association.md §6`;
   `pmbm-design.md §3.2/§9`; `integration-guide.md` §10 Tables A/B/C; drift-guard
   `tests/docs/test_integration_guide_config_coverage.cpp:54-61,103`.
+
+---
+
+## Checkpoint 1 rulings (arbiter, 2026-07-07)
+
+Phase B approved with five binding rulings:
+1. **Scope A+B; §5.0 probe BINDING + FIRST.** Run the birth-vs-confirm race probe
+   before building anything. If most burst phantoms confirm ≤2 scans → STOP + report
+   (campaign finding: "birth-side suppression structurally insufficient; the lever must
+   reach existing Bernoullis"). If it passes → build A, run 5.1; B's go/no-go per §4.
+2. **Signal = A2 (dispersion excess)** as suppression input; **A1 diagnostic column only**
+   (claim-adjacent = 1−r-spiral genus).
+3. **HAXR = report, don't require.** Primary gates = discriminator (with the mandatory
+   λ_C=6e-8 control arm) + harbor/dense_clutter + KEEP.
+4. **Soft suppression only** — soft cap 0.9, no hard-veto, do not ship a `hard_gate` param.
+5. **Band guard stands; no `lambda_birth` nudge.**
+Plus a docs directive: state the λ_C-invariance as a **named invariant** in
+`pmbm-design.md` (not just campaign context).
+
+---
+
+## Phase B result (2026-07-07) — §5.0 entry probe fired STOP
+
+**The binding §5.0 birth-vs-confirm race probe (ruling 1) fired its STOP condition.
+Neither candidate was built.** This is the Checkpoint-2 deliverable: an early,
+quantified, honest negative — the binding probe working exactly as designed, saving the
+~2-day Phase B build. Evidence artifact:
+`tests/benchmark/test_clutter_burst_birth_confirm_probe.cpp` (skips without `SIMMS_DIR`).
+
+**Faithfulness first:** the probe drives the deployed `imm_cv_ct_pmbm_coverage_land`
+with the Sweep wiring; the real bench on the same cell gives `card_err_mean = 3.48253`
+— bit-for-bit the pinned +3.48 baseline (fixtures sha256-verified to `a4ecaba3…`). So
+the probe measures the real instrument.
+
+**The race (confirmed-track count trajectory, coverage_land, clutter_burst):**
+```
+ t-t0:  117.5   120.0   122.5   125.0   ... (burst onset t=120 s)
+ conf:    2       2      15      16     ... plateau ~14-17 through the burst
+```
+Within **one radar scan** (2.5 s) of burst onset, confirmed jumps 2 → 15 (~13 phantoms).
+`fraction of plateau present by ≤2 scans = 109%`; `12 burst-region phantom ids, all 12
+confirmed within ≤2 scans, none later` → the phantoms confirm essentially immediately
+and there is **no turnover** (the region saturates at scan 1 via `smart_birth_skip`, so
+no later births occur).
+
+**Over-count split (phantom = confirmed − 2 reals; card_err is a whole-run mean):**
+| window | mean phantom | run-fraction | note |
+|---|---|---|---|
+| pre-burst [0,120] | 0.85 | 20% | compound-K background — the ONLY birth-turnover-y part |
+| burst [120,240] | 9.64 | 20% | burst + background |
+| post-burst [240,end] | 2.40 | 60% | **decaying burst tail** (sticky phantoms persist long after t=240), NOT fresh background |
+| whole run | 3.53 | — | == card_err (bench 3.48) ✓ |
+
+**Why birth-side suppression cannot win here (mechanism, both candidates):**
+1. **Learn-latency (kills A).** A spatial prior learns from a scan's returns only in the
+   post-scan `observe()`; so the t=120 first-wave births happen *before* the map knows
+   the burst region. Those first-wave Bernoullis confirm one scan later (t=122.5).
+   Unpreventable.
+2. **Saturation → no later births.** `smart_birth_skip_existing` gates new returns to the
+   ~12 existing high-r Bernoullis, so after scan 1 there are **no further burst births**
+   for any prior to suppress.
+3. **Channel-reach wall.** A birth suppressor cannot touch an already-*confirmed*
+   Bernoulli. The 12 phantoms are confirmed by t=122.5 and, being re-detected every scan
+   in the dense disk, never miss, never die — they dominate the burst window AND persist
+   through 60% of the post-burst run.
+4. **Candidate B is not saved by same-scan timing.** B's count-over-dispersion signal is
+   available within the scan, but (a) a *global* count cannot distinguish the concentrated
+   150 m burst disk from diffuse compound-K of the same total count, and (b) a correctly-
+   fit negative-binomial finds the burst's high count *unsurprising* (heavy tail) → weak
+   discount. B fails on the burst for a different reason than A.
+
+**Quantified ceiling:** the only birth-reachable component is the pre-burst background
+(0.85 phantom). A *perfect* birth fix therefore floors `card_err` at **~2.69 — still
+above MHT's +2.51**, and far from the +0.9 ideal. The birth *channel* (the only channel
+left non-cancelled by `birth_existence_target`, per §1.1) cannot win the discriminator.
+
+**Recommended pivots (arbiter's call):**
+- **(i) Existence-side clutter penalty.** Reach *existing* Bernoullis: decay a confirmed
+  Bernoulli's existence when it sits in a region of persistently-concentrated *unclaimed*
+  returns (the burst signature). This is the lever the finding points to, but it is a
+  deeper PMBM change (λ_C does not currently enter the existence update — Appendix), and
+  it raises ADR-0002 over-delete risk *on confirmed tracks* plus KEEP byte-identity risk.
+- **(ii) Non-Poisson clutter cardinality in the UPDATE.** The true PMBM-with-NB-clutter
+  derivation — reduce target-attribution of measurements in over-dense regions. Large,
+  hot-path change.
+- **(iii) Front-end extraction (the increment-8 thesis, and the extraction-boundary
+  ruling).** A 150 m disk of 25 spread returns is exactly what a clustering front-end
+  should collapse/reject upstream. This finding *reinforces* that burst-type dense clutter
+  is an extraction problem, not a fusion-birth problem.
+
+**What remains true and useful regardless:** the λ_C-cancellation invariant (§1.1), the
+`birthScale`-not-λ_C channel map (§2), and the minefield analysis (§1.4–1.5) stand as the
+campaign's durable contribution and belong in `pmbm-design.md` (ruling docs directive).
