@@ -287,6 +287,34 @@ Config knobs:
 - `birth_existence_target = 0.1` — bench probe value (Task 1, 2026-06-24):
   philos `gospa_mean` dropped from 82.63 to 48.50 (−41 %).
 
+> **INVARIANT — clutter levers and the birth channel (deployed-config facts).**
+> Two consequences of the birth model above governed the whole 2026-07 clutter/birth
+> campaign; state them once, here, because they bound what any clutter fix can do:
+>
+> 1. **Under `birth_existence_target > 0`, birth existence is `λ_C`-invariant.** The
+>    algebra above (`PmbmTracker.cpp:500-507`, materialised `:1082-1083`) gives
+>    `r_new = r*` exactly, *independent of `λ_C(z)`*. So a spatially-varying `λ_C`, a
+>    per-sensor `λ_C`, or a count-adaptive `λ_C` change **nothing** in the born
+>    existence on `imm_cv_ct_pmbm_coverage_land` / `_bundle*` / `_coverage`
+>    (`birth_existence_target = 0.1`). Only the fixed-`λ_birth` configs (`_adapt`,
+>    `_land`, target = 0) let `λ_C` move `r_new`. **A clutter lever that hopes to
+>    reduce births must scale the birth intensity / `birthScale` directly, not `λ_C`.**
+>    (This is the root cause of the long-standing "clutter map inert under PMBM"
+>    puzzle: the read path is wired, but on the deployed config it is cancelled.)
+> 2. **`birthScale` (birth suppression) cannot reach a *confirmed* Bernoulli.**
+>    `birthScale` gates only new-target existence at birth; it never enters the
+>    existing-Bernoulli detected/miss update (`PmbmTracker.cpp:984-986, 1048` carry no
+>    clutter term). So a birth-side clutter fix can only *prevent* phantoms, and only
+>    before they cross `confirm_threshold`. Measured (§5.0 entry probe,
+>    `tests/benchmark/test_clutter_burst_birth_confirm_probe.cpp`, 2026-07-07): on
+>    `sim_ms_clutter_burst` a persistent dense-clutter disk saturates the region in
+>    **one scan** (confirmed 2→15), phantoms confirm before any learned prior can act
+>    and then persist (no turnover) — so a *perfect* birth suppressor floors
+>    `card_err` at ~2.69, still above MHT's +2.51. **Reaching persistent concentrated
+>    clutter requires an *existence-side* lever, not a birth-side one** — parked with
+>    triggers (improvement-backlog "Existence-side clutter penalty"). See
+>    evaluation-log 2026-07-07 for the full close-out.
+
 ### 3.3 PPP update — undetected mass loss
 
 After the scan, undetected mass decays:
@@ -843,8 +871,15 @@ remove these: at philos radar p_D = 0.07 a missed sweep barely moves existence (
 and persistent shore returns are re-detected every antenna rotation. The over-count is spatial —
 the only lever is spatial.
 
-**Suppress births, not λ_C.** As shown in §9.1 the algebra, with `birth_existence_target` active
-`r_new` is independent of λ_C. Births must be attacked by scaling the birth intensity directly.
+**Suppress births, not λ_C — and births are not enough for persistent clutter.** As shown in
+§9.1's algebra, with `birth_existence_target` active `r_new` is independent of λ_C, so births
+must be attacked by scaling the birth intensity (`birthScale`) directly — see the named INVARIANT
+in §3.2.2. But `birthScale` gates only *births*: it cannot remove an already-*confirmed* phantom
+(the existing-Bernoulli update carries no clutter term). The 2026-07 clutter/birth campaign
+measured (§5.0 probe) that persistent concentrated clutter confirms in one scan and then persists,
+so a birth-side fix cannot reach it; that residual is an *existence-side* problem, parked with
+triggers. The land prior works here only because it suppresses *births* of transient near-shore
+water clutter — not because it removes confirmed structure.
 
 **Geodetic storage for trivial recenter.** The ENU datum auto-recenters as own-ship moves. Storing
 polygons in geodetic lat/lon makes recenter trivial: swap one datum pointer, no geometry

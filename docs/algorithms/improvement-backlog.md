@@ -962,3 +962,42 @@ kinematic content is identical ON vs OFF); it does NOT make the anchored sim
 scenario row inert, because that row's residual is cross-target coupling from
 the underway vessel's legitimate velocity — i.e. sub-item (a). See eval-log
 2026-07-06.
+
+---
+
+## 23. Existence-side clutter penalty / non-Poisson clutter cardinality (PARKED with triggers)
+
+**Parked 2026-07-07 by the clutter/birth campaign close** (eval-log 2026-07-07;
+design note `docs/superpowers/plans/2026-07-06-clutter-birth-campaign-design.md`).
+The campaign proved birth-side clutter suppression is structurally insufficient for
+persistent concentrated clutter (the birth channel cannot reach a *confirmed*
+Bernoulli — the "channel-reach wall"; a perfect birth fix floors
+`sim_ms_clutter_burst card_err` at ~2.69 > MHT +2.51). The lever that *could* reach
+it is one of:
+
+- **(i) Existence-side clutter penalty.** Decay a *confirmed* Bernoulli's existence
+  when it sits in a region of persistently-concentrated *unclaimed* returns. Reaches
+  confirmed phantoms, but: (a) `λ_C` does not currently enter the existing-Bernoulli
+  update (`PmbmTracker.cpp:984-986,1048`) — a new term, hot-path; (b) it puts the
+  ADR-0002 over-delete risk onto **confirmed tracks**, the most dangerous place for
+  it; (c) KEEP byte-identity risk.
+- **(ii) Non-Poisson (negative-binomial) clutter cardinality in the UPDATE.** The
+  true PMBM-with-NB-clutter derivation — reduces target-attribution of measurements
+  in over-dense regions. Large derivation + hot-path change; unproven payoff on
+  contract-level input.
+
+**Why parked, not pursued now:** both are deep hot-path changes whose *motivating
+mass moved upstream*. The campaign's contract-boundary finding (eval-log 2026-07-07)
+showed the dominant over-count (`clutter_burst`'s burst; and the HAXR dense-harbor
+over-count) is a *pre-extraction* duplicate-cloud phenomenon owned by the upstream
+extractor (2026-07-06 extraction-boundary ruling), not the fusion tracker. The
+genuine tracker-level residual (over-dispersed *diffuse* background) is small in sim
+(~0.85 phantom) and increment 8 already showed suppression-shaped fixes cut <3% on
+HAXR. Opening a confirmed-track-existence change days before water-test facts arrive
+is the wrong burden-of-proof order.
+
+**Trigger to revisit:** post-water **real data** (with the real upstream extractor in
+place) showing **confirmed-phantom persistence in spatially-concentrated clutter that
+upstream cannot fix.** Until then, tracker-level clutter work stays closed; a
+post-extraction-representative sim scenario (point-like false plots, over-dispersed
+counts, no duplicate disks) is the pull-based prerequisite if it re-opens.

@@ -280,12 +280,21 @@ condition, not by an opaque number.
 
 ## 10. What we did not pick, and why
 
-- **Non-homogeneous Poisson cluster process** — better statistical
-  model for clumpy clutter, but estimation is fragile and the
-  cost rarely pays back. The clutter map captures most of the
-  benefit. (Compound-K, §9, is how we *generate* clumpy clutter
-  for the sim gate; estimating it online is the harder problem
-  this bullet is about.)
+- **Non-homogeneous Poisson cluster process / online spatially-varying λ_C** —
+  a better statistical model for clumpy clutter. **Not picked — now MEASURED,
+  not just judged (2026-07-07 clutter/birth campaign, eval-log).** Two hard
+  facts settled it: (1) on the deployed PMBM config the born existence is
+  **λ_C-invariant** (`birth_existence_target` derives λ_birth from λ_C, so
+  `r_new = r*` regardless of λ_C — see ch. 23 / `pmbm-design.md §3.2.2`), so a
+  learned λ_C map changes nothing there; and (2) even routed through the birth
+  *intensity* instead, a birth-side suppressor **cannot reach an already-confirmed
+  phantom**, and persistent concentrated clutter confirms in ~1 scan — a perfect
+  birth fix still leaves `card_err` above the MHT baseline. The remaining
+  tracker-level target (over-dispersed *diffuse* clutter) is small, and the
+  dominant dense-clutter over-count turned out to be a *pre-extraction* problem
+  owned upstream. (Compound-K, §9, is how we *generate* clumpy clutter for the sim
+  gate; estimating it online is the harder problem this bullet is about — parked
+  with triggers, improvement-backlog #23.)
 - **Per-target adaptive `P_D`** — backlog item; needs careful
   identifiability analysis to avoid feedback loops with the
   tracker's own state.

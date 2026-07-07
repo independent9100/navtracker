@@ -127,6 +127,16 @@
 - **"clutter prior"** — a spatial prior `c ∈ [0,1]` that estimates
   how likely a position is to produce false sensor returns (shore /
   structure clutter) rather than real vessel detections. Chapter 25.
+- **"compound-K"** — a clutter model where the false-alarm count is a
+  Poisson whose *rate is itself random* (gamma-distributed "texture" ×
+  Poisson "speckle"). The marginal count is **negative-binomial** —
+  heavier-tailed and clumpier than flat Poisson, so high-count scans are
+  normal, not surprising. It is how the sim battery *generates* realistic
+  clumpy radar clutter (`sim_ms_clutter_burst`). Chapter 13 §9.
+- **"over-dispersion"** — a count distribution whose variance exceeds its
+  mean (ratio > 1), i.e. clumpier than Poisson. Compound-K is over-dispersed;
+  flat Poisson has variance = mean. A tracker whose clutter term assumes flat
+  Poisson over-counts on over-dispersed clutter. Chapter 13 §9.
 - **"shoreline ramp"** — the smooth function `c(d) = clamp((W_off−d)/(W_off+W_in), 0, 1)`
   of signed distance `d` to the nearest shore edge. Rises from 0 (open water)
   to 1 (well inland) across a configurable margin band. Chapter 25.

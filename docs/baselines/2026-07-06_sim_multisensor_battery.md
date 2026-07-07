@@ -72,9 +72,27 @@ The first controlled fusion-vs-single-sensor delta. Radar-only run adds
   scenario where both trackers OVER-count (MHT `card_err +2.51`, PMBM `+3.48`):
   their clutter term assumes flat Poisson, and the gamma-modulated field is
   clumpy and heavy-tailed. Radar-only over-counts less (+0.93) than fusion
-  (+2.51) — the AIS-seeded tracks interact with the clutter births. This is the
-  designed discrimination target for the future clutter/birth-model campaign: a
-  spatially-varying-λ model should measurably beat uniform-λ here.
+  (+2.51) — the AIS-seeded tracks interact with the clutter births.
+
+  > **SCENARIO-HONESTY NOTE (2026-07-07, clutter/birth campaign close).** This
+  > scenario is **no longer billed as the tracker-level clutter discriminator.**
+  > The campaign's binding §5.0 probe (eval-log 2026-07-07;
+  > `tests/benchmark/test_clutter_burst_birth_confirm_probe.cpp`) showed the
+  > `card_err +3.48` is **dominated by the localized burst** — a persistent 150 m
+  > disk of 25 scattered plots/scan. That is a *duplicate-cloud, pre-extraction*
+  > shape which the 2026-07-06 extraction-boundary ruling assigns to **upstream**
+  > (radar API / commercial extractor); the deployed tracker is contractually
+  > entitled to plot-level input, and the burst as simulated would largely not
+  > survive a competent upstream extractor. So the burst conflates an *upstream*
+  > problem (dominant in the metric) with the genuine *tracker-level* problem —
+  > the over-dispersed **diffuse background** (only ~0.85 phantom pre-burst here;
+  > HAXR's ~48.8 is the real-data face of it). `clutter_burst` **stays** — it now
+  > measures **resilience to contract-violating input** (the tracker survives it
+  > with bounded, self-limiting over-count, `lifetime 0.995 / breaks 0`), which is
+  > worth having. But the tracker-level clutter discriminator we actually want is
+  > a **post-extraction-representative** scenario (point-like false plots,
+  > over-dispersed counts, **no** duplicate disks) — the pull-based follow-up if
+  > tracker-level clutter work ever re-opens (see improvement-backlog parking lot).
 - **Out-of-model dynamics cost identity, not position.** `overtaking` (12.5
   id-switches, 16 breaks) and `crossing` (7.3, 8.3) — the rudder-rate-limited
   turns with speed loss are outside the CV/CT IMM set, so the filter loses and

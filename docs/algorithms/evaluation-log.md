@@ -7721,3 +7721,80 @@ The only git-committed deliverables are the C++ loader
 (`adapters/replay/CameraBearingCsvReader.{hpp,cpp}`) + its tests
 (`tests/replay/test_camera_bearing_loader.cpp`) + the CMakeLists wiring; the
 skip-guarded smoke test tolerates the fixtures' absence on a fresh clone.
+
+## 2026-07-07 — Clutter/birth campaign CLOSED: measured negative at the birth channel + contract-boundary finding
+
+The increment-8 redirect ("reduce PMBM dense-scene over-count via a clutter/birth
+model") is **closed as a measured negative.** Design-first campaign
+(`docs/superpowers/plans/2026-07-06-clutter-birth-campaign-{ticket,design}.md`),
+branch `clutter-birth-campaign`. Phase 0 (backlog #21 band guard) already on master
+(`fb7782c`). **Zero implementation waste**: the binding entry probe killed a
+structurally-doomed build before it started. This is the cheapest negative the
+project has bought; the design-first + binding-entry-probe shape is now the template
+for research campaigns.
+
+**Durable result 1 — the `λ_C`-cancellation invariant (root cause of the "cmap inert
+under PMBM" puzzle).** Under `adaptive_birth`, birth existence is
+`r_new = λ_birth/(λ_birth+λ_C)`. With `birth_existence_target > 0`
+(`imm_cv_ct_pmbm_coverage_land` and all `_bundle*`/`_coverage`),
+`λ_birth = (r*/(1−r*))·λ_C` ⇒ **`r_new = r*` exactly, independent of `λ_C`**
+(`PmbmTracker.cpp:500-507,1082-1083`). So a spatial/per-sensor/count-adaptive `λ_C`
+is *cancelled* on the deployed config — the shipped `ClutterMapSensorDetectionModel`
+read path is wired but inert there. **Any clutter lever must ride `birthScale`
+(the land/static-obstacle birth-prior channel), never `λ_C`.** Recorded as a named
+INVARIANT in `pmbm-design.md §3.2.2`.
+
+**Durable result 2 — the birth channel cannot reach confirmed phantoms (§5.0 probe).**
+`tests/benchmark/test_clutter_burst_birth_confirm_probe.cpp` (permanent regression
+test; skips w/o `SIMMS_DIR`). Faithful to the instrument: the probe drives
+`imm_cv_ct_pmbm_coverage_land` with the Sweep wiring and the real bench on the same
+cell gives `card_err_mean = 3.48253` — bit-for-bit the pinned +3.48 (fixtures
+sha256-verified). Findings:
+- **Confirmed count jumps 2 → 15 in ONE radar scan** at burst onset (t=120 s); 12
+  burst-region ids, all confirmed ≤2 scans, none later — the region saturates at
+  scan 1 (`smart_birth_skip`), so no turnover, and the dense disk re-detects them
+  every scan → they never miss/die → persist through 60 % of the post-burst run.
+- Over-count split: pre-burst background **0.85** phantom (the only birth-reachable,
+  turnover-y part); the rest (**~2.69**) is burst + its decaying tail, unreachable.
+  **A perfect birth fix floors `card_err` at ~2.69 — still above MHT's +2.51**, far
+  from the +0.9 ideal.
+- Why the whole birth *channel* fails (both candidates): (1) a learned prior sees a
+  scan's returns only post-scan → can't suppress the t=120 first wave (kills spatial
+  candidate A); (2) saturation → no later births to suppress; (3) channel-reach wall
+  → can't touch confirmed phantoms; (4) the count candidate B is not saved by
+  same-scan timing — a global count can't tell a concentrated 150 m disk from diffuse
+  compound-K of equal count, and a correct negative-binomial finds the burst's high
+  count *unsurprising*.
+
+**Durable result 3 — scenario-honesty / contract-boundary finding (arbiter ruling).**
+`sim_ms_clutter_burst`'s dominant mass is the persistent 150 m, 25-plot/scan disk —
+a duplicate-cloud *pre-extraction* shape that the 2026-07-06 extraction-boundary
+ruling assigns to **upstream** (radar API / commercial extractor). The deployed
+tracker is contractually entitled to plot-level input, and the burst as simulated
+would largely not survive a competent upstream extractor. So the discriminator,
+built in good faith, **conflated an upstream problem (the burst — dominant in the
+metric) with the genuine tracker-level problem (the over-dispersed *diffuse*
+background — the 0.85 pre-burst phantoms in sim; HAXR's ~48.8).** The controlled
+instrument was pointed mostly at the wrong layer. `clutter_burst` **stays** (it now
+measures resilience to contract-violating input — the tracker survives it with
+bounded over-count) but is **no longer billed as the tracker-level clutter
+discriminator**; a post-extraction-representative scenario (point-like false plots,
+over-dispersed counts, no duplicate disks) is the pull-based follow-up if
+tracker-level clutter work re-opens. See the sim-battery doc scenario-honesty note.
+
+**Parked with triggers (not built):** (i) existence-side clutter penalty and (ii)
+non-Poisson clutter cardinality in the *update* — both deep hot-path changes whose
+motivating mass just moved upstream; (i) would put ADR-0002 over-delete risk onto
+*confirmed* tracks (the most dangerous place). **Trigger:** revisit only if
+post-water real data (with the real upstream extractor in place) shows
+confirmed-phantom persistence in spatially-concentrated clutter that upstream can't
+fix. Recorded in `improvement-backlog.md`; learning `13-clutter-and-detection.md §10`
+stays "not picked" with the reason upgraded from *judged* to *measured*.
+
+**Net:** the increment-8 dense-harbor over-count redirect is closed **both ways** —
+suppression-side (increment 8: occupancy persistence, <3 % on HAXR) and birth-side
+(this campaign: structurally insufficient, floor +2.69 > MHT +2.51). What remains of
+the over-count belongs to **upstream extraction** and to whatever the water test
+teaches. Durable contributions carried forward: the `λ_C`-cancellation invariant,
+the `birthScale`-not-`λ_C` channel map, the minefield analysis (design note §1.4-1.5),
+the §5.0 probe as a permanent regression test, and Phase 0 (backlog #21) on master.

@@ -124,3 +124,27 @@ it closes the redirect either way.
    point; the discriminator NOT separating candidates (gate failure — that's
    a finding about the gate); single-run times exploding past ~5 min on the
    standard workloads.
+
+---
+
+## CLOSED 2026-07-07 — measured negative at the birth channel (zero implementation waste)
+
+Executed design-first with a binding entry probe. Phase 0 (backlog #21 band guard)
+shipped to master (`fb7782c`). Phase A design note approved (Checkpoint 1, 5 rulings).
+Phase B **halted at the binding §5.0 gate** (ruling 1): the birth-vs-confirm race probe
+showed `sim_ms_clutter_burst` phantoms confirm in **one scan** and persist — a birth-side
+suppressor (both candidates) cannot reach them; a perfect birth fix floors `card_err` at
+**~2.69 > MHT +2.51**. **Neither candidate built.**
+
+Root finding beyond the probe (arbiter, Checkpoint 2): the burst that dominates the metric
+is a **pre-extraction duplicate-cloud** owned by the upstream extractor (2026-07-06
+extraction-boundary ruling); the discriminator conflated an upstream problem with the small
+tracker-level residual (over-dispersed diffuse background). Deep pivots (existence-side
+clutter penalty; non-Poisson clutter cardinality in the update) **parked with triggers**
+(improvement-backlog #23).
+
+**Durable contributions:** the λ_C-cancellation invariant (`pmbm-design.md §3.2.2`), the
+`birthScale`-not-λ_C channel map, the minefield analysis (design note §1.4-1.5), the §5.0
+probe as a permanent regression test, Phase 0 on master. Redirect closed both ways
+(suppression-side = increment 8; birth-side = this campaign). Full close-out: eval-log
+2026-07-07; design note "Phase B result"; comparison-baselines campaign row.
