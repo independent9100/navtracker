@@ -246,6 +246,32 @@ It produces a `Position2D` measurement directly — no pose lookup. If you pass 
 all-zero covariance it is treated as "unknown" and left empty, so
 `applyDefaultsIfEmpty` (below) can fill it (`core/types/MeasurementBuilders.cpp`).
 
+**Your AIS also reports SOG/COG (speed and course)? Use `PolarVelocity.hpp` —
+do not hand-roll the conversion.** `core/estimation/PolarVelocity.hpp` is the
+single source of truth both our own AIS paths use (NMEA adapter and replay
+loader — pinned equal by a no-drift test). It packages four decisions that were
+each learned from a measured failure:
+
+```cpp
+#include "core/estimation/PolarVelocity.hpp"
+// 1) Anchored/moored (AIS nav-status 1 or 5)? Then NO velocity content —
+//    watch-circle drift is not a velocity (measured: it crosses the SOG
+//    threshold and pollutes the track).
+if (!aisNavStatusSuppressesVelocity(nav_status) &&
+    sog_mps >= kAisSogVelocityMinMps) {           // 2) low-SOG: COG is jitter
+  auto v = sogCogToEnuVelocity(sog_mps, cog_rad,  // 3) compass→ENU + units
+                               sog_std, cog_std); // 4) speed-dependent cov +
+  // → PositionVelocity2D [e, n, ve, vn], cov block   isotropic floor (kills
+  //   from v.velocity / v.covariance                 the low-SOG rank-1
+} else { /* emit Position2D as above */ }         //   overconfidence)
+```
+
+Default 1-σ / threshold constants (`kAisSogStdMps`, `kAisCogStdDeg`,
+`kAisVelocityIsoFloorMps`, `kAisSogVelocityMinMps`) live in the same header —
+AIS carries no uncertainty of its own, so use these unless your feed documents
+better. Also populate `hints.nav_status` regardless (the anchored-vessel veto
+keys on it — see the pitfall checklist) and `hints.mmsi` for identity.
+
 ### You have range + bearing (radar / EO-IR / sonar)
 
 Two builders, depending on whether your bearing is relative to own-ship's bow or
@@ -1102,6 +1128,13 @@ One-liners, each linking to where it is explained above.
   estimator's own COG observation is SOG- and turn-rate-gated for this exact
   reason — copy that discipline). The **nav-input guard** below now *flags* this
   (and a stale feed, and position/heading glitches) at the edge. → §5, guard below.
+- **`hints.nav_status` not populated for anchored/moored AIS targets** — nothing
+  errors, but two protections silently never fire: the anchored-vessel
+  suppression veto (ADR 0002 — the "never suppress a self-declared vessel"
+  path holds its veto for the long anchored window only when it knows the
+  vessel is anchored) and the velocity gate in `PolarVelocity.hpp` (an
+  anchored ship's watch-circle drift would otherwise enter as velocity).
+  If your middleware parses AIS itself, carry nav-status through to the hint.
 - **Treating MMSI / ARPA target id as the fusion key** — external identifiers are
   *hints* (`AssociationHints`), never the primary key. The stable `track_id` is
   the identity (invariant 5). → §3.
