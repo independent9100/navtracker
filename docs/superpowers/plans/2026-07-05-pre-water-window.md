@@ -62,9 +62,15 @@ when the water date firms.
 
 ## Tier 3 — bigger quality fronts (pick AT MOST ONE, design-first)
 
-11. **Clutter/birth-model investigation** (increment-8 redirect): the
-    diffuse over-count. Full gate suite mandatory (λ_C history: KEEP
-    over-deletion + dense_clutter spiral). ~1 week.
+11. **Clutter/birth-model investigation** — CLOSED 2026-07-07 (c7d2b6a):
+    measured negative at the birth channel, zero implementation waste
+    (binding §5.0 probe: burst phantoms confirm in ONE scan; perfect birth
+    fix floors card_err ~2.69 > MHT +2.51; neither candidate built).
+    Durable: the lambda_C-cancellation INVARIANT (pmbm-design §3.2.2),
+    contract-boundary finding (the burst is upstream-extraction input;
+    tracker-level residual is small), deep pivots parked as backlog #23
+    with post-water triggers. Redirect closed BOTH ways (suppression =
+    increment 8; birth = this campaign).
 12. **Cl-1 cold-start env-1 gap** (bearing-heavy open water, no anchor) —
     the one open headline-claim gap. ~1 week.
 13. **D10 GFW anchorages (+ what's left of D3)** — anchored-vessel stats
