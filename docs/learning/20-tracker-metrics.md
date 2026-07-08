@@ -268,3 +268,43 @@ remember the paper aggregates per-environment, not per-scenario.
   and `assignPerStep` now all use the optimal (min-cost) **Hungarian**
   assignment (`core/association/Hungarian.hpp`). On the synthetic
   sweep this changed ~0.8 % of metric rows, all in head-on crossings.
+
+## 9. When "truth" is another tracker: consistency, not accuracy
+
+Every metric above assumes `Yₖ` is **ground truth** — where the targets
+really were. Sometimes all you have is the output of *another* tracker: a
+dataset ships "labels" that are actually the authors' own tracking pipeline,
+run on the same detections you are about to feed your tracker.
+
+You can still compute RMSE / OSPA / GOSPA against it. **But the number means
+something completely different, and it is easy to fool yourself.**
+
+- **It is not accuracy.** Neither tracker is truth, so a small "error" only
+  says the two trackers agree — not that either is right. Both can be wrong
+  together.
+- **Localisation is meaningless when both sit on the same detections.** If you
+  feed your tracker the reference's cluster centroids, and the reference's
+  positions *are* those centroids, then `pos_rmse ≈ 0` and OSPA localisation
+  ≈ 0 by construction. Reporting that as "0.3 m accuracy" is a lie waiting to
+  happen. **Do not report localisation in this setting.**
+- **What is still meaningful is the association/continuity dimension** —
+  because the two trackers made *independent* decisions about which detections
+  form one track and when a track begins and ends. So `lifetime_ratio`,
+  `id_switches`, `track_breaks`, and signed cardinality error answer a real
+  question: *do we hold one track where they held one ID, and do we fragment
+  where they did not?* Call this **cross-tracker consistency**, label the
+  columns `vs_reference_tracker`, and state on the table that it is
+  consistency, not accuracy.
+
+Rule of thumb: **if your input and your "truth" share an upstream stage, the
+metric can only score the stages that differ.** Here the shared stage is
+detection/clustering; the differing stage is association + lifecycle, so only
+those metrics carry signal.
+
+The live example in this repo is the **R-BAD** berthing dataset
+(`tests/fixtures/rbad/`, `--with-rbad`): an mmWave-FMCW dataset whose labels
+are the authors' onboard reference tracker. We score it purely as
+cross-tracker consistency (see the 2026-07-08 entry in
+`docs/algorithms/evaluation-log.md`). When independent ground truth is
+genuinely needed there, the only honest source is a fresh manual label pass
+from the synced video — a *different* upstream stage.

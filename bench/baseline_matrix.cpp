@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 
+#include "adapters/benchmark/RbadScenarioRun.hpp"
 #include "adapters/benchmark/ReplayScenarioRun.hpp"
 #include "adapters/benchmark/SimMultisensorScenarioRun.hpp"
 #include "adapters/benchmark/SimScenarioRun.hpp"
@@ -44,6 +45,7 @@ int main(int argc, char** argv) {
         << "Usage: navtracker_bench_baseline [--run-id ID] [--out DIR]\n"
            "                                 [--seeds N] [--skip-replays]\n"
            "                                 [--with-haxr] [--with-simms]\n"
+           "                                 [--with-rbad]\n"
            "                                 [--config-filter SUBSTR]\n"
            "                                 [--scenario-filter SUBSTR]\n"
            "                                 [--config-eq LABEL]\n"
@@ -71,6 +73,15 @@ int main(int argc, char** argv) {
            "first (see that dir's README); absent fixtures are skipped. This\n"
            "is the first controlled fusion-accuracy gate (truth independent\n"
            "of every sensor by construction).\n"
+           "\n"
+           "--with-rbad adds the R-BAD berthing REPLAY battery (automotive-band\n"
+           "mmWave FMCW, NOT marine X-band — a new sensor class, not a marine\n"
+           "geography). Fixtures are local-only (tests/fixtures/rbad/,\n"
+           "git-ignored); generate them first (see that dir's README); absent\n"
+           "fixtures are skipped. The dataset has NO ego pose (fixed body frame)\n"
+           "and its labels are the authors' own reference TRACKER, so every\n"
+           "score is cross-tracker CONSISTENCY (vs_reference_tracker), NOT\n"
+           "accuracy. Reality-check arm only — do not tune to it.\n"
            "\n"
            "--export-states-dir DIR writes, per run, the per-scan (truth,\n"
            "track) states and our per-scan GOSPA to DIR for the D2 Stone\n"
@@ -115,6 +126,13 @@ int main(int argc, char** argv) {
   // independent of every sensor by construction). Absent fixtures => the
   // scenarios generate empty and are skipped by the Sweep.
   const bool with_simms = has_flag(argc, argv, "--with-simms");
+  // R-BAD berthing REPLAY battery (automotive-band mmWave FMCW; local-only
+  // fixtures under tests/fixtures/rbad/). Off by default; pass --with-rbad.
+  // NEW SENSOR CLASS (not marine X-band), NO ego pose (fixed body frame), and
+  // labels are the authors' reference tracker => cross-tracker CONSISTENCY only,
+  // never a marine-radar accuracy number. Absent fixtures self-skip (empty
+  // Scenario). See docs/algorithms/evaluation-log.md.
+  const bool with_rbad = has_flag(argc, argv, "--with-rbad");
   // Dev-loop knob: skip per-cell accuracy/consistency scoring (OSPA/GOSPA/
   // T-GOSPA/RMSE/NEES/NIS), emit only wall + per-scan latency. See SweepParams.
   const bool fast_metrics = has_flag(argc, argv, "--fast-metrics");
@@ -153,6 +171,12 @@ int main(int argc, char** argv) {
   // dir is missing, so this is safe to enable without the fixtures present.
   if (with_simms) {
     for (auto& s : defaultSimMultisensorScenarios()) all.push_back(std::move(s));
+  }
+  // R-BAD berthing replay battery (opt-in via --with-rbad; local-only fixtures).
+  // Each generate() self-skips (empty Scenario) when its fixture dir is missing,
+  // so this is safe to enable without the fixtures present.
+  if (with_rbad) {
+    for (auto& s : defaultRbadScenarios()) all.push_back(std::move(s));
   }
 
   // Apply optional filters (substring match on labels). Lets the user

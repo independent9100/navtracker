@@ -8,6 +8,155 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-08 — D8 R-BAD berthing: first fixtures + label-scored replay (fixed body frame; cross-tracker consistency) [Cl-3 reality-check; NOT a tuning target]
+
+Executes the D8 feasibility GO's named next step (2026-07-06, 30323ac): extract
+fixtures from the R-BAD berthing dataset + run a label-scored replay. Branch
+`d8-rbad-extraction`. **REGIME CAVEAT (governs every number below): R-BAD is
+automotive/industrial mmWave FMCW radar (TI IWR6843 60–64 GHz + AWR1443/1642/1843
+77–81 GHz), NOT marine X-band. It corroborates the berthing SCENE on a new sensor
+class; nothing here is a marine-radar number and philos/HAXR tuning does not
+transfer. No config was tuned to this data.**
+
+**Step 1 — four confirm-at-extraction flags, all RESOLVED empirically** (the MDPI
+paper stayed 403 bot-blocked on both mdpi.com and IEEE, so the DATA is the
+authority; the raw archive was inspected via a ZIP64 central-directory HTTP-range
+probe, NOT downloaded):
+
+| flag | resolution |
+|---|---|
+| (a) CSV columns + frame | Raw `…/<Scenario>/<Port>/<name>.csv`: `Frame Number,POSIX Timestamp,AWR1443,AWR1642,AWR1843,IWR6843` — one point-cloud per chip, each point `[x,y,z,v_doppler,snr]`, **Cartesian body-frame metres**, absolute POSIX time, 20 Hz. Labelled: `Time,Frame_ID,Tracking_ID,X,Y,Z,Num_Points,Points,Dock_Label`. |
+| (b) label provenance | **Circular for kinematic/ID truth.** Labelled `Points` match the raw points exactly → clusters + `Tracking_ID` are the authors' OWN onboard clustering/tracking pipeline = a REFERENCE TRACKER, not ground truth. `Dock_Label` binary (0/1), meaning unconfirmed. ⇒ scored at **cross-tracker consistency** grade only. |
+| (c) ego pose | **NONE anywhere** — no nav/GPS/IMU file in the 1252-entry raw archive (0 keyword hits), no ownship columns in raw or labelled CSVs. Pure sensor body frame. |
+| (d) range/scan | 4× TI mmWave FMCW chips (above); **20 Hz**; observed range **≤ ~56 m**; forward-looking narrow azimuth (±~9.4 m lateral). |
+
+**Scope decision (arbiter, Option A + 5 riders).** No ego pose was the ticket's
+designated stop-and-report gate. Ruling: replay as a **fixed body-frame relative-
+tracking scene** (own-ship = origin; body frame ≡ fixed ENU, E=X starboard, N=Y
+forward) built from the **31.2 MB labelled buffers only** (their `Points` column
+carries the per-plot cloud; the 31.6 GB raw is video-dominated). NOT broadened to
+visual-odometry ego-pose recovery (worst effort-to-evidence for a sensor class the
+deployment will not carry).
+
+**⚠ ADR-0002 exclusion (rider 3):** with no ego pose, nothing is world-stationary
+in a body frame, so the anchored/moored static-hazard logic is **UNTESTABLE here
+by construction** — its non-firing on R-BAD is **not evidence of anything**.
+
+**Extraction.** `tests/fixtures/rbad/generator/extract_rbad.py` (stdlib only,
+committed source; data + derived fixtures local-only via the sim_multisensor
+gitignore-negation). 6 arrival approaches across 2 ports (Kalimnos, Kos), ~28 min
+of ~1 Hz labelled data — the labelled buffers are sub-sampled to 1 Hz for
+annotation, so `tod` is derived from `Frame_ID`/20 Hz. A **representative subset**
+of the ~121 min of labelled arrivals available locally across 13 ports (NOT
+silently capped — the full set is one edit to `SCENARIOS` away). Plot input =
+cluster **centroids** (plot-level, per the extraction-boundary ruling — rider 2),
+never the raw constituent points.
+
+**Data-integrity finding + R8.8 fail-loud guards.** A few buffers assign TWO
+`Tracking_ID`s to ONE physical detection (identical `Frame_ID,X,Y,Z,Num_Points`,
+occasionally conflicting `Dock_Label`) — an annotation artifact. Feeding two
+identical plots would inject a duplicate detection cloud (the clutter_burst
+duplicate-cloud lesson), so exact-centroid double-labels are collapsed to one
+plot/reference, lowest `Tracking_ID` kept (kalimnos_3: 11 collapsed, kalimnos_17:
+1, others 0). Every buffer passes 11 fail-loud integrity guards BEFORE any write
+(plausible ~20 Hz rate; dynamic non-placeholder ranges/bearings/positions;
+|Doppler| ≤ 10 m/s; SNR ∈ (0,60] dB; binary Dock_Label; ≥ 2 reference IDs); on any
+violation the extractor names the buffer and writes NOTHING (all-or-nothing).
+Re-runs are byte-identical.
+
+**Doppler + SNR carried (rider 4).** `radar_plots.csv` carries `v_doppler_mps` +
+`snr_db` as trailing columns beyond the 8 standard plot columns (`loadPlotCsv`
+reads the first 8 and ignores extras). First in-hand dataset with per-detection
+Doppler (−0.6…0.5 m/s, berthing-slow); **columns only, no analysis** — a future
+deployment-hardware Doppler probe becomes an afternoon, not a re-extraction.
+
+**Checksums** (sha256; Zenodo `Labelled Buffers Data.zip` md5
+`894a55b05552c57b85e60535fe433e85`; raw archive md5
+`ebf21c27637602463a84e701065aa330`, NOT downloaded):
+
+```
+30510dd7…  rbad_kalimnos_3/radar_plots.csv     53084bd3…  rbad_kalimnos_3/reference_tracks.csv
+fb1edf80…  rbad_kalimnos_16/radar_plots.csv    768284cf…  rbad_kalimnos_16/reference_tracks.csv
+1b442f1f…  rbad_kalimnos_17/radar_plots.csv    a844a67e…  rbad_kalimnos_17/reference_tracks.csv
+9e0ac22d…  rbad_kos_11/radar_plots.csv         7fe6fb24…  rbad_kos_11/reference_tracks.csv
+d17f3944…  rbad_kos_16/radar_plots.csv         5811ab92…  rbad_kos_16/reference_tracks.csv
+fdfb8498…  rbad_kos_5/radar_plots.csv          27bf4dd2…  rbad_kos_5/reference_tracks.csv
+```
+(full 18-line list incl. meta.txt in `tests/fixtures/rbad/CHECKSUMS.txt`)
+
+**Wiring.** `RbadScenarioRun` (`adapters/benchmark/RbadScenarioRun.{hpp,cpp}`,
+env `RBAD_DIR`, skip-guarded, single station "rbad" at ENU origin, nominal datum),
+bench flag `--with-rbad`, test `tests/benchmark/test_rbad_scenario_run.cpp`
+(skip-guarded, loader-determinism, MHT smoke + consistency print). Detection table
+= one radar entry with **UNTUNED nominals** (P_D 0.9, λ_C 1e-6 m⁻², 80 m coverage)
+— not fitted to this data.
+
+**Results — cross-tracker CONSISTENCY vs the authors' reference tracker, NOT
+accuracy (mmWave FMCW, NOT a marine-radar number).** Localization/RMSE are omitted
+on purpose: both trackers sit on the same centroids, so localization ≈ 0 and would
+be a meaningless "accuracy" artifact. `card_err` is signed per-tick cardinality vs
+the reference (+ = we hold more tracks/tick). (Caveat for anyone reading the raw
+dump: `--with-rbad` routes through the shared Sweep, whose CSV emits the *uniform*
+metric schema — so it DOES contain accuracy-named columns `pos_rmse_m`, `ospa_*`,
+`gospa_localization` for `rbad_*` rows, scored against the reference tracker. Those
+are the same ≈0 same-centroids artifacts and **must not be quoted as accuracy**;
+only the continuity/cardinality columns in the table above carry signal.)
+
+| config | scenario | lifetime_vs_ref | id_switches_vs_ref | breaks_vs_ref | card_err_vs_ref |
+|---|---|--:|--:|--:|--:|
+| MHT `imm_cv_ct_mht` | rbad_kalimnos_16 | 0.951 | 1.31 | 0.01 | +1.06 |
+| MHT | rbad_kalimnos_17 | 0.947 | 1.25 | 0.00 | +0.50 |
+| MHT | rbad_kalimnos_3 | 0.932 | 0.45 | 0.02 | +0.60 |
+| MHT | rbad_kos_11 | 0.868 | 0.98 | 0.04 | +0.53 |
+| MHT | rbad_kos_16 | 0.824 | 0.75 | 0.00 | +0.49 |
+| MHT | rbad_kos_5 | 0.861 | 0.86 | 0.05 | +0.19 |
+| PMBM `imm_cv_ct_pmbm_coverage_land` | rbad_kalimnos_16 | 0.923 | 0.28 | 0.04 | +0.68 |
+| PMBM | rbad_kalimnos_17 | 0.846 | 0.18 | 0.02 | +0.29 |
+| PMBM | rbad_kalimnos_3 | 0.931 | 0.13 | 0.02 | +0.58 |
+| PMBM | rbad_kos_11 | 0.902 | 0.14 | 0.03 | +0.46 |
+| PMBM | rbad_kos_16 | 0.870 | 0.14 | 0.02 | +0.44 |
+| PMBM | rbad_kos_5 | 0.762 | 0.14 | 0.10 | +0.11 |
+
+Dock_Label distribution (reported, **not asserted** — rider 1; meaning
+unconfirmed): label-1 fraction per buffer ranges 0.21 (kalimnos_17) → 0.47
+(kalimnos_3); ~32% across the full labelled set.
+
+**Findings for the arbiter (report only — the ticket's interesting questions):**
+- **Berthing-speed continuity: holds, no fragmentation.** breaks ≈ 0, lifetime
+  0.76–0.95 across both trackers — navtracker holds one stable track where the
+  reference held one ID through the slow, close-range, maneuvering approach. PMBM
+  id_switches (0.13–0.28) < MHT (0.45–1.31): more stable identity.
+- **Over-count on a different clutter class: mild per-tick, FEWER IDs over a run.**
+  card_err is a small positive (+0.1…+1.1 tracks/tick), yet over a whole buffer
+  navtracker uses far fewer distinct track IDs than the reference has (e.g.
+  kalimnos_16: 130 ours vs 235 reference) — the reference spawns many single-frame
+  transient IDs that navtracker's confirmation correctly does not promote. On this
+  mmWave clutter the behavior is the OPPOSITE of the philos over-count:
+  conservative, not exuberant. Observed with the untuned λ_C nominal; NOT tuned.
+- **Anchored/moored logic: not evaluated** (see ADR-0002 exclusion above).
+
+**Deferred route (rider 5).** The 31.6 GB Raw Aggregated Frames archive
+(video-dominated) stays UNDOWNLOADED. Its only added value is the synced MP4 for
+an independent manual video-label pass (the philos R8 workflow), which yields the
+one thing missing here — independent KINEMATIC truth. Trigger, recorded
+explicitly: **download + commission the video-label pass only if a berthing-scene
+result ever needs independent kinematic truth.**
+
+**Determinism.** `--with-rbad` PMBM run twice: 0 differing data-metric cells
+(wall/scan-latency excluded) — byte-identical. Loader determinism pinned by
+`RbadScenarioRun.DeterministicReplay`.
+
+**Suite / fixture-trap (ran-vs-skipped).** The R-BAD fixture-gated tests were RUN
+(not skipped) against the MAIN-tree fixtures via
+`RBAD_DIR=<main>/tests/fixtures/rbad`: `RbadScenarioRun.*` 4/4 pass, replay 0.55 s
+for all 6 scenarios; both `--with-rbad` configs complete in ~1 s (stop-condition
+was >10 min). This is REQUIRED because `tests/fixtures/` is gitignored and empty in
+the worktree (the fixture-trap rule). Full worktree suite (RBAD_DIR set): **1076/1076
+passed, 0 failed** (75.6 s), incl. the integration-guide config-coverage drift
+test. 78 other-dataset fixture-gated tests (philos/haxr/simms) skip in the
+worktree — their data lives only in the main tree and this change does not touch
+them.
+
 ## 2026-07-06 — nav_status-gated velocity suppression (#20 sub-item b): correct guard; proof re-pinned to the right level [Cl-3]
 
 Ships the fix candidate the velocity-path pricing surfaced: an anchored (1) /

@@ -41,6 +41,17 @@ CMakeUserPresets.json
 /tests/fixtures/sim_multisensor/generator/*
 !/tests/fixtures/sim_multisensor/generator/*.py
 
+# EXCEPTION: the R-BAD berthing fixture extractor is committed SOURCE (it
+# produces local fixtures from the CC-BY-4.0 Zenodo labelled buffers). Same
+# pattern: track generator + docs, ignore the downloaded archive + derived CSVs.
+!/tests/fixtures/rbad/
+/tests/fixtures/rbad/*
+!/tests/fixtures/rbad/generator/
+!/tests/fixtures/rbad/README.md
+!/tests/fixtures/rbad/requirements.txt
+/tests/fixtures/rbad/generator/*
+!/tests/fixtures/rbad/generator/*.py
+
 # External reference implementations — read-only cross-check material
 # (e.g. Garcia-Fernandez MTT MATLAB toolbox for PMBM port). Fetched per
 # developer; never linked into the build. See docs/algorithms/pmbm-design.md.
