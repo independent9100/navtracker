@@ -8,6 +8,83 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-08 — Imazu 22 encounter battery: identity stability through close crossings [Cl-3]
+
+The 22 canonical Imazu-problem encounters (head-on / crossing / overtaking
+singles up to 3-target combinations) transcribed as fixed-geometry sim scenarios
+`imazu_01`..`imazu_22` — a citable regression suite for exactly what crossing
+geometry stresses: identity stability through close passes. Own-ship never
+manoeuvres (a TRACKER suite, not COLAV); targets run constant-velocity through
+CPA/collision geometry. radar+AIS arm; truth independent of every sensor by
+construction. Same `SimMultisensorScenarioRun` class as `--with-simms` (new
+`defaultImazuScenarios()` factory, `--with-imazu` bench flag, no camera arm),
+explicit geometry via `ExplicitInitial` (not trafficgen). Full table + reproduce
+in `docs/baselines/2026-07-08_imazu22.md`. No defaults changed; additive and
+self-skips when fixtures/`SIMMS_DIR` absent (bench + suite bit-identical without
+`--with-imazu`). GOSPA c=20 p=α=2.
+
+**Geometry source:** CORALL `src/utils/imazu_cases.py` (Klins101/CORALL, MIT),
+transcribed verbatim (arithmetic as-authored; `Case 23` non-canonical, dropped).
+CORALL's non-physical speed scalars are replaced by preserving their tuned
+collision RATIO (`18.52/43.3 = 0.4277`) with a physical own-ship speed (20 kn /
+targets 8.6 kn); ranges ×0.5 (3-7 → 1.5-3.5 NM) to keep each case ~6-9 min —
+both CPA-preserving, leaving all bearings/courses/crossing angles unchanged.
+Sources disagree on absolute speed/frame/range scaling (CORALL vs Waltz&Okhrin
+arXiv:2211.01004 vs Xie JMSE 12(3):372 vs Lyu JMSE 12(8):1289) but AGREE on the
+topology (encounters + 4/7/11 grouping); we picked one and recorded the
+divergence. COLREG-role tags are geometry-derived.
+
+**Determinism (a deliverable):** pure function of `(scenario,seed)` —
+byte-identical regen (spot-checked imazu_01/12/22) and in-memory `--verify`
+passes all 22; bench replay bit-stable (two MHT runs → identical non-timing
+metrics). Aggregate `id_sw`/`breaks` are mean-per-truth (imazu_09: per-truth
+25 & 32 → 28.5).
+
+**Headline / finding — MHT identity churn on dense crossings (backlog #11
+evidence):** single-target cases (imazu_01-04) are clean for both trackers
+(0 id-switches). MHT churn then climbs with target count + crossing density to
+**imazu_17 72.0**, **imazu_20 68.0**, imazu_21 43.0, imazu_19 42.3, imazu_14
+32.0 mean switches/truth — concentrated in the overtaking-heavy 3-target family
+(overtaken co-course target + crossers converging on one CPA region, where radar
+cross-range error exceeds true separation). Position holds throughout
+(RMSE ~25-28 m); it is identity, not position, that breaks. PMBM (coverage_land)
+is structurally identity-stable (id-switches 0-8.3 across all 22) but pays with a
+persistent over-count (card_err ≈ +0.77 on clean cases, OSPA 130-260 vs MHT
+37-195) and, on the densest cases, under-holds (card_err ~0/negative, lifetime
+0.67-0.81, breaks 20-32). No clean winner; no tuning applied. The imazu family is
+now the controlled instrument for future #11 (MHT association) / PMBM birth work.
+
+**Gate:** `tests/benchmark/test_imazu22_scenario_run.cpp` — 22 labels (radar+AIS
+table, no camera), datum+shared-clock truth, sampled per-case determinism, and a
+COARSE per-case id-switch tripwire (a band over the measured max + margin, not an
+exact pin — the knife-edge lesson holds).
+
+Fixture checksums (sha256 prefix; own / ais / radar / cam / truth;
+`b12a6528` = header-only empty camera file, none carry camera):
+`imazu_01` 2694811f / 5153b1a3 / 813b7727 / b12a6528 / 599886e6;
+`imazu_02` 2694811f / eb30c77e / da0eeba8 / b12a6528 / 89a0dd85;
+`imazu_03` 2694811f / 86a44d44 / 4028e065 / b12a6528 / d685f455;
+`imazu_04` 2694811f / 6efd27ea / 72fb168d / b12a6528 / f74d32cd;
+`imazu_05` 2694811f / 7848d91c / 66d1cd4e / b12a6528 / f84b5da6;
+`imazu_06` 2694811f / 70df762a / 3940eacc / b12a6528 / 4fc03a8a;
+`imazu_07` 2694811f / 1bbae5a0 / cd42e24d / b12a6528 / 279fc26f;
+`imazu_08` 2694811f / 28d5fb60 / b3d0e0de / b12a6528 / 02b5e7af;
+`imazu_09` 2694811f / cb1b7238 / 6e35fd0c / b12a6528 / 4a30fec5;
+`imazu_10` 2694811f / a20da0bc / b6f41dc1 / b12a6528 / 9beabe37;
+`imazu_11` 2694811f / ea5c5661 / 87a97ac3 / b12a6528 / 3bf1286d;
+`imazu_12` 2694811f / e615a47d / 5cafc071 / b12a6528 / a6a426a4;
+`imazu_13` 2694811f / 766b01c2 / fe9cc7a6 / b12a6528 / 7c3a1eb5;
+`imazu_14` 2694811f / 3393d2de / fb938c8b / b12a6528 / c93a3ade;
+`imazu_15` 2694811f / 2a1fbe23 / 5a85e17b / b12a6528 / d69eea1d;
+`imazu_16` 2694811f / d064cb91 / 64c0d93f / b12a6528 / 0de29a12;
+`imazu_17` 2694811f / 28917e73 / 12b3aead / b12a6528 / 5c2c1418;
+`imazu_18` 2694811f / 498bebc9 / 093ad54f / b12a6528 / d1978033;
+`imazu_19` 2694811f / 9fa0136d / 7eed680e / b12a6528 / 4e7c67d4;
+`imazu_20` 2694811f / abd16c8d / f604b911 / b12a6528 / 4db1b1be;
+`imazu_21` 2694811f / d05ce174 / c4d55b83 / b12a6528 / 09cc49a5;
+`imazu_22` 2694811f / 203384b7 / 25384838 / b12a6528 / cae32a8d.
+(Regenerate: `tests/fixtures/sim_multisensor/README.md`, `--family imazu`.)
+
 ## 2026-07-07 — LOS/shadow guard SHIPPED (verdict-b fix): coverage-aware decay no longer erodes a shadowed moored vessel; two gate-correctness rulings [Cl-3 / ADR 0002]
 
 Implements the 2026-07-06 shadow-probe verdict-b fix (ticket

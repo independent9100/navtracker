@@ -28,6 +28,7 @@ from .geo import Datum, enu_from_marine
 
 KNOTS_TO_MPS = 0.514444
 MPS_TO_KNOTS = 1.0 / KNOTS_TO_MPS
+NM_TO_M = 1852.0
 
 
 # --- specs -------------------------------------------------------------------
@@ -41,6 +42,25 @@ class OwnShipInit:
 
 
 @dataclass
+class ExplicitInitial:
+    """Deterministic placement of a target relative to own-ship, bypassing
+    trafficgen. Used by fixed-geometry families (the Imazu 22) that must
+    reproduce a *specific* published encounter, not a seeded random one of a
+    given COLREG type.
+
+    Marine convention throughout: bearings are relative to own-ship's bow,
+    degrees, clockwise positive (so with own-ship heading north the relative
+    bearing equals the compass bearing). Range is from own-ship at t=0.
+    ``course_deg`` is the target's TRUE course (marine deg, N=0 CW); the target
+    then runs constant-velocity (Imazu targets do not manoeuvre)."""
+
+    rel_bearing_deg: float   # target bearing off own-ship bow (+starboard), t=0
+    range_nm: float          # initial range from own-ship (nautical miles)
+    course_deg: float        # target true course (marine deg, N=0 CW)
+    speed_kn: float          # target speed over ground (knots)
+
+
+@dataclass
 class VesselSpec:
     """One target vessel: how trafficgen should place it + how it moves + which
     sensors observe it."""
@@ -50,6 +70,10 @@ class VesselSpec:
     name: str
     motion: str = "cv"             # "cv" | "maneuver" | "anchored"
     vector_time_min: float = 5.0
+    # explicit deterministic placement (fixed-geometry families, e.g. Imazu).
+    # When set, trafficgen is bypassed for the whole scenario. None => the
+    # trafficgen path (the original 6-scenario battery) is used unchanged.
+    initial: ExplicitInitial | None = None
     # maneuver params (motion == "maneuver")
     turn_start_s: float = 90.0
     turn_total_deg: float = 70.0   # signed; +starboard
@@ -191,6 +215,64 @@ def _bundled_settings_path() -> str:
                         "encounter_settings.json")
 
 
+# --- explicit-geometry wrapper (fixed-geometry families) ---------------------
+_MIN_SPAWN_SEP_M = 200.0   # closer than this at t=0 is a degenerate spawn
+
+
+def _explicit_target_initials(spec: ScenarioSpec) -> list[dict]:
+    """Place each target from its ``ExplicitInitial`` (no trafficgen, no RNG).
+
+    Own-ship sits at the ENU origin heading ``spec.own.cog_deg``. A target at
+    relative bearing ``b`` (off the bow) and range ``r`` therefore lands at
+    true bearing ``own.cog + b`` and range ``r`` in the shared ENU frame. We
+    return the same ``{lat_deg, lon_deg, sog_mps, cog_deg}`` dict shape as the
+    trafficgen wrapper so ``build_truth`` is byte-for-byte identical downstream.
+
+    Guards against degenerate spawns (vessels overlapping own-ship or each
+    other at t=0) — a stop-and-report trigger in the Imazu ticket.
+    """
+    datum = Datum(spec.own.lat_deg, spec.own.lon_deg)
+    enu0: list[tuple[float, float]] = [(0.0, 0.0)]   # own-ship at origin
+    out = []
+    for v in spec.vessels:
+        ini = v.initial
+        if ini is None:
+            raise ValueError(
+                f"[{spec.name}] vessel {v.name!r} has no ExplicitInitial")
+        true_brg = (spec.own.cog_deg + ini.rel_bearing_deg) % 360.0
+        e0, n0 = enu_from_marine(ini.range_nm * NM_TO_M, true_brg)
+        enu0.append((e0, n0))
+        lat, lon = datum.enu_to_lonlat(e0, n0)
+        out.append({
+            "lat_deg": lat, "lon_deg": lon,
+            "sog_mps": ini.speed_kn * KNOTS_TO_MPS,
+            "cog_deg": ini.course_deg % 360.0,
+        })
+    # degeneracy check: every pair (own + targets) must be separated at t=0.
+    labels = ["OWN"] + [v.name for v in spec.vessels]
+    for i in range(len(enu0)):
+        for j in range(i + 1, len(enu0)):
+            d = math.hypot(enu0[i][0] - enu0[j][0], enu0[i][1] - enu0[j][1])
+            if d < _MIN_SPAWN_SEP_M:
+                raise RuntimeError(
+                    f"[{spec.name}] degenerate spawn: {labels[i]} and "
+                    f"{labels[j]} are {d:.1f} m apart at t=0 "
+                    f"(< {_MIN_SPAWN_SEP_M:.0f} m). Stop-and-report per ticket.")
+    return out
+
+
+def _target_initials(spec: ScenarioSpec) -> list[dict]:
+    """Dispatch to explicit-geometry or trafficgen placement. A scenario is
+    all-explicit or all-trafficgen; mixing is rejected."""
+    explicit = [v.initial is not None for v in spec.vessels]
+    if all(explicit):
+        return _explicit_target_initials(spec)
+    if not any(explicit):
+        return _trafficgen_target_initials(spec)
+    raise ValueError(
+        f"[{spec.name}] mixed explicit/trafficgen placement is not supported")
+
+
 # --- propagation kernels -----------------------------------------------------
 def _propagate_cv(e0, n0, sog, cog_deg, t):
     de, dn = enu_from_marine(sog, cog_deg)          # velocity components (m/s)
@@ -278,7 +360,7 @@ def build_truth(spec: ScenarioSpec) -> tuple[TruthTrack, list[TruthTrack]]:
         vessel_id=0, mmsi=spec.own.mmsi, name="OWN", is_ownship=True,
         t=t, e=oe, n=on, sog=osog, cog=ocog, heading=ocog.copy(), nav_status=0)
 
-    initials = _trafficgen_target_initials(spec)
+    initials = _target_initials(spec)
     targets: list[TruthTrack] = []
     for idx, (v, ini) in enumerate(zip(spec.vessels, initials), start=1):
         enu0 = datum.to_enu(ini["lat_deg"], ini["lon_deg"])

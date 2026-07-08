@@ -18,6 +18,7 @@ import sys
 
 from .geo import Datum
 from . import scenarios as scen
+from . import imazu
 from . import sensors
 from .truth import ScenarioSpec, build_truth
 from .writer import (AIS_COLS, CAMERA_COLS, OWNSHIP_COLS, RADAR_COLS, TRUTH_COLS,
@@ -25,6 +26,26 @@ from .writer import (AIS_COLS, CAMERA_COLS, OWNSHIP_COLS, RADAR_COLS, TRUTH_COLS
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _DEFAULT_OUT = os.path.dirname(_HERE)  # tests/fixtures/sim_multisensor/
+
+# Scenario families. Each maps to a list of factories ``fn(seed) -> ScenarioSpec``.
+# "sim_ms" is the original 6-scenario multi-sensor battery (trafficgen geometry);
+# "imazu" is the 22 fixed-geometry Imazu encounters (explicit placement).
+FAMILIES = {
+    "sim_ms": scen.BATTERY,
+    "imazu": imazu.IMAZU_BATTERY,
+}
+
+
+def _battery_for(family: str):
+    if family == "all":
+        out = []
+        for fam in FAMILIES.values():
+            out.extend(fam)
+        return out
+    if family not in FAMILIES:
+        raise SystemExit(f"unknown family {family!r}; choose from "
+                         f"{sorted(FAMILIES)} or 'all'")
+    return FAMILIES[family]
 
 
 def build_scenario_csvs(spec: ScenarioSpec) -> dict[str, str]:
@@ -70,10 +91,11 @@ def _scenario_dir(out: str, spec: ScenarioSpec) -> str:
     return os.path.join(out, f"{spec.name}_s{spec.seed}")
 
 
-def write_all(out: str, seed: int, only: str | None) -> list[tuple[str, str, str]]:
+def write_all(out: str, seed: int, only: str | None,
+              battery) -> list[tuple[str, str, str]]:
     """Write scenarios; return [(scenario, filename, sha256)] manifest."""
     manifest = []
-    for make in scen.BATTERY:
+    for make in battery:
         spec = make(seed)
         if only and spec.name != only:
             continue
@@ -89,10 +111,10 @@ def write_all(out: str, seed: int, only: str | None) -> list[tuple[str, str, str
     return manifest
 
 
-def verify_determinism(seed: int) -> bool:
+def verify_determinism(seed: int, battery) -> bool:
     """Generate every scenario twice in memory; assert byte-identical."""
     ok = True
-    for make in scen.BATTERY:
+    for make in battery:
         spec = make(seed)
         a = build_scenario_csvs(spec)
         b = build_scenario_csvs(spec)
@@ -110,18 +132,22 @@ def main(argv=None):
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", default=_DEFAULT_OUT)
     p.add_argument("--scenario", default=None, help="only this scenario name")
+    p.add_argument("--family", default="all",
+                   help="scenario family: 'sim_ms', 'imazu', or 'all' (default)")
     p.add_argument("--verify", action="store_true",
                    help="in-memory double-generation determinism check (no writes)")
     args = p.parse_args(argv)
 
+    battery = _battery_for(args.family)
+
     if args.verify:
-        print(f"Determinism verify (seed {args.seed}):")
-        ok = verify_determinism(args.seed)
+        print(f"Determinism verify (family {args.family}, seed {args.seed}):")
+        ok = verify_determinism(args.seed, battery)
         print("PASS" if ok else "FAIL")
         return 0 if ok else 1
 
-    print(f"Generating battery (seed {args.seed}) -> {args.out}")
-    manifest = write_all(args.out, args.seed, args.scenario)
+    print(f"Generating battery (family {args.family}, seed {args.seed}) -> {args.out}")
+    manifest = write_all(args.out, args.seed, args.scenario, battery)
     checks_path = os.path.join(args.out, "CHECKSUMS.txt")
     # merge with any existing checksums for other seeds/scenarios
     existing = {}

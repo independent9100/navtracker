@@ -126,6 +126,11 @@ int main(int argc, char** argv) {
   // independent of every sensor by construction). Absent fixtures => the
   // scenarios generate empty and are skipped by the Sweep.
   const bool with_simms = has_flag(argc, argv, "--with-simms");
+  // Imazu 22 fixed-geometry encounter battery (seeded Python-generated fixtures
+  // under tests/fixtures/sim_multisensor/imazu_NN_s0/, same class as --with-simms,
+  // radar+AIS arm). Off by default (local-only fixtures); pass --with-imazu.
+  // Absent fixtures => scenarios generate empty and are skipped by the Sweep.
+  const bool with_imazu = has_flag(argc, argv, "--with-imazu");
   // R-BAD berthing REPLAY battery (automotive-band mmWave FMCW; local-only
   // fixtures under tests/fixtures/rbad/). Off by default; pass --with-rbad.
   // NEW SENSOR CLASS (not marine X-band), NO ego pose (fixed body frame), and
@@ -171,6 +176,12 @@ int main(int argc, char** argv) {
   // dir is missing, so this is safe to enable without the fixtures present.
   if (with_simms) {
     for (auto& s : defaultSimMultisensorScenarios()) all.push_back(std::move(s));
+  }
+  // Imazu 22 fixed-geometry encounter battery (opt-in via --with-imazu;
+  // local-only fixtures). Each generate() self-skips (empty Scenario) when its
+  // fixture dir is missing, so this is safe to enable without the fixtures.
+  if (with_imazu) {
+    for (auto& s : defaultImazuScenarios()) all.push_back(std::move(s));
   }
   // R-BAD berthing replay battery (opt-in via --with-rbad; local-only fixtures).
   // Each generate() self-skips (empty Scenario) when its fixture dir is missing,

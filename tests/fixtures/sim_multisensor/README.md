@@ -43,13 +43,18 @@ sim_multisensor/
 cd tests/fixtures/sim_multisensor
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt          # or requirements.lock.txt for exact closure
-python -m generator.generate             # writes every scenario at seed 0
+python -m generator.generate             # writes EVERY family at seed 0 (--family all)
+python -m generator.generate --family imazu   # just the Imazu 22 (no trafficgen needed)
+python -m generator.generate --family sim_ms  # just the original 6-scenario battery
 python -m generator.generate --seed 1    # a second seed
 python -m generator.generate --verify    # in-memory determinism self-check
 ```
 
-Fixtures land in `<scenario>_s<seed>/` with `ownship.csv`, `ais.csv`,
-`radar_plots.csv`, `camera_bearings.csv`, `truth.csv`, `meta.txt`.
+`--family` selects a scenario family: `sim_ms` (the 6 multi-sensor scenarios,
+trafficgen geometry), `imazu` (the 22 fixed-geometry Imazu encounters, explicit
+placement — no trafficgen), or `all` (default). Fixtures land in
+`<scenario>_s<seed>/` with `ownship.csv`, `ais.csv`, `radar_plots.csv`,
+`camera_bearings.csv`, `truth.csv`, `meta.txt`.
 
 ## Determinism contract (a deliverable, not a hope)
 
@@ -118,3 +123,19 @@ confidence. So, by design:
 | `sim_ms_ais_dropout` | AIS dies mid-run for one vessel | identity survival on radar (R11) + re-attach |
 | `sim_ms_clutter_burst` | **compound-K** field + burst | over-count / clutter-model discrimination |
 | `sim_ms_anchored_camera` | anchored (nav_status=1) + camera-only radar-silent contact | ADR-0002 never-invisible + #17 wedge |
+
+## The Imazu 22 family (`--family imazu`)
+
+`imazu_01`..`imazu_22`: the canonical Imazu-problem encounter set (Imazu 1987)
+as fixed-geometry scenarios — own-ship + 1-3 targets in every head-on / crossing
+/ overtaking combination (cases 1-4 single-target, 5-11 two-target, 12-22
+three-target). Unlike the `sim_ms` battery these use **explicit placement**
+(`ExplicitInitial` in `truth.py`), not trafficgen, because each case is a
+*specific* published geometry, not a random encounter of a given COLREG type.
+Own-ship never manoeuvres; targets run constant-velocity through CPA — a TRACKER
+regression suite for **identity stability through close crossings** (not a COLAV
+suite). radar+AIS arm, no camera. Geometry: CORALL `imazu_cases.py` (verbatim,
+MIT); speeds preserve CORALL's tuned collision ratio at a physical own-ship
+speed; ranges ×0.5. Full provenance + source-divergence note in
+`generator/imazu.py`; results in `docs/baselines/2026-07-08_imazu22.md`. Consumed
+by the same `SimMultisensorScenarioRun` class via `--with-imazu`.

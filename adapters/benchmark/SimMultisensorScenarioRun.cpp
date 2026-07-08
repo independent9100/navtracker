@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -98,7 +99,8 @@ std::vector<TruthSample> loadSimTruthCsv(const std::string& path,
 
 class SimMultisensorScenarioRun : public ScenarioRun {
  public:
-  explicit SimMultisensorScenarioRun(std::string label) : label_(std::move(label)) {}
+  explicit SimMultisensorScenarioRun(std::string label, bool with_camera = true)
+      : label_(std::move(label)), with_camera_(with_camera) {}
 
   ScenarioDescriptor descriptor() const override {
     ScenarioDescriptor d{label_, /*is_multi_seed=*/false, /*seed_count=*/1};
@@ -117,11 +119,16 @@ class SimMultisensorScenarioRun : public ScenarioRun {
         // clutter-free.
         {SensorKind::Ais, MeasurementModel::Position2D,
          DetectionParams{0.5, 1e-9}},
-        // camera bearing-only: corroborates, never births (canInitiateTrack ==
-        // false in the loader), so this mostly informs miss modelling.
-        {SensorKind::EoIr, MeasurementModel::Bearing2D,
-         DetectionParams{0.85, 1e-9, 8000.0}},
     };
+    // camera bearing-only: corroborates, never births (canInitiateTrack ==
+    // false in the loader), so this mostly informs miss modelling. Omitted for
+    // the radar+AIS-only arm (the Imazu family carries no camera at all — a
+    // phantom EoIr sensor would model misdetections for a sensor that isn't
+    // there).
+    if (with_camera_) {
+      d.detection_table.push_back({SensorKind::EoIr, MeasurementModel::Bearing2D,
+                                   DetectionParams{0.85, 1e-9, 8000.0}});
+    }
     return d;
   }
 
@@ -197,6 +204,7 @@ class SimMultisensorScenarioRun : public ScenarioRun {
 
  private:
   std::string label_;
+  bool with_camera_ = true;
 };
 
 }  // namespace
@@ -207,6 +215,20 @@ std::vector<std::unique_ptr<ScenarioRun>> defaultSimMultisensorScenarios() {
                             "sim_ms_overtaking", "sim_ms_ais_dropout",
                             "sim_ms_clutter_burst", "sim_ms_anchored_camera"}) {
     out.push_back(std::make_unique<SimMultisensorScenarioRun>(label));
+  }
+  return out;
+}
+
+std::vector<std::unique_ptr<ScenarioRun>> defaultImazuScenarios() {
+  // imazu_01 .. imazu_22 — same class, radar+AIS arm (no camera). Discovery is
+  // the shared env-pointed, skip-guarded generate() path: absent fixtures =>
+  // empty Scenario => callers skip, identical to the sim_ms battery.
+  std::vector<std::unique_ptr<ScenarioRun>> out;
+  for (int n = 1; n <= 22; ++n) {
+    char label[16];
+    std::snprintf(label, sizeof(label), "imazu_%02d", n);
+    out.push_back(std::make_unique<SimMultisensorScenarioRun>(
+        std::string(label), /*with_camera=*/false));
   }
   return out;
 }

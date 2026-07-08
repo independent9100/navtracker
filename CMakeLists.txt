@@ -344,6 +344,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_sim_scenario_run.cpp
   tests/benchmark/test_replay_scenario_run.cpp
   tests/benchmark/test_sim_multisensor_scenario_run.cpp
+  tests/benchmark/test_imazu22_scenario_run.cpp
   tests/benchmark/test_rbad_scenario_run.cpp
   tests/benchmark/test_sweep.cpp
   tests/benchmark/test_csv_writer.cpp
