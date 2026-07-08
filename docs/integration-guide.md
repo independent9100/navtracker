@@ -674,6 +674,15 @@ nullable; null = today's behaviour, no overhead.
 - **`ICollisionRiskSink`** (`ports/ICollisionRiskSink.hpp`) — one
   `onCollisionRisk(event)` with a `CollisionRiskEvent {Entered/Exited/Updated,
   other_track_id, time, CpaPrediction}`.
+- **`IPmbmDiagnosticSink`** (`core/pmbm/PmbmDiagnostics.hpp`) — **forensics only,
+  not a production integration point.** `PmbmTracker::setDiagnosticSink(...)`
+  emits a per-scan `PmbmScanDiag` exposing MBM-internal state the aggregated
+  `tracks()` output collapses away (per-identity existence mass, dominant-hyp
+  `r`, claimed measurement, state divergence, prune/cap events). It lives in
+  `core/pmbm/` (not `ports/`) because a normal consumer never wires it; it exists
+  for close-pass / track-death diagnosis (backlog #25, reproducer
+  `tools/pmbm_closepass_trace.py`). Null (default) = zero overhead,
+  byte-identical tracking.
 
 Lifecycle + risk wiring (`tests/integration/test_full_stack_pipeline.cpp`):
 

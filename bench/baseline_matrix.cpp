@@ -89,6 +89,13 @@ int main(int argc, char** argv) {
            "Pair with --config-eq / --scenario-eq / --seeds 1 to export a\n"
            "single run.\n"
            "\n"
+           "--export-pmbm-diag-dir DIR writes, per PMBM run, the per-scan\n"
+           "MBM-internal diagnostics (per-identity existence mass, dominant-\n"
+           "hyp r, claimed measurement, state divergence, prune/cap events)\n"
+           "to DIR/<config>__<scenario>__seed<seed>.{pmbmscan,pmbmbern}.csv\n"
+           "for backlog #25 close-pass localization (tools/pmbm_closepass_\n"
+           "trace.py). Diagnostic-only; no effect on tracking or metrics.\n"
+           "\n"
            "--config-filter / --scenario-filter restrict the matrix to\n"
            "entries whose label contains the given substring. Both filters\n"
            "compose. Use for focused re-measurement against an existing\n"
@@ -231,6 +238,10 @@ int main(int argc, char** argv) {
   const std::string export_states_dir =
       argv_str(argc, argv, "--export-states-dir");
   if (!export_states_dir.empty()) sp.export_states_dir = export_states_dir;
+  const std::string export_pmbm_diag_dir =
+      argv_str(argc, argv, "--export-pmbm-diag-dir");
+  if (!export_pmbm_diag_dir.empty())
+    sp.export_pmbm_diag_dir = export_pmbm_diag_dir;
   const auto rows = runSweep(configs, all, sp);
 
   const auto t1 = std::chrono::steady_clock::now();

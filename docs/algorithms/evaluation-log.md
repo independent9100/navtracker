@@ -8,6 +8,81 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-08 — Backlog #25 Phase 1: PMBM close-pass track loss is ESTIMATOR DIVERGENCE (H3), not miss-starvation (H1) [Cl-3 diagnostic]
+
+**Localization pass — no fix, no config/algorithm change.** Answers backlog #25:
+which stage kills the PMBM (`imm_cv_ct_pmbm_coverage_land`) track at the
+sustained close passes where it drops a target for tens of seconds at the CPA
+(Q2b, above). New code is diagnostic-only: an additive, default-off,
+per-instance PMBM per-scan introspection sink (`core/pmbm/PmbmDiagnostics.hpp` +
+`PmbmTracker::setDiagnosticSink`, guarded so null = byte-identical), a bench
+recorder (`--export-pmbm-diag-dir`), and one Python reproducer
+(`tools/pmbm_closepass_trace.py`). Full write-up + trace tables in
+`docs/baselines/2026-07-08_b25_localization.md`. Ticket
+`docs/superpowers/plans/2026-07-08-backlog25-localization-ticket.md`.
+
+**Verdict — H3 (estimator state divergence) is the killer; H1 only a downstream
+secondary effect; H2 absent.** The arbiter's H1 working hypothesis is
+**refuted**: the target is lost because the Bernoulli tracking it has its
+**velocity state run away** and leaves the 100 m match gate **while `r` is still
+high** (0.99–1.0 at the instant it crosses out), not because existence starved.
+Through the two worst losses (imazu_15 158 s, id 6; imazu_22 96 s, id 7 — both
+overlapping the own-ship CPA): imazu_22 id 7 keeps r 0.98–1.0 the whole window at
+speed 3,700–4,500 m/s; imazu_15 id 6 leaves the gate at t≈477 with r=1.0, speed
+839 m/s, dist 1,838 m, then coasts off (→156 km) with r decaying 1.0→~0.5 only
+*downstream* of the divergence (never reaching the 0.1 floor in-window). 5 of 6
+traced dying tracks are pure H3; the one mixture (imazu_15 truth 153) diverges
+then miss-starves at run-end. **H2 ruled out:** `hyp_dropped_floor =
+hyp_dropped_cap = 0` across all windows (single K=1 hypothesis); r_min prunes
+only already-sub-floor phantoms.
+
+**Adversarially verified** (independent re-analysis of the raw diag CSVs):
+causal claim upheld, with two refinements incorporated. (1) Velocity runaway is
+a **systemic** IMM filter-stability defect, not CPA-unique — even single-target
+imazu_01 has 439/959 (46 %) confirmed-track rows > 50 m/s (the same phantom
+population as the +0.77 clutter over-count); the sustained pass is what steers
+the divergence onto the *target's own* track and strips its measurement stream.
+(2) A **neighbour-lock / measurement-hijack** data-association effect prolongs
+the loss and delays re-acquisition (survivors bind to neighbour truths; the
+diverged K=1 track keeps hijacking the abandoned target's returns, starving a
+re-birth) — concurrent with H3, distinct from H1 existence-decay.
+
+**Mechanism.** Wide gate (20) + K=1 winner-take-all hard-commit + sustained
+proximity → after the track drifts in the ambiguity, re-grabbing the true return
+dumps a large position innovation into velocity (high-cov overshoot); the IMM
+CV/CT filter has no speed/innovation bound, so velocity → gate widens → admits
+distant returns → runaway divergence. Severity scales with ambiguity duration:
+control imazu_01 (isolated) tracks at the true ~2–3 m/s; imazu_08 (85 m) mild
+(200–450 m/s, holds); only sustained proximity (15/22) diverges at the CPA.
+
+**Byte-identical (acceptance #3).** Post-hook binary *with the diag sink active*
+reproduces all 22 Imazu `states.csv` bit-for-bit vs the pre-hook binary; on the
+32 `--with-simms` scenarios diag-off vs diag-on gives byte-identical states +
+**1488/1488 accuracy-metric rows identical** (only the wall-clock
+`scan_proc_ms_*` differ). Faithfulness anchor: every Confirmed states track is
+contained in the diag (mass ≥ 0.5, pos err 0.000 m) on 100% of truth-scans
+across 5 cases. Loss reproduces the Q2b counts exactly (no determinism alarm).
+
+**Phase-2 conditioning (for the arbiter).** The killer is on the update/gating
+path, not the misdetection existence recursion — so an estimator-robustness fix
+(maritime speed/innovation gate; ambiguity-aware soft update vs hard
+winner-take-all — the PDA soft branch exists but is OFF; or a coalescence guard)
+is orthogonal to the miss-P_D existence brake that holds philos over-count down,
+and cannot weaken it by construction, PROVIDED it fires only in the
+association-ambiguity / large-innovation context and leaves the existence/birth
+channel untouched (per-instance, default-byte-identical, re-measured on
+philos/HAXR KEEP before promotion; PDA-soft must be gated to contested close-pass
+scans — it regressed open-sea lifetime globally).
+
+Full suite green in the `backlog25-localization` worktree: **100% tests passed,
+0 tests failed out of 1090** (33 skipped = data/-gated replays only —
+Philos/HAXR/AutoFerry/R-BAD/camera/GeoJSON; the Imazu battery RAN via
+`SIMMS_DIR`→main-tree: `Imazu22ScenarioRun.*` all 5 Passed incl. the
+fixture-gated `DeterministicReplaySampled`/`IdSwitchesCoarseBand`). States export
+byte-deterministic.
+Reproducer `tools/pmbm_closepass_trace.py` sha256 `7f0ba18c`; input fixtures =
+the 2026-07-08 set in this log.
+
 ## 2026-07-08 — Backlog #11 Imazu churn diagnosis: conveyor (not swaps) + PMBM mirror + knob measurement [Cl-2/Cl-3 diagnostic]
 
 **Diagnosis pass — no config/algorithm change.** Root-causes the Imazu identity

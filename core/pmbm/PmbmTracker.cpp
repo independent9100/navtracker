@@ -1178,15 +1178,23 @@ void PmbmTracker::pruneAndNormalise() {
   }
 
   // Drop hypotheses below the weight floor.
+  std::size_t diag_n_before_floor = 0;
+  if (diag_sink_ != nullptr) diag_n_before_floor = density_.mbm.size();
   density_.mbm.erase(
       std::remove_if(density_.mbm.begin(), density_.mbm.end(),
                      [&](const GlobalHypothesis& h) {
                        return h.weight < cfg_.hypothesis_weight_min;
                      }),
       density_.mbm.end());
+  if (diag_sink_ != nullptr)
+    diag_hyp_dropped_floor_ +=
+        static_cast<int>(diag_n_before_floor - density_.mbm.size());
 
   // Cap mixture size at max_global_hypotheses (keep top-weighted).
   if (density_.mbm.size() > cfg_.max_global_hypotheses) {
+    if (diag_sink_ != nullptr)
+      diag_hyp_dropped_cap_ +=
+          static_cast<int>(density_.mbm.size() - cfg_.max_global_hypotheses);
     std::partial_sort(
         density_.mbm.begin(),
         density_.mbm.begin() + cfg_.max_global_hypotheses,
@@ -1209,12 +1217,16 @@ void PmbmTracker::pruneAndNormalise() {
 
   // Within-hypothesis Bernoulli pruning by r_min.
   for (auto& h : density_.mbm) {
+    const std::size_t nb = (diag_sink_ != nullptr) ? h.bernoullis.size() : 0;
     h.bernoullis.erase(
         std::remove_if(h.bernoullis.begin(), h.bernoullis.end(),
                        [&](const Bernoulli& b) {
                          return b.existence_probability < cfg_.r_min;
                        }),
         h.bernoullis.end());
+    if (diag_sink_ != nullptr)
+      diag_bernoulli_pruned_rmin_ +=
+          static_cast<int>(nb - h.bernoullis.size());
   }
 
   // PPP weight pruning.
@@ -1280,6 +1292,12 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
   const std::vector<Measurement>& scan_in = need_sort ? scan_ordered : scan_arg;
   // Task 6: reset per-scan stale set. enumerateChildren will populate it.
   cooperative_overdue_ids_.clear();
+  // Backlog #25: reset per-scan structural-event counters (diagnostic only).
+  if (diag_sink_ != nullptr) {
+    diag_hyp_dropped_floor_ = 0;
+    diag_hyp_dropped_cap_ = 0;
+    diag_bernoulli_pruned_rmin_ = 0;
+  }
   // Task 5 Step-4 fix: reset the per-scan staging maps. enumerateChildren
   // reads the persistent maps as a frozen snapshot and writes resolved
   // window times here; merged into the persistent maps after all parents.
@@ -1297,6 +1315,9 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
   }
   const std::vector<Measurement>& scan =
       bias_provider_ != nullptr ? scan_corrected : scan_in;
+  // Backlog #25 diagnostic: record this scan's return count (post sort).
+  if (diag_sink_ != nullptr)
+    diag_last_scan_meas_count_ = static_cast<int>(scan.size());
 
   // Predict to the latest measurement time in the scan (matches the
   // MhtTracker convention). Empty scan still advances the filter if a
@@ -1357,6 +1378,10 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     }
     if (track_sink_ != nullptr) {
       firePmbmLifecycleEvents(current_time_);
+    }
+    if (diag_sink_ != nullptr) {
+      emitPmbmDiagnostics(current_time_);
+      ++diag_scan_counter_;
     }
     return;
   }
@@ -1806,6 +1831,13 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
   if (track_sink_ != nullptr && !scan.empty()) {
     firePmbmLifecycleEvents(scan.front().time);
   }
+  // Backlog #25 diagnostic emission (no-op unless a diagnostic sink is set).
+  // Runs AFTER pruneAndNormalise + lifecycle so it observes the exact
+  // post-scan density the states.csv export sees.
+  if (diag_sink_ != nullptr) {
+    emitPmbmDiagnostics(current_time_);
+    ++diag_scan_counter_;
+  }
 }
 
 namespace {
@@ -2241,6 +2273,92 @@ void PmbmTracker::refreshAggregatedTracks() const {
     }
     aggregated_tracks_.push_back(std::move(t));
   }
+}
+
+void PmbmTracker::emitPmbmDiagnostics(Timestamp t) {
+  // Diagnostic-only (backlog #25). Never mutates tracking state. Mirrors the
+  // refreshAggregatedTracks per-id aggregation (Σ_j w^j·r^{j,id}) but keeps
+  // EVERY id — including those below output_existence_floor — so the r/mass
+  // trajectory of a dying track is observable before and through its loss. The
+  // dominant-hypothesis Bernoulli supplies the mechanism detail (r, the claimed
+  // measurement index = detection vs miss, and the state speed = divergence).
+  // The output_merge cross-id fold is intentionally NOT applied here (it is
+  // disabled — threshold 0 — on imm_cv_ct_pmbm_coverage_land, so this matches
+  // the emitted output exactly for that config).
+  PmbmScanDiag d;
+  d.scan_index = diag_scan_counter_;
+  d.time_s = t.seconds();
+  d.n_measurements = diag_last_scan_meas_count_;
+  d.n_global_hypotheses = static_cast<int>(density_.mbm.size());
+  d.n_hyp_dropped_floor = diag_hyp_dropped_floor_;
+  d.n_hyp_dropped_cap = diag_hyp_dropped_cap_;
+  d.n_bernoulli_pruned_rmin = diag_bernoulli_pruned_rmin_;
+
+  struct Agg {
+    double mass{0.0};
+    int hyp_count{0};
+    Eigen::VectorXd mean_acc;
+  };
+  std::map<BernoulliId, Agg> by_id;
+  int n_bern_total = 0;
+  for (const auto& h : density_.mbm) {
+    for (const auto& b : h.bernoullis) {
+      ++n_bern_total;
+      const double m = h.weight * b.existence_probability;
+      if (m <= 0.0) continue;
+      Agg& a = by_id[b.id];
+      if (a.mean_acc.size() == 0)
+        a.mean_acc = Eigen::VectorXd::Zero(b.mean.size());
+      a.mass += m;
+      a.hyp_count += 1;
+      a.mean_acc += m * b.mean;
+    }
+  }
+  d.n_bernoulli_total = n_bern_total;
+  d.n_ids = static_cast<int>(by_id.size());
+
+  // Dominant (max-weight) global hypothesis: per-id mechanism detail.
+  const GlobalHypothesis* dom = nullptr;
+  for (const auto& h : density_.mbm) {
+    if (dom == nullptr || h.weight > dom->weight) dom = &h;
+  }
+  std::map<BernoulliId, const Bernoulli*> dom_b;
+  if (dom != nullptr) {
+    for (const auto& b : dom->bernoullis) dom_b[b.id] = &b;
+  }
+
+  d.bernoullis.reserve(by_id.size());
+  for (const auto& [id, a] : by_id) {
+    PmbmBernoulliDiag bd;
+    bd.id = id;
+    bd.agg_mass = a.mass;
+    bd.hyp_count = a.hyp_count;
+    const Eigen::VectorXd mean =
+        (a.mass > 0.0) ? (a.mean_acc / a.mass).eval() : a.mean_acc;
+    if (mean.size() > 0) bd.east_m = mean(0);
+    if (mean.size() > 1) bd.north_m = mean(1);
+    auto it = dom_b.find(id);
+    if (it != dom_b.end()) {
+      const Bernoulli* b = it->second;
+      bd.existence_r_best = b->existence_probability;
+      bd.claimed_meas_index = b->last_claimed_meas_index;
+      bd.speed_mps = (b->mean.size() >= 4)
+                         ? std::sqrt(b->mean(2) * b->mean(2) +
+                                     b->mean(3) * b->mean(3))
+                         : -1.0;
+      bd.in_dominant = true;
+    } else {
+      bd.existence_r_best = 0.0;
+      bd.claimed_meas_index = -2;  // absent from the dominant hypothesis
+      bd.speed_mps = -1.0;
+      bd.in_dominant = false;
+    }
+    bd.in_output = a.mass >= cfg_.output_existence_floor;
+    bd.confirmed = a.mass >= cfg_.confirm_threshold;
+    d.bernoullis.push_back(std::move(bd));
+  }
+
+  diag_sink_->onPmbmScan(d);
 }
 
 }  // namespace navtracker::pmbm

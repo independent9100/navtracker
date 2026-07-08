@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -48,6 +49,7 @@
 #include "core/benchmark/BenchSink.hpp"
 #include "core/benchmark/Consistency.hpp"
 #include "core/benchmark/GospaExport.hpp"
+#include "core/benchmark/PmbmDiagRecorder.hpp"
 #include "core/bias/SensorBiasPairExtractor.hpp"
 #include "core/land/CoastlineModel.hpp"
 #include "core/static/LiveOccupancyModel.hpp"
@@ -352,6 +354,20 @@ std::vector<MetricRow> runSweep(
           auto det = detectionModelFor(desc, carrier, config.use_clutter_map);
           pmbm::PmbmTracker tracker(*est, cfg, std::move(birth));
           if (det) tracker.setSensorDetectionModel(det);
+
+          // Backlog #25 PMBM localization: wire the per-scan diagnostic
+          // recorder when a diag dir is set. Kept alive until after the
+          // synchronous runBenchPmbm call below (the tracker holds only a raw
+          // pointer). Unset → no sink → byte-identical.
+          std::unique_ptr<PmbmDiagRecorder> pmbm_diag_rec;
+          if (params.export_pmbm_diag_dir) {
+            std::string base = *params.export_pmbm_diag_dir;
+            if (!base.empty() && base.back() != '/') base.push_back('/');
+            base += config.label + "__" + desc.label + "__seed" +
+                    std::to_string(seed);
+            pmbm_diag_rec = std::make_unique<PmbmDiagRecorder>(base);
+            tracker.setDiagnosticSink(pmbm_diag_rec.get());
+          }
 
           // Task 4: build a DeclaredSensorActivity from the scenario's
           // per-sensor detection table and wire it into the PMBM tracker.

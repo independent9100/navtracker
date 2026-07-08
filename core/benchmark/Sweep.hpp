@@ -61,6 +61,14 @@ struct SweepParams {
   // scores. Unset (default) → no files, bit-identical behaviour. Test/tool
   // knob only — see core/benchmark/GospaExport.hpp.
   std::optional<std::string> export_states_dir;
+  // Backlog #25 PMBM localization hook. When set AND the config is a PMBM
+  // tracker, each PMBM run additionally writes its per-scan MBM-internal
+  // diagnostics (per-identity existence mass / dominant-hyp r / claimed
+  // measurement / state divergence + structural prune/cap events) to
+  // <dir>/<config>__<scenario>__seed<seed>.{pmbmscan,pmbmbern}.csv via
+  // PmbmDiagRecorder. Unset (default) → no diagnostic sink wired →
+  // byte-identical tracking + states export. Diagnostic/tool knob only.
+  std::optional<std::string> export_pmbm_diag_dir;
 };
 
 /**

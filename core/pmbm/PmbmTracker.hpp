@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "core/pmbm/PmbmDiagnostics.hpp"
 #include "core/pmbm/PmbmTypes.hpp"
 #include "core/types/Timestamp.hpp"
 #include "core/types/Track.hpp"
@@ -726,6 +727,17 @@ class PmbmTracker {
    */
   void setLiveOccupancyFeed(ILiveOccupancyFeed* f) { occupancy_feed_ = f; }
 
+  /**
+   * DIAGNOSTIC-ONLY per-scan introspection sink (backlog #25 localization).
+   * When non-null, after each processBatch the tracker emits a PmbmScanDiag
+   * carrying per-identity existence mass / dominant-hyp r / claimed
+   * measurement / state divergence and per-scan structural events (see
+   * PmbmDiagnostics.hpp). Null (default) = no emission, zero overhead,
+   * byte-identical tracking behaviour — every diagnostic computation below is
+   * guarded on this pointer. Per-instance (no globals). Never alters tracking.
+   */
+  void setDiagnosticSink(IPmbmDiagnosticSink* s) { diag_sink_ = s; }
+
   /** Next Bernoulli id that will be minted (introspection / tests). */
   BernoulliId nextBernoulliId() const noexcept { return next_bernoulli_id_; }
 
@@ -857,6 +869,10 @@ class PmbmTracker {
 
   void refreshAggregatedTracks() const;
 
+  // Backlog #25 diagnostic emission (no-op unless diag_sink_ is set). Reads the
+  // post-prune density at end of processBatch; never mutates tracking state.
+  void emitPmbmDiagnostics(Timestamp t);
+
   const IEstimator& estimator_;
   Config cfg_;
   BirthModelFn birth_model_;
@@ -902,6 +918,16 @@ class PmbmTracker {
   std::map<std::uint64_t, TrackStatus> prev_emitted_statuses_;
   // Task 6: optional cooperative stale-signal sink.
   IStaleSignalSink* stale_sink_{nullptr};
+  // Backlog #25: nullable per-scan diagnostic sink (default off = byte-
+  // identical). The counters below accumulate structural events over ONE scan
+  // (pruneAndNormalise may run twice per scan); reset at processBatch start and
+  // read by emitPmbmDiagnostics — all only when diag_sink_ != nullptr.
+  IPmbmDiagnosticSink* diag_sink_{nullptr};
+  long diag_scan_counter_{0};
+  int diag_hyp_dropped_floor_{0};
+  int diag_hyp_dropped_cap_{0};
+  int diag_bernoulli_pruned_rmin_{0};
+  int diag_last_scan_meas_count_{0};
   // Task 6: set of Bernoulli ids whose cooperative own-identity report was
   // overdue in the current scan (populated by enumerateChildren, cleared at
   // the start of each processBatch, read by refreshAggregatedTracks to set

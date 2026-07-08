@@ -1090,3 +1090,26 @@ assertions only. Candidate levers AFTER localization (not before): existence
 floor under confirmed-recent tracks, association-ambiguity-aware survival, or
 birth-with-identity-adoption near a just-dead Bernoulli (the R11
 identity-adoption machinery is adjacent).
+
+**DIAGNOSED 2026-07-08 (Phase 1 localization — `docs/baselines/2026-07-08_b25_localization.md`,
+reproducer `tools/pmbm_closepass_trace.py`, additive default-off diagnostic
+hook).** The killer is **H3 — ESTIMATOR STATE DIVERGENCE, not H1
+miss-starvation.** Instrumenting r + state per Bernoulli per scan shows the
+Bernoulli tracking the target keeps **r ≈ 1.0 through the loss** while its
+**velocity state runs away** (imazu_22 id 7: r 0.98–1.0, speed 3,700–4,500 m/s
+for the full 96 s; imazu_15 id 6: speed 839→12,000→unbounded m/s, distance from
+truth 51 m→156 km) — the target is unassigned because its confirmed track *flew
+off*, not because its existence decayed. 5 of 6 dying tracks are pure H3; H1
+appears only as the downstream tail (a re-acquired track that diverges then
+starves). **H2 ruled out** (hyp floor/cap drops = 0; single K=1 hypothesis).
+Mechanism: wide gate + K=1 winner-take-all hard-commit + sustained proximity →
+a large re-association innovation dumps into velocity; the IMM CV/CT filter has
+no speed/innovation bound → runaway. **This changes the lever class:** the
+existence-floor / birth-channel levels listed above (item 1's candidates) are
+H1 levers and would NOT fix an H3 divergence. Phase-2 candidates are
+estimator-side (maritime speed/innovation gate; ambiguity-aware soft update vs
+hard winner-take-all — the PDA soft branch exists but is OFF; coalescence
+guard), which are orthogonal to the miss-P_D existence brake that holds philos
+over-count down (so they cannot weaken it), provided they fire only in the
+association-ambiguity/large-innovation context and leave the existence/birth
+channel untouched. Phase-2 design is the arbiter's call.
