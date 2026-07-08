@@ -390,6 +390,13 @@ The remaining sc17 lifetime / sc22 NEES residuals are deeper than
 gating — see SOTA-roadmap §2 (JIPDA, the paper's tracker class) and
 §5 (Schmidt-KF residual-bias treatment).
 
+**#11 evidence (2026-07-08, Imazu-22 suite e771dad):** the controlled instrument
+now exists — MHT identity churns up to 72 mean switches/truth on dense
+multi-target crossings (imazu_17/20) while POSITION holds (RMSE ~25-28 m);
+all single-target cases are 0-switch. PMBM holds identity (≤8.3) but
+over-counts (+0.77 card_err). Any #11 fix is judged on this family:
+`docs/baselines/2026-07-08_imazu22.md`.
+
 ## 12. Filter consistency on real data (NEES calibration)
 
 **Problem (measured 2026-06-12, sc5).** Mean position NEES 77.6 vs
