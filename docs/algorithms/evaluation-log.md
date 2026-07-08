@@ -8,6 +8,37 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-08 (correction) — master IS red on 3 sunset 6c tests since f11d6e7; the "concurrent-mutation artifact" attribution was WRONG for them [suite health]
+
+**Finding (two independent isolated worktrees, deterministic, serial-run
+confirmed).** `PhilosCoverageDecay6c.Sunset{CoverageAwareHoldsStructureAndProtectsUnsweptCells,
+CameraObservedEmptyFlagsVacatedCells,CameraEvictionRemovesDepartedPinsHoldsChartStructure}`
+fail on clean master (`7f5cd17`, and `3ae355f` = +additive diag hook):
+reproduced by the Cl-1 implementer (3 clean runs) AND by the arbiter's
+verify-b25 worktree, including a **serial 3-test-only run** — NOT
+load-dependent, NOT concurrency. Failing assertion is the backlog **#24
+knife-edge case (2)** verbatim: with the LOS shadow guard ON
+(`occupancy_detector_coverage`), guard-held mass shifts the clutter-adaptive
+bar and `astern_blob` de-emits under the coverage config →
+`cov_astern > uni_astern` fails (0 vs 13).
+
+**How it was masked (attribution correction).** `f11d6e7`'s commit message
+attributes the earlier red to a "concurrent-mutation artifact". That was true
+for the 55-failure incident itself, but it HID a genuine 3-test breakage:
+(a) the post-revert verification ran with the guard reverted → tests passed;
+(b) the re-land verification's worktree did not have these fixture-gated
+tests running (skip = counted as pass); (c) the isolated 6c 5/5 pass cited
+at the Imazu merge ran during the revert window. Lesson recorded: an
+isolated-worktree verification must ALSO diff its skip list against the
+expected-skip set — `100% tests passed` proves nothing about tests that
+silently skipped.
+
+**Disposition.** The guard stays (net-beneficial, merged deliberately); the
+three A/B assertions are the defect — they pin the epsilon-fragile
+cross-config flip that #24 rules invalid, exactly what `c0ac493` already
+fixed for the loiterer assertion. Fix ticket:
+`docs/superpowers/plans/2026-07-08-sunset6c-assertions-ticket.md`.
+
 ## 2026-07-08 — Backlog #25 Phase 1: PMBM close-pass track loss is ESTIMATOR DIVERGENCE (H3), not miss-starvation (H1) [Cl-3 diagnostic]
 
 **Localization pass — no fix, no config/algorithm change.** Answers backlog #25:
