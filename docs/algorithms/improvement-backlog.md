@@ -397,6 +397,23 @@ all single-target cases are 0-switch. PMBM holds identity (≤8.3) but
 over-counts (+0.77 card_err). Any #11 fix is judged on this family:
 `docs/baselines/2026-07-08_imazu22.md`.
 
+**DIAGNOSED 2026-07-08 (Imazu forensics, merged with the evidence above;
+addendum in the same doc, adversarially verified, classifier faithful to the
+bench's own per-truth rows on all 22 cases).** The Imazu churn is the SAME
+duplicate-track conveyor as sc5 (88.9% of switch events aggregate, ≥76% on
+17/18 churn cases; genuine swaps only 11.1%, confined to sustained-proximity
+co-course pairs; up to 81 track-ids for 3 truths) — different trigger (radar
+cross-range ambiguity, not camera-bearing overconfidence). Position is never
+at risk (RMSE 25–28 m throughout). Knobs re-measured on Imazu: recapture
+NET-NEGATIVE here too (id_sw +1.6, lifetime −0.005), share-bearings
+inapplicable, all three stay OFF. If MHT identity is ever the chosen path,
+the lever is duplicate-birth suppression near an existing confirmed track
+(birth gating), NOT gate widening. The decision-relevant counterpart finding
+(PMBM drops the track at the CPA on the same geometry) is **item #25** — the
+two failure modes are a genuine operational trade (MHT: churn, presence
+preserved / PMBM: loss at CPA, survivor id preserved); reproducers
+`tools/imazu_switch_forensics.py`, `tools/imazu_trackloss.py`.
+
 ## 12. Filter consistency on real data (NEES calibration)
 
 **Problem (measured 2026-06-12, sc5).** Mean position NEES 77.6 vs
@@ -1032,3 +1049,44 @@ feedback system pins an incidental, not an invariant** — such A/B gates should
 assert only isolated (fixed-input) invariants or robustly-banded aggregates. If
 picked up, rethinking what 6c-style A/B gates may validly assert is in scope.
 Evidence: the four cases with their tables (eval-log 2026-07-06 / 2026-07-07).
+
+## 25. PMBM close-pass track loss — the target vanishes at the CPA (SAFETY-relevant; the deployment-choice discriminator)
+
+**Found 2026-07-08 (Imazu #11 forensics, Q2b —
+`docs/baselines/2026-07-08_imazu22.md`, reproducer `tools/imazu_trackloss.py`).**
+On the 6 densest Imazu crossings (14/15/17/19/20/22 — exactly the cases whose
+lifetime drops to 0.67–0.81) PMBM (`imm_cv_ct_pmbm_coverage_land`) *loses the
+track* at close passes: substantial (≥10 s) losses of 62–158 s, 398–709 s total
+unassigned time per case, routinely re-acquiring under a NEW id (6–27
+re-confirmations per case, a handful permanent). On the two worst cases
+(imazu_15: 158 s; imazu_22: 96 s) the loss window OVERLAPS the own-ship CPA —
+the target is absent from the picture at the moment it matters most. Controls:
+single-target 85 m passes show only 1–4 s flicker; imazu_12's fleeting 0.6 m
+pass keeps identity — the driver is SUSTAINED proximity, not closeness per se.
+
+**Why it matters.** This is ADR 0002's forbidden failure in its sharpest
+temporal form — a persistent real object represented as *nothing*, during the
+CPA window. It flips the Imazu headline: MHT churns identity but never loses
+presence; PMBM holds identity but drops presence at the CPA. For a
+collision-avoidance consumer, presence-through-encounter is the harder
+requirement, so THIS item (not #11) is what would actually change a deployment
+tracker choice.
+
+**Where it lives (scoping, not yet diagnosed).** A PMBM birth/continuity —
+existence-mass — question, NOT MHT association (#11) and NOT clutter
+cardinality (#23, parked): under sustained proximity the association ambiguity
+plausibly starves one Bernoulli's existence until it dies, then the birth
+channel re-creates it under a new id. That mechanism chain is HYPOTHESIS, not
+finding — the Q2b data quantifies the loss, it does not yet localize which
+stage (existence decay vs measurement-share vs pruning) kills the track.
+
+**What to test next.** (1) Localize: instrument r (existence) of the dying
+Bernoulli through a close pass (imazu_15/22) — does it starve gradually
+(association mass split) or get pruned abruptly (hypothesis cap)? (2) The
+Imazu family is the controlled gate; any candidate fix is judged on
+loss-seconds-overlapping-CPA + re-acquire-id-count there, with philos/HAXR
+KEEP configs as the no-regression guard. (3) Knife-edge rules apply — banded
+assertions only. Candidate levers AFTER localization (not before): existence
+floor under confirmed-recent tracks, association-ambiguity-aware survival, or
+birth-with-identity-adoption near a just-dead Bernoulli (the R11
+identity-adoption machinery is adjacent).
