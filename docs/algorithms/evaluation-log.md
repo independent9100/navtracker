@@ -8156,3 +8156,60 @@ the over-count belongs to **upstream extraction** and to whatever the water test
 teaches. Durable contributions carried forward: the `λ_C`-cancellation invariant,
 the `birthScale`-not-`λ_C` channel map, the minefield analysis (design note §1.4-1.5),
 the §5.0 probe as a permanent regression test, and Phase 0 (backlog #21) on master.
+## 2026-07-08 — D10 Global Fishing Watch anchorages: license NO-GO (c) for our (commercial) context; D3 not replaced [Cl-3 feasibility; desk check, no download]
+
+Feasibility-only assessment of the GFW anchorage database + Events API (data-
+expansion item D10, pre-water item 13). Verdict: **NO-GO** for navtracker's
+commercial (TKMS) context — decisive on license alone. **Desk check only: no
+registration, no download, no data pulled**; the Step-0 gate hit classification
+**(c) not usable**, so execution stopped before Step 1 per the ticket. Report:
+`docs/baselines/2026-07-08_d10_gfw_anchorages.md`.
+
+**License — (c), decisive.** GFW **data products** are **CC BY-NC 4.0**
+(NonCommercial): ToU — "data products ... are provided for and subject to
+non-commercial use in accordance with the Creative Commons Attribution
+Non-Commercial 4.0 license"; "provided for Non-Commercial use only ... for
+commercial purposes, please contact us." CC BY-NC 4.0 — NonCommercial = "not
+primarily intended for or directed towards commercial advantage." The **Events
+API** is likewise "only available for non-commercial purposes" and requires
+registration + a token + *agreeing to* the non-commercial terms (an independent
+registration-wall blocker — a commercial entity cannot truthfully accept). This
+is the **same NonCommercial ground that killed D7 MOANA**; GFW is lighter (CC
+BY-NC, **no ShareAlike**) but the NonCommercial term alone bars product-directed
+use — including "research-side statistics that inform our design", since that is
+still directed toward commercial advantage (so classification (b) does not
+survive either). **Apache-2.0 red herring ruled out:** Apache covers the GFW
+pipeline *code* (`anchorages_pipeline` repo), not the *data product*; the ToU
+CC-BY-NC controls the data.
+
+**Boston sanity anchor (not measured; expected MISS).** No download, so the
+video-verified cluster at ≈42.3585 N / −71.0464 (largest `KEEP_INCOV_UNCHARTED`
+driver) was not checked against GFW. On paper: a **likely miss**, because GFW
+needs ≥20 **AIS-transmitting** vessels and our cluster is AIS-dark small
+recreational craft. The blind spot is the finding: a GFW anchorage layer is dark
+over exactly the small-craft fields that generate our hardest KEEP cases.
+
+**D3 — not replaced, not shortened.** Per-statistic (on paper, moot under
+license): anchorage *locations* covered (coarse ~0.5 km S2 cells, commercial
+anchorages only); *dwell* derivable from visit events; *transitions* partially
+derivable but AIS-derived (the veto's existing signal); **watch-circle swing
+radius NOT covered at any resolution** — and that is the statistic D3 most needs.
+GFW pre-computes what D3 needed least, omits what it needed most. **MarineCadastre
+(U.S. public-domain AIS) stays the lawful, necessary D3 route** for watch-circle
++ per-vessel dwell.
+
+**KEEP-side prior — use ENC charts, not GFW.** GFW anchorage clusters as a
+"known anchorage → bias KEEP" prior: low fairway-FP risk by construction (≥20
+vessels *stop* there) but coarse (~500 m blobs), AIS-blind to small craft, and
+license-barred. The right source for the prior is the **official ENC / S-57
+charted anchorage-area polygon (`ACHARE`, berths `ACHBRT`)** — authoritative,
+surveyed, commercially clean, already in the chart-corroboration substrate. **Do
+not wire a GFW-derived KEEP prior.** No code changed, no prior wired.
+
+**Net.** D10 NO-GO on license; the only lawful GFW path is a commercial grant
+("please contact us") — an organizational decision for the user, not extraction.
+Queue effect: D3 is **not** unblocked/shortened by D10 (MarineCadastre still
+required for watch-circle), and the chart-corroboration KEEP prior should be
+sourced from ENC `ACHARE`, not GFW. Sources: GFW ToU / anchorages page / API
+docs; CC BY-NC 4.0 legal code; `anchorages_pipeline` (Apache-2.0 code);
+D7 MOANA entry (2026-07-06).
