@@ -914,6 +914,37 @@ std::vector<Config> defaultConfigs() {
     lp.extended_cells_min = 1;
     lp.clutter_reject_factor = 1.5;
     lp.membership_exit_factor = 0.6;  // FROZEN detector: hysteresis ON (see above)
+    // LOS/shadow guard ON: coverage-aware decay must not treat a cell shadowed by
+    // a closer occluder as observed-empty (2026-07-06 shadow-probe verdict b — a
+    // correctness fix wherever coverage-aware decay runs). Safe direction:
+    // shadowed cells simply don't decay. See core/static/ShadowMask.hpp.
+    // min_occluder_returns=1: the tracker feeds CFAR PLOTS, not raw cells — each
+    // return is already a thresholded detection (the probe's occluder carried
+    // n_cells 100+, but that count does not survive to the occupancy feed and the
+    // philos burst rate is only ~4 plots/scan), so a single closer plot on the
+    // bearing is a real reflector blocking line of sight. wedge_pad ~8° covers the
+    // beam/plot angular slop within a burst; 50 m range margin protects the
+    // occluder's own far side. Raise min_occluder_returns for dense raw-cell feeds.
+    lp.shadow_guard.enabled = true;
+    // min_occluder_returns = 1: the tracker feeds CFAR PLOTS, not raw cells —
+    // each return is already a thresholded detection (a real reflector), and the
+    // philos burst rate is only ~4 plots/scan, so a single closer plot on the
+    // bearing blocks line of sight. (n_cells/amp — the probe's occluder carried
+    // 100+ — does not survive to the occupancy feed; raise this for dense raw-cell
+    // feeds.)
+    lp.shadow_guard.min_occluder_returns = 1;
+    // wedge_pad ≈ 3·σ_az of plot bearing noise (σ_az ≈ 1.6° on philos) added to
+    // the occluder cluster's own angular extent — beam/edge slop, not a magic arc.
+    lp.shadow_guard.wedge_pad_rad = 0.10;  // ~5.7°
+    // range_margin = occluder radial extent (a large vessel spans ~tens of m in
+    // range) + ~1·σ_r plot range noise (σ_r ≈ 25 m on philos) ≈ 50 m — just enough
+    // not to clip the occluder's OWN far side, and no larger, so every genuinely
+    // deeper shadow is protected. NOTE: margin = 400 m was the ONLY setting that
+    // kept the 6c emitted-hazard monotonicity green as-is, but it was REJECTED as
+    // an overfit passing point on the sunset knife-edge (the 6c assertion was
+    // instead corrected to the per-cell-persistence invariant it actually implies
+    // — see test_philos_occupancy_coverage_6c.cpp and the 2026-07-07 eval-log).
+    lp.shadow_guard.range_margin_m = 50.0;
     c.live_occupancy_params = lp;
     c.pmbm_config = []() {
       auto cfg = makePmbmConfig();

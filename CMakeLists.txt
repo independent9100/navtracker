@@ -240,6 +240,7 @@ add_executable(navtracker_tests
   tests/static/test_static_obstacle_model.cpp
   tests/static/test_live_occupancy_model.cpp
   tests/static/test_bearing_wedge_model.cpp
+  tests/static/test_shadow_mask.cpp
   tests/geo/test_wgs84.cpp
   tests/geo/test_datum.cpp
   tests/adapters/own_ship/test_own_ship_provider.cpp
@@ -351,6 +352,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_synthetic_clutter_ab.cpp
   tests/benchmark/test_philos_cluttermap_ab.cpp
   tests/benchmark/test_occupancy_ab.cpp
+  tests/benchmark/test_los_guard_haxr_ab.cpp
   tests/benchmark/test_harbor_complete_truth.cpp
   tests/benchmark/test_harbor_complete_truth_baseline.cpp
   tests/benchmark/test_adapt_k3_harbor_knife_guard.cpp

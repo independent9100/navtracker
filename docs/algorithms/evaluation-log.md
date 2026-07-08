@@ -8,6 +8,95 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-07 — LOS/shadow guard SHIPPED (verdict-b fix): coverage-aware decay no longer erodes a shadowed moored vessel; two gate-correctness rulings [Cl-3 / ADR 0002]
+
+Implements the 2026-07-06 shadow-probe verdict-b fix (ticket
+`2026-07-06-los-guard-ticket.md`): coverage-aware occupancy decay must not treat
+a cell whose line of sight is blocked by a closer occluder as "observed empty".
+Geometry `core/static/ShadowMask.hpp` (pure, unit-tested); wired into the decay
+loop `LiveOccupancyModel::observe`; ON in `imm_cv_ct_pmbm_occupancy_detector_coverage`
+via per-instance `LiveOccupancyParams::shadow_guard` (default OFF ⇒ every other
+config byte-identical).
+
+**The fix works (car_carrier_near, unknown_w860 yacht cell, guard ON vs OFF):**
+
+| interval        | mass0→massT (OFF) | mass0→massT (ON) | hazard OFF→ON | guard fired |
+|-----------------|-------------------|------------------|---------------|-------------|
+| shadow 50-85 s  | 0.141 → **0.006** | 0.504 → **1.566** | **51% → 100%** | **9/9 swept** |
+
+Shadow mean mass 0.073 → **1.510 (20.7×)**, hazard presence **51% → 100%**, decay
+events 10 → 0. The occluded moored yacht's occupancy evidence is held through the
+35 s passage instead of eroding. Peak guard-protected cell fraction 10% (narrow
+shadow sectors — sane). Test `LosShadowGuard.CarCarrierNearYachtCellGuardOnVsOff`.
+
+**No false shielding:** sim control `sim_ms_anchored_camera` (no persistent
+occluder) — guard fires 1/15 swept scans (7%, a real transient crossing), mass Δ
+≤ 0.0009: near-inert. Default configs (occupancy OFF) byte-identical by
+construction (guard gated behind `use_live_occupancy_model` + `shadow_guard.enabled`);
+full suite 1078/1078 green, philos KEEP gates untouched.
+
+**Calibration — physically derived, NOT swept-to-green (anti-overfit):**
+`min_occluder_returns = 1` (the tracker feeds CFAR PLOTS at ~4/scan — each is a
+real reflector, so a single closer plot blocks LOS; n_cells/amp does not survive
+to the occupancy feed), `wedge_pad ≈ 3σ_az` (σ_az ≈ 1.6°), `range_margin = 50 m`
+(occluder radial extent + ~1σ_r, σ_r ≈ 25 m — just enough not to clip the
+occluder's own far edge). **`range_margin = 400 m` was the ONLY setting that kept
+the 6c emitted-hazard gate green as-is, and was REJECTED as an overfit passing
+point on the sunset knife-edge** (see the second ruling below).
+
+**HAXR delta (fixed shore station kattwyk_08 decimated — "say what you find"):**
+the ticket guessed near-inert; the finding is the guard is **active AND net
+beneficial**, no regression — a shore station still has ships occluding shore
+structure, so the guard holds it:
+
+| metric | guard OFF | guard ON |
+|---|---:|---:|
+| card_err_mean | 44.40 | **41.46** |
+| gospa_mean | 100.26 | **97.46** |
+| gospa_false | 9707 | **9119** |
+| gospa_missed | 827.75 | 827.75 |
+| lifetime_ratio | 0.0957 | **0.1045** |
+| occ_peak_structures / suppress_hits | 27 / 26 633 | 37 / **50 151** |
+
+Suppression ~doubles but falls on CLUTTER, not vessels (gospa_missed FLAT,
+gospa_false DOWN). Test `LosGuardHaxrAB` (skip-guarded on local-only fixtures).
+
+**Ruling 1 — decouple the guard from the clutter-adaptive bar (semantic fix).**
+Holding shadowed mass raised the median-based clutter bar → de-emitted marginal
+structure. Fix: a cell the LOS guard is protecting this scan is EXCLUDED from the
+clutter-background median (a shadowed real object is not clutter; feeding its held
+mass into the background estimate was a category error, invisible until the guard
+gave those cells mass worth noticing). State-scoped (only while protected); its
+own classification against the bar is unchanged; guard OFF ⇒ empty set ⇒ median
+byte-identical. No feedback loop: the guard's fire decision is PURELY geometric
+(occluder returns), independent of persistence/bar. `LiveOccupancyModel.cpp`.
+
+**Ruling 2 — the 6c "monotonicity" gate asserted a non-invariant; corrected.**
+`test_philos_occupancy_coverage_6c` assertion (2) claimed coverage-aware holds
+every region ≥ universal (emitted hazard-scans), "from per-cell persistence →
+hazard superset". BOTH forms are false as full-pipeline invariants: (a)
+emitted-hazard — the clutter-ADAPTIVE bar is non-monotone in persistence (more
+mass → higher median → higher bar → can de-emit a region whose mass rose); the
+failing region flipped midriver_grp↔astern_blob as the guard margin changed
+(50→0/15, 150→0/0, 250→93/0, 400→606/60), an epsilon-knife-edge, not an
+invariant. (b) per-cell persistence — NOT monotone between these two configs
+either, because the occupancy layer is FEEDBACK-COUPLED to the tracker
+(persistence → suppression → tracker → claim pattern → 1−r weights → touches →
+persistence): `cov`/`uni` are different runs with different inputs (measured
+deficit 0.064). Asserting a property of the DIFFERENCE between two full-pipeline
+runs of a feedback system pins an incidental, not an invariant — the old check
+was true by luck. Assertion (2) removed (documented in place); the guard's REAL
+invariant (identical inputs ⇒ only skips decays ⇒ persistence only rises) is
+proven where it holds — `LiveOccupancyModel.ShadowGuardOnlyAddsMassOnFixedInputs`.
+Reported observations at the shipped margin: midriver_grp 9→0, astern_blob 10→15
+(both med-confidence, satellite-pending SUPPRESS_STRUCTURE). Checks (1)/(3)/(4)
+and the KEEP conservation gates untouched.
+
+**LOS guard is NOT implemented as a special case of coverage** — it is the
+coverage decay's LOS assumption made explicit; the two rulings above are logged
+to the backlog as the week's 4th epsilon-fragility case (adaptive/threshold &
+feedback-coupled-A/B decision robustness).
+
 ## 2026-07-06 — nav_status-gated velocity suppression (#20 sub-item b): correct guard; proof re-pinned to the right level [Cl-3]
 
 Ships the fix candidate the velocity-path pricing surfaced: an anchored (1) /
