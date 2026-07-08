@@ -8,6 +8,66 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-08 — Backlog #25 Phase 2a: runaway census + offline velocity/innovation-bound probe [Cl-3 diagnostic]
+
+Offline probe (no build; new read-only `tools/pmbm_phase2a_probe.py` over the
+Phase-1 diag export). Config `imm_cv_ct_pmbm_coverage_land`, seed 0; 22 Imazu +
+6 sim_ms (census) + 18 AutoFerry (false-fire). Full write-up:
+`docs/baselines/2026-07-09_b25_phase2a_probe.md`.
+
+**Question A — census.** 19 869 Confirmed rows > 50 m/s. **82.5 % are
+clutter-born short-lived phantoms** (930 tracks, median life 117 s) vs 17.5 %
+target-born (46 tracks, median 717 s). In single-target `imazu_01–04`, **99.5 %**
+of runaway rows are clutter-born. → Phase-1's "systemic IMM defect" gloss
+*shrinks*: the single-target runaway is phantoms, not the target track. But the
+CPA-**dying** tracks are genuinely target-born long-lived (imazu_15 id6 595 s,
+id7 718 s) — H3-at-the-CPA stands. Contest is 3 % in aggregate, concentrated at
+dense CPAs (imazu_21 137). (c) IMM mode not exported — declared gap.
+
+**Question B — bound probe (V∈{25,50,75} m/s, D∈{100,200,400} m).** Axis
+separation is decisive:
+- **SPEED bound FAILS** the false-fire kill-criterion: 6.6–11.4 % on sim_ms,
+  2.2–4.4 % on imazu single-target, **0 %** on AutoFerry. The sim_ms false-fires
+  are *well-positioned* healthy tracks (median 22–31 m, min 1.2 m from truth)
+  carrying transient velocity-**state** spikes of 159–235 m/s during crossing/
+  head-on ambiguity.
+- **JUMP / position-displacement bound PASSES** at D ≥ 200 m: 5/6 dying tracks
+  flagged before permanent gate-exit, false-fire **0.13 %** (sim_ms), **0.00 %**
+  (AutoFerry + imazu single-target). The position stays put for a
+  measurement-corrected healthy track even when the velocity state overshoots.
+
+**Verdict: BUILD the position-innovation gate (NOT the velocity bound), band
+D_max ≈ 200–400 m, guard at the estimator update / association gate — clamp/reject
+kinematics, never delete the Bernoulli** (keeps the miss-P_D existence brake and
+ADR-0002 untouched; the 82.5 % clutter-phantom majority makes it a clutter-killer
+bonus). Two Phase-2b pre-conditions: (1) the true measurement-innovation is not
+exported — the D-axis is a posterior-position-jump proxy; add one additive
+default-off field and re-probe to choose estimator-clamp vs association-gate;
+(2) pair with a coalescence guard — per-truth margins are confounded by
+close-pass id migration across near truths (imazu_15 id6 migrates 152/153→151;
+imazu_22 id7 covers 2 truths). Alternates ranked: (1) position-innovation gate,
+(2) coalescence guard, (3) ambiguity-gated soft update (PDA branch, OFF today,
+restrict to contested close-pass). Zero core/config change; determinism
+re-verified byte-identical.
+
+*Verification (branch `backlog25-phase2a`, off master `afc47d2`): the full
+gtest binary run from the worktree root (philos/autoferry symlinked, SIMMS_DIR →
+main tree) = **1089 ran, 1081 passed, 0 FAILED, 8 skipped**. The 8 skips are all
+HAXR / RBAD / Boston-coastline data-gated (fixtures absent here): GeoJsonCoastline.
+BostonFixtureSmoke, HaxrOspa.KattwykHourEkfGnnBaseline, LosShadowGuard.
+SimAnchoredControlGuardInert, ReplayScenarioRun.HaxrScenarioCarriesDatum…,
+RbadScenarioRun.{Generate…,MhtConsistency…,DeterministicReplay}, LosGuardHaxrAB.
+GuardIsNearInertOnFixedShoreStation. NOTE for the sunset6c-assertions ticket: the
+3 `PhilosCoverageDecay6c.Sunset*` assertions this eval-log documents as red on
+master (below) **RAN and PASSED here** (isolated and in-suite; test file
+byte-identical to master, no core change) — the `#24` knife-edge
+`EXPECT_GT(cov_astern, uni_astern)` lands green on this toolchain (g++13 Release,
+current fixtures). Consistent with the #24 FP-fragility finding; it does not
+change the disposition that those assertions must be replaced. Caveat on
+plain `ctest`: it runs each case from the build dir, so the philos-fixture-gated
+6c cases GTEST_SKIP there — `100% tests passed` under `ctest` alone would be a
+false green; the numbers above are from running the binary at the worktree root.*
+
 ## 2026-07-08 (correction) — master IS red on 3 sunset 6c tests since f11d6e7; the "concurrent-mutation artifact" attribution was WRONG for them [suite health]
 
 **Finding (two independent isolated worktrees, deterministic, serial-run
