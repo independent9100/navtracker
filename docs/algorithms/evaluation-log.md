@@ -8,6 +8,117 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-08 — Backlog #11 Imazu churn diagnosis: conveyor (not swaps) + PMBM mirror + knob measurement [Cl-2/Cl-3 diagnostic]
+
+**Diagnosis pass — no config/algorithm change.** Root-causes the Imazu identity
+numbers from the 2026-07-08 battery (above). Only new code: three Python analysis
+scripts (`tools/imazu_switch_forensics.py`, `tools/imazu_cardinality_timing.py`,
+`tools/imazu_trackloss.py`) consuming the existing bench `--export-states-dir`
+output; nothing under `core/`/`ports/`/`adapters/`/`app/` touched. Findings
+independently re-derived by an adversarial verifier (from-scratch brute-force
+optimal-assignment solver + own bench parser) — all five claims confirmed, no
+classifier defect. Full write-up + tables in
+`docs/baselines/2026-07-08_imazu22.md` (dated addendum). Ticket
+`docs/superpowers/plans/2026-07-08-backlog11-imazu-churn-ticket.md`.
+
+**Stop-and-report (acceptance #5) resolved NEGATIVE-for-stop:** the 2026-06-12
+switch-forensics tool was a throwaway (never committed). It was *rebuildable
+without any core change* — the existing `--export-states-dir`
+(`scan,time_s,kind,id,east_m,north_m`, scenario-agnostic) carries everything, so
+the method was re-implemented as Python that re-derives the bench's own per-scan
+Hungarian assignment (`Metrics.cpp assignPerStep`, strict gate 100 m; JV port of
+`Hungarian.cpp`) and continuity walk. **Faithfulness proven:** the script's
+per-truth `id_switches`/`track_breaks` equal the bench's `*:truth_<id>` rows for
+**all 22 cases** (MHT, PMBM, recapture) — the classification is an exact
+decomposition of the reported metric, not a re-estimate.
+
+**Q1 — MHT churn is the duplicate-track conveyor, not swaps.** Aggregated over
+all 18 multi-target cases, duplicate-track churn = **88.9%** of id-switch events
+and genuine pair-swaps **11.1%**; dup-churn is ≥76% on 17 of 18 cases (sole
+exception imazu_08 at 65% dup / 35% swap; swap fraction ranges 0–35%).
+Signature: **up to 81 distinct track ids for 3 truths** (imazu_20). Same
+mechanism as sc5 2026-06-12 but a different trigger — sc5 was camera-bearing
+over-confidence; Imazu carries no camera, so here it is **radar cross-range
+ambiguity between targets passing inside the gate**. Geometry: churn + *all*
+swaps concentrate on whichever pair passes within radar ambiguity (imazu_17/20:
+T1↔T2 co-course overtakers at 28.2 m carry all swaps, isolated crosser T3 has 0;
+imazu_14: the two crossers at 10.9 m). Position holds (RMSE 25–28 m) throughout.
+break+re-confirm is a real secondary channel (≈ half of breaks re-confirm a new
+id on churny cases).
+
+**Q2 — PMBM's +0.77 over-count is clutter birth noise, NOT the swap mirror.**
+Cardinality decomposed into extra(over)/missed(under): the ≈ +0.77 over-count is
+**present unchanged on a single isolated target with no crossing** (imazu_01:
+mean tracks 1.766, extra 0.786, misses ≈ 0; 39 distinct Bernoulli ids for 1
+truth, 0 id-switches) — crossing-independent over-birth (λ_C 2e-8, ≈ 4
+clutter/scan).
+
+**Q2b — PMBM's real close-pass failure mode is losing the track (elevated per
+arbiter).** `tools/imazu_trackloss.py` finds per-truth loss windows (= breaks),
+their duration, before→after id, and CPA-window overlap (own-ship + truth-truth,
+own-ship from fixture `ownship.csv`). The six densest cases (14/15/17/19/20/22 —
+exactly those whose headline lifetime drops to 0.67–0.81) drop the ambiguous
+target for **tens of seconds**, at/around the CPA: substantial (≥10 s) losses of
+62–158 s, 398–709 s total unassigned time per case, **6–27 losses re-acquiring
+under a NEW id**, a handful permanent (never re-acquired), and the longest losses
+overlap the **own-ship** CPA (imazu_15 158 s, imazu_22 96 s — the collision-
+relevant moment). Controls confirm it is proximity-driven, not baseline:
+single-target and the 85 m pass (imazu_08) show only 1–4 s flicker, 0 substantial
+losses, 0 CPA overlap. Caveat: closeness is necessary but not sufficient
+(imazu_12's 0.6 m fleeting pass keeps identity, lifetime 0.96) — the driver is
+*sustained* co-course proximity, matching Q1. So MHT and PMBM express the same
+ambiguity oppositely and both hurt at the CPA: MHT holds the track and churns
+identity; PMBM holds its primary id but drops the target (often re-acquiring a
+new id).
+
+**Q3 — #11 knobs on Imazu (measurement only, no promotion):**
+`share_ambiguous_bearings` = structural no-op (no bearings on Imazu);
+per-sensor `gate_threshold` = not `--config-eq`-reachable, enabling it is a
+forbidden config edit (prior 2026-06-12 global-gate sweep already characterises
+the trade: switches↓/OSPA↓ vs rmse/lifetime↑); recapture
+(`imm_cv_ct_mht_recapture`, τ=2) **measured net-negative** — means over
+imazu_05–22: id_switches 27.84 → 29.44 (+1.60), breaks 16.82 → 17.73, lifetime
+0.933 → 0.928 (−0.005), gospa 27.31 → 27.37. The AutoFerry lifetime catastrophe
+is **absent** here because the age-scaling barely engages on position-only
+radar+AIS (last-position-anchor age ≈ 0) — a knob behaving differently on
+crossing geometry, which is itself the finding.
+
+**Recommendation — frame the trade, not a winner** (not "do nothing, PMBM is
+fine": Q2b makes that dishonest). MHT and PMBM fail the same close geometry in
+different currencies: **MHT = identity churn, presence preserved** (target stays
+in the picture near CPA, label unreliable); **PMBM = track loss, survivor id
+preserved** (target can vanish for tens of seconds *at* the CPA, often back under
+a new id, plus a steady +0.77 clutter over-count). The choice is operational: if
+the consumer needs continuous presence through the encounter (collision
+avoidance), PMBM's close-pass dropout is the disqualifier and MHT's churn the
+lesser evil; if it needs stable identity for held tracks and tolerates a brief
+dropout, PMBM wins. Arbiter/user own the call. Engineering actions: (1) close #11
+"MHT identity churn" as *diagnosed*; (2) elevate PMBM close-pass track-loss as
+the decision-relevant finding (arbiter's call: new backlog item vs attach to a
+PMBM-birth/continuity line — not MHT association); (3) +0.77 over-count is the
+parked clutter/birth channel; (4) no #11 knob promotable (leave OFF); (5) if MHT
+identity is ever chosen, the lever is duplicate-birth suppression near a
+confirmed track, not gate widening — new ticket. Full suite green in the
+`backlog11-imazu-churn` worktree: **100% tests passed, 0 failed out of 1090**
+(33 fixture-gated non-imazu tests skipped — only imazu/sim_ms fixtures reached
+via `SIMMS_DIR`→main tree; the imazu battery tests ran, incl.
+`Imazu22ScenarioRun.IdSwitchesCoarseBand`).
+
+Commands (states export is byte-deterministic; re-run checksum verified):
+```
+SIMMS_DIR=$PWD/tests/fixtures/sim_multisensor ./build/bench/navtracker_bench_baseline \
+  --with-imazu --skip-replays --scenario-filter imazu --seeds 1 \
+  --config-eq <imm_cv_ct_mht | imm_cv_ct_pmbm_coverage_land | imm_cv_ct_mht_recapture> \
+  --run-id <id> --out <dir> --export-states-dir <dir>/states_<cfg>
+tools/imazu_switch_forensics.py  --states <states.csv> --meta <meta.txt> --bench-csv <b11_*.csv> --config <cfg> --scenario <case>
+tools/imazu_cardinality_timing.py --states <states.csv>
+tools/imazu_trackloss.py          --states <pmbm states.csv> --ownship <fixture>/ownship.csv --window 30
+```
+Fixtures unchanged (sha256 = the 2026-07-08 set below). Reproducer sha256
+prefixes: forensics 9504189b, cardinality a417f13a, trackloss 39f0d090; states
+CSVs imazu_14/17/20 MHT a550c34c/250e571b/0971e88e, PMBM 39a5c33b/4fbb96b2/
+64a1cd28, recapture b08a6048/a707b67d/ca470584.
+
 ## 2026-07-08 — Imazu 22 encounter battery: identity stability through close crossings [Cl-3]
 
 The 22 canonical Imazu-problem encounters (head-on / crossing / overtaking
