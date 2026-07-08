@@ -84,6 +84,50 @@ Fixture checksums (sha256 prefix; own / ais / radar / cam / truth;
 `imazu_21` 2694811f / d05ce174 / c4d55b83 / b12a6528 / 09cc49a5;
 `imazu_22` 2694811f / 203384b7 / 25384838 / b12a6528 / cae32a8d.
 (Regenerate: `tests/fixtures/sim_multisensor/README.md`, `--family imazu`.)
+## 2026-07-08 — Camera chain vs operator: pinned YOLO graded against the R8.8 car_carrier labels [Cl-3 reality-check; NOT a tuning target]
+
+Named follow-up to the 2026-07-06 R8.8 occlusion labelling pass (the camera→
+bearing pipeline was deliberately withheld from labelling; now the machine is run
+over the same clip and graded against the human labels). One-way: labels grade the
+machine, no label edited, no chain parameter tuned. Full write-up +
+per-label table + all checksums:
+`docs/baselines/2026-07-08_camera_chain_vs_operator.md`. Ticket
+`docs/superpowers/plans/2026-07-08-camera-chain-comparison-ticket.md`.
+
+**Calibration gate — PASS.** car_carrier is the 2020 rig; used the bag's OWN cal
+files (same camera serials as the committed 2022 cal — same cameras recalibrated
+2020-08-21; fx drift −1.5…−2.8% ⇒ ≤0.6° bearing impact). No AIS on 2020 ⇒ boresight
+transferred from the 2022 `yaw_offset` (2.29217° center, −42.971° left) and
+validated against RADAR (independent; `azimuth_deg` is hull-relative, so directly
+comparable to camera `bearing_rel`). Signed camera−radar residual median **+0.31°
+(center, n=948) / +0.08° (left, n=555)** with NO offset fitted → transferred
+boresight has no measurable systematic bias on the 2020 rig. Radar ≠ camera ≠
+labels, so non-circular.
+
+**Detector run.** Pinned `yolov8n.pt`
+(sha256 `f59b3d83…c83b36`), ultralytics 8.4.87 / torch 2.12.1+cpu / cv2 5.0.0 /
+py3.12, `conf=0.25 imgsz=1280 class=8`, center+left, 2×1451 frames → **3086 + 1591
+detections** (`_camera_detections.csv` sha256 `9a24b313…5222908`). Clip registered
+at runtime (CLIP_MAP injection) so the pinned script stays byte-identical.
+
+**Findings (for the arbiter).** (1) **`carrier_gl_a/b` label COORDINATES are
+inconsistent** — tagged `nearestbig{60,95}` yet their lat/lon back-projects to
++8…+16° starboard while the actual radar nearest-big <300 m is at −137° port
+(~400 m off); the label *text* (port/left-cam) is right, the *coords* are not.
+NOT edited — flagged upstream. (2) **Bearing-only + point labels can't attribute
+co-bearing detections**: the port sector is crowded, so `unknown_w860`/`yacht_moored_2`
+"partial" (cov 0.32–0.36) is entirely the CARRIER crossing their bearing (ambig=1.00);
+independent 860 m yacht detection ≈4% = a recall/range limit (bearing tight, 2.55°
+median, when it does fire). (3) **Carrier handled well**: single clean box in the
+LEFT camera on the port bow/beam (bearing −22°→−62°), fragmentation in only 4/32
+big-box frames, max ~12% frame area — it does NOT fill the frame (crossing at
+143–269 m); extreme-scale fragmentation NOT observed. (4) **Shadow interval t50–85
+confirmed**: at the yacht bearing the left cam shows the large carrier box (t50–60)
+then nothing (t65–85) — the yacht is never independently detected; silence =
+"not observed", never "observed empty". (5) `yacht_exit_port` + `sail_close_end`
+are clean unambiguous hits; `portq_object` (SUPPRESS_STRUCTURE) is correctly never
+in any camera FOV. Annotated frames rendered LOCAL only (license boundary;
+11 frames, checksums in the baseline doc).
 
 ## 2026-07-07 — LOS/shadow guard SHIPPED (verdict-b fix): coverage-aware decay no longer erodes a shadowed moored vessel; two gate-correctness rulings [Cl-3 / ADR 0002]
 
