@@ -83,6 +83,10 @@ when the water date firms.
     the one open headline-claim gap. ~1 week.
 13. **D10 GFW anchorages (+ what's left of D3)** — anchored-vessel stats
     + KEEP-side corroboration prior. ~1–2 days, registration first.
+    **DONE 2026-07-08 as NO-GO** (CC BY-NC 4.0 data+API; desk check only,
+    nothing downloaded — `docs/baselines/2026-07-08_d10_gfw_anchorages.md`).
+    D3 not shortened (stays MarineCadastre, sharpened to watch-circle+dwell);
+    KEEP prior redirected to ENC `ACHARE` charted polygons.
 
 ## Stays parked (unchanged reasons)
 
