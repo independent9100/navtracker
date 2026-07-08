@@ -24,14 +24,18 @@ whoever commits next land on the wrong branch (it happened twice on
 2026-07-06). Hand your branch to the arbiter for merge; don't merge or push
 master yourself.
 
-**Fixture trap in worktrees:** `tests/fixtures/` is gitignored — the data
-exists only in the MAIN tree. In a worktree, fixture-gated tests silently
-SKIP, so "full suite green" there does NOT cover them (this shipped a red
-master once, 2026-07-07: a calibration was never exercised against its own
-gate). Before handing off work that touches fixture-gated behavior, run the
-affected tests with the fixture env pointed at the main tree (or symlink
-`tests/fixtures` into the worktree) and say IN THE HANDOFF which
-fixture-gated tests actually RAN vs skipped.
+**Fixture trap in worktrees:** `tests/fixtures/` and `data/` are gitignored —
+the data exists only in the MAIN tree. In a worktree, fixture-gated tests
+silently SKIP, so "full suite green" there does NOT cover them. Symlink the
+fixture dirs into the worktree (or point the fixture env at the main tree)
+and say IN THE HANDOFF which fixture-gated tests actually RAN vs skipped.
+
+**Never build or verify in the shared main checkout while other sessions are
+active.** A temporary source edit + incremental rebuild in the shared tree
+races anyone else's test run there (2026-07-07: exactly this produced a false
+red that reverted a good merge). Verification builds — including the
+arbiter's merge verification — happen in isolated worktrees with fixtures
+symlinked.
 
 ## Tech stack
 
