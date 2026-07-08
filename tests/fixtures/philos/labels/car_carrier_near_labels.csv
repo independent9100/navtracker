@@ -26,13 +26,17 @@
 # t_start_s / t_end_s are RELATIVE to the clip's first ownship timestamp
 # (1603390014.90). Blank window = whole clip. `notes` is the last column and
 # may contain commas.
+# CORRECTION 2026-07-08: carrier_gl_a/b coordinates and the former portq_object
+# row were fixed after the camera-chain comparison (finding 1,
+# docs/baselines/2026-07-08_camera_chain_vs_operator.md): the analyst had
+# projected small wrong radar blobs, not the hull. Operator content unchanged.
 region_id,source_rank,lat,lon,radius_m,t_start_s,t_end_s,label,evidence,confidence,notes
-carrier_gl_a,nearestbig60,42.359843,-71.038665,120,40,80,KEEP_VESSEL,video (name GENTLE LEADER readable) + radar nearest-big,high,NYK car carrier crossing port side; enters left cam ~20 s; spans camera FOV boundary ~60 s
-carrier_gl_b,nearestbig95,42.359568,-71.039011,120,80,110,KEEP_VESSEL,video+radar closest large return ~143-187 m,high,same vessel late leg; starts exiting left cam ~77 s; gone from cams by ~105 s
+carrier_gl_a,nearestbig60,42.356100,-71.035500,120,40,80,KEEP_VESSEL,video (name GENTLE LEADER readable) + radar nearest-big + camera-chain back-projection,high,NYK car carrier crossing port side; enters left cam ~20 s; COORDS CORRECTED 2026-07-08 (analyst picked wrong radar blob; camera-chain finding 1; rel=-137 deg 249 m validated)
+carrier_gl_b,nearestbig95,42.358200,-71.040600,120,80,110,KEEP_VESSEL,video + radar biggest <300 m return (n_cells 662) via validated rel=az convention,high,same vessel late leg; starts exiting left cam ~77 s; COORDS CORRECTED 2026-07-08 (same wrong-blob error; rel=-46 deg 267 m)
 unknown_w860,r4unknown,42.358300,-71.046400,50,,,KEEP_VESSEL,video (two moored white motor yachts) + radar 16-return/25 m cluster + shadow timeline,high,THE R4 UNKNOWN RESOLVED: moored motor yacht(s); radar-shadowed 50-85 s by GENTLE LEADER (present but occluded — the LOS test row); also camera-hidden until ~20/36 s at clip start
 yacht_moored_2,operator,42.358500,-71.045600,60,,,KEEP_VESSEL,video (second moored white yacht close to first; visible from ~36 s center cam),med,operator: both yachts close together; moored; position approximate (offset from unknown_w860)
 yacht_exit_port,operator,42.357200,-71.034800,80,0,12,KEEP_VESSEL,video (left cam: motor yacht slowly exits left 0:00-0:12),high,moving; heads toward port-aft sector; possibly related to portq_object but range mismatch unresolved
-portq_object,nearestbig30,42.355955,-71.035765,80,0,60,SUPPRESS_STRUCTURE,radar-only (big returns 210-250 m port quarter t 0-60; nothing visible in any camera per operator),low-med,class UNKNOWN — out of camera FOV; structure label provisional; NOT corroborated by video; revisit if this region matters
+carrier_gl_approach,nearestbig30,42.355955,-71.035765,120,0,40,KEEP_VESSEL,radar continuity (big returns rel -80..-137 deg 210-250 m track continuously into the validated t=60 carrier position) + FOV reasoning (carrier aft of left-cam coverage until ~20 s),med-high,RESOLVED 2026-07-08: the first-minute port-quarter object WAS GENTLE LEADER approaching (extended hull; bow entered left cam ~20 s while radar centroid sat aft) — former portq_object SUPPRESS_STRUCTURE row retired (camera-chain finding 1 follow-through)
 sail_pair,operator,42.358600,-71.037500,150,6,121,KEEP_VESSEL,video (operator: 2 sailboats right of center cam from 0:06; circle each other to ~60 s then follow carrier; one crosses the other),high,TWO vessels in one region (angularly unresolvable at times — id-churn stress case); position approximate mid-river
 sail_third,operator,42.359200,-71.039500,120,40,110,KEEP_VESSEL,video faint + radar (operator: 3 small blobs in a line at ~71 s),med,third boat behind the pair; farther away; hard to see visually
 sail_close_end,operator,42.359500,-71.038900,80,107,121,KEEP_VESSEL,video (left cam: sailboat enters 1:47 to mid-screen) + radar small 88 m port-bow return,med-high,likely the 88 m/23-cell close return t 110-121 (NOT the carrier — carrier is bigger and further by then); passes in front of moored yachts ~107 s
