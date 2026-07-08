@@ -40,6 +40,14 @@ when the water date firms.
    automotive mmWave FMCW (60-81 GHz), NOT marine X-band — corroborates the
    berthing scene on a new sensor class, not a 3rd marine geography. Next
    step when picked up: extract 1-2 station-hours + label-scored replay.
+   **EXTRACTION DONE 2026-07-08 (branch `d8-rbad-extraction`, unmerged):** the
+   four flags resolved empirically (no ego pose → fixed body frame; labels are
+   the authors' reference tracker → cross-tracker CONSISTENCY only, not
+   accuracy). 6 arrival approaches (Kalimnos+Kos), `RbadScenarioRun` +
+   `--with-rbad`, MHT+PMBM run — holds berthing targets without fragmenting;
+   mild per-tick over-count but FEWER IDs than the reference. 31.6 GB raw NOT
+   downloaded (video-only value; deferred behind an independent-kinematic-truth
+   trigger). Full eval-log entry: `docs/algorithms/evaluation-log.md` 2026-07-08.
 9. **R8.8 car_carrier_near re-extraction + occlusion video pass** — CODE
    HALF DONE 2026-07-06 (3855efd): extractor fallbacks (densest NavSatFix +
    quaternion-yaw heading, convention verified to 0.2-2.2 deg) + fail-loud

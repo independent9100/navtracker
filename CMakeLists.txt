@@ -155,6 +155,7 @@ add_library(navtracker_benchmark_adapters
   adapters/benchmark/SimScenarioRun.cpp
   adapters/benchmark/ReplayScenarioRun.cpp
   adapters/benchmark/SimMultisensorScenarioRun.cpp
+  adapters/benchmark/RbadScenarioRun.cpp
 )
 target_include_directories(navtracker_benchmark_adapters PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_benchmark_adapters
@@ -343,6 +344,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_sim_scenario_run.cpp
   tests/benchmark/test_replay_scenario_run.cpp
   tests/benchmark/test_sim_multisensor_scenario_run.cpp
+  tests/benchmark/test_rbad_scenario_run.cpp
   tests/benchmark/test_sweep.cpp
   tests/benchmark/test_csv_writer.cpp
   tests/benchmark/test_csv_reader.cpp

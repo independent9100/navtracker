@@ -1,0 +1,9 @@
+# R-BAD fixture extractor dependencies.
+#
+# NONE. extract_rbad.py uses only the Python standard library
+# (argparse, ast, csv, hashlib, math, os, statistics, io). There is nothing to
+# pin. Developed and run under CPython 3.10+ (uses list[dict] / dict-ordered
+# semantics and statistics.fmean, all >=3.8/3.10 stdlib).
+#
+# Kept as an explicit file to match the sim_multisensor generator convention and
+# to make the "no third-party deps" decision visible rather than implicit.

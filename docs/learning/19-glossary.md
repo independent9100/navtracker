@@ -81,6 +81,8 @@
 | OOSM     | Out-Of-Sequence Measurement                                     | 10            |
 | OSPA     | Optimal SubPattern Assignment (bounded multi-target metric)     | 20            |
 | GOSPA    | Generalised OSPA — decomposable, unbounded multi-target metric  | 20            |
+| FMCW     | Frequency-Modulated Continuous-Wave radar                       | 20            |
+| mmWave   | Millimetre-wave radar band (~24/60/77 GHz FMCW, e.g. automotive); ≠ marine X-band | 20 |
 | PD       | Probability of Detection                                        | 13            |
 | PDA      | Probabilistic Data Association (single-target JPDA)             | 12            |
 | PDAF     | PDA Filter (PDA + KF update)                                    | 12            |
@@ -122,6 +124,14 @@
 - **"coasting"** — track lifecycle state where predict still
   runs but no recent update has arrived.
 - **"datum"** — the origin point of the ENU local tangent plane.
+- **"reference tracker"** — another tracker's output used as a
+  comparison baseline (e.g. a dataset whose "labels" are the authors'
+  own tracking pipeline). It is *not* ground truth.
+- **"cross-tracker consistency"** — scoring our tracker against a
+  reference tracker rather than truth. Only the association/lifecycle
+  dimension (lifetime, id-switches, breaks, cardinality) carries signal;
+  localisation is meaningless when both share the detection stage.
+  Reported `vs_reference_tracker`, never as accuracy. See ch. 20 §9.
 - **"hexagonal architecture"** — ports-and-adapters pattern;
   the core has no I/O knowledge.
 - **"clutter prior"** — a spatial prior `c ∈ [0,1]` that estimates
