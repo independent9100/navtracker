@@ -796,6 +796,26 @@ void PmbmTracker::enumerateChildren(
       Bernoulli upd = b;
       fromTrack(upd, t_upd);
       upd.existence_probability = 1.0;  // existence given detection
+      // #25 Phase 2b: the TRUE raw position innovation of measurement l against
+      // the predicted position (b.mean is post-predict/pre-update). Position-
+      // model measurements carry an ENU position directly; bearing-only carry
+      // none → sentinel. Computed when a diagnostic sink is attached OR the
+      // velocity-runaway guard is armed (it keys on this innovation); otherwise
+      // skipped → byte-identical. It is never fed back into the update math here
+      // (the guard treatment below is applied to the finalised detected
+      // Bernoulli, post-assignment/PDA).
+      if (diag_sink_ != nullptr || cfg_.innov_gate_max_m > 0.0) {
+        const MeasurementModel mdl = scan[l].model;
+        if ((mdl == MeasurementModel::Position2D ||
+             mdl == MeasurementModel::PositionVelocity2D) &&
+            scan[l].value.size() >= 2 && b.mean.size() >= 2) {
+          upd.last_innovation_enu = scan[l].value.head<2>() - b.mean.head<2>();
+          upd.last_innovation_norm_m = upd.last_innovation_enu.norm();
+        } else {
+          upd.last_innovation_enu.setZero();
+          upd.last_innovation_norm_m = -1.0;
+        }
+      }
       updated[i][l] = std::move(upd);
       const double r = b.existence_probability;
       const double cost_val = -(std::log(r) + ll);
@@ -943,6 +963,17 @@ void PmbmTracker::enumerateChildren(
         }
         det.last_update = scan[l].time;
         det.last_claimed_meas_index = l;  // R2: true assignment for the feed
+        // #25 Phase 2b velocity-runaway guard (default OFF, innov_gate_max_m<=0).
+        // The association is already decided (this cell won the assignment) —
+        // we ACCEPT the measurement's position but, when its position innovation
+        // is grossly oversized, treat the corrupted velocity/turn-rate so the
+        // track cannot fly off. Kinematic only: r/mass/id/existence untouched.
+        // det.last_innovation_norm_m was computed above (>=0 only for a
+        // position-model detection; sentinel -1 never exceeds a positive gate).
+        if (cfg_.innov_gate_max_m > 0.0 &&
+            det.last_innovation_norm_m > cfg_.innov_gate_max_m) {
+          applyInnovationGate(det);
+        }
         // R11 identity surfacing: last-write-wins from the claimed measurement's
         // hints. `det` was copied from the parent Bernoulli (line above), so an
         // identity-free claim (e.g. a radar plot) preserves a previously-seen
@@ -994,6 +1025,11 @@ void PmbmTracker::enumerateChildren(
         // eventually fall below r_min.
         Bernoulli miss = b;
         miss.last_claimed_meas_index = -1;  // R2: claimed nothing this scan
+        // #25 P2b: no measurement applied → clear the parent's stale innovation.
+        if (diag_sink_ != nullptr) {
+          miss.last_innovation_enu.setZero();
+          miss.last_innovation_norm_m = -1.0;
+        }
         // Misdetection: no update at this scan → predicted == filtered.
         if (!should_misdetect(b.id)) {
           miss.existence_probability *= idle_decay_for(b);
@@ -1138,6 +1174,11 @@ void PmbmTracker::enumerateChildren(
       nb.imm_mode_probabilities = nt.imm_mode_probabilities;
       nb.last_update = scan[l].time;
       nb.last_claimed_meas_index = l;  // R2: this measurement birthed it
+      // #25 P2b: a birth has no predicted position to innovate against → sentinel.
+      if (diag_sink_ != nullptr) {
+        nb.last_innovation_enu.setZero();
+        nb.last_innovation_norm_m = -1.0;
+      }
       nb.birth_time = scan[l].time;
       // R11 identity surfacing: seed identity from the birthing measurement's
       // hints (nullopt if it carries none — refined by later claims). #20 adds
@@ -1950,7 +1991,14 @@ void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h) const {
       const bool take_b_claim =
           b.last_claimed_meas_index >= 0 &&
           (a.last_claimed_meas_index < 0 || r_b > r_a);
-      if (take_b_claim) a.last_claimed_meas_index = b.last_claimed_meas_index;
+      if (take_b_claim) {
+        a.last_claimed_meas_index = b.last_claimed_meas_index;
+        // #25 P2b: keep the innovation attached to the claim it belongs to.
+        if (diag_sink_ != nullptr) {
+          a.last_innovation_enu = b.last_innovation_enu;
+          a.last_innovation_norm_m = b.last_innovation_norm_m;
+        }
+      }
       // R11: the two folding Bernoullis are the same logical target, so the
       // survivor keeps any identity it already has and inherits the duplicate's
       // when it had none (never drop a real id in favour of a nullopt).
@@ -2275,6 +2323,47 @@ void PmbmTracker::refreshAggregatedTracks() const {
   }
 }
 
+void PmbmTracker::applyInnovationGate(Bernoulli& b) const {
+  // Kinematic-only treatment of the velocity (indices 2,3) and, when the state
+  // carries it, the turn-rate (index 4). ACCEPT the position (indices 0,1 are
+  // left as the measurement pulled them); TREAT the untrustworthy velocity so
+  // the runaway cannot propagate. Applied to the moment-matched mean/covariance
+  // AND to every IMM mode — the IMM predict reads imm_means/imm_covariances, so
+  // fixing only the moment-matched projection would be re-corrupted next scan.
+  const double floor = cfg_.innov_gate_velocity_var_floor;
+  const bool reset =
+      cfg_.innov_gate_action == Config::InnovationGateAction::kVelocityReset;
+  const int kIdx[3] = {2, 3, 4};
+
+  auto treat_mean = [&](Eigen::VectorXd& mean) {
+    if (!reset) return;  // deweight keeps the mean; only reset zeroes it
+    for (int idx : kIdx)
+      if (idx < mean.size()) mean(idx) = 0.0;
+  };
+  auto treat_cov = [&](Eigen::MatrixXd& cov) {
+    for (int idx : kIdx) {
+      if (idx >= cov.rows() || idx >= cov.cols()) continue;
+      // Raise (never shrink) the marginal variance to the prior floor and clear
+      // this component's cross-covariances, so the widened velocity/turn-rate
+      // uncertainty is not immediately re-tightened through position on the
+      // next update — the filter re-learns velocity from subsequent positions.
+      if (cov(idx, idx) < floor) {
+        for (int j = 0; j < cov.rows(); ++j) { cov(idx, j) = 0.0; cov(j, idx) = 0.0; }
+        cov(idx, idx) = floor;
+      }
+    }
+  };
+
+  treat_mean(b.mean);
+  treat_cov(b.covariance);
+  for (int k = 0; k < b.imm_means.cols(); ++k) {
+    if (reset)
+      for (int idx : kIdx)
+        if (idx < b.imm_means.rows()) b.imm_means(idx, k) = 0.0;
+  }
+  for (auto& c : b.imm_covariances) treat_cov(c);
+}
+
 void PmbmTracker::emitPmbmDiagnostics(Timestamp t) {
   // Diagnostic-only (backlog #25). Never mutates tracking state. Mirrors the
   // refreshAggregatedTracks per-id aggregation (Σ_j w^j·r^{j,id}) but keeps
@@ -2347,6 +2436,17 @@ void PmbmTracker::emitPmbmDiagnostics(Timestamp t) {
                                      b->mean(3) * b->mean(3))
                          : -1.0;
       bd.in_dominant = true;
+      // #25 Phase 2b: true applied-measurement position innovation + IMM weights
+      // of the dominant-hyp Bernoulli (sentinel norm −1 when it misdetected /
+      // was born this scan; imm empty when single-Gaussian).
+      bd.innov_east_m = b->last_innovation_enu.x();
+      bd.innov_north_m = b->last_innovation_enu.y();
+      bd.innov_norm_m = b->last_innovation_norm_m;
+      if (b->imm_mode_probabilities.size() > 0)
+        bd.imm_mode_weights.assign(
+            b->imm_mode_probabilities.data(),
+            b->imm_mode_probabilities.data() +
+                b->imm_mode_probabilities.size());
     } else {
       bd.existence_r_best = 0.0;
       bd.claimed_meas_index = -2;  // absent from the dominant hypothesis

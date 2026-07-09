@@ -1157,3 +1157,37 @@ path — clamp kinematics, never delete the Bernoulli.** Phase-2b pre-conditions
 proxy) and re-probe to pick estimator-clamp vs association-gate; (2) pair with a
 coalescence guard (dying ids migrate across near truths at the CPA — margins are
 coalescence-confounded). Phase-2b design remains the arbiter's call.
+
+**RE-PROBED 2026-07-09 (Phase 2b Stage 1, CHECKPOINT — `docs/baselines/2026-07-09_b25_phase2b.md`,
+`tools/pmbm_phase2b_innov_probe.py`).** Extended the diag with the TRUE
+measurement position innovation + IMM mode weights (additive, default-off,
+byte-identical — proven vs the pre-2b binary). The true innovation **reproduces
+the proxy verdict**: 5/6 dying flagged before permanent gate-exit; false-fire
+D200 0.70%/0.22%, D400 0.06%/0.02% (autoferry_unanch+sim_ms), 0% on real
+autoferry → **position-innovation gate PASSES at D_max 200–400 m**. Placement
+(new): the runaway is a moderate-innovation (50–108 m) CT-mode velocity build-up
+(speed 2→110+ m/s) FOLLOWED by one oversized accepted innovation (484 m) — so the
+clean binding TRIGGER is at update-acceptance, but the velocity is already
+elevated when it fires → the flag ACTION should reset/deweight velocity, not bare-
+reject. IMM finding: CT-mode dominance + 0↔1 thrash is the divergence signature
+(closes the 2a (c) gap). Recommended Stage-2 build: `innov_gate_max_m` ∈ 200–400 m
+(per-instance, default OFF), accept-position-reset-velocity, kinematic path only.
+No behavior code written — awaiting arbiter go for Stage 2.
+
+**BUILT 2026-07-09 (Phase 2b Stage 2 — `docs/baselines/2026-07-09_b25_phase2b_stage2.md`,
+`docs/algorithms/velocity-runaway-innovation-gate.md`).** Shipped the update-
+acceptance position-innovation guard in `PmbmTracker` (`innov_gate_max_m` /
+`innov_gate_action` / `innov_gate_velocity_var_floor`; per-instance, ctor-threaded,
+default OFF; kinematic-only). A/B (reset vs deweight × D200/D400) on the 6 dying
+cases picked **deweight @ D_max 400 m**: loss-seconds-overlapping-CPA **163 → 6 s**
+(the Q2b 158 s/96 s CPA blackouts eliminated), total dying loss 1366 → 544 s,
+re-acquire ids 45 → 10, id-switches 34 → 15 (NO swap regression — rider-2 watch-
+item cleared). Reset stalls the track (velocity→0) and loses it through the CPA;
+deweight keeps it moving and re-locks. No-regression: philos KEEP + AutoFerry
+BYTE-IDENTICAL (guard never fires on real data — 0 % false-fire); sim_ms net-
+beneficial. Phantom presence neutral (rider 3 — not a phantom killer; band decided
+by CPA-overlap). Shipped as `imm_cv_ct_pmbm_coverage_land_ivgate` (library default
+OFF). Escalation lever (CT-mode-keyed estimator clamp) + coalescence guard remain
+parked (separate tickets) — not needed on any workload measured. **#25 CLOSED as
+the target-loss fix; the deployment trade (MHT churn/presence vs PMBM identity)
+is now mitigated on the PMBM side.**

@@ -121,6 +121,13 @@
 
 - **"in-gate"** — a (track, measurement) pair whose Mahalanobis
   distance is below the gate.
+- **"velocity-runaway guard" / "innovation-acceptance gate"** — a
+  kinematic guard (backlog #25) that, when an accepted measurement's
+  position innovation is grossly oversized (a close-pass mis-
+  association), accepts the position but distrusts the velocity so the
+  estimate cannot fly off the target. "Accept *where*, not *how-fast*."
+  Distinct from the Mahalanobis *association* gate: this one acts at
+  update-acceptance, not on which pairing is chosen. See chapter 11.
 - **"coasting"** — track lifecycle state where predict still
   runs but no recent update has arrived.
 - **"datum"** — the origin point of the ENU local tangent plane.

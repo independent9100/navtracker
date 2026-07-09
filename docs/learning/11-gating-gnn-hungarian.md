@@ -87,6 +87,63 @@ of the same dimension.
 `core/association/Gating.{hpp,cpp}` — `mahalanobisDistance`.
 `docs/algorithms/association.md` §1.
 
+### A second gate: the velocity-runaway guard (backlog #25)
+
+The Mahalanobis gate above decides *which* measurement a track may pair with.
+There is a second, different gate that decides *whether to trust* a pairing the
+tracker has already chosen — an **update-acceptance** gate. It exists because of
+a specific failure: at a sustained close pass, our PMBM tracker sometimes let a
+track's **speed estimate run away** (hundreds of m/s for a vessel doing ~4 m/s),
+the estimate flew off the target, and the real vessel vanished from the picture
+right at the closest point of approach — the worst moment to lose it.
+
+**The plain-English idea.** When the tracker updates a track with a measurement,
+it compares where it *predicted* the target to be with where the measurement
+*says* it is. That gap is the **position innovation** ("innovation" = "surprise":
+how surprised the filter is by the measurement). A small surprise is normal. A
+**huge** surprise — the measurement is hundreds of metres from the prediction —
+almost always means the tracker grabbed the **wrong return** (a different vessel,
+or clutter). If it swallows that wrong return whole, it concludes the target
+suddenly moved hundreds of metres in one step, i.e. it is going very fast, and it
+flies off chasing that phantom speed.
+
+The guard: if the position innovation exceeds a threshold `D_max` (we use
+**400 m**), **accept where the measurement is** (the estimate stays somewhere
+real) but **stop trusting how fast** the track thinks it is going — widen the
+velocity uncertainty so the next few honest measurements pull the speed back
+down. It is "accept *where*, not *how-fast*."
+
+![The update-acceptance innovation gate: a huge position innovation is the wrong measurement — accept its position but deweight the velocity; the runaway starts as a moderate-innovation build-up then one oversized innovation trips the gate](figures/11-innovation-gate.png)
+
+The left panel shows the geometry: a small-innovation return (green) is trusted
+normally; a gross-innovation return (red, outside `D_max`) is the wrong return —
+ungated, the velocity dumps and the track flies off; gated, we keep its position
+but blur the velocity (the wide blue blob) so it re-learns. The right panel is the
+real onset from a dying track: the speed is first pumped up by a *run of moderate
+innovations* while the turning (CT) motion mode dominates, then **one oversized
+innovation** trips the gate.
+
+**Why "accept the position" and not "reject the measurement"?** We measured both.
+Zeroing the velocity outright (a "reset") makes the track *stall* while the real
+target keeps moving, so it stays lost through the close pass. Keeping the position
+but widening the velocity uncertainty (a "deweight") lets the track keep moving in
+roughly the right direction and re-lock onto the target — it cut the time the
+target was missing during the CPA from 163 s to 6 s across the six worst cases.
+
+**Why it is safe.** The guard only touches the *kinematics* (position/velocity).
+It never deletes the track or lowers its existence probability — presence is the
+requirement (see ADR 0002; a real object must stay in the picture). And it never
+fires on the real-data workloads (AutoFerry, the harbour replays): their honest
+returns never land 400 m from the prediction, so those runs are bit-for-bit
+unchanged. It only bites on the pathological close-pass mis-associations it was
+built for.
+
+### Code pointer
+
+`PmbmTracker::applyInnovationGate` + `Config::innov_gate_max_m` /
+`innov_gate_action` (`core/pmbm/PmbmTracker.{hpp,cpp}`), default OFF.
+`docs/algorithms/velocity-runaway-innovation-gate.md` (the four-section reference).
+
 ## 2. Greedy GNN — the baseline associator
 
 Once gating has thrown away the obviously-wrong pairs, we have a

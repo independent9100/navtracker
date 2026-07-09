@@ -8,6 +8,99 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-09 — Backlog #25 Phase 2b Stage 2: BUILT the velocity-runaway guard (deweight @ 400 m) [Cl-3]
+
+On arbiter GO. Built the update-acceptance position-innovation guard in
+`PmbmTracker` (per-instance, ctor-threaded, default OFF; kinematic-only —
+existence/mass/birth/id untouched). Full write-up:
+`docs/baselines/2026-07-09_b25_phase2b_stage2.md`; reference
+`docs/algorithms/velocity-runaway-innovation-gate.md`; learning
+`docs/learning/11-gating-gnn-hungarian.md` §"A second gate" (+ figure
+`11-innovation-gate.png`).
+
+**Rider 1 (pick the treatment by measurement).** A/B reset vs deweight × D200/D400
+on the 6 dying cases, gate = loss-seconds-overlapping-CPA + re-acquire-id count:
+
+| variant | CPA-overlap loss (s) | dying loss (s) | reacq ids | idsw all/dense |
+|---|---|---|---|---|
+| OFF | 163 | 1366 | 45 | 34/30 |
+| reset 200 | 51 | 630 | 9 | 13/12 |
+| reset 400 | 299 | 550 | 14 | 17/13 |
+| deweight 200 | 179 | 939 | 17 | 9/8 |
+| **deweight 400** | **6** | **544** | 10 | 15/11 |
+
+**Winner: deweight @ 400 m** — CPA-overlap loss 163 → **6 s** (Q2b blackouts
+eliminated; per-case ≤3 s). Reset *stalls* the track (velocity→0 while the target
+moves) so it stays lost; deweight keeps it moving with a wide velocity prior and
+re-locks. Shipped as `imm_cv_ct_pmbm_coverage_land_ivgate` (library default OFF).
+
+**Rider 2 (id-switch watch-item).** id-switches ON vs OFF: every variant REDUCES
+them (34/30 → 15/11 for the winner) — **no swap regression**; the neighbour-snap
+risk is real in principle (parked coalescence guard) but doesn't materialise.
+
+**Rider 3 (band + phantom bonus).** D400 is the clean band (D200 marginal). The
+82.5 % clutter-born phantom majority is **presence-neutral** (−125 confirm,
+survivors longer, total track-seconds ≈ 0) — not a phantom killer; the band is
+decided by CPA-overlap, not the bonus.
+
+**No-regression.** deweight@400 ON vs OFF: **philos KEEP byte-identical (0/8),
+AutoFerry byte-identical (0/72)** — the guard never fires on real data (0 % false-
+fire, honest innovations < 400 m); sim_ms net-beneficial (headon/overtaking/
+ais_dropout improve; crossing ospa +8 within synthetic noise). Kinematic-only ⇒
+miss-P_D brake + λ_C/birth invariant untouched by construction. Guard OFF is
+byte-identical to the pre-guard binary; the coverage_land knob extraction into
+`makeCoverageLandPmbmConfig()` is a proven no-op.
+
+Suite 1089 ran / 1081 passed / 0 failed / 8 skipped (HAXR/RBAD/Boston data-gated,
+named; sunset-6c ran+passed on this toolchain). `Config.DefaultConfigsHaveUnique
+Labels` → 38 (+`…_ivgate`). Placement/escalation unchanged from Stage 1 (CT-mode-
+keyed estimator clamp is the parked escalation; not needed on any workload here).
+
+## 2026-07-09 — Backlog #25 Phase 2b Stage 1: true-innovation re-probe (CHECKPOINT) [Cl-3 diagnostic]
+
+Extended the `IPmbmDiagnosticSink` surface (additive, default-off, byte-
+identical) with the TRUE applied-measurement position innovation (measurement
+ENU − predicted ENU + norm) and the per-mode IMM weights, then re-ran the
+Phase-2a D-axis probe on the real innovation. Full write-up:
+`docs/baselines/2026-07-09_b25_phase2b.md`. **No behavior code — checkpoint.**
+
+**Byte-identical proof.** sim_ms states.csv diag ON==OFF; all 46 states.csv
+(22 imazu+6 sim_ms+18 autoferry) my diag-ON == the pre-2b binary (update-path
+edit inert); 260 non-timing metric rows ON==OFF; diag re-run deterministic. The
+`enumerateChildren` innovation capture is sink-gated → zero work / byte-identical
+when no sink.
+
+**Binding re-probe (true innovation).** Detection: 5/6 dying flagged before
+permanent gate-exit at every D_max (6th = the imazu_22 id7 coalescence, no clean
+exit). False-fire (autoferry_unanch+sim_ms): D100 3.39%/1.09% FAIL, **D200
+0.70%/0.22% PASS, D400 0.06%/0.02% PASS** (detection-surface / all-rows). REAL
+autoferry = 0.00% at every D. **The true innovation reproduces the Phase-2a
+proxy verdict — position-innovation gate PASSES at D_max 200–400 m.**
+
+**Placement (the question the proxy could not answer).** The runaway is
+two-phase: a SEQUENCE of moderate innovations (50–108 m, each < D_max) under IMM
+**CT (turn) mode** dominance pumps speed 2→110+ m/s over ~25 s (the track grabs
+returns near its increasingly-fast prediction, so innovation stays small), THEN
+a single OVERSIZED accepted innovation (imazu_15 id6: 484 m at t=355) lands as
+the gross mis-association. Max innovation before the first >200 m flag: 108/158/
+173 m across the three traced tracks. So: the clean, binding-passing TRIGGER is
+at **update-acceptance** (the oversized innovation; ~0 false-fire), but the
+velocity is already elevated when it fires — a bare "reject/coast" action would
+flag-but-not-fix; the evidence favours **accept-position + reset/deweight-
+velocity**. The moderate build-up is estimator-internal (CT-mode update too
+aggressive) — an estimator clamp is the fallback but must key on CT-mode/
+velocity-change, not innovation magnitude (magnitude clamping the build-up
+re-introduces the Phase-2a velocity-signal false-fire). IMM finding (closes the
+2a (c) gap): CT-mode dominance + violent 0↔1 mode thrash is the divergence
+signature; healthy scans are CV-dominant (0.9+).
+
+**Stage-1 verdict: PASS → recommend Stage 2 builds the gate at update-acceptance,
+`innov_gate_max_m` ∈ 200–400 m (per-instance, default OFF), action = accept-
+position-reset-velocity, kinematic path only (existence/birth untouched — the
+philos brake + ADR-0002 stay untouched by construction). Awaiting arbiter go.**
+Suite 1089 ran / 1081 passed / 0 failed / 8 skipped (HAXR/RBAD/Boston data-gated,
+named; sunset-6c ran and passed on this toolchain as in 2a).
+
 ## 2026-07-08 — Backlog #25 Phase 2a: runaway census + offline velocity/innovation-bound probe [Cl-3 diagnostic]
 
 Offline probe (no build; new read-only `tools/pmbm_phase2a_probe.py` over the
