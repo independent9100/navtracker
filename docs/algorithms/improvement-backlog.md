@@ -1050,6 +1050,18 @@ assert only isolated (fixed-input) invariants or robustly-banded aggregates. If
 picked up, rethinking what 6c-style A/B gates may validly assert is in scope.
 Evidence: the four cases with their tables (eval-log 2026-07-06 / 2026-07-07).
 
+**Case (5), 2026-07-08 — the flip BIT: master red for a day.** The three
+sunset 6c assertions pinning case-(2)-style cross-config outcomes
+(`cov_astern > uni_astern` et al.) went genuinely red when the LOS guard
+re-landed, masked by revert-window/fixture-skip greens (eval-log 2026-07-08
+correction). Fixed by assertion upgrade only (b6e865a — banded floors,
+config-independent streaks, one-sided inequalities; zero behavior diff). A
+sixth sub-instance surfaced in that fix: the ferry berth pin decays before
+its post-vacate empty window under the guard, so the camera_empty emitted
+flag has nothing left to evict there — same adaptive-threshold family. If
+this item is picked up, b6e865a + c0ac493 are the worked examples of the
+valid assertion shapes.
+
 ## 25. PMBM close-pass track loss — the target vanishes at the CPA (SAFETY-relevant; the deployment-choice discriminator)
 
 **Found 2026-07-08 (Imazu #11 forensics, Q2b —
