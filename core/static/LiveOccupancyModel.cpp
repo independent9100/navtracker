@@ -423,7 +423,10 @@ double LiveOccupancyModel::birthSuppression(
   // Corroboration VETO (R9 item 1b): an AIS/cooperative-known vessel must remain
   // track-eligible — never suppress a birth within veto_radius of a recent fix.
   // The veto only lowers suppression to 0, so the conservation invariant holds.
-  if (!vessel_fixes_.empty()) {
+  // Gated by corroboration_veto_enabled (default true) so the veto's isolated
+  // effect can be A/B-measured; disabling only lets suppression rise back to the
+  // hazard-implied ramp below — never orphans a birth (invariant preserved).
+  if (params_.corroboration_veto_enabled && !vessel_fixes_.empty()) {
     const double vr2 = params_.veto_radius_m * params_.veto_radius_m;
     for (const VesselFix& f : vessel_fixes_)
       if ((f.position_enu - q).squaredNorm() <= vr2) return 0.0;

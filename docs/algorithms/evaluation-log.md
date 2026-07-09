@@ -100,6 +100,55 @@ position-reset-velocity, kinematic path only (existence/birth untouched — the
 philos brake + ADR-0002 stay untouched by construction). Awaiting arbiter go.**
 Suite 1089 ran / 1081 passed / 0 failed / 8 skipped (HAXR/RBAD/Boston data-gated,
 named; sunset-6c ran and passed on this toolchain as in 2a).
+## 2026-07-09 — Anchored-vessel corroboration veto ISOLATED: real + protective on HAXR (verdict a); default unchanged [Cl-3 corroboration seam / Stage-1b closeout]
+
+**What.** Gave the always-on occupancy corroboration veto (never suppress a birth
+within `veto_radius_m` of a recent AIS/cooperative fix) a per-instance A/B partner
+`LiveOccupancyParams::corroboration_veto_enabled` (default `true`), then measured
+its ISOLATED effect holding the AIS arm ON in both arms — the increment-8
+entanglement (AIS turned the veto on AND changed fusion input at once) that left
+its benefit "unmeasurable". Toggle-only; zero default/behaviour change. Branch
+`veto-isolation-ab` (base `317ecfd`). Full doc + tables:
+`docs/baselines/2026-07-09_veto_isolation.md`.
+
+**Byte-identical (default flag).** `kattwyk_08` coverage config (AIS fed → veto
+path fires) + philos sunset occupancy tests, reverted-317ecfd build vs toggle
+build: all 811 HAXR metric rows identical, philos hazard diagnostics identical.
+Plus the fixed-input invariant test
+`LiveOccupancyModel.CorroborationVetoToggleDefaultOnReproducesVetoOffFallsThrough`
+(ON → suppression exactly 0 at a fix; OFF → the same hazard ramp as no-fix →
+suppression only rises, never orphans a birth: ADR-0002 conservation holds both
+ways).
+
+**HAXR 3-site A/B** (kattwyk/parkhafen/seemannshöft_08, dec50 eps=50, common 285 s
+window, `imm_cv_ct_pmbm_occupancy_detector_coverage`, AIS ON both arms, veto
+toggled). occ_suppress_hits OFF→ON: kattwyk 45848→39417 (**−14.0%**), parkhafen
+24578→13599 (**−44.7%**), seemannshöft 104810→69631 (**−33.6%**). The lift
+recovers missed tracks (card_err_mean toward 0 on all three — seemannshöft
+−1.59→−0.96; gospa_missed down; lifetime up) at the cost of more false tracks near
+the lifted regions (gospa_false up, seemannshöft +123), so net gospa_mean is
+~flat (kattwyk/parkhafen) to slightly worse (seemannshöft +0.47).
+`occ_peak_structures` unchanged both arms → clean isolation (the veto changes
+whether a birth is suppressed, not what is learned as structure).
+
+**Sim** (`sim_ms_anchored_camera`, perfect truth, `imm_cv_ct_pmbm_occupancy_detector`):
+INERT — every metric byte-identical ON vs OFF, `occ_peak_structures=occ_suppress_hits=0`
+both arms. The layer is fed but forms no structure in open water (the anchored
+vessel is tracked → low clutter-weight into the feed → never suppressible
+structure); nothing to veto. The perfect-truth protective demo is carried by the
+fixed-input unit test, not this scenario. Reported honestly.
+
+**Verdict (a): real and protective — keep ON (default unchanged).** The isolated
+effect is large and directly attributable (14–45 % suppression lifted near known
+vessels) and protective in the ADR-0002 sense (fewer missed, better continuity).
+The trade for the arbiter: on fixed-shore dense-harbor sites the lift also admits
+phantoms within `veto_radius_m` of a fix (net gospa flat-to-slightly-worse there);
+the lever if that cost matters is tightening `veto_radius_m`, NOT disabling the
+veto — an arbiter/user call, not changed here.
+
+**Commands.** `ctest --test-dir build -R VetoIsolationHaxrAB` (~6.5 min, local HAXR
+fixtures), `-R VetoIsolationSimAB` (SIMMS fixtures), `-R CorroborationVetoToggle`.
+Fixture md5s in the baseline doc. Full suite green; skips named in the handoff.
 
 ## 2026-07-08 — Backlog #25 Phase 2a: runaway census + offline velocity/innovation-bound probe [Cl-3 diagnostic]
 
