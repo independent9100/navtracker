@@ -8324,3 +8324,74 @@ required for watch-circle), and the chart-corroboration KEEP prior should be
 sourced from ENC `ACHARE`, not GFW. Sources: GFW ToU / anchorages page / API
 docs; CC BY-NC 4.0 legal code; `anchorages_pipeline` (Apache-2.0 code);
 D7 MOANA entry (2026-07-06).
+
+## 2026-07-08 — [Cl-1] Cold-start Helgesen re-score: env-1 gap CLOSED by PMBM (18.62 < paper 20.37); frozen 43.4 row is stale [CHECKPOINT — no Phase 2]
+
+Ticket `docs/superpowers/plans/2026-07-08-cl1-coldstart-ticket.md`. The last
+open ❌ on the Cl-1 headline card ("beat in cold deployment without anchor")
+was frozen at the **2026-06-13** `imm_cv_ct_mht` run (`gospa20m_20260613T174620Z`,
+env-1 GOSPA RMS 43.4 vs paper 20.37 → ×2.1). Nobody had re-scored since the
+UKF promotion and PMBM Phases 4–7. Measurement-only pass, **zero config/algorithm
+change**. Worktree `cl1-coldstart-rescore` @ `7f5cd17`, autoferry fixtures
+symlinked from main. Full table + provenance in
+`docs/baselines/helgesen2022_reference.md` (new dated section; frozen table
+untouched). CSV checksums there.
+
+Exact commands (from worktree root):
+```
+./build/bench/navtracker_bench_baseline --run-id cl1_rescore_mht_20260708  --config-eq imm_cv_ct_mht       --scenario-filter autoferry_scenario --seeds 1 --out docs/baselines/
+./build/bench/navtracker_bench_baseline --run-id cl1_rescore_pmbm_20260708 --config-eq imm_cv_ct_pmbm_land --scenario-filter autoferry_scenario --seeds 1 --out docs/baselines/
+./build/bench/navtracker_bench_baseline --run-id cl1_drift_ekf_20260708    --config-eq imm_cv_ct_mht_ekf   --scenario-filter autoferry_scenario --seeds 1 --out docs/baselines/
+```
+
+**Phase 0 — reproduction is PARTIAL (a finding, not hidden).** Per-env GOSPA RMS:
+
+| Stack | env-1 | env-2 |
+|---|---:|---:|
+| Frozen 2026-06-13 (pre-UKF EKF) | 43.4 | 33.9 |
+| Current `imm_cv_ct_mht_ekf` (pre-UKF filter, ablation) | 39.42 | 33.91 |
+| Current `imm_cv_ct_mht` (UKF default) | 34.37 | 28.57 |
+
+env-2 reproduces **exactly** under the pre-UKF filter (33.91≈33.9) → its whole
+drift is the **UKF flip `6106ec7`** (2026-06-20). env-1 is ~4 m lower even
+under EKF (43.4→39.42, −9%) → ~44% of the env-1 drift is *non-UKF* merged bench
+change (candidates: truth-sort `3ee491f`/`3aa9c58`, GOSPA decomposition
+`711cf45`; exact per-commit split not bisected), the rest (−13%) is the UKF
+flip. **The 43.4 row is stale; honest current MHT cold-start = 34.37/28.57.**
+Table NOT silently rebased — arbiter picks the baseline.
+
+**Phase 1 — the decision table (cold-start = no-AIS is the claim):**
+
+| Condition | Config | env-1 | env-2 |
+|---|---|---:|---:|
+| no-AIS | `imm_cv_ct_mht` (UKF) | 34.37 | 28.57 |
+| no-AIS | **`imm_cv_ct_pmbm_land`** | **18.62** | **17.74** |
+| truth-AIS | `imm_cv_ct_mht` | 5.18 | 5.16 |
+| truth-AIS | `imm_cv_ct_pmbm_land` | 3.43 | 8.94 |
+| paper | Helgesen 2022 | 20.37 | 30.97 |
+
+**PMBM cold-start env-1 = 18.62 BEATS the paper's 20.37** (env-2 17.74 ≪ 30.97).
+The ×2.1 gap is closed with no tuning.
+
+**Mechanism (free from the GOSPA decomposition, not a Phase-2 run).** The whole
+MHT→PMBM env-1 win is cardinality: `imm_cv_ct_mht` over-counts (card_err +3.6…
++5.1, gospa_false 830…1070, id_switches 16…49 — the backlog-11 duplicate-track
+conveyor); `imm_cv_ct_pmbm_land` holds card_err≈0 (gospa_false 63…160, ~7×
+smaller, id_switches 1.5…14.5). Localization comparable; PMBM's missed
+component is slightly higher (existence flickers → breaks 14–60/scenario,
+lifetime 0.53–0.81), but at c=20 a break-step is a bounded miss while a
+duplicate is a full false. Confirms the standing **Cl-2 #2** hypothesis: one
+PMBM existence+association recursion makes the env-1 over-count moot.
+
+**Operational trade (framed, not adjudicated).** Opposite failure modes; GOSPA
+scores one and is blind to the other. PMBM: best GOSPA/pos_rmse/cardinality/
+id-stability, **worst continuity** (track drops+reacquires — coincides with
+backlog **#25** close-pass loss). MHT: best presence/continuity (~90% lifetime),
+**worst cardinality** (duplicate/renamed tracks). The paper is scored on GOSPA
+and PMBM beats it; continuity is a separate deployment axis.
+
+**Verdict (a) — implementer read; arbiter decides & lands north-star edit.**
+Cl-1 "beat in cold deployment without anchor" ✅ on the PMBM canonical, with the
+continuity trade recorded. **CHECKPOINT honored: Phase 2 (NEES-per-scenario deep
+dive + sim observability control) NOT entered — awaits arbiter go.** No code
+changed anywhere in this ticket.
