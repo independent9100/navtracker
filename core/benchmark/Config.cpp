@@ -411,6 +411,45 @@ pmbm::PmbmTracker::Config makePmbmConfig() {
   cfg.r_min = probeEnvD("PMBM_PROBE_RMIN", cfg.r_min);
   cfg.trajectory_window_scans =
       probeEnvU("PMBM_PROBE_TRAJWIN", cfg.trajectory_window_scans);
+  // #25 Phase 2b velocity-runaway guard A/B (env-gated; UNSET = OFF =
+  // byte-identical). PMBM_INNOV_GATE_M > 0 arms the update-acceptance guard at
+  // that innovation threshold (metres); PMBM_INNOV_GATE_ACTION ∈ {reset,
+  // deweight} picks the velocity treatment; PMBM_INNOV_GATE_VARFLOOR sets the
+  // re-learn variance floor (m/s)². Survives into the derived coverage_land
+  // config (which overrides other knobs, never these). See
+  // docs/baselines/2026-07-09_b25_phase2b_stage2.md.
+  cfg.innov_gate_max_m = probeEnvD("PMBM_INNOV_GATE_M", cfg.innov_gate_max_m);
+  cfg.innov_gate_velocity_var_floor =
+      probeEnvD("PMBM_INNOV_GATE_VARFLOOR", cfg.innov_gate_velocity_var_floor);
+  if (const char* a = std::getenv("PMBM_INNOV_GATE_ACTION"); a != nullptr && *a) {
+    cfg.innov_gate_action =
+        (std::string(a) == "reset")
+            ? pmbm::PmbmTracker::Config::InnovationGateAction::kVelocityReset
+            : pmbm::PmbmTracker::Config::InnovationGateAction::kVelocityDeweight;
+  }
+  return cfg;
+}
+
+// imm_cv_ct_pmbm_coverage_land's PMBM knobs, factored out so the #25 Phase-2b
+// velocity-runaway-guard variant (…_ivgate) shares them verbatim (only the two
+// gate fields differ). Keeping one definition avoids config drift between the
+// gated and ungated baselines.
+pmbm::PmbmTracker::Config makeCoverageLandPmbmConfig() {
+  auto cfg = makePmbmConfig();
+  cfg.adaptive_birth = true;
+  cfg.k_best_per_hypothesis = 1;
+  cfg.adaptive_k_best = false;
+  cfg.birth_existence_target = 0.1;
+  cfg.source_aware_identity = true;
+  cfg.min_new_bernoulli_existence = 0.1;
+  cfg.output_existence_floor = 0.1;
+  cfg.lambda_birth = 1e-5;
+  cfg.use_sensor_activity = true;
+  cfg.source_aware_misdetection = false;
+  cfg.idle_halflife_sec = 0.0;
+  cfg.dedup_miss_pd = false;
+  cfg.cooperative_stale_timeout_sec = 120.0;
+  cfg.use_land_model = true;
   return cfg;
 }
 
@@ -1176,36 +1215,45 @@ std::vector<Config> defaultConfigs() {
     c.tracker_kind = TrackerKind::Pmbm;
     c.use_sensor_activity_model = true;  // coverage model (same as parent)
     c.use_land_model = true;             // Task 6: wire CoastlineModel
+    // PMBM knobs live in makeCoverageLandPmbmConfig() (shared with the …_ivgate
+    // variant). Notable: min_new_bernoulli_existence == birth_existence_target
+    // == 0.1 on purpose — the land soft-ramp (r_new *= 1−c) and the phantom-
+    // birth floor are independent multiplicative gates, so the offshore soft
+    // band (50 m) becomes a no-birth zone; a vessel within 50 m of shore will
+    // not initiate under this config. Accepted (near-land operation is rare);
+    // lowering the floor to 0.05 re-admits philos near-shore WATER clutter and
+    // regresses the real-data win (gospa 73.1→100.0, card_err +6.9→+36.2,
+    // gospa_false 3550→9000). See docs/algorithms/synthetic-clutter-bench.md.
+    c.pmbm_config = &makeCoverageLandPmbmConfig;
+    c.build_sensor_bias_estimator = []() {
+      return std::make_shared<SensorBiasEstimator>();
+    };
+    configs.push_back(std::move(c));
+  }
+
+  // #25 Phase 2b — the SHIPPED velocity-runaway guard variant: coverage_land
+  // with the update-acceptance position-innovation gate ON (deweight velocity,
+  // D_max 400 m), the A/B winner (docs/baselines/2026-07-09_b25_phase2b_stage2.md:
+  // loss-seconds-overlapping-CPA 163→6 s across the 6 dying cases; id-switches
+  // 34→15; philos KEEP + autoferry byte-identical because no accepted innovation
+  // there exceeds 400 m). The library default keeps the gate OFF
+  // (PmbmTracker::Config::innov_gate_max_m ≤ 0); this named config is the
+  // deployment representative + a permanent no-regression baseline. Kinematic
+  // guard only — existence/birth/id untouched (ADR 0002 + the miss-P_D brake
+  // hold by construction).
+  {
+    Config c;
+    c.label = "imm_cv_ct_pmbm_coverage_land_ivgate";
+    c.build_estimator = &makeImmCvCt;
+    c.build_associator = &makeJpda;  // unused for Pmbm
+    c.tracker_kind = TrackerKind::Pmbm;
+    c.use_sensor_activity_model = true;
+    c.use_land_model = true;
     c.pmbm_config = []() {
-      auto cfg = makePmbmConfig();
-      cfg.adaptive_birth = true;
-      cfg.k_best_per_hypothesis = 1;
-      cfg.adaptive_k_best = false;
-      cfg.birth_existence_target = 0.1;
-      cfg.source_aware_identity = true;
-      // Equal to birth_existence_target on purpose. Known consequence (the
-      // (E) shore_clutter_nearshore validator measured it): the land soft-ramp
-      // (r_new *= 1−c) and this phantom-birth floor are independent
-      // multiplicative gates, so when floor == target ANY soft suppression
-      // (c>0) drops r_new below the floor — the entire offshore soft band
-      // (offshore_halfwidth_m, 50 m) becomes a no-birth zone, and a real
-      // vessel within 50 m of shore will not initiate under this config.
-      // We accept this: near-land operation is rare, and the alternative
-      // (lowering the floor to 0.05 to revive near-shore births) re-admits
-      // philos near-shore WATER clutter and regresses the real-data win
-      // gospa 73.1→100.0, card_err +6.9→+36.2, gospa_false 3550→9000 — so
-      // the 0.1 floor is retained. See docs/algorithms/synthetic-clutter-bench.md.
-      cfg.min_new_bernoulli_existence = 0.1;
-      cfg.output_existence_floor = 0.1;
-      cfg.lambda_birth = 1e-5;
-      cfg.use_sensor_activity = true;
-      cfg.source_aware_misdetection = false;  // R9: coverage model owns the miss
-                                              // signal; identity gate would block
-                                              // the cooperative retirement below.
-      cfg.idle_halflife_sec = 0.0;
-      cfg.dedup_miss_pd = false;
-      cfg.cooperative_stale_timeout_sec = 120.0;
-      cfg.use_land_model = true;   // activate land-prior birth gate
+      auto cfg = makeCoverageLandPmbmConfig();
+      cfg.innov_gate_max_m = 400.0;
+      cfg.innov_gate_action =
+          pmbm::PmbmTracker::Config::InnovationGateAction::kVelocityDeweight;
       return cfg;
     };
     c.build_sensor_bias_estimator = []() {

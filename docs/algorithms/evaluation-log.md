@@ -8,6 +8,54 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-09 — Backlog #25 Phase 2b Stage 2: BUILT the velocity-runaway guard (deweight @ 400 m) [Cl-3]
+
+On arbiter GO. Built the update-acceptance position-innovation guard in
+`PmbmTracker` (per-instance, ctor-threaded, default OFF; kinematic-only —
+existence/mass/birth/id untouched). Full write-up:
+`docs/baselines/2026-07-09_b25_phase2b_stage2.md`; reference
+`docs/algorithms/velocity-runaway-innovation-gate.md`; learning
+`docs/learning/11-gating-gnn-hungarian.md` §"A second gate" (+ figure
+`11-innovation-gate.png`).
+
+**Rider 1 (pick the treatment by measurement).** A/B reset vs deweight × D200/D400
+on the 6 dying cases, gate = loss-seconds-overlapping-CPA + re-acquire-id count:
+
+| variant | CPA-overlap loss (s) | dying loss (s) | reacq ids | idsw all/dense |
+|---|---|---|---|---|
+| OFF | 163 | 1366 | 45 | 34/30 |
+| reset 200 | 51 | 630 | 9 | 13/12 |
+| reset 400 | 299 | 550 | 14 | 17/13 |
+| deweight 200 | 179 | 939 | 17 | 9/8 |
+| **deweight 400** | **6** | **544** | 10 | 15/11 |
+
+**Winner: deweight @ 400 m** — CPA-overlap loss 163 → **6 s** (Q2b blackouts
+eliminated; per-case ≤3 s). Reset *stalls* the track (velocity→0 while the target
+moves) so it stays lost; deweight keeps it moving with a wide velocity prior and
+re-locks. Shipped as `imm_cv_ct_pmbm_coverage_land_ivgate` (library default OFF).
+
+**Rider 2 (id-switch watch-item).** id-switches ON vs OFF: every variant REDUCES
+them (34/30 → 15/11 for the winner) — **no swap regression**; the neighbour-snap
+risk is real in principle (parked coalescence guard) but doesn't materialise.
+
+**Rider 3 (band + phantom bonus).** D400 is the clean band (D200 marginal). The
+82.5 % clutter-born phantom majority is **presence-neutral** (−125 confirm,
+survivors longer, total track-seconds ≈ 0) — not a phantom killer; the band is
+decided by CPA-overlap, not the bonus.
+
+**No-regression.** deweight@400 ON vs OFF: **philos KEEP byte-identical (0/8),
+AutoFerry byte-identical (0/72)** — the guard never fires on real data (0 % false-
+fire, honest innovations < 400 m); sim_ms net-beneficial (headon/overtaking/
+ais_dropout improve; crossing ospa +8 within synthetic noise). Kinematic-only ⇒
+miss-P_D brake + λ_C/birth invariant untouched by construction. Guard OFF is
+byte-identical to the pre-guard binary; the coverage_land knob extraction into
+`makeCoverageLandPmbmConfig()` is a proven no-op.
+
+Suite 1089 ran / 1081 passed / 0 failed / 8 skipped (HAXR/RBAD/Boston data-gated,
+named; sunset-6c ran+passed on this toolchain). `Config.DefaultConfigsHaveUnique
+Labels` → 38 (+`…_ivgate`). Placement/escalation unchanged from Stage 1 (CT-mode-
+keyed estimator clamp is the parked escalation; not needed on any workload here).
+
 ## 2026-07-09 — Backlog #25 Phase 2b Stage 1: true-innovation re-probe (CHECKPOINT) [Cl-3 diagnostic]
 
 Extended the `IPmbmDiagnosticSink` surface (additive, default-off, byte-

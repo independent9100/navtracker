@@ -18,8 +18,11 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   // classifier to separate mis-tuning from architectural sparsity limit) +
   // imm_cv_ct_pmbm_occupancy_detector (Stage 1b-ii: coarse grid, adaptive bar) +
   // imm_cv_ct_pmbm_occupancy_detector_coverage (6c: coverage-aware decay arm,
-  // differs from _detector in estimate_coverage_sector only).
-  ASSERT_EQ(configs.size(), 37u);
+  // differs from _detector in estimate_coverage_sector only) +
+  // imm_cv_ct_pmbm_coverage_land_ivgate (#25 Phase 2b: coverage_land + the
+  // velocity-runaway innovation gate ON, deweight@400 — the shipped guard
+  // variant; library default keeps the gate OFF).
+  ASSERT_EQ(configs.size(), 38u);
   // Canonical config is listed first.
   EXPECT_EQ(configs.front().label, "imm_cv_ct_mht");
   // Canonical wires the bias estimator unconditionally; the
@@ -31,7 +34,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
     EXPECT_NE(c.build_estimator, nullptr);
     EXPECT_NE(c.build_associator, nullptr);
   }
-  EXPECT_EQ(labels.size(), 37u);
+  EXPECT_EQ(labels.size(), 38u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_land"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_land_pda"), 1u);
@@ -41,6 +44,7 @@ TEST(Config, DefaultConfigsHaveUniqueLabels) {
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_occupancy_sensitive"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_occupancy_detector"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_occupancy_detector_coverage"), 1u);
+  EXPECT_EQ(labels.count("imm_cv_ct_pmbm_coverage_land_ivgate"), 1u);
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt_k3"), 1u);
   // Phase 9 probe siblings dropped 2026-06-23 (S4 fold-in):
   EXPECT_EQ(labels.count("imm_cv_ct_pmbm_adapt_k3_altgate"), 0u);

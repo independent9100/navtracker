@@ -579,6 +579,34 @@ class PmbmTracker {
     // is not (over-claiming it is the unsafe direction). ≈ 20°; philos multi-
     // cluster bursts show 80–169° internal gaps, well above this.
     double coverage_cluster_gap_rad = 0.349;
+
+    // #25 Phase 2b: velocity-runaway guard at update-acceptance. When a
+    // detection update's position innovation ‖measurement − predicted position‖
+    // exceeds innov_gate_max_m (metres), the accepted measurement is a gross
+    // mis-association that would dump into the velocity state and fly the track
+    // off the target (backlog #25 H3 — docs/baselines/2026-07-09_b25_phase2b.md).
+    // The guard ACCEPTS the position (the estimate stays in the real world) but
+    // TREATS the now-untrustworthy velocity/turn-rate. It is a KINEMATIC guard
+    // ONLY: it never touches existence, mass, birth, or track id — ADR 0002
+    // (presence over classification) and the miss-P_D existence brake stay
+    // untouched by construction. Probe band 200–400 m.
+    //
+    // Default OFF: innov_gate_max_m ≤ 0 → the gate never fires → byte-identical
+    // to a build without it (independent of any diagnostic sink). Per-instance,
+    // ctor-threaded via Config; no global state.
+    enum class InnovationGateAction {
+      kVelocityReset,     // zero the velocity+turn-rate mean, widen its variance
+      kVelocityDeweight,  // keep the velocity mean, only widen its variance
+    };
+    double innov_gate_max_m = 0.0;  // ≤ 0 disables (default OFF)
+    InnovationGateAction innov_gate_action =
+        InnovationGateAction::kVelocityDeweight;
+    // Variance floor (m/s)² applied to the velocity (and turn-rate) marginals
+    // when the guard fires — the filter re-learns velocity from subsequent
+    // positions. 1e4 ≈ σ 100 m/s, a wide maritime prior. Both variants raise
+    // (never shrink) these marginals to this floor; reset additionally zeroes
+    // the velocity/turn-rate mean.
+    double innov_gate_velocity_var_floor = 1.0e4;
   };
 
   /**
@@ -872,6 +900,14 @@ class PmbmTracker {
   // Backlog #25 diagnostic emission (no-op unless diag_sink_ is set). Reads the
   // post-prune density at end of processBatch; never mutates tracking state.
   void emitPmbmDiagnostics(Timestamp t);
+
+  // Backlog #25 Phase 2b: apply the velocity-runaway guard's kinematic treatment
+  // (reset or deweight per Config) to a detected Bernoulli whose accepted
+  // measurement's position innovation exceeded innov_gate_max_m. Touches the
+  // velocity/turn-rate state (indices 2,3 and, if present, 4) across the
+  // moment-matched mean/covariance AND every IMM mode; never touches existence,
+  // position, mass, or id.
+  void applyInnovationGate(Bernoulli& b) const;
 
   const IEstimator& estimator_;
   Config cfg_;

@@ -1594,6 +1594,89 @@ def fig_shadow_guard():
     save(fig, "27-los-shadow-guard.png")
 
 
+def fig_innovation_gate():
+    """#25 Phase 2b: the update-acceptance position-innovation gate.
+
+    Left: geometry — a small innovation is a trusted return; a gross innovation
+    is the WRONG return, so accept its position but distrust the implied velocity.
+    Right: the real imazu_15 dying-track shape — moderate innovations pump the
+    velocity, then one oversized innovation; the gate fires and deweights velocity
+    so the estimate cannot fly off."""
+    fig, (axL, axR) = plt.subplots(1, 2, figsize=(13, 5.6))
+
+    # ---- Panel A: geometry ----
+    px, py = 0.0, 0.0  # predicted position (post-predict, pre-update)
+    dmax = 4.0         # D_max acceptance radius (schematic; ≈ 400 m in the config)
+    circ = plt.Circle((px, py), dmax, fill=False, edgecolor="#5a8fb0",
+                      linewidth=1.6, linestyle="--", zorder=2)
+    axL.add_patch(circ)
+    axL.text(0, dmax + 0.25, "D_max (position-innovation gate)", ha="center",
+             fontsize=9, color="#33627d")
+    axL.scatter([px], [py], s=90, marker="P", color="#333333", zorder=5)
+    axL.text(px + 0.2, py - 0.5, "predicted\nposition", fontsize=9, va="top")
+
+    # trusted (small-innovation) return
+    gx, gy = 1.4, 1.0
+    axL.scatter([gx], [gy], s=110, marker="o", color="#2d8659", zorder=5,
+                edgecolor="white")
+    axL.annotate("", xy=(gx, gy), xytext=(px, py),
+                 arrowprops=dict(arrowstyle="->", color="#2d8659", lw=1.8))
+    axL.text(gx + 0.15, gy, "small innovation\n→ trusted return\n(normal update)",
+             fontsize=9, color="#2d8659", va="center")
+
+    # gross (oversized-innovation) return = wrong vessel / clutter
+    bx, by = 5.6, -3.0
+    axL.scatter([bx], [by], s=130, marker="X", color="#aa3333", zorder=5,
+                edgecolor="white")
+    axL.annotate("", xy=(bx, by), xytext=(px, py),
+                 arrowprops=dict(arrowstyle="->", color="#aa3333", lw=2.2))
+    axL.text(bx - 0.3, by - 0.4, "GROSS innovation (> D_max)\n= the wrong return",
+             fontsize=9, color="#aa3333", ha="right", va="top", fontweight="bold")
+
+    # ungated consequence: velocity dumped → fly-off
+    axL.annotate("", xy=(bx + 2.4, by - 1.3), xytext=(bx, by),
+                 arrowprops=dict(arrowstyle="-|>", color="#aa3333", lw=3.0,
+                                 linestyle=":"))
+    axL.text(bx + 2.5, by - 1.5, "UNGATED: velocity\ndumps → track flies off",
+             fontsize=9, color="#aa3333", va="top")
+    # gated: accept position, deweight velocity (fat uncertainty blob)
+    axL.add_patch(mpatches.Ellipse((bx, by), 2.6, 2.0, color="#5a8fb0",
+                                   alpha=0.30, zorder=3))
+    axL.text(bx, by + 1.3, "GATED: accept position,\ndeweight velocity\n"
+             "(wide → re-learn)", fontsize=9, color="#33627d", ha="center")
+    axL.set_xlim(-5, 9.5); axL.set_ylim(-6.5, 5.5); axL.set_aspect("equal")
+    axL.set_title("Acceptance gate: a huge position innovation\nis the wrong "
+                  "measurement — accept where, not how-fast")
+    axL.grid(True, linestyle=":", alpha=0.3)
+
+    # ---- Panel B: the real dying-track shape (imazu_15 id 6) ----
+    t = np.array([315, 320, 325, 327, 330, 335, 337, 340, 345, 350, 355, 358, 362])
+    innov = np.array([18, 29, 10, 67, 22, 11, 54, 71, 77, 105, 484, 436, 128.])
+    speed = np.array([2, 8, 12, 34, 22, 42, 75, 101, 122, 150, 178, 223, 150.])
+    axR.plot(t, innov, "-o", color="#aa3333", lw=1.8, ms=4, label="position innovation (m)")
+    axR.axhline(400, color="#33627d", ls="--", lw=1.4)
+    axR.text(316, 415, "D_max = 400 m", color="#33627d", fontsize=9)
+    axR.axvspan(327, 352, color="#e8b04b", alpha=0.18)
+    axR.text(339, 300, "moderate innovations\n(CT-mode pumps velocity)",
+             ha="center", fontsize=8.5, color="#8a6d1f")
+    axR.annotate("gate fires\n(deweight velocity)", xy=(355, 484), xytext=(330, 455),
+                 fontsize=9, color="#aa3333", fontweight="bold",
+                 arrowprops=dict(arrowstyle="->", color="#aa3333"))
+    axR.set_ylim(0, 560)
+    axR.set_xlabel("time (s)"); axR.set_ylabel("position innovation (m)")
+    axR2 = axR.twinx()
+    axR2.plot(t, speed, "-s", color="#2f6f9f", lw=1.4, ms=3, alpha=0.8,
+              label="implied speed (m/s)")
+    axR2.set_ylabel("implied speed (m/s)", color="#2f6f9f")
+    axR.set_title("Runaway onset: a moderate-innovation build-up,\nthen one "
+                  "oversized innovation trips the gate")
+    axR.grid(True, linestyle=":", alpha=0.3)
+    axR.legend(loc="upper left", fontsize=8)
+    axR2.legend(loc="center left", fontsize=8)
+
+    save(fig, "11-innovation-gate.png")
+
+
 def fig_bearing_wedge():
     """Camera-only contact → a bearing wedge from own-ship; handover by suppression."""
     fig, (axL, axR) = plt.subplots(1, 2, figsize=(13, 6.2), sharex=True, sharey=True)
@@ -1706,6 +1789,7 @@ def main():
     fig_live_occupancy()
     fig_shadow_guard()
     fig_bearing_wedge()
+    fig_innovation_gate()
     render_dot_figures()
     print("done.")
 

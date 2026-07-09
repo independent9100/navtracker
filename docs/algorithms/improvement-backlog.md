@@ -1173,3 +1173,21 @@ reject. IMM finding: CT-mode dominance + 0↔1 thrash is the divergence signatur
 (closes the 2a (c) gap). Recommended Stage-2 build: `innov_gate_max_m` ∈ 200–400 m
 (per-instance, default OFF), accept-position-reset-velocity, kinematic path only.
 No behavior code written — awaiting arbiter go for Stage 2.
+
+**BUILT 2026-07-09 (Phase 2b Stage 2 — `docs/baselines/2026-07-09_b25_phase2b_stage2.md`,
+`docs/algorithms/velocity-runaway-innovation-gate.md`).** Shipped the update-
+acceptance position-innovation guard in `PmbmTracker` (`innov_gate_max_m` /
+`innov_gate_action` / `innov_gate_velocity_var_floor`; per-instance, ctor-threaded,
+default OFF; kinematic-only). A/B (reset vs deweight × D200/D400) on the 6 dying
+cases picked **deweight @ D_max 400 m**: loss-seconds-overlapping-CPA **163 → 6 s**
+(the Q2b 158 s/96 s CPA blackouts eliminated), total dying loss 1366 → 544 s,
+re-acquire ids 45 → 10, id-switches 34 → 15 (NO swap regression — rider-2 watch-
+item cleared). Reset stalls the track (velocity→0) and loses it through the CPA;
+deweight keeps it moving and re-locks. No-regression: philos KEEP + AutoFerry
+BYTE-IDENTICAL (guard never fires on real data — 0 % false-fire); sim_ms net-
+beneficial. Phantom presence neutral (rider 3 — not a phantom killer; band decided
+by CPA-overlap). Shipped as `imm_cv_ct_pmbm_coverage_land_ivgate` (library default
+OFF). Escalation lever (CT-mode-keyed estimator clamp) + coalescence guard remain
+parked (separate tickets) — not needed on any workload measured. **#25 CLOSED as
+the target-loss fix; the deployment trade (MHT churn/presence vs PMBM identity)
+is now mitigated on the PMBM side.**

@@ -1085,6 +1085,29 @@ environment models (`use_land_model`, `use_static_obstacle_model`,
 `estimate_coverage_sector`, §7) — a wired model pointer does nothing until its
 flag is on.
 
+**Velocity-runaway guard (backlog #25 Phase 2b, default OFF).** At a detection
+update whose position innovation ‖measurement − predicted position‖ exceeds
+`innov_gate_max_m` (metres), the accepted measurement is treated as a gross
+close-pass mis-association: the position is accepted but the velocity/turn-rate
+state is treated so the track cannot fly off the target. Config fields:
+
+- **`innov_gate_max_m`** (default **`0.0` = OFF**; recommended **`400.0`**) — the
+  innovation threshold. `≤ 0` disables the guard → byte-identical to a build
+  without it.
+- **`innov_gate_action`** — `kVelocityDeweight` (default; keep the velocity mean,
+  widen its covariance) or `kVelocityReset` (also zero the velocity mean).
+  **Deweight is the shipped/recommended choice** (reset stalls the track through
+  the CPA; deweight keeps it moving and re-locks — A/B in
+  `docs/baselines/2026-07-09_b25_phase2b_stage2.md`).
+- **`innov_gate_velocity_var_floor`** (default `1e4` (m/s)²) — the re-learn
+  variance floor the treated velocity marginals are raised to.
+
+It is a **kinematic guard only** — existence/mass/birth/track-id are untouched
+(ADR 0002 + the miss-P_D existence brake hold by construction). The bench config
+`imm_cv_ct_pmbm_coverage_land_ivgate` is the shipped enable-recipe (deweight @
+400 m). Reference: `docs/algorithms/velocity-runaway-innovation-gate.md`;
+intuition: `docs/learning/11-gating-gnn-hungarian.md` §"A second gate".
+
 **PDA soft detected-branch (data-association softening).** Under the default
 K=1 GNN, a detected Bernoulli hard-commits to its single lowest-cost gated
 measurement, so a gate-closer clutter return can pull the state off a real
