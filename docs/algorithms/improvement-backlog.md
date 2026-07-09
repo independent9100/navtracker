@@ -1062,6 +1062,19 @@ flag has nothing left to evict there — same adaptive-threshold family. If
 this item is picked up, b6e865a + c0ac493 are the worked examples of the
 valid assertion shapes.
 
+**Case (5) addendum — the flip is TOOLCHAIN-fragile, not just
+parameter-fragile (2026-07-09, Phase-2a implementer).** On the SAME commit
+(pre-fix afc47d2), SAME fixtures, the old `cov_astern > uni_astern`
+assertions failed deterministically on two worktrees (arbiter + Cl-1
+implementer) and PASSED deterministically on a third (g++13 Release) —
+floating-point differences across toolchains move the adaptive bar across
+the knife edge. Consequence: an epsilon-fragile assertion can be green on
+the author's machine and red on another box with no code difference at all.
+Strengthens (does not change) the b6e865a disposition. Also re-learned:
+plain `ctest` runs cases from the build dir, so philos-fixture-gated 6c
+cases GTEST_SKIP there — run the binary from the worktree root (or wire
+build/tests + build/data symlinks) to make them actually RUN.
+
 ## 25. PMBM close-pass track loss — the target vanishes at the CPA (SAFETY-relevant; the deployment-choice discriminator)
 
 **Found 2026-07-08 (Imazu #11 forensics, Q2b —
