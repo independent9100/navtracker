@@ -118,10 +118,26 @@ target data — env-2 is roughly even but env-1 is far worse.
 
 **Status.**
 - "Beat under apples-to-apples calibration condition" ✅ (both envs).
-- "Beat in cold deployment without anchor" ❌ (env-1).
+- "Beat in cold deployment without anchor" ✅ **(flipped 2026-07-09,
+  re-score de61183)** — on `imm_cv_ct_pmbm_land`, no-AIS: env-1 GOSPA RMS
+  **18.62** < paper 20.37 (env-2 17.74 < 30.97), zero tuning. Mechanism
+  (from the GOSPA decomposition): cardinality — MHT over-counts via the
+  #11 duplicate conveyor (card_err +3.6..+5.1, gospa_false 830–1070);
+  PMBM holds card_err ≈ 0. The frozen 2026-06-13 table (43.4) was stale:
+  ~56% UKF flip, ~44% truth-sort/decomp bench drift — root-caused, not
+  silently rebased (new dated section in
+  `docs/baselines/helgesen2022_reference.md`; frozen table untouched).
+  TWO CAVEATS the flip does not erase: (1) the card flips on the PMBM
+  config, NOT on the formal MHT canonical — the canonical-promotion
+  decision is separate and gated on backlog **#25** (PMBM close-pass track
+  loss); (2) PMBM pays the win in continuity (breaks 2→36/scenario,
+  lifetime 0.90→0.69 = the #25 axis) — GOSPA scores cardinality, not
+  continuity.
 
-**Work that closes the unanchored env-1 gap.** Identical to Cl-2's
-open work below — env-1 BOT pathology and ID stability.
+**Work that closed the unanchored env-1 gap.** Nothing bespoke — the
+accumulated stack (UKF inner filter, PMBM birth/land work) closed it;
+the 2026-07-09 re-score only measured it. Cl-2 #2's residual relevance
+is now historical (see below).
 
 **Class-controlled extension (deferred).** Build SJPDA + JIPDA on our
 JPDA branch; bench against the paper as a class-matched comparison.

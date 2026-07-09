@@ -81,6 +81,10 @@ when the water date firms.
     increment 8; birth = this campaign).
 12. **Cl-1 cold-start env-1 gap** (bearing-heavy open water, no anchor) —
     the one open headline-claim gap. ~1 week.
+    **DONE 2026-07-09 as CLOSED-AND-BEATEN** (re-score de61183, merged):
+    PMBM no-AIS env-1 GOSPA RMS 18.62 < paper 20.37, zero tuning; claim
+    card flipped in comparison-baselines.md with the two caveats (PMBM
+    config not the formal canonical; continuity trade = backlog #25).
 13. **D10 GFW anchorages (+ what's left of D3)** — anchored-vessel stats
     + KEEP-side corroboration prior. ~1–2 days, registration first.
     **DONE 2026-07-08 as NO-GO** (CC BY-NC 4.0 data+API; desk check only,
