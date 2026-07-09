@@ -101,6 +101,47 @@ TEST(LiveOccupancyModel, PersistentExtendedStructureSuppressesBirths) {
   EXPECT_EQ(m.obstacles().size(), 1u);
 }
 
+// The corroboration-veto A/B toggle (2026-07-09 veto-isolation ticket). Fixed
+// inputs, so this gives the invariant the real-data A/B cannot: default ON
+// reproduces the veto (a fix lifts suppression to EXACTLY 0 — the pre-toggle
+// always-on behaviour), and OFF falls through to the hazard ramp, i.e.
+// suppression RISES back to exactly what the structure implies with no fix at
+// all — never orphaning a birth, so ADR-0002 conservation holds in BOTH states.
+// Per-instance: two models, opposite flags, identical inputs.
+TEST(LiveOccupancyModel, CorroborationVetoToggleDefaultOnReproducesVetoOffFallsThrough) {
+  const Eigen::Vector2d pier_cell(62.5, 0.0);
+
+  // Baseline: the same pier with NO fix — the hazard-implied suppression the
+  // veto would override. OFF must reproduce this; ON must drive it to 0.
+  LiveOccupancyModel base(anchorDatum(), testParams());
+  for (int scan = 0; scan < 10; ++scan) base.observe(feed(pierReturns(), scan));
+  const double no_fix = base.birthSuppression(pier_cell);
+  ASSERT_GT(no_fix, 0.5) << "precondition: the pier suppresses without a fix";
+
+  auto build = [&](bool veto_enabled) {
+    LiveOccupancyParams p = testParams();
+    p.corroboration_veto_enabled = veto_enabled;
+    auto m = std::make_unique<LiveOccupancyModel>(anchorDatum(), p);
+    for (int scan = 0; scan < 10; ++scan) m->observe(feed(pierReturns(), scan));
+    m->observeVesselFix(10.0, pier_cell, /*anchored=*/false);  // AIS fix on the pier
+    return m;
+  };
+
+  // Default ON: the fix vetoes the birth → suppression lifted to EXACTLY 0
+  // (byte-identical to the pre-toggle always-on behaviour).
+  auto on = build(true);
+  EXPECT_DOUBLE_EQ(on->birthSuppression(pier_cell), 0.0);
+
+  // OFF: the veto block is skipped → suppression falls through to the SAME
+  // hazard ramp as with no fix. Disabling can only RAISE suppression back, never
+  // orphan a birth.
+  auto off = build(false);
+  EXPECT_DOUBLE_EQ(off->birthSuppression(pier_cell), no_fix);
+
+  // The default is ON, and it is a per-instance field (not a global toggle).
+  EXPECT_TRUE(LiveOccupancyParams{}.corroboration_veto_enabled);
+}
+
 // Uniform, non-repeating clutter never becomes persistent, so it is never
 // suppressed — this is the dense_clutter no-regression guarantee.
 TEST(LiveOccupancyModel, UniformTransientClutterNeverSuppresses) {

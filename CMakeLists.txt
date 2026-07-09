@@ -356,6 +356,8 @@ add_executable(navtracker_tests
   tests/benchmark/test_philos_cluttermap_ab.cpp
   tests/benchmark/test_occupancy_ab.cpp
   tests/benchmark/test_los_guard_haxr_ab.cpp
+  tests/benchmark/test_veto_isolation_haxr_ab.cpp
+  tests/benchmark/test_veto_isolation_sim_ab.cpp
   tests/benchmark/test_harbor_complete_truth.cpp
   tests/benchmark/test_harbor_complete_truth_baseline.cpp
   tests/benchmark/test_adapt_k3_harbor_knife_guard.cpp

@@ -836,7 +836,13 @@ vessel that pinned a cell:
   vessel reports infrequently (~3 min) yet (being stationary, structure-like) is
   exactly the object that must never be suppressed into nothing (ADR 0002 / R3).
   The port speaks `anchored`, not "nav-status": the sensor-format translation
-  stays in the producer.
+  stays in the producer. Set **`corroboration_veto_enabled = false`** (default
+  `true`) to disable the veto entirely — suppression then follows the emitted
+  hazards alone even next to a fix. This is a per-instance measurement/ablation
+  switch (added 2026-07-09 to isolate the veto's contribution on HAXR); disabling
+  it can only *raise* suppression back to what the hazards imply, never orphan a
+  birth, so the ADR-0002 conservation invariant holds in both states. Leave it at
+  the default in production.
 - `observeCamera(frame)` — one live camera frame (own-ship ENU, absolute-bearing
   detections, FOV, match tolerance). A structure cell the camera watches (in FOV,
   live frame) with no detection at its bearing for `camera_empty_sustain_s`

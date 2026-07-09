@@ -88,13 +88,24 @@ struct LiveOccupancyParams {
   // STALE and must not evict now — the recency guard that makes decoupled per-cell
   // evidence safe. Only consulted when evict_camera_empty is true.
   double camera_empty_recency_window_s = 5.0;
+  // A/B partner for the corroboration veto below (2026-07-09 veto-isolation
+  // ticket). Default true == today's always-on behaviour. When false, the veto
+  // block in birthSuppression() is skipped and a queried cell falls through to
+  // the normal hazard-derived suppression ramp — so disabling can only RAISE
+  // suppression back to what the emitted hazards already imply, never orphan a
+  // birth: the ADR-0002 conservation invariant is untouched in BOTH states. This
+  // exists purely to measure the veto's isolated contribution on HAXR with the
+  // AIS arm held constant (increment-8's entanglement blocked that). Per-instance
+  // (a LiveOccupancyParams member, ctor-threaded) — never a global/static toggle.
+  bool corroboration_veto_enabled = true;
   // Corroboration suppression VETO (increment 6 / R9 item 1b): a birth is NEVER
   // suppressed within this radius of a RECENT AIS/cooperative vessel fix — an
   // AIS/cooperative-known platform must remain track-eligible (the strongest
   // vessel discriminator under the ADR-0002 amendment: "where we CAN tell, a
   // vessel must track, never be suppressed"). ~100 m ≈ one coarse cell, covering
-  // the vessel + fix uncertainty. Only active when observeVesselFix() is fed; the
-  // veto only REDUCES suppression to 0, so the conservation invariant is preserved.
+  // the vessel + fix uncertainty. Only active when observeVesselFix() is fed AND
+  // corroboration_veto_enabled is true; the veto only REDUCES suppression to 0,
+  // so the conservation invariant is preserved.
   double veto_radius_m = 100.0;
   // A vessel fix vetoes only while it is within this window of the current scan
   // time; a stale fix (the vessel's feed went quiet) is pruned, so an anchored
