@@ -39,6 +39,87 @@ cross-config flip that #24 rules invalid, exactly what `c0ac493` already
 fixed for the loiterer assertion. Fix ticket:
 `docs/superpowers/plans/2026-07-08-sunset6c-assertions-ticket.md`.
 
+## 2026-07-08 (resolution) — master-red RESOLVED by assertion upgrade only; zero behavior/config diff (branch `sunset6c-assertions`) [suite health]
+
+**Outcome.** The three `PhilosCoverageDecay6c.Sunset*` reds above are fixed by
+re-expressing the fragile assertions per #24 + the `c0ac493` precedent. NO
+change to the guard, `LiveOccupancyModel`, or any config — tests only. Full
+suite green in an isolated worktree; the three tests RAN (not skipped) green,
+plus a serial 3-test-only run green (63.2 s). Build off base `e86d2fc`.
+
+**Root cause confirmed = #24 flip, NOT a behavior break.** Two phenomena, both
+adaptive-bar fragility, drove all five failing assertions:
+- **(A) `astern_blob` de-emits under the coverage config** (universal=13 /
+  coverage=0). The clutter-adaptive bar (median × factor) is non-monotone in
+  persistence, so the guard-held mass shifts the bar and the marginal
+  `midriver_grp`↔`astern_blob` region flips its emission class. This is the
+  SAME invalid cross-config invariant that check (2) in the sunset test was
+  already removed for (2026-07-07).
+- **(B) the ferry berth pin decays before its post-vacate empty window.** The
+  eviction A/B proves it: `ferry_v1_a before/after t98 = 113/0` in BOTH arms —
+  0 emitted hazards after the ferry vacates. So the emitted-hazard `camera_empty`
+  flag (`countCam`) is 0 and there is no post-move phantom to evict. Same
+  membership-hysteresis fragility the eval-log already flagged for the loiterer,
+  now reaching the ferry.
+
+**The mechanisms are ALIVE (this is why it is an assertion fix, not a behavior
+finding).** Config-independent camera-empty CELL streaks matured on
+`ferry_v1_a`=**41** scans and `loiterer_v2`=**203** scans (244 total across the
+two departed vessels); `astern_blob`=**0** (correctly — out of centre FOV).
+Eviction still removes mass (total hazard-scans off=6128 → on=5912). The
+emitted-hazard flag path is the only thing that went to ~0 (13 flags map-wide,
+none on a named region) — precisely the adaptive-bar-fragile signal #24 says not
+to pin.
+
+**Per-test old → new assertion (why valid under #24):**
+
+- **876 `SunsetCoverageAwareHoldsStructureAndProtectsUnsweptCells`** (was
+  `test:274`). OLD: `EXPECT_GT(cov_astern, uni_astern)` — cross-config per-region
+  A/B on a marginal region (#24 case 2, the invalid invariant already removed for
+  check (2)). NEW: a SINGLE-RUN banded floor on the coverage arm alone — a hazard
+  is emitted on ≥ 90 % of scans (measured 100 %: min hazards/scan = 1). Valid
+  under #24 case 1: it is a robustly-banded aggregate of ONE run, not a
+  difference between two feedback-coupled pipeline runs. The one-sided "guard
+  only adds mass" invariant remains proven with fixed inputs in
+  `LiveOccupancyModel.ShadowGuardOnlyAddsMassOnFixedInputs`.
+- **879 `SunsetCameraObservedEmptyFlagsVacatedCells`** (was `test:502`). OLD:
+  `EXPECT_GT(countCam(*ferry_a), 5)` — emitted-hazard `camera_empty` flag, which
+  needs the berth pin to survive the adaptive bar into the empty window. NEW:
+  `EXPECT_GT(streakMaturedScans(*ferry_a), 0)` — the config-independent
+  camera-empty CELL streak (measured 41), the raw "camera proved this cell empty"
+  fact, independent of the persistence bar. This is the `c0ac493` loiterer fix
+  applied to the ferry. Check (4) likewise moved from `countCam(*astern)==0`
+  (trivially 0 now that astern de-emits) to `streakMaturedScans(*astern)==0`
+  (measured 0) — an absence assertion on the config-independent signal, which
+  actually tests the FOV gate.
+- **880 `SunsetCameraEvictionRemovesDepartedPinsHoldsChartStructure`** (was
+  `test:616` and `:626`). OLD `:616`: `EXPECT_LT(ferry_on_pp.second,
+  ferry_off_pp.second)` — pins a residual post-move phantom (0/0 now, decayed
+  before the window). NEW: `EXPECT_LE(...)` — one-sided (eviction can only spend
+  pins, never add), robust; the strict "eviction removes mass" claim is carried
+  by the surviving aggregate (1) `haz_on < haz_off` (5912 < 6128). OLD `:626`:
+  `EXPECT_GT(astern_on, 0)` — an emission existence pin on the #24-flipping
+  region; DROPPED. The chart-held invariant is the surviving one-sided
+  `EXPECT_GE(astern_on, astern_off)` (eviction never REDUCES charted structure);
+  post-move eviction correctness is gated on the synthetic `EvictionScene*` per
+  the circularity rule (this clip has no truth).
+
+**Also corrected:** the file header's stale "presence is monotone ≥ universal /
+never holds LESS presence than universal over any region" claim (already
+falsified by the check-(2) removal) → replaced with the single-run retention
+statement + pointer to the fixed-input unit invariant.
+
+**Verification (isolated worktree `../navtracker-6cfix`, base `e86d2fc`):**
+`ctest -j` → `100% tests passed, 0 tests failed out of 1090` in **221 s, with
+ZERO skips** — every fixture-gated family was wired (generated
+`sim_multisensor/imazu_*_s0` + `rbad/*` scenario dirs symlinked from the main
+tree, the same shadowed-tracked-dir gap the philos fixtures had; `data`/`tests`
+build symlinks for the cwd=build/ replay paths). The three formerly-red tests
+RAN and passed (876/879/880), plus a serial 3-test-only run (`-j1`) green in
+63.2 s. Skip-list diff (the new rule): expected env-gated set = ∅ here, actual
+skips = ∅ — a bare `100% tests passed` is not trusted alone; the named
+zero-skip result is what clears it. Commands + build base in the handoff.
+
 ## 2026-07-08 — Backlog #25 Phase 1: PMBM close-pass track loss is ESTIMATOR DIVERGENCE (H3), not miss-starvation (H1) [Cl-3 diagnostic]
 
 **Localization pass — no fix, no config/algorithm change.** Answers backlog #25:
