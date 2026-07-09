@@ -68,6 +68,23 @@ struct PmbmBernoulliDiag {
   bool in_dominant{false};  // present in the max-weight global hypothesis
   bool in_output{false};    // agg_mass >= output_existence_floor
   bool confirmed{false};    // agg_mass >= confirm_threshold
+
+  // #25 Phase 2b: the TRUE applied-measurement position innovation of the
+  // dominant-hyp Bernoulli this scan — (measurement ENU) − (predicted ENU) —
+  // and its norm (metres). This is what the Phase-2a probe approximated with
+  // the frame-to-frame posterior position jump; the raw innovation lets the
+  // position-innovation gate be sized against the real update surprise and
+  // answers whether the runaway starts with one oversized accepted innovation
+  // (→ gate at update-acceptance) or a run of moderate ones (→ estimator clamp).
+  // innov_norm_m = -1 when misdetected / absent from the dominant hypothesis /
+  // born / the claimed measurement has no ENU position (bearing-only).
+  double innov_east_m{0.0};
+  double innov_north_m{0.0};
+  double innov_norm_m{-1.0};
+  // Per-mode IMM weights of the dominant-hyp Bernoulli (empty = single-Gaussian
+  // PPP / no IMM). Closes the Phase-2a declared (c) gap — the CV-vs-CT mode
+  // dominance through a divergence.
+  std::vector<double> imm_mode_weights;
 };
 
 /** Per-scan PMBM diagnostic record (one per processBatch when a sink is set). */

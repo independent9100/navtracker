@@ -214,6 +214,21 @@ struct Bernoulli {
   // just processed; not round-tripped through toTrack/fromTrack.
   int last_claimed_meas_index{-1};
 
+  // #25 Phase 2b diagnostic (forensics only; transient, per-scan; NOT round-
+  // tripped through toTrack/fromTrack). The raw POSITION innovation of the
+  // measurement this Bernoulli claimed under the assignment that produced its
+  // hypothesis: (measurement ENU position) − (predicted ENU position, i.e. the
+  // parent's post-predict/pre-update mean). `last_innovation_norm_m` is its
+  // Euclidean norm; sentinel −1 means this Bernoulli was misdetected or born
+  // this scan, or the claimed measurement carries no ENU position (bearing-
+  // only). Written at the detection update in enumerateChildren ONLY when a
+  // diagnostic sink is attached — a pure side-record that never enters the
+  // update math, so tracking output is byte-identical with the sink null.
+  // Consumed only by emitPmbmDiagnostics (the true quantity the Phase-2a probe
+  // proxied with the posterior position jump).
+  Eigen::Vector2d last_innovation_enu{Eigen::Vector2d::Zero()};
+  double last_innovation_norm_m{-1.0};
+
   // R11 identity surfacing. The vessel identity carried by the measurements
   // this Bernoulli has claimed, persisted across scans (unlike the transient
   // last_claimed_meas_index) and set last-write-wins at each detection/birth

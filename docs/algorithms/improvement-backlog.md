@@ -1157,3 +1157,19 @@ path — clamp kinematics, never delete the Bernoulli.** Phase-2b pre-conditions
 proxy) and re-probe to pick estimator-clamp vs association-gate; (2) pair with a
 coalescence guard (dying ids migrate across near truths at the CPA — margins are
 coalescence-confounded). Phase-2b design remains the arbiter's call.
+
+**RE-PROBED 2026-07-09 (Phase 2b Stage 1, CHECKPOINT — `docs/baselines/2026-07-09_b25_phase2b.md`,
+`tools/pmbm_phase2b_innov_probe.py`).** Extended the diag with the TRUE
+measurement position innovation + IMM mode weights (additive, default-off,
+byte-identical — proven vs the pre-2b binary). The true innovation **reproduces
+the proxy verdict**: 5/6 dying flagged before permanent gate-exit; false-fire
+D200 0.70%/0.22%, D400 0.06%/0.02% (autoferry_unanch+sim_ms), 0% on real
+autoferry → **position-innovation gate PASSES at D_max 200–400 m**. Placement
+(new): the runaway is a moderate-innovation (50–108 m) CT-mode velocity build-up
+(speed 2→110+ m/s) FOLLOWED by one oversized accepted innovation (484 m) — so the
+clean binding TRIGGER is at update-acceptance, but the velocity is already
+elevated when it fires → the flag ACTION should reset/deweight velocity, not bare-
+reject. IMM finding: CT-mode dominance + 0↔1 thrash is the divergence signature
+(closes the 2a (c) gap). Recommended Stage-2 build: `innov_gate_max_m` ∈ 200–400 m
+(per-instance, default OFF), accept-position-reset-velocity, kinematic path only.
+No behavior code written — awaiting arbiter go for Stage 2.

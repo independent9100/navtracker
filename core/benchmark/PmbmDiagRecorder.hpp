@@ -17,7 +17,11 @@ namespace navtracker::benchmark {
  *       hyp_dropped_floor,hyp_dropped_cap,bernoulli_pruned_rmin
  *   <base>.pmbmbern.csv  — one row per (scan, aggregated identity):
  *       scan,time_s,id,agg_mass,r_best,hyp_count,claimed_meas,
- *       east_m,north_m,speed_mps,in_dominant,in_output,confirmed
+ *       east_m,north_m,speed_mps,in_dominant,in_output,confirmed,
+ *       innov_east_m,innov_north_m,innov_norm_m,imm_weights
+ *   (#25 Phase 2b: innov_* = true applied-measurement position innovation of the
+ *    dominant-hyp Bernoulli, norm −1 when misdetected/absent/born/bearing-only;
+ *    imm_weights = '|'-joined per-mode IMM weights, empty when not IMM.)
  *
  * Wired by Sweep only when export_pmbm_diag_dir is set AND the tracker is
  * PMBM; the recorder is a plain IPmbmDiagnosticSink, so with no sink the
@@ -33,7 +37,8 @@ class PmbmDiagRecorder : public pmbm::IPmbmDiagnosticSink {
     scan_ << "scan,time_s,n_meas,n_hyp,n_bernoulli,n_ids,"
              "hyp_dropped_floor,hyp_dropped_cap,bernoulli_pruned_rmin\n";
     bern_ << "scan,time_s,id,agg_mass,r_best,hyp_count,claimed_meas,"
-             "east_m,north_m,speed_mps,in_dominant,in_output,confirmed\n";
+             "east_m,north_m,speed_mps,in_dominant,in_output,confirmed,"
+             "innov_east_m,innov_north_m,innov_norm_m,imm_weights\n";
   }
 
   void onPmbmScan(const pmbm::PmbmScanDiag& d) override {
@@ -47,7 +52,11 @@ class PmbmDiagRecorder : public pmbm::IPmbmDiagnosticSink {
             << ',' << b.claimed_meas_index << ',' << b.east_m << ','
             << b.north_m << ',' << b.speed_mps << ',' << (b.in_dominant ? 1 : 0)
             << ',' << (b.in_output ? 1 : 0) << ',' << (b.confirmed ? 1 : 0)
-            << '\n';
+            << ',' << b.innov_east_m << ',' << b.innov_north_m << ','
+            << b.innov_norm_m << ',';
+      for (std::size_t k = 0; k < b.imm_mode_weights.size(); ++k)
+        bern_ << (k ? "|" : "") << b.imm_mode_weights[k];
+      bern_ << '\n';
     }
   }
 

@@ -796,6 +796,23 @@ void PmbmTracker::enumerateChildren(
       Bernoulli upd = b;
       fromTrack(upd, t_upd);
       upd.existence_probability = 1.0;  // existence given detection
+      // #25 Phase 2b (diagnostic-only, sink-gated → zero work / byte-identical
+      // when off): the TRUE raw position innovation of measurement l against the
+      // predicted position (b.mean is post-predict/pre-update). Position-model
+      // measurements carry an ENU position directly; bearing-only carry none →
+      // sentinel. A pure side-record; never re-enters the update math.
+      if (diag_sink_ != nullptr) {
+        const MeasurementModel mdl = scan[l].model;
+        if ((mdl == MeasurementModel::Position2D ||
+             mdl == MeasurementModel::PositionVelocity2D) &&
+            scan[l].value.size() >= 2 && b.mean.size() >= 2) {
+          upd.last_innovation_enu = scan[l].value.head<2>() - b.mean.head<2>();
+          upd.last_innovation_norm_m = upd.last_innovation_enu.norm();
+        } else {
+          upd.last_innovation_enu.setZero();
+          upd.last_innovation_norm_m = -1.0;
+        }
+      }
       updated[i][l] = std::move(upd);
       const double r = b.existence_probability;
       const double cost_val = -(std::log(r) + ll);
@@ -994,6 +1011,11 @@ void PmbmTracker::enumerateChildren(
         // eventually fall below r_min.
         Bernoulli miss = b;
         miss.last_claimed_meas_index = -1;  // R2: claimed nothing this scan
+        // #25 P2b: no measurement applied → clear the parent's stale innovation.
+        if (diag_sink_ != nullptr) {
+          miss.last_innovation_enu.setZero();
+          miss.last_innovation_norm_m = -1.0;
+        }
         // Misdetection: no update at this scan → predicted == filtered.
         if (!should_misdetect(b.id)) {
           miss.existence_probability *= idle_decay_for(b);
@@ -1138,6 +1160,11 @@ void PmbmTracker::enumerateChildren(
       nb.imm_mode_probabilities = nt.imm_mode_probabilities;
       nb.last_update = scan[l].time;
       nb.last_claimed_meas_index = l;  // R2: this measurement birthed it
+      // #25 P2b: a birth has no predicted position to innovate against → sentinel.
+      if (diag_sink_ != nullptr) {
+        nb.last_innovation_enu.setZero();
+        nb.last_innovation_norm_m = -1.0;
+      }
       nb.birth_time = scan[l].time;
       // R11 identity surfacing: seed identity from the birthing measurement's
       // hints (nullopt if it carries none — refined by later claims). #20 adds
@@ -1950,7 +1977,14 @@ void PmbmTracker::mergeBernoulliDuplicates(GlobalHypothesis& h) const {
       const bool take_b_claim =
           b.last_claimed_meas_index >= 0 &&
           (a.last_claimed_meas_index < 0 || r_b > r_a);
-      if (take_b_claim) a.last_claimed_meas_index = b.last_claimed_meas_index;
+      if (take_b_claim) {
+        a.last_claimed_meas_index = b.last_claimed_meas_index;
+        // #25 P2b: keep the innovation attached to the claim it belongs to.
+        if (diag_sink_ != nullptr) {
+          a.last_innovation_enu = b.last_innovation_enu;
+          a.last_innovation_norm_m = b.last_innovation_norm_m;
+        }
+      }
       // R11: the two folding Bernoullis are the same logical target, so the
       // survivor keeps any identity it already has and inherits the duplicate's
       // when it had none (never drop a real id in favour of a nullopt).
@@ -2347,6 +2381,17 @@ void PmbmTracker::emitPmbmDiagnostics(Timestamp t) {
                                      b->mean(3) * b->mean(3))
                          : -1.0;
       bd.in_dominant = true;
+      // #25 Phase 2b: true applied-measurement position innovation + IMM weights
+      // of the dominant-hyp Bernoulli (sentinel norm −1 when it misdetected /
+      // was born this scan; imm empty when single-Gaussian).
+      bd.innov_east_m = b->last_innovation_enu.x();
+      bd.innov_north_m = b->last_innovation_enu.y();
+      bd.innov_norm_m = b->last_innovation_norm_m;
+      if (b->imm_mode_probabilities.size() > 0)
+        bd.imm_mode_weights.assign(
+            b->imm_mode_probabilities.data(),
+            b->imm_mode_probabilities.data() +
+                b->imm_mode_probabilities.size());
     } else {
       bd.existence_r_best = 0.0;
       bd.claimed_meas_index = -2;  // absent from the dominant hypothesis

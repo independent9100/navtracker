@@ -8,6 +8,51 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-09 — Backlog #25 Phase 2b Stage 1: true-innovation re-probe (CHECKPOINT) [Cl-3 diagnostic]
+
+Extended the `IPmbmDiagnosticSink` surface (additive, default-off, byte-
+identical) with the TRUE applied-measurement position innovation (measurement
+ENU − predicted ENU + norm) and the per-mode IMM weights, then re-ran the
+Phase-2a D-axis probe on the real innovation. Full write-up:
+`docs/baselines/2026-07-09_b25_phase2b.md`. **No behavior code — checkpoint.**
+
+**Byte-identical proof.** sim_ms states.csv diag ON==OFF; all 46 states.csv
+(22 imazu+6 sim_ms+18 autoferry) my diag-ON == the pre-2b binary (update-path
+edit inert); 260 non-timing metric rows ON==OFF; diag re-run deterministic. The
+`enumerateChildren` innovation capture is sink-gated → zero work / byte-identical
+when no sink.
+
+**Binding re-probe (true innovation).** Detection: 5/6 dying flagged before
+permanent gate-exit at every D_max (6th = the imazu_22 id7 coalescence, no clean
+exit). False-fire (autoferry_unanch+sim_ms): D100 3.39%/1.09% FAIL, **D200
+0.70%/0.22% PASS, D400 0.06%/0.02% PASS** (detection-surface / all-rows). REAL
+autoferry = 0.00% at every D. **The true innovation reproduces the Phase-2a
+proxy verdict — position-innovation gate PASSES at D_max 200–400 m.**
+
+**Placement (the question the proxy could not answer).** The runaway is
+two-phase: a SEQUENCE of moderate innovations (50–108 m, each < D_max) under IMM
+**CT (turn) mode** dominance pumps speed 2→110+ m/s over ~25 s (the track grabs
+returns near its increasingly-fast prediction, so innovation stays small), THEN
+a single OVERSIZED accepted innovation (imazu_15 id6: 484 m at t=355) lands as
+the gross mis-association. Max innovation before the first >200 m flag: 108/158/
+173 m across the three traced tracks. So: the clean, binding-passing TRIGGER is
+at **update-acceptance** (the oversized innovation; ~0 false-fire), but the
+velocity is already elevated when it fires — a bare "reject/coast" action would
+flag-but-not-fix; the evidence favours **accept-position + reset/deweight-
+velocity**. The moderate build-up is estimator-internal (CT-mode update too
+aggressive) — an estimator clamp is the fallback but must key on CT-mode/
+velocity-change, not innovation magnitude (magnitude clamping the build-up
+re-introduces the Phase-2a velocity-signal false-fire). IMM finding (closes the
+2a (c) gap): CT-mode dominance + violent 0↔1 mode thrash is the divergence
+signature; healthy scans are CV-dominant (0.9+).
+
+**Stage-1 verdict: PASS → recommend Stage 2 builds the gate at update-acceptance,
+`innov_gate_max_m` ∈ 200–400 m (per-instance, default OFF), action = accept-
+position-reset-velocity, kinematic path only (existence/birth untouched — the
+philos brake + ADR-0002 stay untouched by construction). Awaiting arbiter go.**
+Suite 1089 ran / 1081 passed / 0 failed / 8 skipped (HAXR/RBAD/Boston data-gated,
+named; sunset-6c ran and passed on this toolchain as in 2a).
+
 ## 2026-07-08 — Backlog #25 Phase 2a: runaway census + offline velocity/innovation-bound probe [Cl-3 diagnostic]
 
 Offline probe (no build; new read-only `tools/pmbm_phase2a_probe.py` over the

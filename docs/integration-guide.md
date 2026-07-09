@@ -678,10 +678,13 @@ nullable; null = today's behaviour, no overhead.
   not a production integration point.** `PmbmTracker::setDiagnosticSink(...)`
   emits a per-scan `PmbmScanDiag` exposing MBM-internal state the aggregated
   `tracks()` output collapses away (per-identity existence mass, dominant-hyp
-  `r`, claimed measurement, state divergence, prune/cap events). It lives in
-  `core/pmbm/` (not `ports/`) because a normal consumer never wires it; it exists
-  for close-pass / track-death diagnosis (backlog #25, reproducer
-  `tools/pmbm_closepass_trace.py`). Null (default) = zero overhead,
+  `r`, claimed measurement, state divergence, prune/cap events, and — since
+  Phase 2b — the applied-measurement position innovation
+  (`innov_east_m`/`innov_north_m`/`innov_norm_m`) and per-mode IMM weights
+  (`imm_mode_weights`)). It lives in `core/pmbm/` (not `ports/`) because a normal
+  consumer never wires it; it exists for close-pass / track-death diagnosis
+  (backlog #25, reproducers `tools/pmbm_closepass_trace.py`,
+  `tools/pmbm_phase2b_innov_probe.py`). Null (default) = zero overhead,
   byte-identical tracking.
 
 Lifecycle + risk wiring (`tests/integration/test_full_stack_pipeline.cpp`):
