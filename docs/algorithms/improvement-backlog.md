@@ -1125,3 +1125,22 @@ guard), which are orthogonal to the miss-P_D existence brake that holds philos
 over-count down (so they cannot weaken it), provided they fire only in the
 association-ambiguity/large-innovation context and leave the existence/birth
 channel untouched. Phase-2 design is the arbiter's call.
+
+**PROBED 2026-07-08 (Phase 2a offline bound probe — `docs/baselines/2026-07-09_b25_phase2a_probe.md`,
+`tools/pmbm_phase2a_probe.py`).** Ran the census + an on-paper sweep of the
+speed/innovation bound before building it. (A) 82.5 % of all runaway (>50 m/s
+Confirmed) rows are short-lived **clutter-born phantoms** (99.5 % in
+single-target scenarios) — the "systemic" gloss shrinks, though the CPA-dying
+tracks themselves are genuinely target-born. (B) Axis separation is decisive
+under the binding kill-criteria (≥5/6 dying before gate-exit AND <1% false-fire
+on autoferry+sim_ms): the **velocity/implied-speed bound FAILS** (2–11 %
+false-fire — healthy well-positioned tracks carry transient velocity-state spikes
+of 159–235 m/s in close-pass ambiguity), while the **position-displacement /
+innovation gate PASSES** at D_max ≥ 200 m (0.13 % sim_ms / 0.00 % autoferry
+false-fire; 5/6 detection). **Verdict: BUILD the position-innovation gate (NOT
+the velocity bound), band D_max ≈ 200–400 m, guard at the estimator/association
+path — clamp kinematics, never delete the Bernoulli.** Phase-2b pre-conditions:
+(1) export the true measurement-innovation (the D-axis here is a posterior-jump
+proxy) and re-probe to pick estimator-clamp vs association-gate; (2) pair with a
+coalescence guard (dying ids migrate across near truths at the CPA — margins are
+coalescence-confounded). Phase-2b design remains the arbiter's call.
