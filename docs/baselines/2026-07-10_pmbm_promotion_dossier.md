@@ -132,10 +132,21 @@ flat-to-slightly-worse). Net-neutral-to-protective at its default. The
 | id_sw / brk | 0.4 / 0 | 0 / 0 | 0 / 0 | 0 / 0.8 |
 
 - Lifetime **0.975 ≥ 0.974** reproduces the M2 yardstick for all live configs.
-- **Caveat:** the absolute `card_err` (~8–11) is inflated by a known
-  truth-fragmentation harness artifact (the `pmbm-harbor-truth-sort-fix` branch
-  is unmerged at `d94471e`); the comparable signal is the **delta** (candidate
-  8.0 < champion 8.8 < canonical-pmbm 11.1), not the absolute.
+- **Caveat [CORRECTED 2026-07-10 — the original caveat below was WRONG].**
+  ~~The absolute `card_err` (~8–11) is inflated by a known truth-fragmentation
+  harness artifact (the `pmbm-harbor-truth-sort-fix` branch is unmerged at
+  `d94471e`); the comparable signal is the delta, not the absolute.~~
+  The truth-sort fix **is merged** — commits `3ee491f` + `3aa9c58` (2026-07-02)
+  are **ancestors of `d94471e`**, this dossier's own base — so these rows were
+  measured on **already-corrected, time-sorted truth**. Harbor truth is **not**
+  fragmented (verified: 5 objects, 40 complete groups; contract test
+  `HarborCompleteTruth.TruthIsTimeSortedIntoFortyCompleteGroups` green). The
+  absolute `card_err ~8–11` is therefore a **REAL over-count** — phantom tracks
+  on the uncharted 13-point pier (+ transient sea clutter), not an artifact.
+  Both the **delta** (candidate 8.0 < champion 8.8 < canonical-pmbm 11.1) **and
+  the absolute** are meaningful — driving the absolute down is exactly the Cl-4
+  one-config objective. Full reconciliation:
+  `docs/baselines/2026-07-10_harbor_truthsort_reconcile.md`.
 - Gate identical to `coverage_land` here too (does not fire on harbor).
 
 ### 1e. Imazu 22 battery (identity through close crossings)
@@ -252,7 +263,11 @@ operator-facing realtime number; interval = **148 ms**.
   is a *coastal/open-water* stack, not a universal one.
 - **Standing residuals.** +0.77 crossing-independent Imazu over-count (parked
   clutter/birth channel, measured-negative 2026-07-07); philos near-parity
-  (73.1 vs 69.4); harbor card_err confounded by the unmerged truth-sort fix.
+  (73.1 vs 69.4); harbor `card_err ~8–11` is a **real uncharted-pier over-count**
+  — [correction 2026-07-10] NOT "confounded by the unmerged truth-sort fix": that
+  fix is merged (in this dossier's own base `d94471e`) and truth is not
+  fragmented; see §1d and
+  `docs/baselines/2026-07-10_harbor_truthsort_reconcile.md`.
 
 ---
 
