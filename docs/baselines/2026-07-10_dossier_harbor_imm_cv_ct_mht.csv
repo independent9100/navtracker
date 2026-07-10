@@ -1,0 +1,103 @@
+# run_id: 2026-07-10_dossier_harbor_imm_cv_ct_mht
+# started_at: 2026-07-10T10:07:55Z
+# git_sha: unknown
+# build_type: Release
+# compiler: unknown
+# host: unknown
+# seeds: [0]
+# configs: 1
+# scenarios: 1
+# total_runs: 26
+# elapsed_seconds: 0.16072
+run_id,config,scenario,seed,metric,value,unit
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,wall_seconds,0.158647,s
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,ospa_mean,402.37,m
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,ospa_p95,420.107,m
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,gospa_mean,44.5068,m
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,gospa_p95,52.0924,m
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,gospa_rms,44.7865,m
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,gospa_localization,190.829,m2
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,gospa_missed,25,m2
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,gospa_false,1790,m2
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,card_err_mean,8.825,tracks
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,tgospa_raw,284.663,m
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,tgospa_smooth,0,m
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,lifetime_ratio,0.975,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,track_breaks,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,id_switches,0.4,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,pos_rmse_m,6.19786,m
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,sog_rmse_mps,2.98965,m/s
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,cog_rmse_deg,63.1804,deg
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,lifetime_ratio:truth_1,0.975,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,track_breaks:truth_1,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,id_switches:truth_1,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,pos_rmse_m:truth_1,7.55499,m
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,sog_rmse_mps:truth_1,2.68946,m/s
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,cog_rmse_deg:truth_1,10.6125,deg
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,rmse_n:truth_1,39,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,lifetime_ratio:truth_2,0.975,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,track_breaks:truth_2,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,id_switches:truth_2,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,pos_rmse_m:truth_2,6.60087,m
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,sog_rmse_mps:truth_2,2.51511,m/s
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,cog_rmse_deg:truth_2,5.52741,deg
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,rmse_n:truth_2,39,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,lifetime_ratio:truth_3,0.975,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,track_breaks:truth_3,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,id_switches:truth_3,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,pos_rmse_m:truth_3,5.85962,m
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,sog_rmse_mps:truth_3,3.66143,m/s
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,cog_rmse_deg:truth_3,98.2675,deg
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,rmse_n:truth_3,39,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,lifetime_ratio:truth_4,0.975,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,track_breaks:truth_4,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,id_switches:truth_4,2,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,pos_rmse_m:truth_4,5.9995,m
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,sog_rmse_mps:truth_4,4.59586,m/s
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,cog_rmse_deg:truth_4,93.3803,deg
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,rmse_n:truth_4,39,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,lifetime_ratio:truth_5,0.975,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,track_breaks:truth_5,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,id_switches:truth_5,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,pos_rmse_m:truth_5,4.97431,m
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,sog_rmse_mps:truth_5,1.4864,m/s
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,cog_rmse_deg:truth_5,108.114,deg
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,rmse_n:truth_5,39,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nees_mean,1.82993,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nees_median,1.27729,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nees_p95,5.18139,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nees_p99,7.67304,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nees_coverage_95,0.964103,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nees_beta_hat,0.914964,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nees_n,195,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nees_dropped_singular,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_mean:ais_pos2d_sim,2.10366,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_coverage_95:ais_pos2d_sim,0.91954,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_alpha_hat:ais_pos2d_sim,1.05183,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_trace_ratio:ais_pos2d_sim,1.49638,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_n:ais_pos2d_sim,87,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_dropped_singular:ais_pos2d_sim,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_mean:arpattm_pos2d_sim_anchored,1.54725,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_coverage_95:arpattm_pos2d_sim_anchored,0.964286,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_alpha_hat:arpattm_pos2d_sim_anchored,0.773623,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_trace_ratio:arpattm_pos2d_sim_anchored,1.42246,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_n:arpattm_pos2d_sim_anchored,112,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_dropped_singular:arpattm_pos2d_sim_anchored,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_mean:arpattm_pos2d_sim_clutter,5.2769,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_coverage_95:arpattm_pos2d_sim_clutter,0.8,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_alpha_hat:arpattm_pos2d_sim_clutter,2.63845,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_trace_ratio:arpattm_pos2d_sim_clutter,311.983,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_n:arpattm_pos2d_sim_clutter,10,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_dropped_singular:arpattm_pos2d_sim_clutter,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_mean:arpattm_pos2d_sim_pier,1.54526,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_coverage_95:arpattm_pos2d_sim_pier,0.957865,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_alpha_hat:arpattm_pos2d_sim_pier,0.772632,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_trace_ratio:arpattm_pos2d_sim_pier,2.58243,ratio
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_n:arpattm_pos2d_sim_pier,356,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,nis_dropped_singular:arpattm_pos2d_sim_pier,0,count
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,scan_proc_ms_mean,3.94767,ms
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,scan_proc_ms_p95,6.14504,ms
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,scan_proc_ms_p99,8.46247,ms
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,scan_proc_ms_max,9.58425,ms
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,scan_interval_s,1,s
+2026-07-10_dossier_harbor_imm_cv_ct_mht,imm_cv_ct_mht,harbor_complete_truth,0,n_scans,40,count

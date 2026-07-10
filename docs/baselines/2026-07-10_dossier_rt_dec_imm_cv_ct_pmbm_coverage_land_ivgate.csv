@@ -1,0 +1,19 @@
+# run_id: 2026-07-10_dossier_rt_dec_imm_cv_ct_pmbm_coverage_land_ivgate
+# started_at: 2026-07-10T10:19:00Z
+# git_sha: unknown
+# build_type: Release
+# compiler: unknown
+# host: unknown
+# seeds: [0]
+# configs: 1
+# scenarios: 1
+# total_runs: 47
+# elapsed_seconds: 29.7759
+run_id,config,scenario,seed,metric,value,unit
+2026-07-10_dossier_rt_dec_imm_cv_ct_pmbm_coverage_land_ivgate,imm_cv_ct_pmbm_coverage_land_ivgate,haxr,0,wall_seconds,29.5126,s
+2026-07-10_dossier_rt_dec_imm_cv_ct_pmbm_coverage_land_ivgate,imm_cv_ct_pmbm_coverage_land_ivgate,haxr,0,scan_proc_ms_mean,14.5946,ms
+2026-07-10_dossier_rt_dec_imm_cv_ct_pmbm_coverage_land_ivgate,imm_cv_ct_pmbm_coverage_land_ivgate,haxr,0,scan_proc_ms_p95,18.999,ms
+2026-07-10_dossier_rt_dec_imm_cv_ct_pmbm_coverage_land_ivgate,imm_cv_ct_pmbm_coverage_land_ivgate,haxr,0,scan_proc_ms_p99,20.3407,ms
+2026-07-10_dossier_rt_dec_imm_cv_ct_pmbm_coverage_land_ivgate,imm_cv_ct_pmbm_coverage_land_ivgate,haxr,0,scan_proc_ms_max,30.3625,ms
+2026-07-10_dossier_rt_dec_imm_cv_ct_pmbm_coverage_land_ivgate,imm_cv_ct_pmbm_coverage_land_ivgate,haxr,0,scan_interval_s,0.148,s
+2026-07-10_dossier_rt_dec_imm_cv_ct_pmbm_coverage_land_ivgate,imm_cv_ct_pmbm_coverage_land_ivgate,haxr,0,n_scans,1998,count

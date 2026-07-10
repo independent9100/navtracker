@@ -1,0 +1,19 @@
+# run_id: 2026-07-10_dossier_rt_raw_imm_cv_ct_pmbm_coverage_land
+# started_at: 2026-07-10T10:20:35Z
+# git_sha: unknown
+# build_type: Release
+# compiler: unknown
+# host: unknown
+# seeds: [0]
+# configs: 1
+# scenarios: 1
+# total_runs: 47
+# elapsed_seconds: 94.2953
+run_id,config,scenario,seed,metric,value,unit
+2026-07-10_dossier_rt_raw_imm_cv_ct_pmbm_coverage_land,imm_cv_ct_pmbm_coverage_land,haxr,0,wall_seconds,93.8202,s
+2026-07-10_dossier_rt_raw_imm_cv_ct_pmbm_coverage_land,imm_cv_ct_pmbm_coverage_land,haxr,0,scan_proc_ms_mean,46.805,ms
+2026-07-10_dossier_rt_raw_imm_cv_ct_pmbm_coverage_land,imm_cv_ct_pmbm_coverage_land,haxr,0,scan_proc_ms_p95,61.4842,ms
+2026-07-10_dossier_rt_raw_imm_cv_ct_pmbm_coverage_land,imm_cv_ct_pmbm_coverage_land,haxr,0,scan_proc_ms_p99,66.2654,ms
+2026-07-10_dossier_rt_raw_imm_cv_ct_pmbm_coverage_land,imm_cv_ct_pmbm_coverage_land,haxr,0,scan_proc_ms_max,85.0717,ms
+2026-07-10_dossier_rt_raw_imm_cv_ct_pmbm_coverage_land,imm_cv_ct_pmbm_coverage_land,haxr,0,scan_interval_s,0.148,s
+2026-07-10_dossier_rt_raw_imm_cv_ct_pmbm_coverage_land,imm_cv_ct_pmbm_coverage_land,haxr,0,n_scans,1991,count
