@@ -88,6 +88,15 @@ add_library(navtracker_core
 target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
 
+# Track-to-track fusion (tracker-of-trackers). Consumer target: links the pure
+# domain core, no I/O. See docs/algorithms/t2t-fusion.md.
+add_library(navtracker_t2t
+  core/t2t/ExternalTrack.cpp
+  core/t2t/FusedTrackOutput.cpp
+)
+target_include_directories(navtracker_t2t PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(navtracker_t2t PUBLIC navtracker_core Eigen3::Eigen)
+
 add_library(navtracker_nmea
   adapters/util/Nmea.cpp
   adapters/util/EdgeValidation.cpp
@@ -369,11 +378,14 @@ add_executable(navtracker_tests
   tests/benchmark/test_existence_label.cpp
   tests/sensor_activity/test_declared_sensor_activity.cpp
   tests/docs/test_integration_guide_config_coverage.cpp
+  tests/t2t/test_covariance_intersection.cpp
+  tests/t2t/test_pedigree.cpp
+  tests/t2t/test_external_track_validation.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
     navtracker_core navtracker_nmea navtracker_sim navtracker_replay navtracker_benchmark
-    navtracker_benchmark_adapters navtracker_land
+    navtracker_benchmark_adapters navtracker_land navtracker_t2t
     GTest::gtest_main Eigen3::Eigen)
 target_compile_definitions(navtracker_tests PRIVATE
     NAVTRACKER_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
