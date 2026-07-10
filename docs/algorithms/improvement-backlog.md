@@ -1191,3 +1191,10 @@ OFF). Escalation lever (CT-mode-keyed estimator clamp) + coalescence guard remai
 parked (separate tickets) — not needed on any workload measured. **#25 CLOSED as
 the target-loss fix; the deployment trade (MHT churn/presence vs PMBM identity)
 is now mitigated on the PMBM side.**
+
+**MERGED 2026-07-10 (e1697f0; arbiter final ceremony on the merged tip:
+1092/1092, 0 failed, 0 skipped, all fixture families wired).** Next step is
+the DECISION, not more building: the promotion dossier
+(`docs/superpowers/plans/2026-07-09-pmbm-promotion-dossier-ticket.md`)
+compiles both contenders through the full gauntlet at one commit; the
+canonical-promotion call is the user's.

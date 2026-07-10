@@ -133,6 +133,13 @@ target data — env-2 is roughly even but env-1 is far worse.
   loss); (2) PMBM pays the win in continuity (breaks 2→36/scenario,
   lifetime 0.90→0.69 = the #25 axis) — GOSPA scores cardinality, not
   continuity.
+  **CAVEAT-1 UPDATE 2026-07-10:** #25 is MITIGATED — the position-innovation
+  gate shipped (merged e1697f0, opt-in `imm_cv_ct_pmbm_coverage_land_ivgate`):
+  CPA-overlap loss 163→6 s on the Imazu dying cases, id-switches down,
+  byte-identical on philos/autoferry (never fires on real data). The
+  promotion decision is now IN FRONT OF THE USER — evidence compilation
+  commissioned as the promotion dossier
+  (`docs/superpowers/plans/2026-07-09-pmbm-promotion-dossier-ticket.md`).
 
 **Work that closed the unanchored env-1 gap.** Nothing bespoke — the
 accumulated stack (UKF inner filter, PMBM birth/land work) closed it;
