@@ -8784,3 +8784,37 @@ Cl-1 "beat in cold deployment without anchor" ✅ on the PMBM canonical, with th
 continuity trade recorded. **CHECKPOINT honored: Phase 2 (NEES-per-scenario deep
 dive + sim observability control) NOT entered — awaits arbiter go.** No code
 changed anywhere in this ticket.
+
+---
+
+## 2026-07-10 — PMBM promotion dossier (every deployment-decision number at one commit)
+
+Full writeup + tables: `docs/baselines/2026-07-10_pmbm_promotion_dossier.md`.
+MEASUREMENT ONLY (no config/core/tuning change); compiles the champion
+(`imm_cv_ct_mht`) vs candidate (`imm_cv_ct_pmbm_coverage_land_ivgate`) gauntlet
+at **one commit `d94471e`**, one harness state, for the canonical-tracker call
+(north-star Cl-3 #3). Branch `pmbm-promotion-dossier`; commands + sha256 in the
+dossier §4.
+
+- **STOP-gate PASSED:** the Cl-1 frozen protocol reproduces to printed precision
+  (mht no-AIS 34.37/28.57, pmbm_land 18.62/17.74; truth-AIS 5.18/5.16, 3.43/8.94).
+  Imazu, sim_ms, and the HAXR veto 3-site table also reproduce exactly.
+- **NEW finding (decision-critical):** the candidate's coverage+land stack
+  **collapses on autoferry env-2** (shore-hugging urban channel): lifetime 0,
+  card_err −2, gospa pinned at cutoff. Root cause = the documented <50 m
+  no-birth zone (Config.cpp:1220). Isolated to the coverage/land model, **not**
+  the innovation gate (plain `coverage_land` gate-OFF shows the identical
+  collapse). The Cl-1 win (18.62) belongs to `pmbm_land`; the candidate is
+  *better* on env-1 open water (17.44 < paper 20.37) but disqualified near-shore.
+- **Candidate #25 fix reproduces Stage-2 exactly:** 6-dying-truths CPA-overlap
+  loss **163 → 6 s**, total dying loss 1366 → 544 s, reacquire-new-id 45 → 10,
+  id-switches ≤ 2.3 (no id-snap).
+- **Gate fires 0× on real data:** philos candidate byte-identical to
+  `coverage_land` on every accuracy/continuity/identity metric (KEEP safe).
+- **Runtime:** champion MHT is **not realtime on radar density** — decimated
+  worst-scan 1168 ms (7.9× the 148 ms interval), raw-density **timeout
+  (intractable)**; candidate 30 ms decimated / 78 ms raw (reproduces the perf-arc
+  PMBM figures). Harbor lifetime 0.975 yardstick holds; sim_ms fusion-vs-radar
+  33.1 vs 67.2 reproduces.
+- **No promotion recommendation** (per ticket) — the dossier frames the trade;
+  the arbiter/user own the call and the north-star edit.

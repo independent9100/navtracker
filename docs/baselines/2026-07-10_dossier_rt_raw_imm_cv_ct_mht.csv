@@ -1,0 +1,12 @@
+# run_id: 2026-07-10_dossier_rt_raw_imm_cv_ct_mht
+# started_at: 2026-07-10T10:09:35Z
+# git_sha: unknown
+# build_type: Release
+# compiler: unknown
+# host: unknown
+# seeds: [0]
+# configs: 1
+# scenarios: 0
+# total_runs: 26
+# elapsed_seconds: 6.2257e-05
+run_id,config,scenario,seed,metric,value,unit
