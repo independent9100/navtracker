@@ -444,6 +444,50 @@ flag "this track has only default-noise measurements". Note these are two
 different flags at two layers (per-measurement vs per-track output); see
 `docs/output-contract.md`.
 
+### Your sensor's uncertainty depends on range (pixel-based camera range, monocular distance)
+
+**What you have:** a sensor whose range error grows with range — the classic
+case is a camera estimating distance by pixel counting (waterline height,
+bounding-box size). Near, one pixel is centimeters; far, one pixel is tens of
+meters. One fixed `range_std_m` is wrong at every distance.
+
+**What you want:** the tracker to trust the near readings and (automatically)
+nearly ignore the far ones.
+
+The mechanism already exists: `range_std_m` on the bearing builders (§3) is a
+**per-call** argument, not a sensor constant. Propagate your pixel model's
+error per measurement and pass THAT:
+
+```cpp
+// sigma_range from the pixel model, per measurement:
+//   r = f(px);  sigma_r ≈ |dr/dpx| * sigma_px      (grows ~r² for
+//                                                    waterline/height models)
+double sigma_r = pixelRangeSigma(px, sigma_px);      // yours
+Measurement m = makeMeasurementFromRelativeBearing(
+    SensorKind::EoIr, "cam0", t, range_m, rel_bearing_rad,
+    /*range_std_m=*/sigma_r, bearing_std_rad, provider, hints);
+```
+
+Three rules that make this safe:
+
+1. **Cap the usable range at the edge (you own this).** Beyond the range where
+   one pixel of error means "hundreds of meters", stop pretending you have
+   range at all: emit a `Bearing2D` measurement instead (and feed the
+   bearing-wedge safety net, §7) — honest degradation beats confident nonsense.
+   The library will not cap for you; validate-at-edges is the adapter's job.
+2. **At long range the error is also lopsided** (more likely too far than too
+   near — the pixel quantization is asymmetric in range). The filter assumes
+   symmetric noise; the practical compensation is generous inflation of
+   `sigma_r` in the regime where the asymmetry matters, not a fixed fudge.
+3. **With a radar present, prefer bearing-only from the camera.** Let radar own
+   range and the camera own azimuth — fusion combines them naturally, and you
+   get nearly all of the camera's value with none of the risk. Feed
+   pixel-range *in addition* only after validating it against radar side by
+   side on live data: an over-confident camera R does not merely add noise, it
+   actively degrades the fused track (measured on our own data — backlog #12:
+   over-confident camera R was the root cause of duplicate-track identity
+   churn). When in doubt, the camera is a bearing sensor.
+
 ### Derived data and double-counting (the recurring trap)
 
 Before you feed *any* value a sensor reports, ask one question: **is this new
