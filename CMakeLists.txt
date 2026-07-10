@@ -93,6 +93,8 @@ target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
 add_library(navtracker_t2t
   core/t2t/ExternalTrack.cpp
   core/t2t/FusedTrackOutput.cpp
+  core/t2t/T2tAssociator.cpp
+  core/t2t/T2tFuser.cpp
 )
 target_include_directories(navtracker_t2t PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_t2t PUBLIC navtracker_core Eigen3::Eigen)
@@ -381,6 +383,9 @@ add_executable(navtracker_tests
   tests/t2t/test_covariance_intersection.cpp
   tests/t2t/test_pedigree.cpp
   tests/t2t/test_external_track_validation.cpp
+  tests/t2t/test_associator.cpp
+  tests/t2t/test_fuser.cpp
+  tests/t2t/test_navtracker_source.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE

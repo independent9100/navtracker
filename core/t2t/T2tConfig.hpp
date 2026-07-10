@@ -28,6 +28,12 @@ struct T2tConfig {
   // track coasts / demotes instead (see fused_delete_age_s).
   double max_report_age_s{10.0};
 
+  // Velocity 1-sigma (m/s) assumed for a POSITION-ONLY source track when
+  // predicting it forward to the fusion time. The source states no velocity, so
+  // this prior sets how fast its position uncertainty grows between reports. Not
+  // used for sources that supply a valid velocity.
+  double source_unknown_velocity_std_mps{5.0};
+
   // --- Track-to-track association (algorithm doc §1.2) ---
 
   // Squared-Mahalanobis gate on the 2-D position innovation between a fused
