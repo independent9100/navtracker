@@ -156,22 +156,11 @@ inline CiResult covarianceIntersectSequential(
   return acc;
 }
 
-// The overconfident control: naive fusion assuming independence,
-// P_f^{-1} = P1^{-1} + P2^{-1}. NOT a shipped fusion rule — provided so tests
-// and the bench baseline can demonstrate WHY CI (trace(P_CI) >= trace(P_naive)
-// always; the naive covariance is the one that becomes dangerously small when
-// the inputs share a source). Do not use in production.
-inline CiResult naiveIndependentFuse(const Eigen::VectorXd& x1,
-                                     const Eigen::MatrixXd& P1,
-                                     const Eigen::VectorXd& x2,
-                                     const Eigen::MatrixXd& P2) {
-  const Eigen::MatrixXd I1 = P1.inverse();
-  const Eigen::MatrixXd I2 = P2.inverse();
-  CiResult r;
-  r.P = (I1 + I2).inverse();
-  r.x = r.P * (I1 * x1 + I2 * x2);
-  r.omega = 0.5;  // not meaningful for naive fusion; reported for symmetry.
-  return r;
-}
+// NOTE: the overconfident naive-independent fusion (P_f^{-1} = P1^{-1}+P2^{-1})
+// is deliberately NOT part of this shipped surface. It is the exact footgun
+// this module exists to prevent — making it conveniently callable would invite
+// a hurried consumer to reach for it. It lives only where it belongs: as a
+// scientific control in the unit test (tests/t2t/test_covariance_intersection
+// .cpp) and, in M3, as a test-only IFusionRule impl inside the bench.
 
 }  // namespace navtracker::t2t

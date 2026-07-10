@@ -22,6 +22,22 @@ Eigen::MatrixXd diag2(double a, double b) {
   return m;
 }
 
+// The overconfident control: naive fusion assuming independence,
+// P_f^{-1} = P1^{-1} + P2^{-1}. Test-only, by design — the shipped surface must
+// not make this reachable (it is the double-counting footgun CI prevents). Used
+// here to prove trace(P_CI) >= trace(P_naive): the naive covariance is the one
+// that becomes dangerously small when the inputs share a source.
+CiResult naiveIndependentFuse(const Eigen::VectorXd& x1, const Eigen::MatrixXd& P1,
+                              const Eigen::VectorXd& x2, const Eigen::MatrixXd& P2) {
+  const Eigen::MatrixXd I1 = P1.inverse();
+  const Eigen::MatrixXd I2 = P2.inverse();
+  CiResult r;
+  r.P = (I1 + I2).inverse();
+  r.x = r.P * (I1 * x1 + I2 * x2);
+  r.omega = 0.5;
+  return r;
+}
+
 // A seeded random symmetric positive-definite 2x2 (A A^T + floor*I).
 Eigen::MatrixXd randomSpd2(std::mt19937& rng) {
   std::uniform_real_distribution<double> u(-3.0, 3.0);
