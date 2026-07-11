@@ -8,6 +8,39 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-11 — Cl-4 Phase 1: A3 sensor-aware suppression = NO-BUILD (binding kill-criteria; guard unscoreable cross-workload) [Cl-4]
+
+Ticket `2026-07-11-cl4-phase1-a3-probe-ticket.md`; merged 93c31ec. Offline
+evidence census (`tools/cl4_a3_census.cpp`, research-only target), zero
+shipped behavior change. Full write-up:
+`docs/baselines/2026-07-11_cl4_phase1_a3_probe.md`.
+
+- **Revival side (env-2) is real:** coverage_land = ZERO tracks on all 4
+  scenarios (pure birth suppression — pmbm_land tracks them); both targets
+  in-band 100% of scans with clutter-free evidence on hundreds of scans
+  (lidar 35–63%, camera up to 100%). K1 PASS for camera/lidar variants.
+- **Guard side fails structurally:** philos (the designated guard) carries
+  NO lidar and NO camera on the bench path; the one labelled camera clip
+  (sunset_cruise) points 0–10° off the bow while the shore clutter sits at
+  +95°/+198° — time overlap, no bearing overlap. Camera/lidar variants are
+  unscoreable on the guard workload.
+- **Camera measured as a clutter source near shore:** on env-2 (the only
+  camera workload), 79–85% of in-band camera bearings are off-target
+  (structure), robust to doubling the gate. A camera-typed exemption
+  re-admits ~80% clutter — the ADR 0001 §A3 warning, quantified. Lidar is
+  clean (<21%) but Trondheim-only.
+- **Verdict per binding criteria:** AIS-only passes K2 but fails K1 (0
+  AIS in the deployment-relevant no-AIS condition); camera/lidar variants
+  pass K1 but K2 is uncertifiable. NO variant builds. Root cause = the
+  revival sensors and the guard workload share no clutter-free sensor —
+  a data limitation of the gauntlet, not a tuning shortfall.
+
+Takeaway: pivot Cl-4 to ranked path (b), the conditional coverage floor
+(re-detection-based) — no cross-workload sensor dependency, and harbor's
+pier becomes a scoreable guard. Durable facts: near-shore camera use must
+be corroboration-gated, never a standalone exemption; A3-via-lidar worth
+revisiting only on a lidar-equipped deployment+workload pair.
+
 ## 2026-07-10 — Harbor truth-sort reconciliation: card_err +11.64 is REAL (uncharted-pier phantoms), not fragmentation [Cl-3 integrity / Cl-4 input]
 
 Ticket `2026-07-10-harbor-truthsort-reconcile-ticket.md`; merged ad5781e. The
