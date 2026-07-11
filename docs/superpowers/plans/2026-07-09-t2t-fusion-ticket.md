@@ -419,3 +419,59 @@ association results).
    harness needs generator changes that would break existing fixtures'
    byte-identical regeneration; any need to touch the existing Tracker/PMBM
    update paths.
+
+# 10. Addendum 2026-07-11 — two riders from the pre-release deep review (arbiter-issued, binding for M3)
+
+An independent pre-release review (running against master 317ecfd; progress
+in `docs/reviews/2026-07-09-prerelease-review/00-progress.md`) confirmed two
+findings that sit directly on T2T's input surface. Neither is yours to fix —
+both belong to the post-review fix wave — but M3 must be built so they can't
+silently poison the Checkpoint-2 numbers. Fold both into the pending
+combined adversarial-review pass; they gate Checkpoint 2.
+
+## Rider A — TrackOutput covariance ordering is NOT trustworthy from the header (HIGH, CONFIRMED)
+
+The review confirmed a NED-vs-(east,north) contract mismatch in
+`TrackOutput`'s position covariance — the header's claimed axis convention
+does not match what the code emits, and the Foxglove adapter has already
+been bitten by it. Your `NavtrackerSource` self-adapter consumes exactly
+this field, and Checkpoint 2 is a NEES table — the one metric that goes
+quietly wrong under a silent axis swap (NEES stays plausible-looking while
+being computed against a transposed covariance).
+
+Required before ANY Checkpoint-2 number:
+
+1. **Determine the true ordering empirically, not from the header/doc:**
+   push a track with a deliberately asymmetric covariance (e.g.
+   σ²_north = 100, σ²_east = 1, zero cross-term) through
+   `toTrackOutput(...)` and observe which slot carries which axis.
+2. **Pin it with a swap-detecting test** in the T2T adapter tests: the test
+   must FAIL if the upstream ordering ever flips (as it may, when the fix
+   wave resolves the mismatch — your test is what makes that flip loud
+   instead of silent).
+3. State in the Checkpoint-2 handoff which convention you verified and
+   reference the test by name.
+
+## Rider B — `contributing_sources` can contain spurious entries (PmbmTracker:1666, HIGH, CONFIRMED)
+
+The review confirmed a spurious `SourceTouch` in `PmbmTracker` — live
+`contributing_sources` can list sensors that did not actually contribute to
+the track. Your self-adapter maps that field into pedigree. Pedigree is
+diagnostics-only in v1 (never fusion math), so this cannot corrupt fusion —
+but two consequences for M3:
+
+1. **Never enshrine live tracker output as pedigree ground truth** in M3
+   tests. Pedigree assertions run against handcrafted `TrackOutput`
+   fixtures with known contributing_sources; live-pipeline tests may assert
+   pedigree *plumbing* (field arrives, Unknown default behaves) but not
+   pedigree *content* correctness.
+2. If you see implausible pedigree in live M3 runs (a sensor listed that
+   the scenario never fed), do NOT debug it as a T2T defect — note it and
+   move on; it is the known upstream bug awaiting the fix wave.
+
+## Boundary note
+
+The review is pinned at 317ecfd, which predates your branch point's recent
+master history — do not treat any review "clean" verdict as covering T2T
+code; your own adversarial pass remains the review of record for the
+engine.
