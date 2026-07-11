@@ -190,7 +190,14 @@ TEST(T2tScenarioRun, PerArmNeesCalibrationAndBandViolationGate) {
   EXPECT_LT(pa.mean, 3.0);                    // (was 0.42 at the 30 m default)
   EXPECT_GT(nn.mean, cn.mean * 1.4);          // double-count (calibration-invariant)
   EXPECT_GT(nn.mean, cn.band_hi);             // naive BREACHES the χ² band
-  EXPECT_GT(cn.coverage_95, nn.coverage_95);  // CI covers truth better (robust)
+  // #24: the coverage comparison is the intended ROBUST double-count gate
+  // (coverage is outlier-insensitive), but a bare `>` between two adaptive
+  // fractions is the sunset-6c shape. Require a real margin: measured CI cov95
+  // ~0.901 vs naive ~0.826 (gap ~0.075), so +0.03 leaves ~0.045 headroom while
+  // still failing if CI stops covering truth better than naive.
+  EXPECT_GT(cn.coverage_95, nn.coverage_95 + 0.03)  // CI covers truth better (robust, w/ margin)
+      << "CI did not cover truth materially better than naive: CI cov95="
+      << cn.coverage_95 << " naive cov95=" << nn.coverage_95;
 }
 
 // Scenario 3: same data as (2, partial) but pedigrees all-Unknown, and one arm
@@ -332,7 +339,13 @@ TEST(T2tScenarioRun, DropoutContinuityAndLatencySkew) {
   // silent (radar-only) then recovers when AIS returns; (b) a fused id spans the
   // whole dropout (target not lost); (c) the target is re-fused after B returns;
   // (d) the dropout does not ADD substantial fused-id churn beyond the baseline.
-  EXPECT_GT(mean_in, mean_out);                                         // (a)
+  // #24: covariance inflates while B (AIS) is silent, then recovers. Bare `>`
+  // between two adaptive traces → require a real multiplicative margin. Losing
+  // AIS for 60 s leaves radar-only covariance far larger (measured in-drop trace
+  // ≫ out), so 1.2× is trivially cleared yet still fails if inflation stops.
+  EXPECT_GT(mean_in, mean_out * 1.2)                                    // (a)
+      << "covariance did not materially inflate during the AIS dropout: in="
+      << mean_in << " out=" << mean_out;
   EXPECT_GE(survived, 1);                                               // (b)
   EXPECT_FALSE(post_ids.empty());                                       // (c)
   EXPECT_LE(static_cast<int>(all_ids.size()),
@@ -399,7 +412,14 @@ TEST(T2tScenarioRun, ConflictBiasedOverconfidentSourceCharacterization) {
   // protect against a biased-confident source -> motivates input de-weighting
   // (ways-to-improve, algorithm-doc §4). Directional + generous; no exact pin.
   EXPECT_GT(ci_n.n, 0);
-  EXPECT_GE(nv_n.mean, ci_n.mean * 0.9);
+  // #24: the old 0.9 factor slacked in the WRONG direction — it passed even when
+  // naive was up to 10% LESS overconfident than CI, i.e. it did not guard CI's
+  // conservatism at all (the whole point of the characterization). The claimed
+  // mechanism is naive ≥ CI (naive trusts the tight-lying source more), so assert
+  // that direction; a regression making CI as/more overconfident than naive fails.
+  EXPECT_GE(nv_n.mean, ci_n.mean)
+      << "naive must be at least as overconfident as CI on a biased-confident "
+         "source; naive NEES=" << nv_n.mean << " CI NEES=" << ci_n.mean;
 }
 
 // Scenario 6: t2t_cross. Two crossing targets, per-vessel MMSI on both arms.

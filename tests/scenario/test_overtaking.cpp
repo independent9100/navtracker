@@ -1,3 +1,4 @@
+#include <iostream>
 #include <memory>
 #include <vector>
 
@@ -30,6 +31,17 @@ TEST(Stress, OvertakingKeepsBothTracksDistinct) {
   Tracker tracker(est, assoc, mgr, 30.0);
 
   const ScenarioResult r = runScenario(s, tracker, mgr, 50.0);
+  std::cerr << "[overtaking] mean_ospa=" << r.mean_ospa
+            << " id_switches=" << countIdSwitches(r.steps, 30.0)
+            << " tracks=" << mgr.size() << "\n";
   EXPECT_EQ(mgr.size(), 2u);
-  EXPECT_EQ(countIdSwitches(r.steps, 30.0), 0);
+  EXPECT_EQ(countIdSwitches(r.steps, 30.0), 0);  // swap-proof (strict) — kept
+  // #24 (W3 assertion-quality#1): the ==0 switch bound is swap-proof but the test
+  // asserted NO accuracy vs truth (mean_ospa was discarded, and countIdSwitches is
+  // drift-blind — a track >cutoff off truth scores 0). Add a fixed-bound accuracy
+  // gate: mean_ospa clipped at 50; a correctly-tracked overtaking pass is small,
+  // so < 25 catches an off-truth drift/divergence (which saturates OSPA → 50).
+  EXPECT_LT(r.mean_ospa, 25.0)
+      << "overtaking accuracy collapsed (tracks drifted off truth): mean_ospa="
+      << r.mean_ospa;
 }

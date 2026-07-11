@@ -958,8 +958,14 @@ TEST(PmbmStaleSignal, AisAsCooperativeFlagsStaleAndRetires) {
            "Before fix: retirement fires at birth_time=0, 31-0=31>30 → retired. "
            "RED: track absent from tracks(); GREEN: track present and Coasting.";
     if (it != ts.end()) {
-      EXPECT_NEAR(it->existence_probability, it->existence_probability, 0.0)
-          << "sanity: existence is a valid double";
+      // #24: the old assertion compared existence to ITSELF (tol 0.0) — it could
+      // only fail on NaN and said nothing about the value. Spec 9c: a comms-loss
+      // (cooperative overdue) must NOT apply survival/miss math, so the AIS-driven
+      // high existence from t=20 must remain high. A regression that wrongly ran
+      // the miss path would drop it toward ~0.73; a value floor catches that.
+      EXPECT_GT(it->existence_probability, 0.9)
+          << "overdue cooperative track lost existence (comms-loss must not run "
+             "survival/miss math): " << it->existence_probability;
       EXPECT_EQ(it->status, navtracker::TrackStatus::Coasting)
           << "Overdue cooperative track must be Coasting";
     }

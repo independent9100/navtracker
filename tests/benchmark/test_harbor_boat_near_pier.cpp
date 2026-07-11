@@ -146,5 +146,12 @@ TEST(HarborBoatNearPier, StaticTracksNearPierBoatAndSuppressesPier) {
             << "  card_err base=" << card_base << " static=" << card_static
             << "\n" << std::flush;
   EXPECT_GT(life_static, 0.9);       // near-pier boat (1 of 6) is tracked
-  EXPECT_LT(card_static, card_base); // pier still suppressed
+  // #24: bare `<` between two adaptive card_err aggregates flips on drift.
+  // Require a margin sized to the measured base−static gap (~4.1: base ~11.6,
+  // static ~7.5); 2.0 keeps ~48% headroom so a toolchain/seed narrowing no
+  // longer flips it, while a regression that stops suppressing the pier (gap
+  // → 0) still goes red.
+  EXPECT_LT(card_static, card_base - 2.0)  // pier still suppressed, with margin
+      << "static (charted-pier) config did not materially suppress the pier "
+         "over-count: static=" << card_static << " base=" << card_base;
 }

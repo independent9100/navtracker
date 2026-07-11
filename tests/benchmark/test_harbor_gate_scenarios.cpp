@@ -178,7 +178,20 @@ TEST(HarborGateScenarios, ChurnSuppressionGateBaseline) {
             << "  +occ   : gospa_false=" << gf_occ << " lifetime=" << life_occ
             << " suppress_hits=" << hits << "\n"
             << std::flush;
-  EXPECT_GT(hits, 0.0);                       // (1) mechanism is measurable here
-  EXPECT_GE(life_occ, life_land - 1e-9);      // (2) boats preserved (ADR 0002)
-  EXPECT_LE(gf_occ, gf_land + 1e-9);          // (3) false mass not worse
+  // #24: (1) banded floor, not >0 — measured ~28 suppress_hits on churn; a floor
+  // of 10 catches a partial collapse of the mechanism, not only total death.
+  EXPECT_GT(hits, 10.0)
+      << "occupancy suppression barely fired on churn (measured ~28): " << hits;
+  // (2) boats preserved (ADR 0002): the old 1e-9 slack was FP-equality on an
+  // adaptive lifetime ratio; use a real no-regression band (both arms ~0.975, a
+  // 1-of-N boat drop is ~0.16, so 0.05 sits well below a real drop).
+  EXPECT_GE(life_occ, life_land - 0.05)
+      << "occupancy suppression dropped a boat vs land: occ=" << life_occ
+      << " land=" << life_land;
+  // (3) false mass not worse: the old +1e-9 on an O(1e3) quantity demanded bit
+  // equality; use a proportional no-worse margin (measured occ ~1614 ≤ land
+  // ~1705, so suppression already helps; 2% guards against a real increase).
+  EXPECT_LE(gf_occ, gf_land * 1.02)
+      << "occupancy suppression increased false mass vs land: occ=" << gf_occ
+      << " land=" << gf_land;
 }

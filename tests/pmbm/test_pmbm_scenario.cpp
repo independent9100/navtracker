@@ -81,7 +81,12 @@ TEST(PmbmScenario, TwoTargetsCrossingTracked) {
   // OSPA cutoff is 30 m; perfect tracking gives ~position noise (1 m).
   // Allow a generous bound while the birth model is naive.
   EXPECT_LT(o.mean_ospa, 25.0);
-  EXPECT_GE(o.final_track_count, 1u);
+  // #24: the scenario has TWO true crossing targets, so a >=1 floor passed even
+  // when one target was lost or the two merged into one track. Pin BOTH tracked
+  // (measured exactly 2; band [2,5] still tolerates ≤3 transient phantoms).
+  EXPECT_GE(o.final_track_count, 2u)
+      << "both crossing targets must be tracked (a lost/merged target reads <2): "
+      << o.final_track_count;
   EXPECT_LE(o.final_track_count, 5u);
 }
 

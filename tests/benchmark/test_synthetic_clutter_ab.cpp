@@ -72,9 +72,16 @@ TEST(SyntheticClutterAB, ChartedPierSuppressesPierKeepsBoats) {
             << "  card_err:    base=" << card_base << "  static=" << card_stat << "\n"
             << "  gospa_false: base=" << false_base << "  static=" << false_stat << "\n"
             << "  lifetime(static)=" << life_stat << "\n" << std::flush;
-  // Charting the pier removes phantom-track over-count.
-  EXPECT_LT(card_stat, card_base);
-  EXPECT_LT(false_stat, false_base);
+  // Charting the pier removes phantom-track over-count. #24: a bare `<` between
+  // two adaptive aggregates flips under drift; require a margin sized to the
+  // measured collapse (card_err base ~11.6 → static ~7.4, gap ~4.2; gospa_false
+  // base ~2362 → static ~1518, gap ~844).
+  EXPECT_LT(card_stat, card_base - 2.0)
+      << "charted pier did not materially reduce card_err over-count: static="
+      << card_stat << " base=" << card_base;
+  EXPECT_LT(false_stat, false_base - 300.0)
+      << "charted pier did not materially reduce false mass: static=" << false_stat
+      << " base=" << false_base;
   // Real targets (the anchored boats + movers) are still tracked well.
   EXPECT_GT(life_stat, 0.9);
 }
@@ -127,8 +134,11 @@ TEST(SyntheticClutterAB, LandAwarePoolResistsDockClutterPull) {
   // inside the measured ~8 m gap (paired: 10/10 seeds better, mean +8.4 m).
   EXPECT_LT(rmse_water, rmse_plain - 2.0);
   EXPECT_LT(rmse_water, 12.0);
-  // The fix costs no track lifetime.
-  EXPECT_GE(life_water, life_plain - 1e-9);
+  // The fix costs no track lifetime. #24: the old 1e-9 slack was FP-equality on
+  // an adaptive ratio (both arms measured 1.0); use a real no-regression band.
+  EXPECT_GE(life_water, life_plain - 0.05)
+      << "land-aware pool cost track lifetime: water=" << life_water
+      << " plain=" << life_plain;
 }
 
 TEST(SyntheticClutterAB, LandModelRemovesShoreOverCountKeepsRealTargets) {

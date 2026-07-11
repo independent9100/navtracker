@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <functional>
+#include <iomanip>
 #include <sstream>
 
 #include "adapters/benchmark/SimScenarioRun.hpp"
@@ -22,6 +23,13 @@ bool isWallClockMetric(const std::string& m) {
 }
 std::size_t hashRows(const std::vector<MetricRow>& rows) {
   std::ostringstream os;
+  // #24 (W3 assertion-quality#4): stream at full round-trip precision (17 sig
+  // figs for double). The old default ostringstream format (~6 sig figs) hashed
+  // a sub-6th-figure non-determinism (e.g. FP reduction-order drift from
+  // unordered-container iteration in an OSPA/GOSPA/NEES sum) as IDENTICAL, so
+  // the byte-identical-output invariant (CLAUDE.md #4) was only checked to 6
+  // digits. Same-binary repeated runs are bit-identical when truly deterministic.
+  os << std::setprecision(17);
   for (const auto& r : rows) {
     if (isWallClockMetric(r.metric)) continue;
     os << r.run_id << ',' << r.config << ',' << r.scenario << ','
@@ -32,8 +40,17 @@ std::size_t hashRows(const std::vector<MetricRow>& rows) {
 }  // namespace
 
 TEST(BenchDeterminism, RepeatedSweepProducesIdenticalRows) {
+  // #24 (W3 required-scenarios#3): the old test hashed only configs.front()
+  // (imm_cv_ct_mht — the in-source comment "ekf_cv_gnn" is stale), leaving the
+  // headline PMBM tracker's determinism guarded elsewhere only by two aggregate
+  // scalars. Also cover the PMBM path here so byte-identical output is checked
+  // for both the MHT and PMBM pipelines.
   auto configs = defaultConfigs();
-  std::vector<Config> c1 = {configs.front()};  // ekf_cv_gnn
+  std::vector<Config> c1;
+  for (const auto& c : configs)
+    if (c.label == "imm_cv_ct_mht" || c.label == "imm_cv_ct_pmbm") c1.push_back(c);
+  ASSERT_EQ(c1.size(), 2u)
+      << "expected imm_cv_ct_mht + imm_cv_ct_pmbm in defaultConfigs()";
 
   SweepParams p;
   p.run_id = "det";

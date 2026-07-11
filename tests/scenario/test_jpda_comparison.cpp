@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <vector>
@@ -64,4 +65,10 @@ TEST(JpdaComparison, ClutterCrossing) {
                "\n[ClutterCrossing] JPDA mean_ospa=%.4f id_switches=%d tracks=%zu\n",
                g.mean_ospa, g.id_switches, g.final_track_count,
                j.mean_ospa, j.id_switches, j.final_track_count);
+
+  // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+  EXPECT_TRUE(std::isfinite(g.mean_ospa)) << "ClutterCrossing GNN: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(j.mean_ospa)) << "ClutterCrossing JPDA: non-finite OSPA (filter diverged)";
+  EXPECT_LT(g.mean_ospa, 50.0) << "ClutterCrossing GNN: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(j.mean_ospa, 50.0) << "ClutterCrossing JPDA: OSPA saturated at cutoff (total mis-track)";
 }

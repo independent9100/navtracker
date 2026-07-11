@@ -159,11 +159,17 @@ TEST(PhilosCloseApproachCpa, CollisionAlarmFiresBeforeContact) {
                     : -1.0)
             << " s before contact\n" << std::flush;
 
-  // (a) A confirmed track closes onto the collider during the approach — the
-  // radar had returns to 17 m, so a ~15 m near-contact bar is a real "we got it".
+  // (a) A confirmed track closes onto the collider during the approach.
+  // #24: the old 15 m bar sat BELOW the documented 17 m nearest radar return, so
+  // passing required the EKF estimate to lead inside its own last plot — a
+  // toolchain/association-sensitive knife-edge. Use a physically-justified bar
+  // with real margin: 25 m is well inside the 50 m CPA ring (unambiguously a
+  // close pass, distinct from ambient berthed boats) and above the nearest
+  // return, so a small estimator/gate shift no longer flips it. Measured ~10 m.
   ASSERT_NE(collider_id, 0u) << "no confirmed track near own-ship at contact";
-  EXPECT_LT(collider_min_range, 15.0)
-      << "the closest track never actually closed onto own-ship";
+  EXPECT_LT(collider_min_range, 25.0)
+      << "the closest track never actually closed onto own-ship: "
+      << collider_min_range << " m";
 
   // (b) CpaEvaluator fired Entered FOR THE COLLIDER, before contact, with usable
   // lead — the first real-data collision alarm.

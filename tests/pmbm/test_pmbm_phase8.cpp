@@ -379,8 +379,13 @@ TEST(PmbmTrackerPhase8, PerSensorDetectionModelDifferentiatesBernoulliExistence)
   }
   ASSERT_GT(r_hi, 0.0);
   ASSERT_GT(r_lo, 0.0);
-  EXPECT_GT(r_hi, r_lo)
-      << "high-P_D / low-λ_C sensor's birth must outscore the noisy one";
+  // #24: require a meaningful separation margin, not a bare > (measured gap
+  // ~0.98: r_hi~1.00 vs r_lo~0.018). 0.1 pins that the high-quality sensor's
+  // birth beats the noisy one by a real amount, so an attenuated-differentiation
+  // regression that shrinks the gap toward a tie goes red.
+  EXPECT_GT(r_hi, r_lo + 0.1)
+      << "high-P_D / low-λ_C sensor's birth must outscore the noisy one by a "
+         "margin (r_hi=" << r_hi << " r_lo=" << r_lo << ")";
 }
 
 // ---------------------------------------------------------------------------
@@ -509,8 +514,12 @@ TEST(PmbmTrackerPhase8, PerSensorPdAloneDifferentiatesBernoulliExistence) {
   }
   ASSERT_GT(r_hi, 0.0);
   ASSERT_GT(r_lo, 0.0);
-  EXPECT_GT(r_hi, r_lo)
-      << "with λ_C equal across sensors, higher P_D must drive higher r_new";
+  // #24: margin, not bare > (measured gap ~0.21: r_hi~0.857 vs r_lo~0.645 — the
+  // narrowest of the three per-sensor tests, so most exposed to a P_D-plumbing
+  // attenuation). 0.1 keeps ~0.11 headroom and fails on a halved differentiation.
+  EXPECT_GT(r_hi, r_lo + 0.1)
+      << "with λ_C equal, higher P_D must drive higher r_new by a margin (r_hi="
+      << r_hi << " r_lo=" << r_lo << ")";
 }
 
 TEST(PmbmTrackerPhase8, PerSensorLambdaCAloneDifferentiatesBernoulliExistence) {
@@ -549,8 +558,10 @@ TEST(PmbmTrackerPhase8, PerSensorLambdaCAloneDifferentiatesBernoulliExistence) {
   }
   ASSERT_GT(r_hi, 0.0);
   ASSERT_GT(r_lo, 0.0);
-  EXPECT_GT(r_hi, r_lo)
-      << "with P_D equal across sensors, lower λ_C must drive higher r_new";
+  // #24: margin, not bare > (measured gap ~0.95: r_hi~1.00 vs r_lo~0.052).
+  EXPECT_GT(r_hi, r_lo + 0.1)
+      << "with P_D equal, lower λ_C must drive higher r_new by a margin (r_hi="
+      << r_hi << " r_lo=" << r_lo << ")";
 }
 
 // ---------------------------------------------------------------------------
@@ -767,14 +778,19 @@ TEST(PmbmTrackerPhase8, KBestDominanceCutoffDropsSiblingsBelowGap) {
   const auto n_off = run_with_gap(0.0);
   const auto n_on  = run_with_gap(0.5);
 
+  // The no-ADD invariant is the real, always-exercised teeth: a positive
+  // dominance log_gap must never GROW the hypothesis count (a regression that
+  // let the cutoff add children would go red here).
   EXPECT_GE(n_off, n_on)
       << "positive log_gap must NOT add hypotheses; n_off=" << n_off
       << " n_on=" << n_on;
-  // The 3-measurement scan reliably produces ≥ 2 K-children at
-  // K_cap=5; the cutoff at log_gap=0.5 should drop at least one.
-  // We pin a soft "different OR same when one Murty child dominates
-  // by > 0.5 nat" — but in practice this scan has close-weight alts
-  // and the cutoff prunes.
+  // #24 / STOP-AND-REPORT (backlog b24-1): the DROP half is UNCOVERED. The
+  // comment claimed "the 3-measurement scan reliably produces ≥2 K-children",
+  // but measured n_off == 1 — the MBM collapses to a single global hypothesis on
+  // this scan, so the cutoff has nothing to drop and EXPECT_LT(n_on, n_off) never
+  // ran (guarded-loop vacuity, exposed by the assertion sweep). Making it toothy
+  // needs a scenario with genuine assignment ambiguity (≥2 comparable surviving
+  // K-children) — a PMBM-scenario-construction task, not an assertion tweak.
   if (n_off >= 2) {
     EXPECT_LT(n_on, n_off)
         << "log_gap=0.5 must drop ≥ 1 close-weight sibling when "
@@ -894,14 +910,27 @@ TEST(PmbmTrackerPhase9S3, AltBirthGateStripsBirthsInWeakAltOnly) {
         return a.log_weight < b.log_weight;
       })->log_weight;
   const double scan_t = 1.0;
+  int gated_alts = 0;
   for (const auto& h : tracker.density().mbm) {
     if (h.log_weight >= top_lw - 0.5) continue;  // not a gated alt
+    ++gated_alts;
     for (const auto& b : h.bernoullis) {
       EXPECT_NE(b.birth_time.seconds(), scan_t)
           << "alt child (lw=" << h.log_weight << " vs top=" << top_lw
           << ") still contains a fresh birth";
     }
   }
+  // #24 / STOP-AND-REPORT (backlog b24-1): CONFIRMS W3 assertion-quality#3, and
+  // worse — measured gated_alts == 0. The 3-measurement scan collapses to a
+  // single global hypothesis (same root cause as KBestDominanceCutoffDropsSiblings
+  // BelowGap: n_off==1), so NO hypothesis sits below top_lw-0.5 and the strip
+  // check above never runs. The alt-birth-strip mechanism therefore has zero
+  // behavioral coverage. An ASSERT_GT(gated_alts,0) here correctly turns this
+  // vacuity RED, but the fix is a scenario redesign that produces a genuine
+  // gated alt hypothesis (not a mechanical assertion change) — deferred to the
+  // backlog. Documented rather than shipped red; the mechanism's default==legacy
+  // invariant is covered by AltBirthGateDefaultIsBitIdenticalToLegacy.
+  (void)gated_alts;
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,9 +1030,14 @@ TEST(PmbmTrackerPhase9XParent, CrossParentCacheWorksWithoutAdaptiveKBest) {
     }
     return ids.size();
   };
-  EXPECT_LE(run(true), run(false))
-      << "xparent must reduce or equal id count even without "
-         "adaptive_k_best (post-review-2 fix)";
+  // #24: the flag exists because it "silently no-op'd when adaptive_k_best=false"
+  // (the post-review-2 defect). EXPECT_LE passes on exactly that no-op (on==off),
+  // so it cannot catch the regression it guards. This 2-parent / 1-measurement
+  // scan births distinct ids per parent with the cache OFF and one shared id ON,
+  // so a STRICT reduction is the real invariant.
+  EXPECT_LT(run(true), run(false))
+      << "xparent must strictly reduce distinct birth ids even without "
+         "adaptive_k_best (post-review-2 fix); on==off means the flag no-op'd";
 }
 
 TEST(PmbmTrackerPhase9XParent, CrossParentCacheSharesIdsAcrossParents) {
@@ -1043,9 +1077,13 @@ TEST(PmbmTrackerPhase9XParent, CrossParentCacheSharesIdsAcrossParents) {
   };
   const auto n_off = run(false);
   const auto n_on  = run(true);
-  EXPECT_LE(n_on, n_off)
-      << "cross-parent cache must NOT increase distinct ids; "
-      << "off=" << n_off << " on=" << n_on;
+  // #24: EXPECT_LE(on,off) passes when the cache is a complete no-op (on==off),
+  // which cannot distinguish "shares ids across parents" from "does nothing".
+  // The 2-parent / 1-measurement scan yields ≥2 distinct ids with the cache OFF
+  // and a single shared id ON, so require a STRICT reduction.
+  EXPECT_LT(n_on, n_off)
+      << "cross-parent cache must strictly SHARE (reduce) distinct ids across "
+         "parents; off=" << n_off << " on=" << n_on << " (on==off means no-op)";
 }
 
 TEST(PmbmTrackerPhase9S2, PerTrackViewOffByDefaultIsBitIdentical) {
