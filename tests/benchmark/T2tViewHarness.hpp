@@ -12,6 +12,8 @@
 // computeMetrics / computeNees.
 
 #include <algorithm>
+#include <cstdint>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -27,9 +29,11 @@
 #include "core/pipeline/MhtTracker.hpp"
 #include "core/scenario/Truth.hpp"
 #include "core/t2t/ExternalTrack.hpp"
+#include "core/t2t/FusedTrackOutput.hpp"
 #include "core/t2t/Pedigree.hpp"
 #include "core/t2t/T2tConfig.hpp"
 #include "core/t2t/T2tFuser.hpp"
+#include "ports/IFusedTrackSink.hpp"
 #include "ports/IFusionRule.hpp"
 
 namespace navtracker::t2t::bench {
@@ -188,5 +192,129 @@ inline SourcePedigree usedStreams(const std::vector<std::string>& streams) {
   return p;
 }
 inline SourcePedigree allUnknown() { return SourcePedigree{}; }
+
+// --- M4 robustness driver (scenarios 4-6) --------------------------------
+// Records the fused lifecycle stream for continuity / spurious-birth checks.
+struct RecordingFusedSink : IFusedTrackSink {
+  std::vector<std::string> events;       // "init" | "confirm" | "update" | "delete"
+  std::vector<std::uint64_t> init_ids;   // fused ids at each initiation
+  void onFusedTrackInitiated(const FusedTrackLifecycleEvent& e) override {
+    events.push_back("init");
+    init_ids.push_back(e.id.value);
+  }
+  void onFusedTrackConfirmed(const FusedTrackLifecycleEvent&) override { events.push_back("confirm"); }
+  void onFusedTrackUpdated(const FusedTrackLifecycleEvent&) override { events.push_back("update"); }
+  void onFusedTrackDeleted(const FusedTrackLifecycleEvent&) override { events.push_back("delete"); }
+  int count(const std::string& k) const {
+    return static_cast<int>(std::count(events.begin(), events.end(), k));
+  }
+};
+
+// Per-arm perturbation applied while feeding an arm's per-view snapshots into
+// the fuser (test-only, no generator/fixture change).
+struct ArmPerturb {
+  double time_offset_s = 0.0;                          // latency skew (shift report timestamps)
+  double drop_from_s = -1.0, drop_to_s = -1.0;         // dropout: silence reports in [from, to)
+  Eigen::Vector2d pos_bias = Eigen::Vector2d::Zero();  // scenario 5: add to positions
+  double cov_override_m2 = 0.0;                        // scenario 5: >0 overwrites pos cov (overconfidence)
+  bool mmsi_from_truth = false;                        // scenario 6: tag mmsi = nearest-truth id
+};
+
+// Fuse two arms with per-arm perturbations, feeding a MERGED, timestamp-ordered
+// report stream so latency skew exercises the fuser's real batching/late-report
+// path (not a paired-index shortcut). Snapshots the fused confirmed set at each
+// distinct report timestamp; truth is the shared per-tick truth. Optionally
+// records the lifecycle stream (sink) and the multi-source independence verdicts.
+inline benchmark::BenchResult fuseTwoViewsPerturbed(
+    ScenarioRun& run, const Scenario& full, const ArmSpec& A, const ArmSpec& B,
+    const IFusionRule* rule, T2tConfig cfg, const ArmPerturb& pa, const ArmPerturb& pb,
+    RecordingFusedSink* sink = nullptr,
+    std::set<IndependenceClass>* out_multi_classes = nullptr, double ais_sigma_m = 0.0) {
+  using namespace navtracker::benchmark;
+  const BenchResult ra = runArm(run, armView(full, A.sensors), ais_sigma_m);
+  const BenchResult rb = runArm(run, armView(full, B.sensors), ais_sigma_m);
+
+  auto nearestTruthMmsi = [](const std::vector<TruthStateSnapshot>& truth,
+                             const Eigen::Vector2d& p) -> std::optional<std::uint32_t> {
+    double best = -1.0;
+    std::uint64_t id = 0;
+    for (const auto& t : truth) {
+      const double d2 = (t.position - p).squaredNorm();
+      if (best < 0.0 || d2 < best) { best = d2; id = t.truth_id; }
+    }
+    if (best < 0.0) return std::nullopt;
+    return static_cast<std::uint32_t>(200000000u + id);  // MMSI-shaped, per truth target
+  };
+
+  struct Ev { Timestamp time; std::string arm_id; ExternalTrack e; };
+  std::vector<Ev> evs;
+  auto emit = [&](const BenchResult& r, const ArmSpec& arm, const ArmPerturb& p) {
+    for (const auto& step : r.steps) {
+      const double ts = step.time.seconds();
+      if (p.drop_from_s <= ts && ts < p.drop_to_s) continue;  // silenced window
+      const Timestamp t = Timestamp::fromSeconds(ts + p.time_offset_s);
+      for (const auto& tr : step.tracks) {
+        ExternalTrack e;
+        e.source_tracker_id = arm.tracker_id;
+        e.source_track_id = std::to_string(tr.id.value);
+        e.time = t;
+        e.position_enu = tr.position + p.pos_bias;
+        e.position_cov = (p.cov_override_m2 > 0.0)
+                             ? Eigen::Matrix2d(Eigen::Matrix2d::Identity() * p.cov_override_m2)
+                             : tr.pos_covariance;
+        // Per-vessel identity, assigned per-scan by nearest truth so it follows
+        // the target a source is ACTUALLY on (immune to arm-level id churn/swaps):
+        // a source that drifts onto the other target carries that target's MMSI,
+        // which is exactly what the conflict penalty must catch.
+        if (p.mmsi_from_truth) e.attributes.mmsi = nearestTruthMmsi(step.truth, tr.position);
+        evs.push_back({t, arm.tracker_id, std::move(e)});
+      }
+    }
+  };
+  emit(ra, A, pa);
+  emit(rb, B, pb);
+  std::stable_sort(evs.begin(), evs.end(), [](const Ev& a, const Ev& b) {
+    if (a.time.nanos() != b.time.nanos()) return a.time.nanos() < b.time.nanos();
+    return a.arm_id < b.arm_id;
+  });
+
+  T2tFuser fuser(cfg, rule);
+  if (full.datum) fuser.setDatum(*full.datum);
+  if (A.pedigree) fuser.registerSource(A.tracker_id, *A.pedigree);
+  if (B.pedigree) fuser.registerSource(B.tracker_id, *B.pedigree);
+  if (sink) fuser.setFusedTrackSink(sink);
+
+  std::map<std::int64_t, const std::vector<TruthStateSnapshot>*> truth_by_t;
+  for (const auto& step : ra.steps) truth_by_t[step.time.nanos()] = &step.truth;
+
+  BenchResult fused;
+  std::size_t i = 0;
+  while (i < evs.size()) {
+    const std::int64_t t_ns = evs[i].time.nanos();
+    const Timestamp t = evs[i].time;
+    for (; i < evs.size() && evs[i].time.nanos() == t_ns; ++i)
+      fuser.process(std::move(evs[i].e));
+    fuser.flush();
+    BenchStep fs;
+    fs.time = t;
+    auto it = truth_by_t.find(t_ns);
+    if (it != truth_by_t.end()) fs.truth = *it->second;
+    for (const auto& e : fuser.fusedTracksEnu()) {
+      if (e.status != TrackStatus::Confirmed) continue;
+      TrackStateSnapshot s;
+      s.id = e.id;
+      s.position = e.position;
+      s.velocity = e.velocity;
+      s.pos_covariance = e.position_cov;
+      fs.tracks.push_back(s);
+    }
+    fused.steps.push_back(std::move(fs));
+    if (out_multi_classes && full.datum)
+      for (const auto& fo : fuser.fusedTracks())
+        if (fo.contributing_trackers.size() >= 2)
+          out_multi_classes->insert(fo.independence_class);
+  }
+  return fused;
+}
 
 }  // namespace navtracker::t2t::bench

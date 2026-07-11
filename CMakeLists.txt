@@ -283,6 +283,7 @@ add_executable(navtracker_tests
   tests/scenario/test_bearing_bias_convergence.cpp
   tests/integration/test_full_stack_pipeline.cpp
   tests/integration/test_static_obstacle_pipeline.cpp
+  tests/integration/test_t2t_full_stack.cpp
   tests/scenario/test_filter_comparison.cpp
   tests/scenario/test_cpa_scenario.cpp
   tests/scenario/test_jpda_comparison.cpp
@@ -423,6 +424,10 @@ target_link_libraries(navtracker_example PRIVATE
 add_executable(navtracker_mht_fusion_example app/mht_fusion_example.cpp)
 target_link_libraries(navtracker_mht_fusion_example PRIVATE
     navtracker_core Eigen3::Eigen)
+
+add_executable(navtracker_t2t_example app/example_t2t.cpp)
+target_link_libraries(navtracker_t2t_example PRIVATE
+    navtracker_t2t navtracker_core Eigen3::Eigen)
 
 if(NAVTRACKER_BUILD_FOXGLOVE)
   add_executable(navtracker_example_foxglove app/example.cpp)

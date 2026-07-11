@@ -8,6 +8,68 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-11 — T2T Checkpoint 2: shared-AIS double-counting gate (CI vs naive) [Cl-3, new capability]
+
+`navtracker_t2t` M3 measured gate. Two trackers that both fuse the SAME AIS have
+correlated errors; naive (independence-assuming) fusion double-counts it and goes
+overconfident, covariance intersection (CI) does not. Base scenario `sim_ms_headon`
+s0, per-arm tracker `imm_cv_ct_mht`, maximal sharing (both arms AIS-only). Full
+write-up + interpretation: `docs/baselines/2026-07-11_t2t_gates.md`.
+
+Position NEES (2-DoF, consistent ≈ 2), by test-local AIS σ (the loader's 30 m
+pessimistic default is ~150× too loose for this near-perfect-AIS sim, so the arms
+are under-confident at default — calibration is a harness-only lever, no generator
+/ fixture / shared-loader change):
+
+| AIS σ | role | per-arm NEES | CI mean | CI band | naive mean | CI cov95 | naive cov95 | naive/CI |
+|---|---|---|---|---|---|---|---|---|
+| 30 m | operational (real, stale AIS) | 0.42 | 0.48 | [1.87,2.13] | 0.83 | 1.00 | 0.984 | 1.73× |
+| 16 m | coverage-calibrated (cleanest exhibit) | 1.32 | 1.33 | [1.87,2.13] | 2.66 | 0.95 | 0.82 | 2.00× |
+| 12 m | NEES≈2 calibrated (demo row) | 2.06 | 2.08 in-band | [1.87,2.14] | 3.16 breaches | 0.90 | 0.83 | 1.52× |
+
+**Formal gate (arbiter ruling 2026-07-11): the ROBUST invariants** — naive/CI mean
+ratio > 1.4× at every σ AND the monotone coverage gap (naive cov95 < CI cov95).
+σ=16 is the cleanest exhibit (CI 0.95 vs naive 0.82 at 2.0×). σ=12 stays a
+demonstration row only (satisfies the literal "per-arm NEES≈2 → naive out of band,
+CI in" recipe) but the mean-band is knife-edge in σ (fused NEES is heavy-tailed:
+median ≈ 0.5 ≪ mean ≈ 2), so the claim must NOT hang on it — #24 applied to our
+own gate. σ=30 is the operational-context row.
+
+**Engine note (combined-review fix, `4287459`):** the fused delete-clock now
+counts idle from the last REPORT, not the last coasted contribution. This shifted
+ONLY the σ=30 maximal row (naive 0.824→0.833, ratio 1.71→1.73×); all calibrated
+rows byte-identical. Two review rounds fixed: per-cycle M-of-N over-counting,
+birth-window growth, coast-clear, delete-clock; plus 3 vacuous-assertion hardenings.
+
+Reproduce (worktree `../navtracker-t2t`, foxglove off, fixtures at main tree):
+```
+cmake --build build -j --target navtracker_tests
+SIMMS_DIR=/home/andreas/workspace/navtracker/tests/fixtures/sim_multisensor \
+  ./build/navtracker_tests --gtest_filter='T2tScenarioRun.*'
+# the calibrated sweep + band-violation gate:
+SIMMS_DIR=... ./build/navtracker_tests \
+  --gtest_filter='T2tScenarioRun.PerArmNeesCalibrationAndBandViolationGate'
+```
+Determinism: fused output byte-identical on replay
+(`T2tScenarioRun.FusedOutputIsDeterministic`). Checkpoint 2 ACCEPTED; GO for M4.
+
+**M4 robustness scenarios (same date, `sim_ms_headon`/`sim_ms_crossing` s0):**
+- **4 `t2t_dropout`:** B silent 60 s → **zero** added fused-id churn vs no-drop
+  baseline (both 8 distinct ids, all inherited per-arm CPA churn), id spans the
+  dropout, cov inflates (radar-only trace 1.97e5 vs 1.75e3 fused) then recovers.
+  Latency (B 2 s late): reports ACCEPTED (per-source monotonic), fuser predicts
+  to latest ts and fuses → bounded lag (GOSPA 25.2 vs 24.4), no id churn.
+- **5 `t2t_conflict`** (B +150 m, claims 5 m σ): CI gospa 29.88 ≈ naive 29.89,
+  but naive NEES 3.86 > CI 3.38 — CI limits overconfidence, not the bias →
+  seeds the input-de-weighting ways-to-improve entry. Characterization, no gate.
+- **6 `t2t_cross`** MMSI A/B: churn-dominated, within noise (id_switches 13 vs
+  11.7) → report-only (#24). Clean penalty value shown in the controlled
+  associator A/B (`T2tAssociator.MmsiConflictPenaltyBreaksKinematicTieToCorrectPairing`);
+  invariant 5 held (both targets fused despite MMSI).
+- Full-stack `tests/integration/test_t2t_full_stack.cpp` + `app/example_t2t.cpp`
+  (two live Trackers → NavtrackerSource → fuser). Rows in the gates doc.
+  Reproduce: `--gtest_filter='T2tScenarioRun.*:T2tFullStack.*'`.
+
 ## 2026-07-09 — Backlog #25 Phase 2b Stage 2: BUILT the velocity-runaway guard (deweight @ 400 m) [Cl-3]
 
 On arbiter GO. Built the update-acceptance position-innovation guard in

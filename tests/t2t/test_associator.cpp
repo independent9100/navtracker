@@ -64,6 +64,35 @@ TEST(T2tAssociator, ConflictingMmsiStillAssociatesWhenKinematicsAgree) {
   EXPECT_EQ(r.matches[0].second, 0u);
 }
 
+TEST(T2tAssociator, MmsiConflictPenaltyBreaksKinematicTieToCorrectPairing) {
+  // Kinematics ALONE prefer the swap: each source sits closer to the WRONG fused
+  // track. With cov=I (S=2I) and gate 9.21 all four cells are in-gate — correct
+  // pairing kin cost 5.12+5.12=10.24 vs swap 3.92+3.92=7.84 — so cost-min alone
+  // picks the swap. The MMSI-conflict penalty (correct: −bonus×2; swap:
+  // +penalty×2) flips the Hungarian to the correct, MMSI-consistent pairing.
+  // This is the clean A/B the churn-dominated sim scenario 6 cannot show; the
+  // penalty is still SOFT (it re-weights cost, never gates a pair out).
+  const std::vector<GateCandidate> fused{cand(0.0, 0.0, 1.0, 111u), cand(6.0, 0.0, 1.0, 222u)};
+  const std::vector<GateCandidate> sources{cand(3.2, 0.0, 1.0, 111u), cand(2.8, 0.0, 1.0, 222u)};
+
+  T2tConfig off_cfg;
+  off_cfg.conflicting_mmsi_cost_penalty = 0.0;
+  off_cfg.shared_mmsi_cost_bonus = 0.0;
+  T2tAssociator off(off_cfg);
+  const T2tAssignment r_off = off.associate(fused, sources);
+  ASSERT_EQ(r_off.matches.size(), 2u);
+  bool off_swapped = false;
+  for (const auto& [fi, sj] : r_off.matches)
+    if (fi != sj) off_swapped = true;
+  EXPECT_TRUE(off_swapped);  // kinematics alone -> WRONG (cross-)pairing
+
+  T2tAssociator on{};  // defaults: conflicting penalty 6.0, shared bonus 2.0
+  const T2tAssignment r_on = on.associate(fused, sources);
+  ASSERT_EQ(r_on.matches.size(), 2u);
+  for (const auto& [fi, sj] : r_on.matches)
+    EXPECT_EQ(fi, sj);  // MMSI-conflict penalty -> CORRECT pairing
+}
+
 TEST(T2tAssociator, OutOfGatePairsAreUnmatched) {
   T2tAssociator a;
   const std::vector<GateCandidate> fused{cand(0, 0, 1.0)};
