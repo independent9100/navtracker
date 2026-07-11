@@ -239,6 +239,36 @@ TEST(T2tFuser, SingleReportNotPromotedByAmbientTraffic) {
   }
 }
 
+// REGRESSION (review defect #4, completed: full coast must not report stale
+// "current fusion"). A fused track that loses all fresh contributors reports
+// empty contributing_trackers / contributing_sources and SingleSource while it
+// coasts — not the last-fused corroboration.
+TEST(T2tFuser, CoastClearsCurrentFusionFields) {
+  T2tFuser f;
+  f.setDatum(testDatum());
+  f.registerSource("A", usedOnly("radar"));
+  f.registerSource("B", usedOnly("ais"));
+  double t = 0.0;
+  for (int i = 0; i < 5; ++i) {
+    feed(f, rep("A", "1", t, 100, 100));
+    feed(f, rep("B", "1", t + 0.4, 100, 100));
+    t += 1.0;
+  }
+  ASSERT_EQ(f.size(), 1u);
+  ASSERT_EQ(f.fusedTracks()[0].contributing_trackers.size(), 2u);  // fused now
+  ASSERT_EQ(f.fusedTracks()[0].independence_class, IndependenceClass::ProvablyIndependent);
+
+  // Both sources silent past max_report_age_s (10 s) but before delete (30 s).
+  f.advanceTo(Timestamp::fromSeconds(t + 15.0));
+  ASSERT_EQ(f.size(), 1u);  // still alive, coasting
+  const auto out = f.fusedTracks();
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].track.status, TrackStatus::Coasting);
+  EXPECT_TRUE(out[0].contributing_trackers.empty());
+  EXPECT_TRUE(out[0].track.contributing_sources.empty());
+  EXPECT_EQ(out[0].independence_class, IndependenceClass::SingleSource);
+}
+
 // REGRESSION (review defect: same-timestamp reports must batch into one scan).
 // Two reports for the same source key at the SAME timestamp (e.g. the
 // self-adapter firing Updated+Confirmed at one instant) must count as ONE

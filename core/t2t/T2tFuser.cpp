@@ -403,8 +403,8 @@ void T2tFuser::runCycle(Timestamp t, const std::set<std::string>& reporters) {
       }
 
     if (!contributors[fi].empty()) {
-      const bool was_new = f.track.contributing_sources.empty() &&
-                           f.confirm_window.empty();
+      // confirm_window is empty only before the first fuse -> the birth scan.
+      const bool was_new = f.confirm_window.empty();
       // Canonical contributor order (by source key) so the sequential CI fold
       // is deterministic and independent of association-pass order.
       std::sort(contributors[fi].begin(), contributors[fi].end(),
@@ -442,11 +442,16 @@ void T2tFuser::runCycle(Timestamp t, const std::set<std::string>& reporters) {
       }
     } else {
       // Full coast: no fresh contributor at all. Nothing is currently fused, so
-      // the "current" output fields must not report stale corroboration.
+      // every "current-fusion" field must stop reporting stale corroboration —
+      // the ContributingTracker list, the source-id list inherited by
+      // TrackOutput, the independence verdict, and the pessimistic-default flag.
+      // (Track identity, status, kinematics, and attributes persist.)
       if (f.track.status != TrackStatus::Deleted)
         f.track.status = TrackStatus::Coasting;
       f.contributors.clear();
+      f.track.contributing_sources.clear();
       f.independence = IndependenceClass::SingleSource;
+      f.pessimistic_default = false;
       f.confirm_window.push_back(false);
       while (static_cast<int>(f.confirm_window.size()) > cfg_.fused_confirm_n)
         f.confirm_window.pop_front();
