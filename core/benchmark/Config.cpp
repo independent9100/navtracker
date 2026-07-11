@@ -442,6 +442,13 @@ pmbm::PmbmTracker::Config makeCoverageLandPmbmConfig() {
   cfg.birth_existence_target = 0.1;
   cfg.source_aware_identity = true;
   cfg.min_new_bernoulli_existence = 0.1;
+  // Cl-4 endgame cliff-reprice sweep (2026-07-11): vary ONLY the gate floor
+  // through {0.05..0.10} to price the channel-revival vs philos-phantom trade.
+  // Applied AFTER the 0.1 default so UNSET = 0.1 = byte-identical (the A1 env
+  // -sweep method; NOT a deployment surface — same contract as the PMBM_PROBE_*
+  // knobs above). See docs/baselines/2026-07-11_cl4_cliff_price_list.md.
+  cfg.min_new_bernoulli_existence =
+      probeEnvD("PMBM_MIN_NEW_BERN", cfg.min_new_bernoulli_existence);
   cfg.output_existence_floor = 0.1;
   cfg.lambda_birth = 1e-5;
   cfg.use_sensor_activity = true;
