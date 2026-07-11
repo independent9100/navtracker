@@ -20,12 +20,32 @@ Zero shipped behavior change: this is a bench config sweep over the
 EXISTING `min_new_bernoulli_existence` field — no new code paths, no
 default changes. Reuse the 2026-06-30 A1 method.
 
-## The sweep
+## The sweep — now TWO dials (user directive 2026-07-11: spatial split)
 
-Config: `imm_cv_ct_pmbm_coverage_land_ivgate` (the dossier candidate) with
-`min_new_bernoulli_existence` ∈ {0.05, 0.06, 0.07, 0.08, 0.09, 0.10}
-(finer steps near a knee if one appears). Everything else untouched — one
-dial, one curve.
+The user's ruling reshapes the price question: keep the strict zone where
+structure actually lives (inner strip), be permissive in the outer strip
+where channel vessels hug — near-land waters are operator-supervised, so
+phantoms there are an *accepted* price, while an invisible real mover is
+not. Both dials already exist as config; no new code:
+
+- `min_new_bernoulli_existence` ∈ {0.05, 0.06, 0.07, 0.08, 0.09, 0.10}
+- `offshore_halfwidth_m` ∈ {50, 35, 25, 15} (narrows the blocked strip;
+  the ramp math is untouched)
+
+Config: `imm_cv_ct_pmbm_coverage_land_ivgate` (the dossier candidate),
+everything else untouched. The deliverable is the 2-D price surface, finer
+steps near any knee.
+
+## The geography measurement FIRST (it decides whether the split can work)
+
+Before the sweep: the **distance-from-shore distribution** of (a) the
+env-2 targets' positions (per scan, per target), (b) the philos suppressed
+birth population (the ~185 stationary structure returns AND the water-
+clutter residual, separately). One figure/table. This is the fact the
+user's proposal hangs on: if philos clutter hugs the inner strip and the
+env-2 vessels ride the outer strip, a narrowed zone wins cheaply; if they
+overlap, the surface will show the price directly. Either way the sweep
+result becomes explainable instead of magic.
 
 Per floor value, measure:
 
@@ -48,15 +68,21 @@ the price list explainable instead of magic, and tells us whether a knee
 is real separation (vessel r_new sits above clutter r_new) or coincidence.
 The census tool's plumbing from Phases 1a–1d should get you most of the way.
 
-## Deliverable — the price list, no winner declared
+## Deliverable — the price surface, no winner declared
 
-One table, floor value per row: env-2 targets tracked (n/8) · env-2 GOSPA ·
-philos card_err · philos gospa · gospa_false · harbor/autoferry/Imazu
-no-regression flags. Plus the r_new distribution figure/table. Write-up as
-`docs/baselines/2026-07-11_cl4_cliff_price_list.md` with a knee analysis:
-IF a floor value exists where ≥6/8 env-2 targets track AND philos card_err
-stays ≤ ~+12 (≈ the harbor yardstick's known phantom scale), name it as the
-knee candidate; if the curve is a straight trade with no knee, say that
+One table, (halfwidth × floor) per row: env-2 targets tracked (n/8) ·
+env-2 GOSPA · philos card_err · philos gospa · gospa_false ·
+harbor/autoferry/Imazu no-regression flags. Plus the distance-from-shore
+figure and the r_new distributions. **Report WHERE the re-admitted philos
+phantoms sit (distance from shore)** — under the user's ruling, phantoms
+inside the near-land strip are an accepted price while phantoms leaking
+into open water are not, so the phantom *map* matters as much as the
+count. Write-up as `docs/baselines/2026-07-11_cl4_cliff_price_list.md`
+with a knee analysis: IF a (halfwidth, floor) point exists where ≥6/8
+env-2 targets track AND the re-admitted phantoms are confined to the
+near-land strip at a count the operator-supervised framing can carry
+(report the count; do not decide what it can carry), name it as the knee
+candidate; if the surface is a straight trade with no knee, say that
 plainly. Frame the trade per house rule — name what each candidate setting
 costs and when it hurts (phantoms at harbor exits vs invisible movers in
 channels). The decision is the user's; do not recommend a shipping default.
