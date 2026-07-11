@@ -252,11 +252,18 @@ determinism and simplicity, with the better alternative recorded in §4.
   Experiment: compare fused trace and NEES on ≥3-source scenarios.
 - **Determinant (or information) objective** instead of trace for the ω search.
   Experiment: measure fused-covariance shape (not just trace) vs truth.
-- **Input plausibility de-weighting.** The conflict scenario (biased,
-  overconfident source) quantifies how much CI limits the damage; its numbers
-  seed an edge rule that inflates a source's stated covariance when its recent
-  innovations are implausibly large. Experiment: sweep an inflation factor and
-  plot fused NEES vs the factor on the conflict scenario.
+- **Input plausibility de-weighting.** The conflict scenario (`t2t_conflict`: B
+  biased +150 m, claiming a 5 m σ) quantifies how much CI limits the damage.
+  Measured (`sim_ms_headon` s0): CI and naive land at essentially the same
+  position error (GOSPA 29.88 vs 29.89 — both pulled toward the bias), but naive
+  is materially more overconfident (mean NEES 3.86 vs CI 3.38). **The honest
+  framing: CI bounds the _overconfidence_, not the _bias_. Consistency under
+  unknown correlation was the design goal; robustness to a lying-but-confident
+  source was never claimed** — that is a separate defense. The candidate is an
+  edge rule that inflates a source's stated covariance when its recent
+  innovations are implausibly large (a per-source NIS monitor). Experiment: sweep
+  an inflation factor and plot fused NEES vs the factor on the conflict scenario;
+  target naive-free consistency without discarding a merely-noisy source.
 - **Fused-level feedback** into navtracker (explicitly deferred): the fused
   estimate is not fed back into the base tracker in this design, to avoid a new
   double-counting loop one level down.

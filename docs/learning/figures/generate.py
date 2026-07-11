@@ -1756,6 +1756,94 @@ def fig_bearing_wedge():
 
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _cov_ellipse(ax, mean, cov, n_std, **kw):
+    """Draw an n_std covariance ellipse for a 2x2 cov at mean."""
+    vals, vecs = np.linalg.eigh(cov)
+    order = vals.argsort()[::-1]
+    vals, vecs = vals[order], vecs[:, order]
+    angle = np.degrees(np.arctan2(vecs[1, 0], vecs[0, 0]))
+    w, h = 2.0 * n_std * np.sqrt(vals)
+    e = Ellipse(mean, w, h, angle=angle, fill=False, lw=2.2, **kw)
+    ax.add_patch(e)
+    return e
+
+
+def fig_t2t_ci_ellipse():
+    """Two estimates of one object with different-shaped covariances. Naive
+    (independence-assuming) fusion produces a DANGEROUSLY SMALL ellipse if the
+    two secretly share information; covariance intersection stays honest."""
+    navy, lblue, red, green = "#1f3a5f", "#85bbdb", "#aa3333", "#2d8659"
+    P1 = np.array([[9.0, 0.0], [0.0, 1.0]])   # source A: sure in N, unsure in E
+    P2 = np.array([[1.0, 0.0], [0.0, 9.0]])   # source B: sure in E, unsure in N
+    I1, I2 = np.linalg.inv(P1), np.linalg.inv(P2)
+    P_naive = np.linalg.inv(I1 + I2)          # counts both fully -> tiny
+    w = 0.5                                    # CI weight (symmetric here)
+    P_ci = np.linalg.inv(w * I1 + (1 - w) * I2)
+    mean = np.array([0.0, 0.0])
+
+    fig, (axL, axR) = plt.subplots(1, 2, figsize=(11, 5.2))
+    for ax in (axL, axR):
+        ax.set_xlim(-5, 5); ax.set_ylim(-5, 5); ax.set_aspect("equal")
+        ax.axhline(0, color="0.85", lw=0.8); ax.axvline(0, color="0.85", lw=0.8)
+        ax.set_xlabel("east error (m)"); ax.set_ylabel("north error (m)")
+
+    _cov_ellipse(axL, mean, P1, 2.0, edgecolor=navy, label="estimate A  (P₁)")
+    _cov_ellipse(axL, mean, P2, 2.0, edgecolor=lblue, label="estimate B  (P₂)")
+    axL.set_title("Two trackers, one object")
+    axL.legend(loc="upper right", fontsize=10)
+
+    _cov_ellipse(axR, mean, P1, 2.0, edgecolor=navy, alpha=0.55)
+    _cov_ellipse(axR, mean, P2, 2.0, edgecolor=lblue, alpha=0.55)
+    _cov_ellipse(axR, mean, P_naive, 2.0, edgecolor=red,
+                 label="naive fuse (overconfident)", ls="--")
+    _cov_ellipse(axR, mean, P_ci, 2.0, edgecolor=green, label="CI fuse (honest)")
+    axR.set_title("Fuse them")
+    axR.legend(loc="upper right", fontsize=10)
+    fig.suptitle("Covariance intersection: never claim to know more than justified",
+                 fontsize=14)
+    save(fig, "29-t2t-ci-ellipse.png")
+
+
+def fig_t2t_double_counting():
+    """Shared-newspaper cartoon: two trackers both read the same AIS, so their
+    errors are correlated; naive fusion counts that AIS twice."""
+    navy, lblue, red, green = "#1f3a5f", "#85bbdb", "#aa3333", "#2d8659"
+    fig, ax = plt.subplots(figsize=(10.5, 5.2))
+    ax.set_xlim(0, 10); ax.set_ylim(0, 6); ax.axis("off")
+
+    def box(x, y, w, h, text, fc, tc="white"):
+        ax.add_patch(Rectangle((x, y), w, h, facecolor=fc, edgecolor="black", lw=1.4))
+        ax.text(x + w / 2, y + h / 2, text, ha="center", va="center",
+                color=tc, fontsize=11, weight="bold")
+
+    box(0.3, 4.2, 1.9, 0.9, "AIS feed", green)         # shared source
+    box(0.3, 1.0, 1.9, 0.9, "radar", navy)
+    box(4.0, 4.0, 2.0, 1.0, "Tracker A", lblue, tc="black")
+    box(4.0, 1.2, 2.0, 1.0, "Tracker B", lblue, tc="black")
+    box(7.8, 2.6, 1.9, 1.0, "Fuser", "#c9a13b", tc="black")
+
+    def arrow(x1, y1, x2, y2, color="black", ls="-"):
+        ax.add_patch(FancyArrowPatch((x1, y1), (x2, y2), arrowstyle="-|>",
+                                     mutation_scale=16, lw=2, color=color, ls=ls))
+    # AIS feeds BOTH trackers (the shared stream), radar only A.
+    arrow(2.2, 4.7, 4.0, 4.6, green)
+    arrow(2.2, 4.5, 4.0, 1.9, green)     # same AIS into B  <-- the double count
+    arrow(2.2, 1.4, 4.0, 4.2, navy)
+    arrow(6.0, 4.4, 7.8, 3.4)
+    arrow(6.0, 1.7, 7.8, 2.9)
+    ax.text(3.1, 3.0, "same AIS\ninto both", color=red, fontsize=10,
+            ha="center", weight="bold")
+    ax.text(4.9, 0.35,
+            "A and B share the AIS stream → their errors are CORRELATED.\n"
+            "Naive fusion assumes independence and counts that AIS twice "
+            "→ overconfident. CI does not.",
+            ha="center", fontsize=10.5)
+    ax.set_title("Double counting: the shared-newspaper problem", fontsize=14)
+    save(fig, "29-t2t-double-counting.png")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+
 def main():
     print("Generating figures into", HERE)
     fig_gaussian_1d()
@@ -1790,6 +1878,8 @@ def main():
     fig_shadow_guard()
     fig_bearing_wedge()
     fig_innovation_gate()
+    fig_t2t_ci_ellipse()
+    fig_t2t_double_counting()
     render_dot_figures()
     print("done.")
 

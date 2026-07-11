@@ -56,8 +56,10 @@ symlinked.
 
 ```
 core/      domain types, tracker, estimators, association, track mgmt   (no I/O)
-ports/     interfaces (IEstimator, IDataAssociator, ISensorAdapter, ...)
-adapters/  ais/ arpa/ eoir/ own_ship/ land/ static/ …                    (I/O, formats)
+core/t2t/  track-to-track fusion: ExternalTrack, pedigree, covariance     (no I/O)
+           intersection, T2tFuser (tracker-of-trackers) — its own target
+ports/     interfaces (IEstimator, IDataAssociator, ISensorAdapter, IFusionRule, ...)
+adapters/  ais/ arpa/ eoir/ own_ship/ land/ static/ t2t/ …                (I/O, formats)
 app/       composition root: wires adapters + strategies; run/replay modes
 tests/     gtest unit + scenario/replay tests, metrics harness
 docs/      specs/, sensors/, algorithm docs
@@ -108,6 +110,7 @@ means a consumer using it with auto-recenter gets a silently wrong suppression m
 provider.registerDatumSink(&obstacle_model);   // rebuilds the ENU cache on recenter
 provider.registerDatumSink(&coastline_model);
 provider.registerDatumSink(&occupancy_model);  // re-anchors the occupancy grid
+provider.registerDatumSink(&t2t_fuser);        // re-expresses cached source-track ENU state
 ```
 
 (The bench `Sweep` skips this on purpose — it uses a single fixed datum per run, so
@@ -182,6 +185,7 @@ Entered/Exited transitions across a head-on passing scenario.
 
 - `navtracker_core` — pure domain + ports + helpers. No I/O. Link this alone if you supply pre-parsed Measurements.
 - `navtracker_nmea` — NMEA-format adapters. Link this in addition when your input is NMEA strings.
+- `navtracker_t2t` — track-to-track fusion (tracker-of-trackers): fuse other trackers' tracks with covariance intersection. Link in addition when your inputs are *tracks* (not raw detections). See `docs/integration-guide.md` §3.10 and `docs/algorithms/t2t-fusion.md`.
 - `navtracker_sim` — synthetic measurement emitters. Tests only.
 
 ## Documentation standard (REQUIRED for every non-trivial algorithm)

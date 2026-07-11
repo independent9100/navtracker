@@ -376,8 +376,12 @@ precision; under-inflation is the dangerous direction). Replace them with the
 shore feed's real numbers when known — all config, no code. The consistency
 tripwire is a **NEES check** on a fusion scenario: if the fused estimate goes
 overconfident, R-inflation has stopped being enough and you need proper
-track-to-track fusion (covariance intersection) — deliberately **out of scope**
-today (spec §13), to be revisited only when a real feed shows it.
+track-to-track fusion (covariance intersection) — now available as the
+`navtracker_t2t` target (see §3.10 below and `docs/algorithms/t2t-fusion.md`).
+Use this remote-track-as-measurement path when you want the *other tracker's
+tracks treated like another sensor into one tracker*; use `navtracker_t2t` when
+you want a **separate, authoritative fused layer** over several trackers whose
+shared sensors you may not know.
 
 **Velocity is opt-in and extra-suspicious.** By default velocity fields are
 ignored (`accept_velocity{false}`) and every measurement is `Position2D` — a
@@ -475,6 +479,105 @@ The contrast that makes the rule easy to remember: **AIS SOG/COG/heading are
 fine as measurement content** — they come from the *target's own* GPS and gyro,
 a genuinely independent witness, not a derivative of positions you already
 consume.
+
+### 3.10 You have tracks from other trackers (`navtracker_t2t`)
+
+**What you have:** one or more *other tracking systems*, each handing you its own
+tracks — and you often do **not** know which sensors they fused (two of them may
+have used the same AIS). **What you want:** one authoritative fused picture that
+does not fool itself by double-counting a shared sensor. That is the
+`navtracker_t2t` target (link `navtracker_t2t` in addition to `navtracker_core`).
+Concept + intuition: learning chapter 29. Precise reference:
+`docs/algorithms/t2t-fusion.md`.
+
+The default (and only v1) fusion rule is **covariance intersection**: consistent
+for *any* unknown cross-correlation, so the worst case of a wrong/absent pedigree
+is a slightly loose fused covariance, never an overconfident one.
+
+**Minimum wiring** — feed each external tracker's tracks in as `ExternalTrack`s,
+drain `FusedTrackOutput`s:
+
+```cpp
+T2tFuser fuser;                          // default rule = covariance intersection
+fuser.setDatum(datum);                   // lets it hand you lat/lon out
+fuser.registerSource("nav_radar", used("radar"));   // pedigree: what this source used
+fuser.registerSource("coastal_ais", used("ais"));
+
+for (each scan) {
+  fuser.process(makeExternalTrackFromEnu("nav_radar", "17", t, pos, cov));
+  fuser.process(makeExternalTrackFromEnu("coastal_ais", "MMSI-2570…", t, pos, cov));
+  fuser.flush();                         // close the scan (or let a newer ts flush it)
+}
+for (const auto& fo : fuser.fusedTracks()) { /* fo.track is a TrackOutput */ }
+```
+
+The one-file end-to-end example is `app/example_t2t.cpp`
+(`navtracker_t2t_example`); the assembled push example is
+`tests/integration/test_t2t_full_stack.cpp`.
+
+**navtracker's own tracks as a source (zero effort).** `NavtrackerSource`
+(`adapters/t2t/NavtrackerSource.hpp`) is an `ITrackSink` that turns a live
+`TrackManager`'s lifecycle events into `ExternalTrack`s and feeds them to the
+fuser. Its pedigree is filled *exactly* from the track's `contributing_sources`
+(everything else `NotUsed`):
+
+```cpp
+NavtrackerSource src("navtracker", mgr, [&](ExternalTrack e){ fuser.process(std::move(e)); });
+mgr.setTrackSink(&src);
+```
+
+**Pedigree — declare what each source used.** A `SourcePedigree` maps each
+sensor-stream id to `Used`, `NotUsed`, or `Unknown`, plus a `default_usage` for
+streams not listed. Rules:
+
+- Two sources sharing **no** `Used` stream → `ProvablyIndependent`.
+- Any possible overlap, or any `Unknown` reachable → `PossiblyCorrelated`.
+- **No pedigree at all ≡ all-Unknown** (`default_usage = Unknown`): you are safe
+  by default even when you declare nothing.
+- In v1 the pedigree sets only the **diagnostic** `independence_class` on the
+  output; it never changes the fusion math (always CI). A tighter,
+  independence-exploiting rule is future work behind `IFusionRule`.
+
+**Datum recentering.** `T2tFuser` **implements `IDatumChangeSink`** (it caches
+source positions in the ENU frame). If you use auto-recenter (§2), register the
+fuser as a datum sink too, or its cached source state goes stale after a
+recenter:
+
+```cpp
+provider.registerDatumSink(&fuser);   // re-expresses cached ENU state on recenter
+```
+
+**Late / slow sources — the latency contract.** A source whose reports arrive
+consistently offset in time (a slow tracker, a laggy link) is **accepted, not
+rejected**: the stale guard is **per-source monotonic** (it only drops a source's
+*own* out-of-order reports), never cross-source. The fuser advances its clock to
+the latest report timestamp, **predicts the fused estimate to that instant, and
+fuses** — so a uniformly-late source contributes a *bounded lag* (roughly the
+offset × target speed), with **no rejection and no fused-id churn**. Bound the
+staleness you tolerate with `max_report_age_s` (a source silent longer than this
+stops contributing) and `fused_delete_age_s` (the track is deleted once no source
+has *reported* within this window). Measured behavior: results doc scenario 4.
+
+**Covariance axis convention (verified, read this).** The fused output's
+`TrackOutput::position.position_covariance_m2` is in **ENU `(east, north)`** order
+— slot (0,0) = east variance, (1,1) = north — **verified empirically**, *not*
+the "local NED" the `TrackOutput` header comment currently claims (a confirmed
+upstream contract bug awaiting a fix wave). The T2T path itself works entirely in
+ENU and is unaffected. This convention is pinned by
+`TrackOutputCovarianceAxis.EmittedOrderingIsEnuEastNorthNotHeaderNed`; when the
+upstream fix lands that test goes red **by design** and the self-adapter + test
+are updated together. Until then: trust this convention, not the header.
+
+**Output fields.** `FusedTrackOutput` embeds a full `TrackOutput` (id, status,
+lat/lon + covariance, SOG/COG, attributes) and adds `contributing_trackers` (who
+fed this fused track), `independence_class`, `fusion_rule` (`"CI"`), and
+`covariance_is_pessimistic_default`. Fused ids are minted by the fuser, stable,
+and never reused — independent of source track ids (external identity is never
+the fusion key). Push events are available via `IFusedTrackSink`
+(`setFusedTrackSink`), mirroring `ITrackSink`.
+
+**Config:** `T2tConfig` (`core/t2t/T2tConfig.hpp`) — see the appendix (§10).
+Timing/gating/lifecycle only; it never changes fusion correctness.
 
 ---
 
@@ -630,8 +733,13 @@ Walk the tracks and convert each with `toTrackOutput(track, datum)`
 (`core/output/TrackOutput.hpp`). The `TrackOutput` (`core/output/TrackOutput.hpp`)
 carries:
 
-- `position` — `lat_deg`/`lon_deg` (WGS84 deg) and a 2×2 covariance in **m², in
-  the target's local NED frame** (not ENU).
+- `position` — `lat_deg`/`lon_deg` (WGS84 deg) and a 2×2 covariance in **m²**.
+  ⚠️ **Axis order caveat:** the header comment claims "local NED (north-east)",
+  but the code was verified empirically to emit **ENU `(east, north)`** — slot
+  (0,0) = east variance, (1,1) = north. This is a confirmed upstream contract
+  mismatch awaiting a fix wave; until it lands, trust the ENU order, not the
+  header. Pinned by `TrackOutputCovarianceAxis.EmittedOrderingIsEnuEastNorthNotHeaderNed`.
+  (The `navtracker_t2t` path never routes through this rotation — see §3.10.)
 - `velocity` — `sog_m_per_s`, `cog_deg` (true, [0,360)), their σ, and `is_valid`.
   Velocity is `is_valid == false` for a 2D-only state or an unobserved/degenerate
   velocity covariance (`core/output/TrackOutput.cpp`).
@@ -722,6 +830,13 @@ crossings, using a plain range check (not CPA). `StaticHazardEvaluatorConfig`
 `emit_updates = false`. Convert a `StaticObstacle` to an operator-facing
 `StaticHazardOutput` with `toStaticHazardOutput(obs)`
 (`core/output/StaticHazardOutput.hpp`). See §7 for the obstacle input.
+
+### Fused (track-to-track) output
+
+If you run `navtracker_t2t` over several trackers, drain the fused layer with
+`fuser.fusedTracks()` (pull → `FusedTrackOutput`, which embeds a `TrackOutput`
+plus `contributing_trackers` / `independence_class` / `fusion_rule`) or register
+an `IFusedTrackSink` (push). Full field list and wiring: §3.10.
 
 ---
 
@@ -1238,7 +1353,7 @@ or three fields most worth reviewing. (`core/benchmark/` sweep configs and the
 | `ArpaAdapterConfig` | `adapters/arpa/ArpaAdapter.hpp` | Radar TTM/TLL → measurements; TTM speed/course → one-shot birth prior + swap diagnostic (#20) | `heading_std_deg{0.0}` (floor over per-pose σ, #16), `position_std_m{50.0}`, `bearing_std_deg{1.0}`, `seed_birth_velocity_from_ttm{true}`, `swap_course_jump_deg{90.0}`, `swap_min_speed_mps{1.0}` |
 | `EoIrAdapterConfig` | `adapters/eoir/EoIrAdapter.hpp` | EO/IR camera heading σ (floor over per-pose σ, #16) | `heading_std_deg{0.0}` |
 | `RemoteTrackAdapterConfig` | `adapters/remote_track/RemoteTrackAdapter.hpp` | Shore/VTS remote track → pseudo-measurement (R-inflation, rate thinning, velocity opt-in) | `r_inflation_factor{3.0}`, `min_update_interval_s{2.0}`, `default_position_std_m{50.0}`, `accept_velocity{false}` |
-| `T2tConfig` | `core/t2t/T2tConfig.hpp` | Track-to-track fusion (`navtracker_t2t`, tracker-of-trackers): time alignment of stored source tracks, T2T association gate + pairing hysteresis, covariance-intersection weight search, and fused-track lifecycle. The fusion rule is covariance intersection (safe for any unknown cross-correlation — see `docs/algorithms/t2t-fusion.md`); this config tunes timing/gating/lifecycle only, never correctness. *(M1: contract + math. Full wiring section lands with the fuser engine.)* | `gate_chi2_position{9.21}`, `pair_confirm_hits{3}`, `max_report_age_s{10.0}`, `fused_delete_age_s{30.0}`, `trust_source_status{true}` |
+| `T2tConfig` | `core/t2t/T2tConfig.hpp` | Track-to-track fusion (`navtracker_t2t`, tracker-of-trackers): time alignment of stored source tracks, T2T association gate + pairing hysteresis, covariance-intersection weight search, and fused-track lifecycle. The fusion rule is covariance intersection (safe for any unknown cross-correlation — see `docs/algorithms/t2t-fusion.md`); this config tunes timing/gating/lifecycle only, never correctness. Wiring: §3.10. | `gate_chi2_position{9.21}`, `pair_confirm_hits{3}`, `max_report_age_s{10.0}`, `fused_delete_age_s{30.0}`, `trust_source_status{true}` |
 | `AisAdapterConfig` | `adapters/ais/AisAdapter.hpp` | AIS SOG/COG → PositionVelocity2D content (#20), COG down-weighted at low SOG | `emit_velocity_from_sog_cog{true}`, `sog_velocity_min_mps{0.5}`, `sog_std_mps{0.5}`, `cog_std_deg{5.0}`, `velocity_iso_floor_mps{0.3}`, `position_std_high_accuracy_m{10.0}`, `position_std_standard_m{30.0}` |
 | `NavInputGuardConfig` | `core/own_ship/NavInputGuard.hpp` | Fact-free own-ship nav-input sanity flags at the OwnShipProvider edge (#18); flags, never rewrites | `heading_min_sog_mps{0.5}`, `stale_after_s{3.0}`, `max_position_speed_mps{50.0}`, `max_heading_rate_dps{60.0}` |
 | `CpaEvaluatorConfig` | `core/collision/CpaEvaluator.hpp` | Collision-risk thresholds + hysteresis | `d_threshold_m{500.0}`, `enter_probability{0.5}`, `exit_probability{0.3}` |
