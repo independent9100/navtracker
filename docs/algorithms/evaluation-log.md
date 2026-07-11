@@ -8,6 +8,39 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-11 — Cl-4 Phase 1b: conditional coverage floor (M,N,D rule) = NO-BUILD (env-2 revival and pier-walk overlap in net displacement) [Cl-4]
+
+Ticket `2026-07-11-cl4-phase1b-coverage-floor-probe-ticket.md`; merged
+d5e68e8. Chain census (`cl4_a3_census --mode chain/target`), zero shipped
+behavior change. Write-up: `docs/baselines/2026-07-11_cl4_phase1b_floor_probe.md`.
+
+- **K1 (env-2 revival):** easy — all 8 shore-huggers in-band 100%, net
+  143–294 m, ≥69 m within any 30 s window, smooth (per-step p95 ≤ 7.9 m/s).
+  Feasible only for D ≤ 72.6 m.
+- **K2 (philos guard):** passes, NOT binding — in-band radar is dominated by
+  stationary structure; at (M≥8, D≥50) only 2 moving chains = 0.2% of the A1
+  residual (~+0.05 card_err vs the +10 budget).
+- **K3 (harbor pier): THE binding gate.** The pier's 120 m extent lets
+  greedy NN chaining (r_chain 25 m) walk its 10 m-spaced points to ~84 m net
+  displacement on some seeds → robust exclusion needs D > 84 m. Empty
+  feasible set: an extended structure walked by association mimics a transit
+  in exactly the quantity the rule keys on.
+
+Two measured escape hatches (NOT decided in the probe): (1) smoothness —
+pier walks are jumpy (max step 16–20 m/s, teleporting between points on
+missed detections) vs vessels ≤ 8 m/s: a per-step-speed term separates
+cleanly with ~2× margin, but changes the rule family and philos smoothness
+is unmeasured; (2) the NN chainer is a CONSERVATIVE proxy for K3 — at
+r_chain 15 m the pier walk peaks at 50.6 m (< the 72.6 K1 ceiling), and a
+real PMBM Bernoulli under a motion model resists teleports, so true pier
+displacement is likely smaller. Scope unchanged: a displacement floor never
+revives stationary near-shore vessels (static-hazard channel per ADR 0002).
+
+Takeaway: Phase 1c commissioned — smoothness term + real-association
+displacement measured together under binding criteria with robustness
+margins (the #24 knife-edge lesson); paths (c)/per-geography-residual stay
+the fallbacks.
+
 ## 2026-07-11 — Cl-4 Phase 1: A3 sensor-aware suppression = NO-BUILD (binding kill-criteria; guard unscoreable cross-workload) [Cl-4]
 
 Ticket `2026-07-11-cl4-phase1-a3-probe-ticket.md`; merged 93c31ec. Offline
