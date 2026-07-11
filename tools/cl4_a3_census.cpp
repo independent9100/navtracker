@@ -7,6 +7,10 @@
 //     re-detection chain statistics + per-target motion/latency
 //     (docs/baselines/2026-07-11_cl4_phase1b_floor_probe.md, ticket
 //      docs/superpowers/plans/2026-07-11-cl4-phase1b-coverage-floor-probe-ticket.md).
+//   --mode stage0 [--transit-speed --transit-yoff --ramp ...]: Phase-2 Stage-0
+//     vessel-past-structure gate — inject a vessel transiting alongside the
+//     harbor pier and race its floor-revival vs the occupancy veto
+//     (docs/baselines/2026-07-11_cl4_phase2_stage0_vessel_past_structure.md).
 //   --mode veto [--bar --cell --M --D --dump-flags]: Phase-1d occupancy
 //     floor-veto race — feeds an offline LiveOccupancyModel and races T_veto
 //     (endpoint cell flagged as structure) vs T_floor per chain
@@ -36,6 +40,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -386,6 +391,109 @@ int main(int argc, char** argv) {
           (unsigned long long)id, samps.size(), inband, redet, net,
           max_win_disp, max_win_speed, smed, sp95);
     }
+    return 0;
+  }
+  // ---- Phase 2 Stage 0: vessel-past-structure gate (census only) ----
+  // Inject a synthetic vessel transiting PARALLEL to the harbor pier, INSIDE
+  // its suppression ramp, and race its floor-revival against the occupancy veto
+  // — the case no fixture covers (Phase-1d gap). G1: vessel revives with added
+  // latency <= 15 s vs the same transit with NO pier. G2: the pier stays 100%
+  // vetoed with the vessel present. Veto neighborhood is set by --ramp
+  // (suppression_radius_m): 25 = ramp veto; ~1 = bare-cell (on-structure) veto.
+  if (mode == "stage0") {
+    const double bar = std::stod(arg(argc, argv, "--bar", "0.5"));
+    const double cell = std::stod(arg(argc, argv, "--cell", "25.0"));
+    const double ramp = std::stod(arg(argc, argv, "--ramp", "25.0"));
+    const int M = std::stoi(arg(argc, argv, "--M", "8"));
+    const double D = std::stod(arg(argc, argv, "--D", "50.0"));
+    const double win = std::stod(arg(argc, argv, "--win", "30.0"));
+    const double speed = std::stod(arg(argc, argv, "--transit-speed", "3.0"));
+    const double yoff = std::stod(arg(argc, argv, "--transit-yoff", "-332.0"));
+    const double x0 = std::stod(arg(argc, argv, "--transit-x0", "-60.0"));
+    const bool with_pier = arg(argc, argv, "--with-pier", "1") == "1";
+    const double noise = std::stod(arg(argc, argv, "--transit-noise", "4.0"));
+
+    // Harbor radar returns (the real pier + boats + sea clutter), grouped by
+    // the 1 Hz scan grid. seed already applied via generate(seed) above.
+    std::map<double, std::vector<Eigen::Vector2d>> by_scan;
+    for (const auto& m : scen.measurements)
+      if (m.sensor == SensorKind::ArpaTtm && m.value.size() >= 2)
+        by_scan[m.time.seconds()].push_back(m.value.head<2>());
+    std::vector<double> scan_ts;
+    for (auto& [t, v] : by_scan) scan_ts.push_back(t);
+    std::sort(scan_ts.begin(), scan_ts.end());
+    const double t0 = scan_ts.front();
+
+    // Synthesize the transiting vessel: one return per scan, position moving in
+    // +x parallel to the pier at `yoff`, with deterministic Gaussian noise.
+    std::mt19937 rng(1234u + (unsigned)seed);
+    std::normal_distribution<double> nz(0.0, noise);
+    std::vector<std::pair<double, Eigen::Vector2d>> vessel;  // (t, true pos + noise)
+    for (double t : scan_ts) {
+      const double x = x0 + speed * (t - t0);
+      vessel.push_back({t, Eigen::Vector2d(x + nz(rng), yoff + nz(rng))});
+    }
+
+    // Feed occupancy scan-by-scan (harbor radar if with_pier, + vessel return),
+    // recording per-cell first-flag time for structure (birthSuppression>0 with
+    // the chosen ramp).
+    LiveOccupancyParams op; op.persistence_bar = bar; op.cell_size_m = cell;
+    op.suppression_radius_m = ramp;
+    LiveOccupancyModel occ(*scen.datum, op);
+    auto keyOf = [&](const Eigen::Vector2d& p) {
+      return std::make_pair((long)std::floor(p.x()/cell),(long)std::floor(p.y()/cell)); };
+    std::map<std::pair<long,long>, double> t_struct;
+    for (std::size_t s = 0; s < scan_ts.size(); ++s) {
+      const double t = scan_ts[s];
+      std::vector<Eigen::Vector2d> ret;
+      if (with_pier) ret = by_scan[t];
+      ret.push_back(vessel[s].second);
+      ISensorDetectionModel::ScanObservation ob;
+      ob.sensor = SensorKind::ArpaTtm; ob.model = MeasurementModel::Position2D;
+      ob.num_unassociated = (int)ret.size(); ob.positions = ret;
+      ob.clutter_positions = ret; ob.time = Timestamp::fromSeconds(t);
+      occ.observe({ob});
+      for (const auto& [c, ewma] : occ.persistenceCells())
+        if (!t_struct.count(keyOf(c)) && occ.birthSuppression(c) > 0.0)
+          t_struct[keyOf(c)] = t;
+    }
+
+    // Vessel revival: earliest scan where the vessel chain satisfies (M in win
+    // AND net disp >= D) AND its endpoint cell is not structure-flagged by then.
+    auto flaggedBy = [&](const Eigen::Vector2d& p, double t) {
+      auto it = t_struct.find(keyOf(p));
+      return it != t_struct.end() && it->second <= t;
+    };
+    double t_revive = -1.0, t_floor_first = -1.0;
+    for (std::size_t b = 0; b < vessel.size(); ++b) {
+      std::size_t a = b;
+      while (a > 0 && vessel[b].first - vessel[a-1].first <= win) --a;
+      const bool floor_ok = (int)(b - a + 1) >= M &&
+          (vessel[b].second - vessel[a].second).norm() >= D;
+      if (floor_ok && t_floor_first < 0) t_floor_first = vessel[b].first;
+      if (floor_ok && !flaggedBy(vessel[b].second, vessel[b].first)) {
+        t_revive = vessel[b].first; break;
+      }
+    }
+    // G2 signal: does the pier region stay structure-flagged with the vessel
+    // present? Count structure cells on the pier line (y in [-385,-315]).
+    int pier_struct = 0;
+    for (auto& [k, t] : t_struct) {
+      const double cy = (k.second + 0.5) * cell;
+      if (cy > -385 && cy < -315) ++pier_struct;
+    }
+    std::fprintf(stderr, "  [G2] pier-line structure cells flagged (vessel present)=%d\n",
+                 pier_struct);
+    std::printf("STAGE0 %s: speed=%.1f yoff=%.0f x0=%.0f bar=%.2f cell=%.0f ramp=%.0f seed=%llu with_pier=%d\n",
+        label.c_str(), speed, yoff, x0, bar, cell, ramp, (unsigned long long)seed, with_pier);
+    if (t_floor_first < 0)
+      std::printf("  vessel NEVER satisfies floor (D=%.0f in %.0fs at %.1f m/s => %.0fm max) -> SUB-FLOOR (static-hazard channel)\n",
+          D, win, speed, speed*win);
+    else
+      std::printf("  first floor-satisfaction t=%.1fs ; veto-passing revival t=%s (rel %s)\n",
+          t_floor_first - t0,
+          t_revive < 0 ? "NEVER" : std::to_string(t_revive - t0).c_str(),
+          t_revive < 0 ? "inf" : std::to_string(t_revive - t_floor_first).c_str());
     return 0;
   }
   if (mode == "chain") {
