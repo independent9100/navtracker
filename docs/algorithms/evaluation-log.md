@@ -8,6 +8,35 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-11 — Cl-4 Phase 1d: occupancy floor-veto = BUILD-ELIGIBLE (first affirmative of the arc; race won 11–27 s margin) [Cl-4]
+
+Ticket `2026-07-11-cl4-phase1d-occupancy-veto-probe-ticket.md`; merged
+de6464c. Offline `LiveOccupancyModel` (shipped, default params, unmodified)
+as a veto on the Phase-1b floor: no revival when the chain-endpoint cell is
+flagged persistent structure. Write-up:
+`docs/baselines/2026-07-11_cl4_phase1d_occveto_probe.md`.
+
+- **K3 (pier) PASS:** structure flags in 1–3 s (2–3 hits at α 0.3); pier
+  chains satisfy the floor at 14–30 s → veto wins every race, Tier A chains
+  AND Tier B real PMBM tracks (incl. the Phase-1c 104 m laundered walks),
+  all 5 seeds, D=50 and D=70; zero revived. Margin box (bar ±0.15, 2× cell):
+  0 revived at every corner. Sea clutter and anchored boats never classify
+  as structure.
+- **K1 (env-2) PASS, better than hoped:** 16/16 revived at +0 s latency.
+  Mechanism = the shipped extent gate (`extended_cells_min = 4`): a compact
+  dwelling vessel paints persistent cells but never a ≥4-connected
+  component, so it is never "structure"; when it moves (the only way to
+  satisfy D) its endpoint is a fresh cell. Holds even at bar 0.35.
+- **K2 (philos) PASS:** veto monotone, inert on philos (= no-veto counts).
+
+**The one gate for Phase 2 (implementer-flagged, arbiter-adopted):** no
+fixture exercises a vessel transiting within the 25 m ramp of extended
+structure — env-2's shore is a polygon (no dense returns), harbor's R6 boat
+is stationary. The veto's K1 pass is therefore inert-by-data on env-2, not
+vessel-vs-adjacent-structure discrimination. Phase 2 Stage 0 must measure a
+moving vessel passing the pier (transient-veto latency ≤ 15 s) BEFORE any
+build; HAXR real shore returns are the optional corroboration arm.
+
 ## 2026-07-11 — Cl-4 Phase 1c: smoothness + honest-association displacement = NO-BUILD confirmed & hardened (kinematic keying closed) [Cl-4]
 
 Ticket `2026-07-11-cl4-phase1c-smoothness-probe-ticket.md`; merged e676d67.

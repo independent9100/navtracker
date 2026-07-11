@@ -389,11 +389,18 @@ and on equal footing the smoothness gap vanishes (vessel chains 13.8/19.2
 max-step med/p95 vs pier 14.7/19.1 m/s). Durable fact: **a chain along a
 linear extended structure is kinematically a CV vessel transit** —
 kinematic keying of the floor is closed in every measured form. The
-orthogonal signal left is map/extent knowledge of structure (charted
-static prior and/or the live occupancy layer's persistent-cell grid as a
-floor-veto); sim-first caveat: the walking pier is a synthetic-pier
-measurement (sparse 10 m points + misses), no real pier-walk observed in
-our data to date. Caution unchanged: the *unconditional* land-only A2
+orthogonal signal — map/extent knowledge of structure — was then measured
+**BUILD-ELIGIBLE (Phase 1d, 2026-07-11, merged de6464c)**: the shipped
+`LiveOccupancyModel` persistence grid as a floor-veto wins the race
+decisively (pier flags in 1–3 s vs floor satisfaction at 14–30 s; zero pier
+revivals across Tier A/B, all seeds, full margin box) while the extent gate
+(`extended_cells_min = 4`) keeps dwelling vessels unflagged → 16/16 env-2
+revivals at +0 s latency; philos inert. **One gate before build:**
+vessel-transiting-past-structure is unmeasured (no fixture has both dense
+structure returns and a moving vessel beside them) — Phase 2 Stage 0 closes
+it with a moving harbor-boat-past-pier scenario before any tracker code.
+Sim-first caveat stands: the walking pier is a synthetic-pier measurement;
+no real pier-walk observed in our data to date. Caution unchanged: the *unconditional* land-only A2
 floor is measured-dead (2026-07-02 R1 A/B: philos card_err +6.9→+40.15).
 (c) accept a lowered gate + re-price the philos regression that killed the
 naive version (gospa 73.1→100 — measured 2026-06-30, so (c) is likely
