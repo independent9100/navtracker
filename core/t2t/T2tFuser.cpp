@@ -47,13 +47,30 @@ bool T2tFuser::process(ExternalTrack report) {
   applyExternalDefaultsIfEmpty(report);
   const std::string key = keyOf(report);
   const Timestamp t = report.time;
+  // A strictly newer report closes the current scan: flush it (one cycle) so
+  // the lifecycle advances per scan, not per report.
+  if (has_pending_ && t.nanos() > pending_time_.nanos()) flushPending();
   sources_[key] = StoredSource{std::move(report), t};
-  runCycle(t);
+  reported_keys_.insert(key);
+  pending_time_ = has_pending_ && pending_time_.nanos() > t.nanos() ? pending_time_ : t;
+  has_pending_ = true;
   return true;
 }
 
+void T2tFuser::flush() { flushPending(); }
+
+void T2tFuser::flushPending() {
+  if (!has_pending_) return;
+  const Timestamp t = pending_time_;
+  std::set<std::string> reporters;
+  reporters.swap(reported_keys_);
+  has_pending_ = false;
+  runCycle(t, reporters);
+}
+
 void T2tFuser::advanceTo(Timestamp t) {
-  if (!has_time_ || t.nanos() > now_.nanos()) runCycle(t);
+  flushPending();
+  if (!has_time_ || t.nanos() > now_.nanos()) runCycle(t, {});
 }
 
 // ---------------------------------------------------------------------------
@@ -220,17 +237,22 @@ void T2tFuser::fuseInto(FusedState& f,
 // The fusion cycle
 // ---------------------------------------------------------------------------
 
-void T2tFuser::runCycle(Timestamp t) {
+void T2tFuser::runCycle(Timestamp t, const std::set<std::string>& reporters) {
   now_ = (has_time_ && now_.nanos() > t.nanos()) ? now_ : t;
   has_time_ = true;
+  const auto reportedThisScan = [&](const std::string& key) {
+    return reporters.count(key) != 0;
+  };
 
-  // 1. Predict fresh source tracks to now_; drop long-dead ones from the store.
+  // 1. Predict fresh source tracks to now_; drop long-dead ones (and their
+  //    stale birth candidacy) from the store.
   std::vector<PredictedSource> preds;
   std::map<std::string, std::size_t> pred_index;  // key -> index in preds
   for (auto it = sources_.begin(); it != sources_.end();) {
     const double age = now_.secondsSince(it->second.last_report);
     if (age > cfg_.fused_delete_age_s) {
-      it = sources_.erase(it);  // bound memory: well past any contribution
+      birth_window_.erase(it->first);  // prune birth candidacy with the source
+      it = sources_.erase(it);
       continue;
     }
     if (age <= cfg_.max_report_age_s) {
@@ -280,18 +302,38 @@ void T2tFuser::runCycle(Timestamp t) {
     contributors[fi].push_back(&preds[si]);
   }
 
-  // 4. Birth: still-unused sources accrue M-of-N; birth a fused track on pass.
+  // 4. Birth: only sources that REPORTED this scan and remain unassociated
+  //    accrue birth M-of-N (evidence counts the source's own reports, not
+  //    ambient cycles driven by other sources' traffic).
   std::vector<std::size_t> births;
-  for (std::size_t li = 0; li < free_source_idx.size(); ++li) {
-    const std::size_t si = free_source_idx[li];
-    if (source_used[si]) continue;  // matched above
+  for (const std::size_t si : free_source_idx) {
+    if (source_used[si]) continue;                    // matched above
+    if (!reportedThisScan(preds[si].key)) continue;   // reporter-driven M-of-N
     auto& win = birth_window_[preds[si].key];
     win.push_back(true);
     while (static_cast<int>(win.size()) > cfg_.fused_confirm_n) win.pop_front();
     const int hits = static_cast<int>(std::count(win.begin(), win.end(), true));
     if (hits >= cfg_.fused_confirm_m) births.push_back(si);
   }
+  // Cluster co-located birth candidates so two source trackers reporting the
+  // SAME new object in the SAME scan seed ONE fused track (with both as
+  // founders), not two duplicates. (Pre-existing tracks were already offered in
+  // the global pass; this only groups simultaneous newborns among themselves.)
+  std::vector<std::vector<std::size_t>> clusters;
   for (const std::size_t si : births) {
+    bool joined = false;
+    for (auto& members : clusters) {
+      if (associator_.gateDistanceSq(gateOfSource(preds[members.front()]),
+                                     gateOfSource(preds[si])) <=
+          cfg_.gate_chi2_position) {
+        members.push_back(si);
+        joined = true;
+        break;
+      }
+    }
+    if (!joined) clusters.push_back({si});
+  }
+  for (const auto& members : clusters) {
     FusedState f;
     f.track.id = TrackId{next_fused_id_++};  // monotonic, never reused
     f.track.status = TrackStatus::Tentative;
@@ -300,13 +342,15 @@ void T2tFuser::runCycle(Timestamp t) {
     f.track.last_update = now_;
     Pairing founding;
     founding.hits = cfg_.pair_confirm_hits;
-    founding.formed = true;  // the founding source is sticky from birth
-    f.pairings[preds[si].key] = founding;
+    founding.formed = true;  // founding sources are sticky from birth
+    for (const std::size_t si : members) f.pairings[preds[si].key] = founding;
     fused_.push_back(std::move(f));
     contributors.emplace_back();
-    contributors.back().push_back(&preds[si]);
-    source_used[si] = true;
-    birth_window_.erase(preds[si].key);
+    for (const std::size_t si : members) {
+      contributors.back().push_back(&preds[si]);
+      source_used[si] = true;
+      birth_window_.erase(preds[si].key);
+    }
     if (sink_)
       sink_->onFusedTrackInitiated(
           {fused_.back().track.id, now_, TrackStatus::Tentative});
@@ -315,41 +359,50 @@ void T2tFuser::runCycle(Timestamp t) {
   for (std::size_t si = 0; si < preds.size(); ++si)
     if (source_used[si]) birth_window_.erase(preds[si].key);
 
-  // 5. Update / confirm / coast, and refresh pairing hysteresis.
+  // 5. Per fused track: pairing hysteresis, fuse, confirm, coast.
   for (std::size_t fi = 0; fi < fused_.size(); ++fi) {
     FusedState& f = fused_[fi];
-    const bool contributed = !contributors[fi].empty();
 
-    // Pairing bookkeeping: which of this track's known/new source keys
-    // contributed this cycle.
-    std::map<std::string, bool> contributed_key;
-    for (const auto* c : contributors[fi]) contributed_key[c->key] = true;
-    // Existing pairings: hit/miss.
+    // Which contributing sources reported THIS scan (vs coasted-fresh silent).
+    std::set<std::string> contributed_keys;
+    bool reporter_contributed = false;
+    for (const auto* c : contributors[fi]) {
+      contributed_keys.insert(c->key);
+      if (reportedThisScan(c->key)) reporter_contributed = true;
+    }
+
+    // Pairing bookkeeping: hit when the paired source reported this scan AND
+    // gated in; miss when it reported out-of-gate OR has gone stale (dropped
+    // from preds); no change while it is fresh but silent between its own
+    // reports (so a slow source's pairing survives its reporting cadence).
     for (auto pit = f.pairings.begin(); pit != f.pairings.end();) {
-      const bool hit = contributed_key.count(pit->first) != 0;
-      if (hit) {
+      const std::string& key = pit->first;
+      const bool contributed = contributed_keys.count(key) != 0;
+      const bool reported = reportedThisScan(key);
+      const bool stale = pred_index.find(key) == pred_index.end();
+      if (contributed && reported) {
         pit->second.hits += 1;
         pit->second.misses = 0;
         if (pit->second.hits >= cfg_.pair_confirm_hits) pit->second.formed = true;
         ++pit;
-      } else {
+      } else if ((reported && !contributed) || stale) {
         pit->second.misses += 1;
         if (pit->second.misses >= cfg_.pair_break_misses)
           pit = f.pairings.erase(pit);
         else
           ++pit;
+      } else {
+        ++pit;  // fresh but silent this scan: pairing holds unchanged
       }
     }
-    // New contributing keys not yet tracked as pairings.
-    for (const auto* c : contributors[fi]) {
+    for (const auto* c : contributors[fi])
       if (f.pairings.find(c->key) == f.pairings.end()) {
         Pairing pr;
         pr.hits = 1;
         f.pairings[c->key] = pr;
       }
-    }
 
-    if (contributed) {
+    if (!contributors[fi].empty()) {
       const bool was_new = f.track.contributing_sources.empty() &&
                            f.confirm_window.empty();
       // Canonical contributor order (by source key) so the sequential CI fold
@@ -359,37 +412,41 @@ void T2tFuser::runCycle(Timestamp t) {
                   return a->key < b->key;
                 });
       fuseInto(f, contributors[fi]);
-      f.confirm_window.push_back(true);
+      // Confirm M-of-N counts scans with a FRESH (reporter) contribution — a
+      // memoryless re-fuse from purely coasted sources is not fresh evidence.
+      f.confirm_window.push_back(reporter_contributed);
       while (static_cast<int>(f.confirm_window.size()) > cfg_.fused_confirm_n)
         f.confirm_window.pop_front();
 
-      // Confirmation.
       if (f.track.status != TrackStatus::Confirmed) {
         bool confirm = false;
-        if (cfg_.trust_source_status) {
+        if (cfg_.trust_source_status)
           for (const auto* c : contributors[fi])
-            if (c->source_status == TrackStatus::Confirmed) confirm = true;
-        }
-        if (!confirm) {
-          const int hits = static_cast<int>(
-              std::count(f.confirm_window.begin(), f.confirm_window.end(), true));
-          if (hits >= cfg_.fused_confirm_m) confirm = true;
-        }
+            if (reportedThisScan(c->key) && c->source_status == TrackStatus::Confirmed)
+              confirm = true;
+        if (!confirm &&
+            static_cast<int>(std::count(f.confirm_window.begin(),
+                                        f.confirm_window.end(), true)) >=
+                cfg_.fused_confirm_m)
+          confirm = true;
         if (confirm) f.track.status = TrackStatus::Confirmed;
       }
 
-      // Events: Initiated already fired at birth; that cycle counts as the
-      // track's first update too, so fire Updated only for non-birth cycles.
-      if (!was_new && sink_)
+      // Initiated fired at birth; fire Updated only when a fresh report
+      // actually updated the estimate (not on a purely-coasted re-fuse).
+      if (!was_new && reporter_contributed && sink_)
         sink_->onFusedTrackUpdated({f.track.id, now_, f.track.status});
       if (f.track.status == TrackStatus::Confirmed && !f.confirmed_fired) {
         f.confirmed_fired = true;
         if (sink_) sink_->onFusedTrackConfirmed({f.track.id, now_, f.track.status});
       }
     } else {
-      // No fresh contributor: coast.
+      // Full coast: no fresh contributor at all. Nothing is currently fused, so
+      // the "current" output fields must not report stale corroboration.
       if (f.track.status != TrackStatus::Deleted)
         f.track.status = TrackStatus::Coasting;
+      f.contributors.clear();
+      f.independence = IndependenceClass::SingleSource;
       f.confirm_window.push_back(false);
       while (static_cast<int>(f.confirm_window.size()) > cfg_.fused_confirm_n)
         f.confirm_window.pop_front();
@@ -422,6 +479,21 @@ std::vector<FusedTrackOutput> T2tFuser::fusedTracks() const {
   for (const auto& f : fused_) {
     out.push_back(toFusedTrackOutput(f.track, *datum_, f.contributors,
                                      f.independence, f.pessimistic_default));
+  }
+  return out;
+}
+
+std::vector<T2tFuser::FusedEnuState> T2tFuser::fusedTracksEnu() const {
+  std::vector<FusedEnuState> out;
+  out.reserve(fused_.size());
+  for (const auto& f : fused_) {
+    FusedEnuState s;
+    s.id = f.track.id;
+    s.status = f.track.status;
+    s.position = f.track.state.head<2>();
+    s.velocity = f.track.state.segment<2>(2);
+    s.position_cov = f.track.covariance.topLeftCorner<2, 2>();
+    out.push_back(s);
   }
   return out;
 }

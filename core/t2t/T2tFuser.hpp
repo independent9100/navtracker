@@ -23,6 +23,7 @@
 #include <deque>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -54,18 +55,39 @@ class T2tFuser : public IDatumChangeSink {
   // all-Unknown. A per-report pedigree override takes precedence.
   void registerSource(const std::string& source_tracker_id, SourcePedigree pedigree);
 
-  // Ingest one report and run a fusion cycle at its time. Returns false if the
-  // report was rejected at the edge (failed validation, or stale for its
+  // Ingest one report into the current scan. Reports are BATCHED by timestamp:
+  // a report with a newer time first flushes the pending scan (running exactly
+  // one fusion cycle for it), so lifecycle M-of-N advances per SCAN, not per
+  // report — many reports (multiple targets, or the self-adapter firing
+  // Updated+Confirmed at one instant) collapse into a single cycle. Returns
+  // false if the report was rejected at the edge (invalid, or stale for its
   // source). Pessimistic covariance defaults are applied to accepted reports.
+  // Call flush() (or advanceTo) before pulling to run the last buffered scan.
   bool process(ExternalTrack report);
 
-  // Advance to time t with no new input: predict, coast, and delete by age.
-  // Never moves time backward.
+  // Run the pending scan's fusion cycle now (no-op if nothing is buffered).
+  // Pull results after this to see the current scan reflected.
+  void flush();
+
+  // Flush any pending scan, then advance to time t with no new input: predict,
+  // coast, and delete by age. Never moves time backward.
   void advanceTo(Timestamp t);
 
   // Pull the current fused output. Requires a datum (set via setDatum or an
   // onDatumRecentered event); without one, returns an empty vector.
   std::vector<FusedTrackOutput> fusedTracks() const;
+
+  // Raw ENU fused state — the internal estimate before geodetic conversion.
+  // For evaluation/bench scoring against ENU truth (the geodetic/NED output is
+  // for consumers; scoring wants the same frame as the truth). Needs no datum.
+  struct FusedEnuState {
+    TrackId id;
+    TrackStatus status;
+    Eigen::Vector2d position;      // ENU meters
+    Eigen::Vector2d velocity;      // ENU m/s
+    Eigen::Matrix2d position_cov;  // ENU m^2 (position block)
+  };
+  std::vector<FusedEnuState> fusedTracksEnu() const;
 
   // Push sink for fused lifecycle events. Nullable, non-owning; null = no
   // overhead. The sink, if set, must outlive the fuser.
@@ -133,7 +155,11 @@ class T2tFuser : public IDatumChangeSink {
   SourcePedigree effectivePedigreeFor(const ExternalTrack& t) const;
   PredictedSource predictSource(const StoredSource& s, Timestamp to) const;
   void predictFusedForward(FusedState& f, Timestamp to) const;
-  void runCycle(Timestamp t);
+  void flushPending();
+  // One fusion cycle at time t. `reporters` = source keys that reported in THIS
+  // scan (drives birth/confirm/pairing M-of-N); fusion contribution itself uses
+  // every fresh source (within max_report_age), reporter or coasted.
+  void runCycle(Timestamp t, const std::set<std::string>& reporters);
   void fuseInto(FusedState& f, const std::vector<const PredictedSource*>& contributors);
   GateCandidate gateOfFused(const FusedState& f) const;
   static GateCandidate gateOfSource(const PredictedSource& p);
@@ -154,6 +180,11 @@ class T2tFuser : public IDatumChangeSink {
   std::size_t rejected_ = 0;
   Timestamp now_;
   bool has_time_ = false;
+  // Current scan being buffered: the source keys that have reported since the
+  // last flush, and that scan's timestamp.
+  std::set<std::string> reported_keys_;
+  bool has_pending_ = false;
+  Timestamp pending_time_;
   std::optional<geo::Datum> datum_;
   IFusedTrackSink* sink_ = nullptr;
 };
