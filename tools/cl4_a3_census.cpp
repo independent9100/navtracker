@@ -7,6 +7,10 @@
 //     re-detection chain statistics + per-target motion/latency
 //     (docs/baselines/2026-07-11_cl4_phase1b_floor_probe.md, ticket
 //      docs/superpowers/plans/2026-07-11-cl4-phase1b-coverage-floor-probe-ticket.md).
+//   --mode chain --motion 1 [--gate --vcap]: Phase-1c Tier-A motion-model
+//     (CV-consistent, teleport-rejecting) chainer for honest displacement +
+//     smoothness (docs/baselines/2026-07-11_cl4_phase1c_smoothness_probe.md).
+//     Tier B = the real PMBM via navtracker_bench_baseline --export-states-dir.
 //
 // For a replay scenario, classifies every truth sample as in-band (inside the
 // coverage_land <50 m no-birth zone, using the tracker's OWN CoastlineModel /
@@ -210,6 +214,22 @@ int main(int argc, char** argv) {
     const std::string kind_s = arg(argc, argv, "--kind", "radar");
     const bool inband_only = arg(argc, argv, "--inband-only", "0") == "1";
     const std::string ccsv = arg(argc, argv, "--csv", "");
+    // Tier A (--motion 1): motion-model-consistent chaining. A chain carries a
+    // CV velocity estimate; a detection extends it only if it lands within an
+    // innovation gate of the CV-PREDICTED position (last + vel*dt), not merely
+    // near the last point. This rejects the teleport-walk that the plain-NN
+    // (Tier-0/Phase-1b) chainer allowed along the pier's 10 m-spaced points: a
+    // chain that accepts one 10 m jump acquires ~20 m/s velocity, predicts 10 m
+    // further, and the next static pier return then falls OUTSIDE the gate — so
+    // a static structure cannot sustain a walk, while a real CV vessel does.
+    const bool motion = arg(argc, argv, "--motion", "0") == "1";
+    // Innovation gate (m) around the CV prediction — the tracker's own ~15 m
+    // position association gate scale (ReplayScenarioRun.cpp:321).
+    const double gate_m = std::stod(arg(argc, argv, "--gate", "15.0"));
+    // Physical velocity cap (m/s): a step implying speed > vcap is rejected as
+    // kinematically implausible (harbour craft ≪ this) — bounds the CV estimate
+    // so a chain cannot acquire runaway velocity and teleport to distant points.
+    const double vcap = std::stod(arg(argc, argv, "--vcap", "20.0"));
     auto kindMatch = [&](const Measurement& m) {
       if (kind_s == "radar") return m.sensor == SensorKind::ArpaTtm;
       if (kind_s == "lidar") return m.sensor == SensorKind::Lidar;
@@ -242,6 +262,8 @@ int main(int argc, char** argv) {
       int n;
       double pathlen;
       double max_step;  // largest single-step speed (m/s) — flags NN jumps
+      Eigen::Vector2d vel{Eigen::Vector2d::Zero()};  // CV estimate (motion mode)
+      bool have_vel{false};
     };
     std::vector<Chain> chains;
     std::vector<int> active;  // indices into chains, last updated recently
@@ -259,25 +281,42 @@ int main(int argc, char** argv) {
     const double gap_win = max_gap_s;  // absolute revisit tolerance
     for (const auto& p : pts) {
       int best = -1;
-      double best_d = r_chain;
+      double best_d = motion ? gate_m : r_chain;
       for (int ci : active) {
         Chain& c = chains[ci];
         const double dt_c = p.t - c.t1;
         if (dt_c <= 1e-6 || dt_c > gap_win) continue;
-        const double dd = (p.xy - c.plast).norm();
+        // Tier A: gate on the CV-predicted position; Tier 0: on the last point.
+        // reject kinematically implausible steps (motion mode): a step faster
+        // than vcap cannot be this chain's re-detection.
+        if (motion && (p.xy - c.plast).norm() / dt_c > vcap) continue;
+        const Eigen::Vector2d ref =
+            motion && c.have_vel ? (c.plast + c.vel * dt_c) : c.plast;
+        const double dd = (p.xy - ref).norm();
         if (dd <= best_d) { best_d = dd; best = ci; }
       }
       if (best >= 0) {
         Chain& c = chains[best];
         const double step = (p.xy - c.plast).norm();
         const double step_dt = p.t - c.t1;
-        if (step_dt > 1e-6) c.max_step = std::max(c.max_step, step / step_dt);
+        if (step_dt > 1e-6) {
+          c.max_step = std::max(c.max_step, step / step_dt);
+          const Eigen::Vector2d v = (p.xy - c.plast) / step_dt;
+          c.vel = c.have_vel ? (0.5 * c.vel + 0.5 * v) : v;  // light smoothing
+          c.have_vel = true;
+        }
         c.pathlen += step;
         c.plast = p.xy;
         c.t1 = p.t;
         c.n++;
       } else {
-        chains.push_back({p.t, p.t, p.xy, p.xy, 1, 0.0, 0.0});
+        Chain nc;
+        nc.t0 = nc.t1 = p.t;
+        nc.p0 = nc.plast = p.xy;
+        nc.n = 1;
+        nc.pathlen = 0.0;
+        nc.max_step = 0.0;
+        chains.push_back(nc);
       }
       // rebuild active list = chains whose t1 is within gap_win of current time
       active.clear();
