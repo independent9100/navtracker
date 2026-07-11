@@ -9,11 +9,11 @@ Intuitive introduction (plain English, with the shared-newspaper metaphor):
 update). This document is the precise reference; the four-section template
 below is the house standard.*
 
-*Status: Milestone 1 (contracts + math). The engine (associator, fuser,
-lifecycle) is Milestone 2; the math it will implement is specified in full
-here. Sections marked (M2) describe behavior whose implementation lands with
-the engine — the math is fixed now so the header-level API can be reviewed
-against it.*
+*Status: complete (M1 contracts+math · M2 engine · M3 scenarios + Checkpoint-2
+gate · M4 robustness scenarios + full-stack + example · M5 docs). The engine
+(associator, fuser, lifecycle) is built and tested; sections once marked (M2)
+now describe shipped behavior. Measured results:
+`docs/baselines/2026-07-11_t2t_gates.md` and the eval-log (2026-07-11).*
 
 ## 0. Where T2T sits in the pipeline
 
