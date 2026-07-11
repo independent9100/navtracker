@@ -8,6 +8,8 @@
 
 #include <Eigen/Core>
 
+#include "core/geo/Datum.hpp"
+#include "core/output/TrackOutput.hpp"
 #include "core/t2t/Pedigree.hpp"
 
 namespace navtracker::t2t {
@@ -78,6 +80,69 @@ TEST(NavtrackerSource, PedigreeComposesWithAnotherSharedStreamSource) {
   other.sensors["ais"] = SensorUsage::Used;
   EXPECT_EQ(independenceOfPair(*e->pedigree, other),
             IndependenceClass::PossiblyCorrelated);
+}
+
+// --- Rider A (ticket §10): covariance-axis convention guard --------------
+//
+// The pre-release review CONFIRMED (HIGH) that TrackOutput's position-covariance
+// axis ordering is NOT trustworthy from the header: the header claims the frame
+// is "local NED (north-east)", but toGeodeticWithCov emits R·cov_enu·Rᵀ where R
+// is only a small convergence-angle *rotation* between two ENU frames — it never
+// relabels the axes to NED. So the emitted slot order is ENU (east, north),
+// contradicting the header. NEES (Checkpoint 2) is exactly the metric a silent
+// axis swap corrupts while staying plausible-looking, so we (1) pin the true
+// ordering empirically and (2) prove our Checkpoint-2 pipeline never touches the
+// affected field.
+
+// (1) Empirical ordering probe + swap-detector. Target sits AT the datum origin,
+// so R = I exactly and the emitted covariance is the ENU covariance verbatim —
+// any reordering would be a relabel, not a rotation. This test asserts the
+// ordering the code emits TODAY; if the upstream fix wave makes toTrackOutput
+// actually emit NED (north,east), these assertions flip and this test goes RED.
+// That loud failure is the deliverable (Rider A step 2).
+TEST(TrackOutputCovarianceAxis, EmittedOrderingIsEnuEastNorthNotHeaderNed) {
+  const geo::Datum datum(geo::Geodetic{59.0, 10.0, 0.0});
+  Track t;
+  t.id = TrackId{1};
+  t.status = TrackStatus::Confirmed;
+  t.last_update = Timestamp::fromSeconds(1.0);
+  t.state = Eigen::VectorXd(2);
+  t.state << 0.0, 0.0;                 // at the datum origin -> R = I (no rotation)
+  t.covariance = Eigen::MatrixXd::Zero(2, 2);
+  t.covariance(0, 0) = 1.0;            // ENU east variance
+  t.covariance(1, 1) = 100.0;          // ENU north variance (deliberately asymmetric)
+
+  const TrackOutput out = toTrackOutput(t, datum);
+  const Eigen::Matrix2d& P = out.position.position_covariance_m2;
+
+  // VERIFIED 2026-07-11 on this code state: slot (0,0) carries EAST, (1,1) NORTH
+  // — ENU order, NOT the header's claimed NED (north,east). Do not "trust the
+  // header": trust this.
+  EXPECT_NEAR(P(0, 0), 1.0, 1e-6) << "slot (0,0) must carry the EAST variance";
+  EXPECT_NEAR(P(1, 1), 100.0, 1e-6) << "slot (1,1) must carry the NORTH variance";
+  EXPECT_NEAR(P(0, 1), 0.0, 1e-9);
+  EXPECT_NEAR(P(1, 0), 0.0, 1e-9);
+}
+
+// (2) Immunity guard: the Checkpoint-2 NEES pipeline reads the RAW ENU track
+// covariance through this adapter and scores via fusedTracksEnu()/computeNees in
+// ENU — it NEVER routes through toTrackOutput/toGeodeticWithCov. So the Rider-A
+// mismatch above cannot reach the NEES number. Pin that: toExternalTrack copies
+// the top-left 2×2 of track.covariance verbatim, in ENU (east,north) order.
+TEST(NavtrackerSource, CopiesRawEnuCovarianceBypassingTrackOutput) {
+  Track t = makeTrack();
+  t.covariance = Eigen::MatrixXd::Zero(4, 4);
+  t.covariance(0, 0) = 1.0;            // east
+  t.covariance(1, 1) = 100.0;          // north (asymmetric — a swap would be visible)
+  t.covariance(2, 2) = 5.0;
+  t.covariance(3, 3) = 5.0;
+  const auto e = NavtrackerSource::toExternalTrack("navtracker", t,
+                                                   Timestamp::fromSeconds(5.0));
+  ASSERT_TRUE(e.has_value());
+  Eigen::Matrix2d expect;
+  expect << 1.0, 0.0, 0.0, 100.0;
+  EXPECT_TRUE(e->position_cov.isApprox(expect))
+      << "adapter must copy the RAW ENU covariance, not the NED-rotated TrackOutput";
 }
 
 }  // namespace

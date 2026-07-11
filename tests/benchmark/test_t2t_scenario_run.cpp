@@ -127,6 +127,70 @@ TEST(T2tScenarioRun, SharedAisDoubleCountingNeesGate) {
   EXPECT_TRUE(has(classes, IndependenceClass::PossiblyCorrelated));
 }
 
+// Point 2 (ticket §10 ruling): per-arm NEES calibration sweep. At the loader's
+// 30 m AIS default each arm is under-confident (NEES << 2), so the double-count
+// shows only as a ratio, not a χ² band violation. Sweep the AIS σ (test-local,
+// via the harness lever) to find where each arm's OWN NEES ≈ 2; at that σ the
+// maximal-sharing double-count should push NAIVE out of the band while CI stays
+// in. Characterization (prints -> gates doc). No generator/fixture change.
+TEST(T2tScenarioRun, PerArmNeesCalibrationAndBandViolationGate) {
+  auto run = findSim("sim_ms_headon");
+  ASSERT_TRUE(run);
+  const auto full = run->generate(0);
+  if (full.measurements.empty())
+    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+
+  CovarianceIntersectionRule ci;
+  NaiveFusionRule naive;
+  ArmSpec a_ais{"a_ais", {SensorKind::Ais}, usedStreams({"ais"})};
+  ArmSpec b_ais{"b_ais", {SensorKind::Ais}, usedStreams({"ais"})};
+
+  // Characterization sweep (prints -> docs/baselines/2026-07-11_t2t_gates.md).
+  for (double sig : {30.0, 16.0, 14.0, 12.0, 11.0, 10.0, 9.0, 8.0}) {
+    const BenchResult arm = runArm(*run, armView(full, a_ais.sensors), sig);
+    const auto an = computeNees(arm, kGate);
+    const BenchResult mc = fuseTwoViews(*run, full, a_ais, b_ais, &ci, T2tConfig{},
+                                        nullptr, nullptr, nullptr, sig);
+    const BenchResult mn = fuseTwoViews(*run, full, a_ais, b_ais, &naive, T2tConfig{},
+                                        nullptr, nullptr, nullptr, sig);
+    const auto cn = computeNees(mc, kGate);
+    const auto nn = computeNees(mn, kGate);
+    std::cout << "[calib sigma=" << sig << "] perarm NEES mean=" << an.mean
+              << " median=" << an.median << " cov95=" << an.coverage_95
+              << " || CI mean=" << cn.mean << " band=[" << cn.band_lo << ","
+              << cn.band_hi << "] cov95=" << cn.coverage_95
+              << " || naive mean=" << nn.mean << " cov95=" << nn.coverage_95
+              << " | ratio=" << (nn.mean / cn.mean) << "\n";
+  }
+
+  // Calibrated gate. σ = 12 m is where the AIS arm's OWN mean NEES ≈ 2 (the
+  // arbiter's literal target). At that calibration the double-count becomes a
+  // real χ² BAND VIOLATION, not just a ratio: CI mean stays inside the band,
+  // naive mean breaches band_hi. NOTE (honest caveat): the fused-NEES
+  // distribution is heavy-tailed here (median ≈ 0.5 ≪ mean ≈ 2), so the
+  // mean-in-band result is tail-driven and fragile. The robust, calibration-
+  // INVARIANT evidence is what we hard-assert: (a) naive ≥ 1.4× CI at the mean,
+  // (b) naive breaches band_hi, (c) CI covers truth strictly better than naive
+  // (coverage is outlier-insensitive). See the gates doc for the full sweep and
+  // the σ=16 coverage-calibrated cross-check.
+  constexpr double kCalibratedAisSigma = 12.0;
+  const BenchResult perarm =
+      runArm(*run, armView(full, a_ais.sensors), kCalibratedAisSigma);
+  const auto pa = computeNees(perarm, kGate);
+  const BenchResult cal_ci = fuseTwoViews(*run, full, a_ais, b_ais, &ci, T2tConfig{},
+                                          nullptr, nullptr, nullptr, kCalibratedAisSigma);
+  const BenchResult cal_nv = fuseTwoViews(*run, full, a_ais, b_ais, &naive, T2tConfig{},
+                                          nullptr, nullptr, nullptr, kCalibratedAisSigma);
+  const auto cn = computeNees(cal_ci, kGate);
+  const auto nn = computeNees(cal_nv, kGate);
+
+  EXPECT_GT(pa.mean, 1.5);                    // calibration moved per-arm NEES to ≈2
+  EXPECT_LT(pa.mean, 3.0);                    // (was 0.42 at the 30 m default)
+  EXPECT_GT(nn.mean, cn.mean * 1.4);          // double-count (calibration-invariant)
+  EXPECT_GT(nn.mean, cn.band_hi);             // naive BREACHES the χ² band
+  EXPECT_GT(cn.coverage_95, nn.coverage_95);  // CI covers truth better (robust)
+}
+
 // Scenario 3: same data as (2, partial) but pedigrees all-Unknown, and one arm
 // ABSENT. CI is pedigree-blind -> fused estimate byte-identical to explicit-
 // Unknown; class stays PossiblyCorrelated.

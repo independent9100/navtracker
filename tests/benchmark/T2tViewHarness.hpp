@@ -71,8 +71,32 @@ inline Scenario armView(const Scenario& full, const std::set<SensorKind>& keep) 
   return v;
 }
 
+// TEST-ONLY calibration lever (ticket §10 ruling, Point 2). The shared
+// AisCsvReplayAdapter stamps every AIS fix with a 30 m pessimistic σ — right for
+// real, stale AIS, but ~150× too loose for THIS sim, whose AIS carries no
+// additive position noise, only ~0.19 m lat/lon quantization. That mismatch
+// leaves each AIS arm's own NEES ≈ 0.2 (under-confident), so the double-count
+// shows only as a ratio, never a χ² band violation. Overriding the AIS
+// measurement σ HERE (test-locally, per-arm) so each arm's own NEES ≈ 2 makes
+// the gate a real band violation. This touches neither the generator nor the
+// frozen fixtures nor the shared loader constant — it rewrites the covariance of
+// already-loaded AIS Measurements in one scenario view. sigma_m <= 0 is a no-op.
+inline Scenario withAisSigma(Scenario s, double sigma_m) {
+  if (sigma_m <= 0.0) return s;
+  const double var = sigma_m * sigma_m;
+  for (auto& m : s.measurements) {
+    if (m.sensor != SensorKind::Ais) continue;
+    if (m.covariance.rows() >= 2 && m.covariance.cols() >= 2)
+      m.covariance.topLeftCorner<2, 2>() = Eigen::Matrix2d::Identity() * var;
+  }
+  return s;
+}
+
 // Run one view through the canonical IMM+MHT config (mirrors the sim-ms test).
-inline benchmark::BenchResult runArm(ScenarioRun& run, const Scenario& view) {
+// ais_sigma_m > 0 rewrites the AIS measurement σ first (calibration lever above).
+inline benchmark::BenchResult runArm(ScenarioRun& run, const Scenario& view_in,
+                                     double ais_sigma_m = 0.0) {
+  const Scenario view = withAisSigma(view_in, ais_sigma_m);
   using namespace navtracker::benchmark;
   const auto configs = defaultConfigs();
   const Config* mht = nullptr;
@@ -108,10 +132,11 @@ inline benchmark::BenchResult fuseTwoViews(
     const IFusionRule* rule, T2tConfig cfg,
     benchmark::BenchResult* out_a = nullptr,
     benchmark::BenchResult* out_b = nullptr,
-    std::set<IndependenceClass>* out_multi_classes = nullptr) {
+    std::set<IndependenceClass>* out_multi_classes = nullptr,
+    double ais_sigma_m = 0.0) {
   using namespace navtracker::benchmark;
-  const BenchResult ra = runArm(run, armView(full, A.sensors));
-  const BenchResult rb = runArm(run, armView(full, B.sensors));
+  const BenchResult ra = runArm(run, armView(full, A.sensors), ais_sigma_m);
+  const BenchResult rb = runArm(run, armView(full, B.sensors), ais_sigma_m);
   if (out_a) *out_a = ra;
   if (out_b) *out_b = rb;
 
