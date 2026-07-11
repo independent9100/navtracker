@@ -48,6 +48,8 @@
 | CFAR     | Constant False Alarm Rate (sensor-side processing; out of scope)| 13            |
 | COG      | Course Over Ground                                              | 17            |
 | CPA      | Closest Point of Approach                                       | 18            |
+| CI       | Covariance Intersection (unknown-correlation fusion rule)      | 29            |
+| T2T      | Track-to-Track fusion                                          | 29            |
 | CT       | Coordinated Turn                                                | 08, 09        |
 | CV       | Constant Velocity                                               | 08, 09        |
 | CV5      | Constant Velocity with turn-rate placeholder (5-state)          | 08, 09        |
@@ -139,6 +141,24 @@
   dimension (lifetime, id-switches, breaks, cardinality) carries signal;
   localisation is meaningless when both share the detection stage.
   Reported `vs_reference_tracker`, never as accuracy. See ch. 20 §9.
+- **"track-to-track (T2T) fusion"** — merging tracks produced by
+  *other* trackers (not raw detections) into one authoritative set.
+  See ch. 29 and `docs/algorithms/t2t-fusion.md`.
+- **"double counting"** — treating two trackers as independent when
+  they secretly share a sensor (the shared-newspaper problem): their
+  correlated errors get counted twice, so the fused estimate looks far
+  more certain than it is. The core hazard T2T must avoid. See ch. 29.
+- **"covariance intersection (CI)"** — a fusion rule
+  `P_f⁻¹ = ω P₁⁻¹ + (1−ω) P₂⁻¹` (weights summing to 1) that is
+  *consistent for any unknown cross-correlation*. Safe by default when
+  you do not know what the other trackers shared; worst case it is
+  merely loose, never overconfident. Contrast the naive independence
+  merge (`P₁⁻¹ + P₂⁻¹`) which double counts. See ch. 29.
+- **"pedigree"** — a per-source (or per-track) declaration of which
+  sensor streams a tracker used: each stream is `Used`, `NotUsed`, or
+  `Unknown`. `Unknown` is first-class; an absent pedigree ≡ all-Unknown.
+  In v1 it sets a diagnostic independence label only, never the fusion
+  math. See ch. 29.
 - **"hexagonal architecture"** — ports-and-adapters pattern;
   the core has no I/O knowledge.
 - **"clutter prior"** — a spatial prior `c ∈ [0,1]` that estimates

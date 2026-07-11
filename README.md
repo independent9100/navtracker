@@ -98,6 +98,7 @@ see `docs/output-contract.md`. CMake targets:
 
 - `navtracker_core` — domain + ports + helpers. No I/O. Link this alone.
 - `navtracker_nmea` — NMEA-format adapters. Link when you consume NMEA.
+- `navtracker_t2t` — track-to-track fusion (tracker-of-trackers): fuse other trackers' tracks with covariance intersection. Link when your inputs are *tracks*, not detections.
 - `navtracker_sim` — synthetic generators. Tests only.
 
 For more details, see `CLAUDE.md`.
