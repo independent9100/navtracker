@@ -1,7 +1,12 @@
-// Cl-4 Phase-1 A3 evidence probe — sensor census (MEASUREMENT ONLY, research
-// tooling; no shipped tracker behaviour). See
-// docs/superpowers/plans/2026-07-11-cl4-phase1-a3-probe-ticket.md and the
-// write-up docs/baselines/2026-07-11_cl4_phase1_a3_probe.md.
+// Cl-4 Phase-1 census — sensor/chain census (MEASUREMENT ONLY, research
+// tooling; no shipped tracker behaviour).
+//   --mode evidence (default): Phase-1a A3 sensor-evidence census
+//     (docs/baselines/2026-07-10_harbor_truthsort_reconcile.md family;
+//      docs/baselines/2026-07-11_cl4_phase1_a3_probe.md).
+//   --mode chain / --mode target: Phase-1b conditional-coverage-floor probe —
+//     re-detection chain statistics + per-target motion/latency
+//     (docs/baselines/2026-07-11_cl4_phase1b_floor_probe.md, ticket
+//      docs/superpowers/plans/2026-07-11-cl4-phase1b-coverage-floor-probe-ticket.md).
 //
 // For a replay scenario, classifies every truth sample as in-band (inside the
 // coverage_land <50 m no-birth zone, using the tracker's OWN CoastlineModel /
@@ -16,6 +21,7 @@
 //
 // Emits a per-target summary to stdout and (optional) a per-scan CSV.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -28,6 +34,7 @@
 #include <Eigen/Core>
 
 #include "adapters/benchmark/ReplayScenarioRun.hpp"
+#include "adapters/benchmark/SimScenarioRun.hpp"
 #include "adapters/land/GeoJsonCoastline.hpp"
 #include "core/benchmark/ScenarioRun.hpp"
 #include "core/land/CoastlineModel.hpp"
@@ -78,6 +85,7 @@ int main(int argc, char** argv) {
     for (auto& s : defaultAutoferryScenarios()) all.push_back(std::move(s));
     for (auto& s : defaultAutoferryScenariosAnchored())
       all.push_back(std::move(s));
+    for (auto& s : defaultSimScenarios()) all.push_back(std::move(s));
     for (auto& s : all) {
       if (s->descriptor().label == label) {
         coast_path = s->descriptor().coastline_geojson_path;
@@ -90,7 +98,9 @@ int main(int argc, char** argv) {
     std::cerr << "scenario not found or fixture absent: " << label << "\n";
     return 2;
   }
-  Scenario scen = run->generate(0);
+  const std::uint64_t seed =
+      static_cast<std::uint64_t>(std::stoll(arg(argc, argv, "--seed", "0")));
+  Scenario scen = run->generate(seed);
   if (scen.truth.empty()) {
     std::cerr << "scenario has no truth (fixture absent?): " << label << "\n";
     return 2;
@@ -101,19 +111,250 @@ int main(int argc, char** argv) {
   }
 
   // Build the coastline model EXACTLY as Sweep.cpp does for the land configs.
+  // Optional: harbor_complete_truth is chart-free by design (no coastline path),
+  // so the land ramp is inert there and inBand() is false everywhere — matching
+  // the tracker, whose land model is never wired without a coastline.
   std::unique_ptr<CoastlineModel> land;
-  {
+  if (!coast_path.empty()) {
     std::ifstream probe(coast_path);
-    if (!probe.good()) {
-      std::cerr << "coastline geojson not readable: " << coast_path << "\n";
-      return 2;
+    if (probe.good()) {
+      auto geom = loadCoastlineGeoJson(coast_path, CoastlinePriorParams{});
+      land = std::make_unique<CoastlineModel>(std::move(geom), *scen.datum);
     }
-    auto geom = loadCoastlineGeoJson(coast_path, CoastlinePriorParams{});
-    land = std::make_unique<CoastlineModel>(std::move(geom), *scen.datum);
   }
   auto inBand = [&](const Eigen::Vector2d& p) {
-    return land->clutterPrior(p) > 0.0;  // coverage_land no-birth zone
+    return land && land->clutterPrior(p) > 0.0;  // coverage_land no-birth zone
   };
+
+  // ---- Phase 1b: re-detection chain census (conditional coverage floor) ----
+  const std::string mode = arg(argc, argv, "--mode", "evidence");
+
+  // Per-truth-target motion + re-detection availability, with the latency
+  // constraint baked in. K1 asks, per target: does it re-detect on enough
+  // scans AND move ≥ D within a ≤ lat_s window? Truth motion is authoritative
+  // (no chain-labelling ambiguity); a birth-candidate detection within R of the
+  // truth position counts as a re-detection on that scan.
+  if (mode == "target") {
+    const double R2 = std::stod(arg(argc, argv, "--radius", "25.0"));
+    const double lat_s = std::stod(arg(argc, argv, "--latency", "30.0"));
+    // group truth samples by id, in time order
+    std::map<std::uint64_t, std::vector<std::pair<double, Eigen::Vector2d>>> tr;
+    for (const auto& ts : scen.truth)
+      tr[ts.truth_id].push_back({ts.time.seconds(), ts.position});
+    // birth-candidate position measurements (radar+lidar+ais), time-sorted
+    std::vector<std::pair<double, Eigen::Vector2d>> pos;
+    for (const auto& m : scen.measurements) {
+      if (m.value.size() < 2) continue;
+      if (m.sensor == SensorKind::ArpaTtm || m.sensor == SensorKind::Lidar ||
+          m.sensor == SensorKind::Ais)
+        pos.push_back({m.time.seconds(), m.value.head<2>()});
+    }
+    std::cout << "=== TARGET motion+redetection: " << label
+              << "  (R=" << R2 << "m, latency window=" << lat_s << "s) ===\n";
+    std::cout << "id | scans | in_band | redetect_scans | truth_net_disp_m | "
+                 "max_disp_in_" << (int)lat_s << "s_m | max_speed_mps\n";
+    auto byTime = [](const std::pair<double, Eigen::Vector2d>& a,
+                     const std::pair<double, Eigen::Vector2d>& b) {
+      return a.first < b.first;
+    };
+    for (auto& [id, samps] : tr) {
+      std::sort(samps.begin(), samps.end(), byTime);
+      int inband = 0, redet = 0;
+      for (auto& [t, p] : samps) {
+        if (!inBand(p)) continue;  // K1 concerns the in-band (suppressed) part
+        inband++;
+        for (auto& [mt, mp] : pos)
+          if (std::abs(mt - t) <= 0.5 && (mp - p).norm() <= R2) { redet++; break; }
+      }
+      // max truth net displacement over any window of duration ≤ lat_s
+      double max_win_disp = 0.0, max_win_speed = 0.0;
+      for (std::size_t i = 0; i < samps.size(); ++i) {
+        for (std::size_t j = i + 1; j < samps.size(); ++j) {
+          const double dtw = samps[j].first - samps[i].first;
+          if (dtw > lat_s) break;
+          const double dd = (samps[j].second - samps[i].second).norm();
+          if (dd > max_win_disp) max_win_disp = dd;
+          if (dtw > 1e-6) max_win_speed = std::max(max_win_speed, dd / dtw);
+        }
+      }
+      const double net =
+          samps.size() >= 2
+              ? (samps.back().second - samps.front().second).norm()
+              : 0.0;
+      // per-consecutive-step truth speed (median / p95) — the "smoothness"
+      // scale a vessel moves at, vs a structure-walk's teleport jumps.
+      std::vector<double> step;
+      for (std::size_t i = 1; i < samps.size(); ++i) {
+        const double sdt = samps[i].first - samps[i - 1].first;
+        if (sdt > 1e-3)
+          step.push_back((samps[i].second - samps[i - 1].second).norm() / sdt);
+      }
+      std::sort(step.begin(), step.end());
+      const double smed = step.empty() ? 0.0 : step[step.size() / 2];
+      const double sp95 = step.empty() ? 0.0 : step[(int)(0.95 * step.size())];
+      std::printf(
+          "%2llu | %5zu | %7d | %14d | %16.1f | %18.1f | %.2f | step_med=%.2f "
+          "p95=%.2f\n",
+          (unsigned long long)id, samps.size(), inband, redet, net,
+          max_win_disp, max_win_speed, smed, sp95);
+    }
+    return 0;
+  }
+  if (mode == "chain") {
+    const double r_chain = std::stod(arg(argc, argv, "--chain-radius", "25.0"));
+    // Absolute re-visit tolerance (s): re-detections of one object within this
+    // gap AND r_chain chain up. Physically = the sensor's worst revisit period
+    // (philos rotating radar re-hits a fixed structure every few s; autoferry
+    // fused stream is denser). Default 5 s covers both; stated up front.
+    const double max_gap_s = std::stod(arg(argc, argv, "--max-gap-s", "5.0"));
+    const std::string kind_s = arg(argc, argv, "--kind", "radar");
+    const bool inband_only = arg(argc, argv, "--inband-only", "0") == "1";
+    const std::string ccsv = arg(argc, argv, "--csv", "");
+    auto kindMatch = [&](const Measurement& m) {
+      if (kind_s == "radar") return m.sensor == SensorKind::ArpaTtm;
+      if (kind_s == "lidar") return m.sensor == SensorKind::Lidar;
+      if (kind_s == "ais") return m.sensor == SensorKind::Ais;
+      // "pos" = any birth-capable Position2D sensor (radar+lidar+ais union)
+      return m.sensor == SensorKind::ArpaTtm || m.sensor == SensorKind::Lidar ||
+             m.sensor == SensorKind::Ais;
+    };
+
+    // Collect the birth-candidate population: Position2D measurements of the
+    // chosen sensor(s), time-sorted. (These are what would seed a birth; under
+    // coverage_land the in-band ones are suppressed.)
+    struct P { double t; Eigen::Vector2d xy; };
+    std::vector<P> pts;
+    for (const auto& m : scen.measurements) {
+      if (!kindMatch(m) || m.value.size() < 2) continue;
+      if (inband_only && !inBand(m.value.head<2>())) continue;
+      pts.push_back({m.time.seconds(), m.value.head<2>()});
+    }
+    std::sort(pts.begin(), pts.end(),
+              [](const P& a, const P& b) { return a.t < b.t; });
+    // median inter-sample dt (for reporting the scan cadence).
+    // Greedy single-link NN chaining across time: a point extends the nearest
+    // active chain whose last point is within r_chain and whose time gap is in
+    // (0, max_gap*scan]; else it starts a new chain. Gaps up to max_gap scans
+    // are tolerated (missed detections). Chain = re-detections of one object.
+    struct Chain {
+      double t0, t1;
+      Eigen::Vector2d p0, plast;
+      int n;
+      double pathlen;
+      double max_step;  // largest single-step speed (m/s) — flags NN jumps
+    };
+    std::vector<Chain> chains;
+    std::vector<int> active;  // indices into chains, last updated recently
+    // scan interval estimate = median positive dt between consecutive samples
+    std::vector<double> gaps;
+    for (std::size_t i = 1; i < pts.size(); ++i) {
+      const double d = pts[i].t - pts[i - 1].t;
+      if (d > 1e-6) gaps.push_back(d);
+    }
+    double scan = 1.0;
+    if (!gaps.empty()) {
+      std::sort(gaps.begin(), gaps.end());
+      scan = gaps[gaps.size() / 2];
+    }
+    const double gap_win = max_gap_s;  // absolute revisit tolerance
+    for (const auto& p : pts) {
+      int best = -1;
+      double best_d = r_chain;
+      for (int ci : active) {
+        Chain& c = chains[ci];
+        const double dt_c = p.t - c.t1;
+        if (dt_c <= 1e-6 || dt_c > gap_win) continue;
+        const double dd = (p.xy - c.plast).norm();
+        if (dd <= best_d) { best_d = dd; best = ci; }
+      }
+      if (best >= 0) {
+        Chain& c = chains[best];
+        const double step = (p.xy - c.plast).norm();
+        const double step_dt = p.t - c.t1;
+        if (step_dt > 1e-6) c.max_step = std::max(c.max_step, step / step_dt);
+        c.pathlen += step;
+        c.plast = p.xy;
+        c.t1 = p.t;
+        c.n++;
+      } else {
+        chains.push_back({p.t, p.t, p.xy, p.xy, 1, 0.0, 0.0});
+      }
+      // rebuild active list = chains whose t1 is within gap_win of current time
+      active.clear();
+      for (int ci = 0; ci < (int)chains.size(); ++ci)
+        if (p.t - chains[ci].t1 <= gap_win) active.push_back(ci);
+    }
+
+    // Label each chain by proximity to a truth trajectory: "vessel" if its
+    // start point is within r_chain of any truth sample near t0.
+    auto nearTruth = [&](double t, const Eigen::Vector2d& p) {
+      for (const auto& ts : scen.truth) {
+        if (std::abs(ts.time.seconds() - t) > gap_win) continue;
+        if ((ts.position - p).norm() <= r_chain) return (long long)ts.truth_id;
+      }
+      return -1LL;
+    };
+
+    std::ofstream out;
+    if (!ccsv.empty()) {
+      out.open(ccsv);
+      out << "chain,t0_s,n_scans,duration_s,net_disp_m,path_m,mean_speed_mps,max_step_mps,p0x,p0y,label_truth_id\n";
+    }
+    std::cout << "=== CHAIN census: " << label << "  kind=" << kind_s
+              << (inband_only ? " (in-band only)" : "") << "  scan~" << scan
+              << "s  r_chain=" << r_chain << "m  max_gap_s=" << max_gap_s
+              << "s ===\n";
+    std::cout << "population points=" << pts.size()
+              << "  chains=" << chains.size() << "\n";
+    // Summary: bucket chains by whether they track a truth vessel.
+    int n_vessel = 0, n_clutter = 0;
+    for (std::size_t i = 0; i < chains.size(); ++i) {
+      const Chain& c = chains[i];
+      const double dur = c.t1 - c.t0;
+      const double disp = (c.plast - c.p0).norm();
+      const double spd = dur > 1e-6 ? disp / dur : 0.0;
+      const long long lab = nearTruth(c.t0, c.p0);
+      if (lab >= 0) n_vessel++; else n_clutter++;
+      if (out.is_open())
+        out << i << "," << c.t0 << "," << c.n << "," << dur << "," << disp << ","
+            << c.pathlen << "," << spd << "," << c.max_step << "," << c.p0.x()
+            << "," << c.p0.y() << "," << lab << "\n";
+    }
+    std::cout << "chains labelled vessel(near-truth)=" << n_vessel
+              << "  clutter/structure=" << n_clutter << "\n";
+    // Distribution helper over a predicate-selected chain set.
+    auto dist = [&](const char* name, bool vessel) {
+      std::vector<int> len;
+      std::vector<double> dur, disp, spd;
+      for (const Chain& c : chains) {
+        const bool v = nearTruth(c.t0, c.p0) >= 0;
+        if (v != vessel) continue;
+        const double d = c.t1 - c.t0;
+        const double dp = (c.plast - c.p0).norm();
+        len.push_back(c.n);
+        dur.push_back(d);
+        disp.push_back(dp);
+        spd.push_back(d > 1e-6 ? dp / d : 0.0);
+      }
+      if (len.empty()) { std::printf("  %-16s (none)\n", name); return; }
+      auto med = [](std::vector<double> v) {
+        std::sort(v.begin(), v.end());
+        return v[v.size() / 2];
+      };
+      auto mx = [](const std::vector<double>& v) {
+        return *std::max_element(v.begin(), v.end());
+      };
+      std::vector<double> lend(len.begin(), len.end());
+      std::printf(
+          "  %-16s count=%zu  len[med=%.0f max=%.0f]  dur_s[med=%.1f max=%.1f]  "
+          "disp_m[med=%.1f max=%.1f]  speed_mps[med=%.2f max=%.2f]\n",
+          name, len.size(), med(lend), mx(lend), med(dur), mx(dur), med(disp),
+          mx(disp), med(spd), mx(spd));
+    };
+    dist("vessel", true);
+    dist("clutter/struct", false);
+    return 0;
+  }
 
   // Index measurements by sensor role for the per-scan evidence search.
   struct Meas {
