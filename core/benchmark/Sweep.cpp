@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -65,6 +66,25 @@ namespace navtracker {
 namespace benchmark {
 
 namespace {
+
+// Cl-4 endgame cliff-reprice sweep (2026-07-11): the SECOND dial. Vary the
+// shoreline clutter-ramp half-widths for the GeoJSON land configs WITHOUT a
+// recompile, byte-identical when unset — the same sanctioned A1 env-sweep
+// method as PMBM_MIN_NEW_BERN in Config.cpp. NOT a deployment surface: no
+// default is touched (CoastlinePriorParams keeps its 50/50 defaults), so the
+// determinism test and the standing suite stay green with these vars unset.
+// PMBM_OFFSHORE_HALFWIDTH_M narrows the blocked offshore strip W_off (the
+// user's 2026-07-11 spatial-split directive); PMBM_INLAND_HALFWIDTH_M is the
+// inland companion, kept for symmetry (default unchanged). The ramp math in
+// CoastlineGeometry is untouched — only its two half-width params move.
+CoastlinePriorParams sweepCoastlineParams() {
+  CoastlinePriorParams p{};  // shipped defaults: inland=offshore=50 m
+  if (const char* v = std::getenv("PMBM_OFFSHORE_HALFWIDTH_M"); v && *v)
+    p.offshore_halfwidth_m = std::strtod(v, nullptr);
+  if (const char* v = std::getenv("PMBM_INLAND_HALFWIDTH_M"); v && *v)
+    p.inland_halfwidth_m = std::strtod(v, nullptr);
+  return p;
+}
 
 const char* sensorName(SensorKind s) {
   switch (s) {
@@ -433,7 +453,7 @@ std::vector<MetricRow> runSweep(
               if (probe.good()) {
                 try {
                   auto geom = loadCoastlineGeoJson(desc.coastline_geojson_path,
-                                                   CoastlinePriorParams{});
+                                                   sweepCoastlineParams());
                   land = std::make_shared<CoastlineModel>(std::move(geom),
                                                           *scen.datum);
                   tracker.setLandModel(land.get());
