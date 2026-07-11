@@ -8,6 +8,36 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-10 — Harbor truth-sort reconciliation: card_err +11.64 is REAL (uncharted-pier phantoms), not fragmentation [Cl-3 integrity / Cl-4 input]
+
+Ticket `2026-07-10-harbor-truthsort-reconcile-ticket.md`; merged ad5781e. The
+ticket's premise (corrected yardstick "should read ≈0") was INVERTED — the
+arbiter's 2026-07-02 record carried a wrong expectation. Measured:
+
+- **Inventory:** the old `pmbm-harbor-truth-sort-fix` content is FULLY on master
+  (3ee491f + 3aa9c58, both ancestors of the dossier base d94471e); all three
+  additive-builder paths + HAXR replay sort; the no-fragmentation contract test
+  (`HarborCompleteTruth.TruthIsTimeSortedIntoFortyCompleteGroups`) is compiled
+  and green. Nothing missing.
+- **Direct measurement:** harbor truth is clean — 5 objects × 40 samples, single
+  monotonic run each, 200 samples → exactly 40 complete `{1..5}` groups. Zero
+  fragmentation.
+- **Resolution:** today's harbor baseline is byte-identical to the 2026-07-02
+  corrected numbers (card_err 11.64, gospa_false 2362, lifetime 0.974). The fix
+  moved 13.32→11.64, never toward 0. The +11.64 = ~11–12 phantom confirmed
+  tracks on the uncharted 13-point pier (+ transient sea clutter); real targets
+  ARE tracked (gospa_missed 34, lifetime 0.974). Three structural confirmations:
+  pier geometry (13 points ≈ the excess), charted-pier A/B (11.64→7.43), and
+  coverage_land (11.1→8.0).
+- **What was actually wrong:** the promotion dossier's §1d caveat ("unmerged
+  branch", "fragmentation artifact") — corrected in place, dated, with pointer to
+  `docs/baselines/2026-07-10_harbor_truthsort_reconcile.md`.
+
+Takeaway: the harbor yardstick is trustworthy; both delta AND absolute are
+meaningful; driving the absolute down is exactly the Cl-4 objective (the phantom
+source is the same uncharted structure the <50 m no-birth zone / sensor-aware
+suppression must handle). Zero code changes; docs only.
+
 ## 2026-07-09 — Backlog #25 Phase 2b Stage 2: BUILT the velocity-runaway guard (deweight @ 400 m) [Cl-3]
 
 On arbiter GO. Built the update-acceptance position-innovation guard in
