@@ -230,7 +230,9 @@ void T2tFuser::fuseInto(FusedState& f,
   // Adopt an MMSI only if the contributors agree (conflict => assert none;
   // kinematics already won the association, invariant 5).
   f.track.attributes.mmsi = mmsi_conflict ? std::nullopt : mmsi;
-  f.last_contrib = now_;
+  // NOTE: last_contrib (the delete clock) is advanced by the caller, and ONLY
+  // when a source actually REPORTED this scan — not on a purely coasted re-fuse.
+  // See runCycle step 5 and T2tConfig::fused_delete_age_s.
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +414,12 @@ void T2tFuser::runCycle(Timestamp t, const std::set<std::string>& reporters) {
                   return a->key < b->key;
                 });
       fuseInto(f, contributors[fi]);
+      // Delete clock (fused_delete_age_s) counts time since a source last
+      // REPORTED, per T2tConfig. A purely coasted-fresh re-fuse advances the
+      // estimate but is not a report, so it must NOT postpone deletion — else a
+      // lost source keeps the track alive up to max_report_age_s past the
+      // documented window (combined-review finding, fuser-cycle lens).
+      if (reporter_contributed) f.last_contrib = now_;
       // Confirm M-of-N counts scans with a FRESH (reporter) contribution — a
       // memoryless re-fuse from purely coasted sources is not fresh evidence.
       f.confirm_window.push_back(reporter_contributed);

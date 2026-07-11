@@ -76,9 +76,17 @@ TEST(T2tAssociator, OutOfGatePairsAreUnmatched) {
 
 TEST(T2tAssociator, GlobalAssignmentPrefersCloserPairing) {
   T2tAssociator a;
-  // Two fused, two sources; the Hungarian should pick the cheap diagonal.
-  const std::vector<GateCandidate> fused{cand(0, 0, 1.0), cand(50, 0, 1.0)};
-  const std::vector<GateCandidate> sources{cand(1, 0, 1.0), cand(51, 0, 1.0)};
+  // All FOUR pairings are in-gate, so gating alone cannot pick the answer — only
+  // cost-minimization can. With cov=I (S=2I) and gate 9.21: diagonal cells
+  // d²=0.5²/2=0.125 (in-gate) AND anti-diagonal cells d²=2.5²/2=3.125 (also
+  // in-gate but costlier). The diagonal (cost 0.25) beats the anti-diagonal
+  // (cost 6.25). A solver that respected the gate but did NOT minimize cost
+  // could legally return the anti-diagonal here — so asserting the diagonal
+  // genuinely guards the Hungarian's optimization (combined-review, associator
+  // lens: the prior fixture put the wrong pairing out-of-gate, making this
+  // vacuous).
+  const std::vector<GateCandidate> fused{cand(0, 0, 1.0), cand(3, 0, 1.0)};
+  const std::vector<GateCandidate> sources{cand(0.5, 0, 1.0), cand(2.5, 0, 1.0)};
   const T2tAssignment r = a.associate(fused, sources);
   ASSERT_EQ(r.matches.size(), 2u);
   for (const auto& [fi, sj] : r.matches) EXPECT_EQ(fi, sj);  // 0-0 and 1-1

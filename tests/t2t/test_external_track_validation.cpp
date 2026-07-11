@@ -123,16 +123,23 @@ TEST(ExternalTrackPedigree, AbsentBehavesIdenticallyToAllUnknown) {
   ExternalTrack absent = mk("A", "1", 1.0);
   ASSERT_EQ(absent.pedigree, std::nullopt);
 
+  // The invariant: an ABSENT per-track pedigree resolves to all-Unknown. Assert
+  // that DIRECTLY on the resolved value — not by comparing effectivePedigree()
+  // against a value trivially identical to it, which would pass even if the
+  // resolution were broken (combined-review, m1-external-track lens: the prior
+  // form compared a pure function to itself).
   const SourcePedigree effective = effectivePedigree(absent);
-  const SourcePedigree explicit_unknown{};  // all-Unknown
+  EXPECT_TRUE(effective.sensors.empty());
+  EXPECT_EQ(effective.default_usage, SensorUsage::Unknown);
+  EXPECT_EQ(effective.usageOf("anything"), SensorUsage::Unknown);
 
+  // And it must CLASSIFY as Unknown (not NotUsed) against a discriminating peer:
+  // a peer listing a Used stream is PossiblyCorrelated with all-Unknown (overlap
+  // is possible) but would be ProvablyIndependent against an all-NotUsed
+  // pedigree — so this fails if absent ever resolved to NotUsed instead.
   const SourcePedigree other{{{"ais:feed", SensorUsage::Used}}, SensorUsage::NotUsed};
   EXPECT_EQ(independenceOfPair(effective, other),
-            independenceOfPair(explicit_unknown, other));
-
-  const SourcePedigree other2{};  // all-Unknown too
-  EXPECT_EQ(independenceOfPair(effective, other2),
-            independenceOfPair(explicit_unknown, other2));
+            IndependenceClass::PossiblyCorrelated);
 }
 
 TEST(ExternalTrackBuilders, GeodeticRequiresDatumThenProjectsToEnu) {

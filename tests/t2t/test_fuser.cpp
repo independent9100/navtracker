@@ -101,6 +101,34 @@ TEST(T2tFuser, CoastsThenDeletesByAgeAndNeverReusesId) {
   EXPECT_GT(f.fusedTracks()[0].track.id.value, id1);  // fresh id, never reused
 }
 
+// Regression (combined-review, fuser-cycle lens): the delete clock counts from
+// the last scan a source REPORTED, not the last coasted-fresh re-fuse. A source
+// that goes silent but stays inside its freshness window keeps coasting into its
+// fused track every cycle; that must NOT postpone deletion beyond
+// fused_delete_age_s measured from the last actual REPORT. (CoastsThenDeletes
+// above jumps straight to 45 s, past both the correct 30 s and the pre-fix 40 s
+// boundary, so it cannot pin this.)
+TEST(T2tFuser, DeleteClockCountsFromLastReportNotCoastedContribution) {
+  T2tFuser f;  // defaults: max_report_age_s=10, fused_delete_age_s=30
+  f.setDatum(testDatum());
+  feed(f, rep("A", "1", 0.0, 0, 0));
+  feed(f, rep("A", "1", 1.0, 0, 0));
+  feed(f, rep("A", "1", 2.0, 0, 0));  // last REPORT at t=2
+  ASSERT_EQ(f.size(), 1u);
+
+  // Step through the freshness window with NO new report. The source coasts in
+  // each cycle (age <= max_report_age_s), so the PRE-FIX bug would drag the
+  // delete clock forward to ~t=12; the fix leaves it pinned at t=2.
+  for (int t = 3; t <= 12; ++t) f.advanceTo(Timestamp::fromSeconds(t));
+
+  // Correct boundary = last REPORT (t=2) + fused_delete_age_s (30) = 32 s.
+  f.advanceTo(Timestamp::fromSeconds(31.0));
+  EXPECT_EQ(f.size(), 1u) << "alive at 29 s since last report";
+  f.advanceTo(Timestamp::fromSeconds(33.0));
+  EXPECT_EQ(f.size(), 0u)
+      << "deleted >30 s after last REPORT; the pre-fix bug kept it alive to ~42 s";
+}
+
 TEST(T2tFuser, TwoIndependentSourcesFuseToOneTrack) {
   T2tFuser f;
   f.setDatum(testDatum());

@@ -122,7 +122,7 @@ class T2tFuser : public IDatumChangeSink {
     Track track;
     std::map<std::string, Pairing> pairings;   // source key -> hysteresis
     std::deque<bool> confirm_window;           // per-cycle contributed? (M-of-N)
-    Timestamp last_contrib;                    // last time a source contributed
+    Timestamp last_contrib;                    // last scan a source REPORTED (delete clock)
     IndependenceClass independence = IndependenceClass::SingleSource;
     bool pessimistic_default = false;
     bool confirmed_fired = false;              // onFusedTrackConfirmed fired once

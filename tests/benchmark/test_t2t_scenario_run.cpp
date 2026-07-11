@@ -213,7 +213,10 @@ TEST(T2tScenarioRun, UnknownAndAbsentPedigreeMatchExplicitUnknown) {
 
   ArmSpec a_absent{"a", a_sensors, std::nullopt};  // pedigree ABSENT
   ArmSpec b_absent{"b", b_sensors, allUnknown()};
-  const BenchResult f_absent = fuseTwoViews(*run, full, a_absent, b_absent, &ci, T2tConfig{});
+  std::set<IndependenceClass> absent_classes;
+  const BenchResult f_absent =
+      fuseTwoViews(*run, full, a_absent, b_absent, &ci, T2tConfig{}, nullptr, nullptr,
+                   &absent_classes);
 
   ASSERT_EQ(f_unknown.steps.size(), f_absent.steps.size());
   for (std::size_t k = 0; k < f_unknown.steps.size(); ++k) {
@@ -226,6 +229,11 @@ TEST(T2tScenarioRun, UnknownAndAbsentPedigreeMatchExplicitUnknown) {
     }
   }
   EXPECT_TRUE(has(classes, IndependenceClass::PossiblyCorrelated));
+  // The absent run must resolve to the SAME independence verdict(s) as the
+  // explicit all-Unknown run — asserted on the ABSENT run's own classes (the
+  // position check above is pedigree-blind under CI, so it cannot guard this;
+  // combined-review, m1-contracts-adapter lens).
+  EXPECT_EQ(absent_classes, classes);
 }
 
 // Scenario 7: the fused output is deterministic on replay.
