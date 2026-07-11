@@ -7,6 +7,10 @@
 //     re-detection chain statistics + per-target motion/latency
 //     (docs/baselines/2026-07-11_cl4_phase1b_floor_probe.md, ticket
 //      docs/superpowers/plans/2026-07-11-cl4-phase1b-coverage-floor-probe-ticket.md).
+//   --mode veto [--bar --cell --M --D --dump-flags]: Phase-1d occupancy
+//     floor-veto race — feeds an offline LiveOccupancyModel and races T_veto
+//     (endpoint cell flagged as structure) vs T_floor per chain
+//     (docs/baselines/2026-07-11_cl4_phase1d_occveto_probe.md).
 //   --mode chain --motion 1 [--gate --vcap]: Phase-1c Tier-A motion-model
 //     (CV-consistent, teleport-rejecting) chainer for honest displacement +
 //     smoothness (docs/baselines/2026-07-11_cl4_phase1c_smoothness_probe.md).
@@ -42,6 +46,8 @@
 #include "adapters/land/GeoJsonCoastline.hpp"
 #include "core/benchmark/ScenarioRun.hpp"
 #include "core/land/CoastlineModel.hpp"
+#include "core/static/LiveOccupancyModel.hpp"
+#include "ports/ISensorDetectionModel.hpp"
 #include "core/scenario/Truth.hpp"
 #include "core/types/Ids.hpp"
 #include "core/types/Measurement.hpp"
@@ -132,6 +138,184 @@ int main(int argc, char** argv) {
 
   // ---- Phase 1b: re-detection chain census (conditional coverage floor) ----
   const std::string mode = arg(argc, argv, "--mode", "evidence");
+
+  // ---- Phase 1d: occupancy floor-veto race (T_veto vs T_floor) ----
+  // Feed the workload's birth-candidate returns, per fed scan (= one unique
+  // timestamp), into an offline LiveOccupancyModel (shipped machinery, default
+  // params unless overridden). All returns are fed as clutter_positions with
+  // weight 1.0 (the offline proxy: no tracker r-labeling — a moving vessel hits
+  // each cell ~once so its persistence stays low; a persistent pier accrues).
+  // Record, per grid cell, the first scan-time its EWMA crosses persistence_bar
+  // (bare-cell T_veto) and the first scan-time birthSuppression()>0 there
+  // (structure/ramp T_veto — extent-gated, the shipped veto signal). Then, over
+  // Tier-A (motion-model) chains, compute T_floor and race each against its
+  // endpoint cell's flag time.
+  if (mode == "veto") {
+    const double bar = std::stod(arg(argc, argv, "--bar", "0.5"));
+    const double cell = std::stod(arg(argc, argv, "--cell", "25.0"));
+    const int M = std::stoi(arg(argc, argv, "--M", "8"));
+    const double D = std::stod(arg(argc, argv, "--D", "50.0"));
+    const double win = std::stod(arg(argc, argv, "--win", "30.0"));   // M-in-N
+    const double r_chain = std::stod(arg(argc, argv, "--chain-radius", "15.0"));
+    const double gate_m = std::stod(arg(argc, argv, "--gate", "15.0"));
+    const double vcap = std::stod(arg(argc, argv, "--vcap", "20.0"));
+    const double max_gap_s = std::stod(arg(argc, argv, "--max-gap-s", "5.0"));
+    const std::string kind_s = arg(argc, argv, "--kind", "radar");
+    const bool inband_only = arg(argc, argv, "--inband-only", "0") == "1";
+    const std::string ccsv = arg(argc, argv, "--csv", "");
+    auto kindMatch = [&](const Measurement& m) {
+      if (kind_s == "radar") return m.sensor == SensorKind::ArpaTtm;
+      if (kind_s == "lidar") return m.sensor == SensorKind::Lidar;
+      return m.sensor == SensorKind::ArpaTtm || m.sensor == SensorKind::Lidar ||
+             m.sensor == SensorKind::Ais;
+    };
+    struct P { double t; Eigen::Vector2d xy; };
+    std::vector<P> pts;
+    for (const auto& m : scen.measurements)
+      if (kindMatch(m) && m.value.size() >= 2 &&
+          (!inband_only || inBand(m.value.head<2>())))
+        pts.push_back({m.time.seconds(), m.value.head<2>()});
+    std::sort(pts.begin(), pts.end(),
+              [](const P& a, const P& b) { return a.t < b.t; });
+    if (pts.empty()) { std::cerr << "no returns\n"; return 2; }
+    const double t_start = pts.front().t;
+
+    // --- occupancy pass: feed per fed-scan, record per-cell first-flag times.
+    LiveOccupancyParams op;
+    op.persistence_bar = bar;
+    op.cell_size_m = cell;
+    LiveOccupancyModel occ(*scen.datum, op);
+    // MUST match LiveOccupancyModel::cellOf (floor, not round) so the flag-time
+    // grid and the chain-endpoint lookup share the model's exact cells.
+    auto keyOf = [&](const Eigen::Vector2d& p) {
+      return std::make_pair((long)std::floor(p.x() / cell),
+                            (long)std::floor(p.y() / cell));
+    };
+    std::map<std::pair<long, long>, double> t_bar, t_struct;  // first-flag time
+    std::size_t i = 0;
+    int fed_scans = 0;
+    while (i < pts.size()) {
+      std::size_t j = i;
+      std::vector<Eigen::Vector2d> ret;
+      const double ts = pts[i].t;
+      while (j < pts.size() && pts[j].t - ts < 1e-6) { ret.push_back(pts[j].xy); ++j; }
+      ISensorDetectionModel::ScanObservation ob;
+      ob.sensor = SensorKind::ArpaTtm;
+      ob.model = MeasurementModel::Position2D;
+      ob.num_unassociated = (int)ret.size();
+      ob.positions = ret;
+      ob.clutter_positions = ret;  // weight vector empty ⇒ 1.0 each
+      ob.time = Timestamp::fromSeconds(ts);
+      occ.observe({ob});
+      ++fed_scans;
+      for (const auto& [c, ewma] : occ.persistenceCells()) {
+        const auto k = keyOf(c);
+        if (ewma >= bar && !t_bar.count(k)) t_bar[k] = ts;
+        if (!t_struct.count(k) && occ.birthSuppression(c) > 0.0) t_struct[k] = ts;
+      }
+      i = j;
+    }
+
+    // --- chain pass: Tier-A motion-model chains, storing point lists.
+    struct Ch { std::vector<std::pair<double, Eigen::Vector2d>> pt;
+                Eigen::Vector2d vel{Eigen::Vector2d::Zero()}; bool hv{false};
+                double t1; Eigen::Vector2d plast; };
+    std::vector<Ch> chains;
+    std::vector<int> active;
+    for (const auto& p : pts) {
+      int best = -1; double bd = gate_m;
+      for (int ci : active) {
+        Ch& c = chains[ci];
+        const double dt = p.t - c.t1;
+        if (dt <= 1e-6 || dt > max_gap_s) continue;
+        if ((p.xy - c.plast).norm() / dt > vcap) continue;
+        const Eigen::Vector2d ref = c.hv ? (c.plast + c.vel * dt) : c.plast;
+        const double dd = (p.xy - ref).norm();
+        if (dd <= bd) { bd = dd; best = ci; }
+      }
+      if (best >= 0) {
+        Ch& c = chains[best];
+        const double dt = p.t - c.t1;
+        const Eigen::Vector2d v = (p.xy - c.plast) / dt;
+        c.vel = c.hv ? (0.5 * c.vel + 0.5 * v) : v; c.hv = true;
+        c.plast = p.xy; c.t1 = p.t; c.pt.push_back({p.t, p.xy});
+      } else {
+        Ch c; c.t1 = p.t; c.plast = p.xy; c.pt.push_back({p.t, p.xy});
+        chains.push_back(std::move(c));
+      }
+      active.clear();
+      for (int ci = 0; ci < (int)chains.size(); ++ci)
+        if (p.t - chains[ci].t1 <= max_gap_s) active.push_back(ci);
+    }
+
+    // T_floor(chain): first time it has >=M points within `win` s AND net
+    // displacement >= D over that window. Returns {t_floor, endpoint}.
+    auto floorTime = [&](const Ch& c) -> std::pair<double, Eigen::Vector2d> {
+      const auto& q = c.pt;
+      for (std::size_t b = 0; b < q.size(); ++b) {
+        std::size_t a = b;
+        while (a > 0 && q[b].first - q[a - 1].first <= win) --a;
+        if ((int)(b - a + 1) >= M && (q[b].second - q[a].second).norm() >= D)
+          return {q[b].first, q[b].second};
+      }
+      return {-1.0, Eigen::Vector2d::Zero()};
+    };
+    auto nearTruth0 = [&](const Eigen::Vector2d& p, double t) {
+      for (const auto& tsmp : scen.truth)
+        if (std::abs(tsmp.time.seconds() - t) <= max_gap_s &&
+            (tsmp.position - p).norm() <= r_chain)
+          return true;
+      return false;
+    };
+
+    std::ofstream out;
+    if (!ccsv.empty()) { out.open(ccsv);
+      out << "chain,is_vessel,t_floor_rel,endpoint_x,endpoint_y,t_bar_rel,t_struct_rel,veto_struct_wins,veto_bar_wins\n"; }
+    int floor_pier=0, veto_pier_struct=0, veto_pier_bar=0, floor_vessel=0, vetoed_vessel_struct=0;
+    for (std::size_t ci = 0; ci < chains.size(); ++ci) {
+      auto [tf, ep] = floorTime(chains[ci]);
+      if (tf < 0) continue;  // never satisfies the floor
+      const bool vessel = nearTruth0(chains[ci].pt.front().second,
+                                     chains[ci].pt.front().first);
+      const auto k = keyOf(ep);
+      const double tb = t_bar.count(k) ? t_bar[k] : 1e18;
+      const double tstr = t_struct.count(k) ? t_struct[k] : 1e18;
+      const bool vs = tstr <= tf, vb = tb <= tf;
+      if (vessel) { floor_vessel++; if (vs) vetoed_vessel_struct++; }
+      else { floor_pier++; if (vs) veto_pier_struct++; if (vb) veto_pier_bar++; }
+      if (out.is_open())
+        out << ci << "," << vessel << "," << (tf - t_start) << "," << ep.x()
+            << "," << ep.y() << "," << (tb > 1e17 ? -1 : tb - t_start) << ","
+            << (tstr > 1e17 ? -1 : tstr - t_start) << "," << vs << "," << vb << "\n";
+    }
+    std::cout << "=== VETO race: " << label << " kind=" << kind_s
+              << (inband_only ? " in-band" : "") << "  M=" << M << " D=" << D
+              << " bar=" << bar << " cell=" << cell << "  fed_scans=" << fed_scans
+              << " persistent_cells=" << t_bar.size()
+              << " structure_cells=" << t_struct.size() << "\n";
+    std::cout << "  floor-satisfying CLUTTER/PIER chains=" << floor_pier
+              << "  vetoed(struct)=" << veto_pier_struct
+              << "  vetoed(bare)=" << veto_pier_bar
+              << "  -> pier REVIVED(struct-veto)=" << (floor_pier - veto_pier_struct) << "\n";
+    std::cout << "  floor-satisfying VESSEL chains=" << floor_vessel
+              << "  vetoed-away(struct)=" << vetoed_vessel_struct
+              << "  -> vessel still revived=" << (floor_vessel - vetoed_vessel_struct) << "\n";
+    // Optional: dump the per-cell flag-time grid (for the Tier-B cross-check —
+    // race real PMBM pier tracks, exported separately, against these times).
+    const std::string fdump = arg(argc, argv, "--dump-flags", "");
+    if (!fdump.empty()) {
+      std::ofstream fg(fdump);
+      fg << "cell_x,cell_y,t_bar_rel,t_struct_rel\n";
+      std::set<std::pair<long, long>> keys;
+      for (auto& [k, v] : t_bar) keys.insert(k);
+      for (auto& [k, v] : t_struct) keys.insert(k);
+      for (auto& k : keys)
+        fg << (k.first + 0.5) * cell << "," << (k.second + 0.5) * cell << ","
+           << (t_bar.count(k) ? t_bar[k] - t_start : -1.0) << ","
+           << (t_struct.count(k) ? t_struct[k] - t_start : -1.0) << "\n";
+    }
+    return 0;
+  }
 
   // Per-truth-target motion + re-detection availability, with the latency
   // constraint baked in. K1 asks, per target: does it re-detect on enough
