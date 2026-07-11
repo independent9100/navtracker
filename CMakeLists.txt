@@ -386,6 +386,7 @@ add_executable(navtracker_tests
   tests/t2t/test_associator.cpp
   tests/t2t/test_fuser.cpp
   tests/t2t/test_navtracker_source.cpp
+  tests/benchmark/test_t2t_scenario_run.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
