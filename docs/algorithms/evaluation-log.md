@@ -8,6 +8,41 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-11 — Cl-4 Phase 1c: smoothness + honest-association displacement = NO-BUILD confirmed & hardened (kinematic keying closed) [Cl-4]
+
+Ticket `2026-07-11-cl4-phase1c-smoothness-probe-ticket.md`; merged e676d67.
+Write-up: `docs/baselines/2026-07-11_cl4_phase1c_smoothness_probe.md`.
+
+- **Hook 2 backfired:** the greedy-NN chainer UNDER-estimated the pier walk.
+  Harbor pier max net displacement across 5 seeds: NN 84 m → motion-model
+  chaining (Tier A) 130 m → real PMBM tracks (Tier B) 104 m. Motion
+  consistency *sustains* the walk (steady apparent velocity along the 120 m
+  linear pier predicts the next point and locks on). The D-only window
+  closes further (env-2 targets reach 69–95 m per 30 s).
+- **Hook 1 was apples-to-oranges:** on the same footing (both as chains),
+  env-2 vessel chains max-step med/p95 = 13.8/19.2 m/s vs pier chains
+  14.7/19.1 — identical. No per-step cap admits vessels while rejecting the
+  pier. (Phase 1b had compared vessel TRUTH steps vs pier CHAIN steps.)
+- **Verdict:** K1 fine (8/8), K2 never binds, K3 fails under both honest
+  tiers, all 5 seeds, no margin. Root cause, now a named durable fact: **a
+  chain along a linear extended structure is kinematically a constant-
+  velocity vessel transit** — association (NN, motion-model, or the real
+  PMBM) launders the pier walk into vessel-like motion. The conditional
+  floor cannot key on suppressed-birth kinematics, in any measured form.
+- **Scope caveat (sim-first honesty):** the walking-pier effect is measured
+  on the synthetic pier (13 points / 10 m spacing / P_D 0.9). On the real
+  near-shore structure we have (philos, within its ~1 km radar reach) the
+  structure chains were STATIONARY (median net disp 0, Phase 1b) — the walk
+  needs sparse point returns + misses on a linear feature. Sim is the
+  controlled gate per methodology, but the trap's real-world incidence is
+  unmeasured (no real pier-walk observed in our data to date).
+
+Takeaway: path (b) closed in every kinematic form. The orthogonal signal is
+map/extent knowledge of structure (charted static prior, or the live
+occupancy layer's persistent-cell grid as a floor-veto) — arbiter decision
+pending between that probe, path (c) re-pricing, and a documented
+per-geography residual.
+
 ## 2026-07-11 — Cl-4 Phase 1b: conditional coverage floor (M,N,D rule) = NO-BUILD (env-2 revival and pier-walk overlap in net displacement) [Cl-4]
 
 Ticket `2026-07-11-cl4-phase1b-coverage-floor-probe-ticket.md`; merged

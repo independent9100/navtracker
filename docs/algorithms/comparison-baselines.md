@@ -381,12 +381,19 @@ d5e68e8; `docs/baselines/2026-07-11_cl4_phase1b_floor_probe.md`): K1 needs
 D ≤ 72.6 m (env-2 shore-huggers reach 69–95 m per 30 s), but the harbor
 pier's 120 m extent lets association *walk* its 10 m-spaced points to
 ~84 m net displacement → K3 needs D > 84 m; empty feasible set. Philos was
-NOT binding (0.2% re-admission at M≥8, D≥50). Two measured refinements
-remain live and are **Phase 1c (now the primary path)**: a smoothness term
-(pier walks are jumpy, max step 16–20 m/s vs vessel p95 ≤ 8 m/s — clean ~2×
-margin) and real-association displacement (the NN chainer is a conservative
-K3 proxy: r_chain 15 m peaks at 50.6 m, and a Bernoulli's motion model
-resists teleports). Caution unchanged: the *unconditional* land-only A2
+NOT binding (0.2% re-admission at M≥8, D≥50). Phase 1c (2026-07-11,
+merged e676d67) then closed BOTH refinements: honest association makes the
+pier walk LONGER, not shorter (NN 84 m → motion-model 130 m → real PMBM
+tracks 104 m — motion consistency sustains the walk along the linear pier),
+and on equal footing the smoothness gap vanishes (vessel chains 13.8/19.2
+max-step med/p95 vs pier 14.7/19.1 m/s). Durable fact: **a chain along a
+linear extended structure is kinematically a CV vessel transit** —
+kinematic keying of the floor is closed in every measured form. The
+orthogonal signal left is map/extent knowledge of structure (charted
+static prior and/or the live occupancy layer's persistent-cell grid as a
+floor-veto); sim-first caveat: the walking pier is a synthetic-pier
+measurement (sparse 10 m points + misses), no real pier-walk observed in
+our data to date. Caution unchanged: the *unconditional* land-only A2
 floor is measured-dead (2026-07-02 R1 A/B: philos card_err +6.9→+40.15).
 (c) accept a lowered gate + re-price the philos regression that killed the
 naive version (gospa 73.1→100 — measured 2026-06-30, so (c) is likely
