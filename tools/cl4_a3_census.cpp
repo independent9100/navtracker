@@ -144,6 +144,49 @@ int main(int argc, char** argv) {
   // ---- Phase 1b: re-detection chain census (conditional coverage floor) ----
   const std::string mode = arg(argc, argv, "--mode", "evidence");
 
+  // ---- Cl-4 endgame: pre-gate birth existence r_new distribution ----
+  // Under imm_cv_ct_pmbm_coverage_land_ivgate the birth path has NO occupancy
+  // model, so r_new = birth_existence_target * (1 - c_land), c_land =
+  // clutterPrior(pos). The floor admits a birth iff r_new >= floor. This mode
+  // dumps the r_new distribution for (a) each truth target's in-band positions
+  // (the "vessel births" — env-2) and (b) in-band radar returns (the clutter
+  // births — philos), and the fraction surviving each floor {0.05..0.10} — the
+  // explanation of the sweep curve and whether a knee is real separation.
+  if (mode == "rnew") {
+    const double rstar = std::stod(arg(argc, argv, "--rstar", "0.1"));
+    if (!land) { std::cerr << "no land model (need coastline)\n"; return 2; }
+    const double floors[] = {0.05, 0.06, 0.07, 0.08, 0.09, 0.10};
+    auto surviveRow = [&](const std::vector<double>& rn, const char* name) {
+      if (rn.empty()) { std::printf("  %-22s (none in-band)\n", name); return; }
+      std::vector<double> s = rn; std::sort(s.begin(), s.end());
+      std::printf("  %-22s n=%4zu r_new[min=%.3f med=%.3f max=%.3f] survive:",
+          name, s.size(), s.front(), s[s.size()/2], s.back());
+      for (double f : floors) {
+        int c = 0; for (double v : rn) if (v >= f - 1e-9) ++c;
+        std::printf(" %.2f=%.0f%%", f, 100.0*c/rn.size());
+      }
+      std::printf("\n");
+    };
+    std::printf("=== r_new = %.2f*(1-c_land) distribution: %s ===\n", rstar, label.c_str());
+    // (a) truth targets, in-band positions
+    std::map<std::uint64_t, std::vector<double>> by_id;
+    for (const auto& ts : scen.truth) {
+      const double c = land->clutterPrior(ts.position);
+      if (c > 0.0) by_id[ts.truth_id].push_back(rstar * (1.0 - c));
+    }
+    for (auto& [id, v] : by_id)
+      surviveRow(v, ("truth_" + std::to_string(id)).c_str());
+    // (b) in-band radar returns (clutter births)
+    std::vector<double> rad;
+    for (const auto& m : scen.measurements)
+      if (m.sensor == SensorKind::ArpaTtm && m.value.size() >= 2) {
+        const double c = land->clutterPrior(m.value.head<2>());
+        if (c > 0.0) rad.push_back(rstar * (1.0 - c));
+      }
+    surviveRow(rad, "radar_in_band(clutter)");
+    return 0;
+  }
+
   // ---- Phase 1d: occupancy floor-veto race (T_veto vs T_floor) ----
   // Feed the workload's birth-candidate returns, per fed scan (= one unique
   // timestamp), into an offline LiveOccupancyModel (shipped machinery, default
