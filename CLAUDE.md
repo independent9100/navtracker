@@ -29,6 +29,13 @@ the data exists only in the MAIN tree. In a worktree, fixture-gated tests
 silently SKIP, so "full suite green" there does NOT cover them. Symlink the
 fixture dirs into the worktree (or point the fixture env at the main tree)
 and say IN THE HANDOFF which fixture-gated tests actually RAN vs skipped.
+**Second-order trap (bit the arbiter 2026-07-11):** some fixture dirs are
+*partially tracked* (`philos/` labels+charts, `sim_multisensor/` generator,
+`rbad/` generator), so they already EXIST in a fresh worktree and a
+top-level "symlink if missing" loop skips them — while the gitignored data
+*inside* is still missing and those tests skip. Symlink at the inner level
+(per entry within each fixture dir), and set `SIMMS_DIR`/`RBAD_DIR` when in
+doubt. The proof of a fully-wired run is **0 skips**, not "green".
 
 **Never build or verify in the shared main checkout while other sessions are
 active.** A temporary source edit + incremental rebuild in the shared tree
