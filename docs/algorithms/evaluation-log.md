@@ -8,6 +8,39 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-11 — Cl-4 Phase 2 Stage 0: vessel-past-structure gate FAILS (G1) — STOP-AND-REPORT; the revive-near-structure arc is EXHAUSTED [Cl-4]
+
+Ticket `2026-07-11-cl4-phase2-floor-veto-build-ticket.md` Stage 0; merged
+da8b778; NO Stage-1 tracker code written. Write-up:
+`docs/baselines/2026-07-11_cl4_phase2_stage0_vessel_past_structure.md`.
+
+- **G1 FAILS structurally:** a vessel transiting parallel to the pier
+  inside the 25 m ramp has its floor-satisfying endpoint inside the flagged
+  region for the whole pass → vetoed throughout. At the representative
+  3 m/s / 30 m point, 5 seeds give latency {20 s, never ×4}; every in-ramp
+  point is never or ≫15 s. The only pass (4 m/s at 50 m, bare-cell) is
+  outside the ramp — vessel already clear of the structure. Margin box
+  tightens it.
+- **G2 PASSES** (pier stays vetoed with the vessel present, 5 seeds);
+  no-pier baseline revives at +0 s — tool sound, failure real.
+- **Root cause, now spanning the whole arc:** near a linear structure, a
+  transiting vessel and the structure occupy the same signal space for
+  every mechanism measured — sensor identity (A3: camera 80% structure),
+  kinematics (1b/1c: association launders the walk into a CV transit), and
+  now occupancy position (the veto that catches the laundered walk also
+  catches the vessel). Phase 1d passed only because its fixtures kept
+  vessels and structure spatially separate — the separation the Cl-4
+  near-shore case doesn't have.
+
+Endgame options (arbiter + user; NOT a tuning exercise): per-geography
+residual / re-price the coverage cliff (with the ADR-0002 framing: the
+zone's failure mode is an invisible real MOVING vessel — no hazard-channel
+fallback for movers — which is the project's forbidden failure, vs phantoms
+= the accepted degraded mode) / charted-extent identity signal (the one
+signal not yet measured: pier-walk chains lie ON a charted line, a passing
+vessel is laterally offset — needs charts as input and a lateral-offset
+separability census vs radar σ).
+
 ## 2026-07-11 — Cl-4 Phase 1d: occupancy floor-veto = BUILD-ELIGIBLE (first affirmative of the arc; race won 11–27 s margin) [Cl-4]
 
 Ticket `2026-07-11-cl4-phase1d-occupancy-veto-probe-ticket.md`; merged

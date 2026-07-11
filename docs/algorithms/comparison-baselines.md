@@ -395,12 +395,19 @@ orthogonal signal — map/extent knowledge of structure — was then measured
 decisively (pier flags in 1–3 s vs floor satisfaction at 14–30 s; zero pier
 revivals across Tier A/B, all seeds, full margin box) while the extent gate
 (`extended_cells_min = 4`) keeps dwelling vessels unflagged → 16/16 env-2
-revivals at +0 s latency; philos inert. **One gate before build:**
-vessel-transiting-past-structure is unmeasured (no fixture has both dense
-structure returns and a moving vessel beside them) — Phase 2 Stage 0 closes
-it with a moving harbor-boat-past-pier scenario before any tracker code.
-Sim-first caveat stands: the walking pier is a synthetic-pier measurement;
-no real pier-walk observed in our data to date. Caution unchanged: the *unconditional* land-only A2
+revivals at +0 s latency; philos inert. **Phase 2 Stage 0 (2026-07-11, merged da8b778) then FAILED that gate
+structurally** — a vessel transiting inside the 25 m ramp is vetoed
+throughout (never revives, or ≫15 s; the only pass is outside the ramp) —
+and with it the whole revive-near-structure arc is **EXHAUSTED**: sensor
+identity, kinematics, and occupancy position each fail on the same root
+(near a linear structure, a transiting vessel and the structure occupy the
+same signal space). No Stage-1 code was written. Endgame decision (user +
+arbiter): per-geography residual / re-priced coverage cliff (ADR-0002
+framing: an invisible real *moving* vessel has no hazard-channel fallback —
+the forbidden failure — vs phantoms = accepted degraded mode) / charted-
+extent identity signal (unmeasured: on-line vs laterally-offset chains,
+needs charts as input). Sim-first caveat stands: the walking pier is a
+synthetic-pier measurement; no real pier-walk observed in our data to date. Caution unchanged: the *unconditional* land-only A2
 floor is measured-dead (2026-07-02 R1 A/B: philos card_err +6.9→+40.15).
 (c) accept a lowered gate + re-price the philos regression that killed the
 naive version (gospa 73.1→100 — measured 2026-06-30, so (c) is likely
