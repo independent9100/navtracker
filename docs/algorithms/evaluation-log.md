@@ -8,6 +8,34 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-11 — Cl-4 endgame: floor-sweep price list (0.05–0.10) — NO KNEE in floor-space; spatial half still open [Cl-4]
+
+Ticket `2026-07-11-cl4-endgame-cliff-reprice-ticket.md` (pre-amendment
+scope: 1-D floor sweep); merged 1acfef2. Env-knob method (bench factory
+only, unset = byte-identical). Write-up:
+`docs/baselines/2026-07-11_cl4_cliff_price_list.md`.
+
+- **No knee:** ≥6/8 env-2 revival needs floor ≤ 0.08 (philos +19.35 there);
+  philos ≤ ~+12 needs ≥ ~0.093 (env-2 already 3/8). Graded trade, ~+5
+  card_err per 0.01 of floor. Meaningful choice: **0.08** (8/8 channel,
+  env-2 GOSPA 13.72 — beats pmbm_land's 17.74 — at philos +12.5 card_err /
+  +10.7 GOSPA) vs **0.10** (philos clean, channel invisible).
+- **Why (r_new = 0.1·(1−c)):** env-2 vessels cluster r_new ∈ [0.065,
+  0.092] (≈15–42 m offshore); philos clutter is bimodal — median AT the
+  shoreline (gated at every floor) with a tail overlapping the vessel band.
+  Non-separability again, now in ramp-depth space.
+- **No collateral, provably:** harbor (9.53/0.974) and env-1 (16.57)
+  byte-identical at every floor (open-water/chart-free r_new = 0.1 never
+  gated); pier phantoms untouched.
+- **NOT yet measured (the amended ticket's other half, user's spatial
+  split):** distance-from-shore distributions + the `offshore_halfwidth_m`
+  × floor 2-D surface. The r_new data makes it promising: vessels sit
+  ~15–42 m out, clutter median sits ON the shoreline — a narrowed strip
+  (e.g. 25 m) may admit the vessels at full r_new while still gating the
+  shoreline mass; the open question is how much of the clutter TAIL lives
+  beyond the narrowed strip. Phantom MAP (distance of each re-admitted
+  phantom) required per the user's operator-supervised framing.
+
 ## 2026-07-11 — Cl-4 Phase 2 Stage 0: vessel-past-structure gate FAILS (G1) — STOP-AND-REPORT; the revive-near-structure arc is EXHAUSTED [Cl-4]
 
 Ticket `2026-07-11-cl4-phase2-floor-veto-build-ticket.md` Stage 0; merged
