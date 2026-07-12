@@ -100,6 +100,10 @@ class OwnShipNmeaAdapter {
   std::size_t dispatchedMagnetic()     const { return d_mag_; }
   std::size_t skippedMagNoVariation()  const { return skip_mag_var_; }
   std::size_t skippedGyroStale()       const { return skip_stale_; }
+  // Count of GGA sentences rejected by edge validation (fix-quality 0, empty
+  // lat/lon fields, or implausible position). Nonzero means the nav feed is
+  // dropping fixes — surface it rather than silently coasting on stale poses.
+  std::size_t skippedNoFixGga()        const { return skip_no_fix_gga_; }
 
  private:
   void pushGyroSample(Timestamp t, double heading_deg);
@@ -145,6 +149,7 @@ class OwnShipNmeaAdapter {
   std::size_t d_mag_{0};
   std::size_t skip_mag_var_{0};
   std::size_t skip_stale_{0};
+  std::size_t skip_no_fix_gga_{0};
 };
 
 }  // namespace navtracker

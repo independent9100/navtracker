@@ -682,6 +682,21 @@ multi-antenna GPS. Any HDT talker *not* in that set is treated as gyro heading
 (the backward-compatible `$GPHDT`-as-gyro path). See §5 for what the adapter does
 with those.
 
+> **GGA fix validation (rejection is silent-safe, not silent).** The adapter
+> validates every GGA at the edge (architecture invariant #6) before it ever
+> touches your `OwnShipProvider`. A GGA is **rejected — no pose is produced** —
+> when its fix-quality field is `0` (no fix) or empty, when the lat/lon fields
+> are empty, or when the parsed position is implausible (`|lat| > 90` / `|lon| >
+> 180` / non-finite). `ingest(...)` returns `false` for a rejected sentence, and
+> the adapter increments a counter you can read with **`skippedNoFixGga()`** —
+> watch it to detect a nav feed that is dropping fixes rather than silently
+> coasting on the last good pose. This matters because a standard no-fix GGA
+> (`$GPGGA,hhmmss,,,,,0,...`) parses its empty lat/lon to `(0, 0)`: without this
+> guard that null-island pose would initialize — or, mid-run, auto-recenter —
+> the working datum to (0, 0), silently corrupting every ENU conversion
+> afterwards. (The RMC branch already rejects the `V` navigation-warning
+> status; this is its GGA counterpart.) Valid fixes are unaffected.
+
 ---
 
 ## 5. Heading and bias
