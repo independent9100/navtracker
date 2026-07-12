@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <vector>
@@ -82,4 +83,12 @@ TEST(MhtComparison, CrossingWithDropout) {
                g.mean_ospa, g.id_switches, g.final_track_count,
                j.mean_ospa, j.id_switches, j.final_track_count,
                m.mean_ospa, m.id_switches, m.final_track_count);
+
+  // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+  EXPECT_TRUE(std::isfinite(g.mean_ospa)) << "CrossingWithDropout GNN: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(j.mean_ospa)) << "CrossingWithDropout JPDA: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(m.mean_ospa)) << "CrossingWithDropout MHT: non-finite OSPA (filter diverged)";
+  EXPECT_LT(g.mean_ospa, 20.0) << "CrossingWithDropout GNN: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(j.mean_ospa, 20.0) << "CrossingWithDropout JPDA: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(m.mean_ospa, 20.0) << "CrossingWithDropout MHT: OSPA saturated at cutoff (total mis-track)";
 }

@@ -146,12 +146,21 @@ TEST(PmbmTrackerUpdate, NoPriorNoPppMeasurementProducesClutterOnly) {
 
   // One child hypothesis (the only feasible assignment: clutter row).
   ASSERT_FALSE(tracker.density().mbm.empty());
-  // The new-target Bernoulli has rho_target = 0 → r = 0 → pruned.
+  // The new-target Bernoulli has rho_target = 0 → r = 0 → pruned. #24: the
+  // "clutter only" property is that NO target Bernoulli survives. The old loop
+  // asserted only that survivors respect r_min — a pruning invariant that holds
+  // vacuously when the list is empty, so a regression that births a phantom with
+  // r ≥ r_min would have passed. Pin the count directly.
+  int surviving_bernoullis = 0;
   for (const auto& h : tracker.density().mbm) {
     for (const auto& b : h.bernoullis) {
+      ++surviving_bernoullis;
       EXPECT_GE(b.existence_probability, cfg.r_min);
     }
   }
+  EXPECT_EQ(surviving_bernoullis, 0)
+      << "clutter-only scan must birth no target Bernoulli; got "
+      << surviving_bernoullis;
 }
 
 // ---------------------------------------------------------------------------
@@ -909,10 +918,15 @@ TEST(PmbmTrackerUpdate, BirthExistenceTargetOutOfRangeFallsBackToLambdaBirth) {
       r_max = std::max(r_max, b.existence_probability);
     }
   }
-  if (any_bernoulli) {
-    EXPECT_NEAR(r_max, r_expected, 1e-6)
-        << "fallback must use scalar lambda_birth path";
-  }
+  // #24 (W3 assertion-quality#2): the value assertions above are gated by
+  // any_bernoulli; a regression in the out-of-range guard that emits NOTHING
+  // would skip them all and pass green, masking the NaN/negative-existence
+  // poisoning this test exists to catch. Require a Bernoulli to actually be born.
+  ASSERT_TRUE(any_bernoulli)
+      << "out-of-range birth_existence_target must still birth via the "
+         "lambda_birth fallback; no Bernoulli born → the fallback path vanished";
+  EXPECT_NEAR(r_max, r_expected, 1e-6)
+      << "fallback must use scalar lambda_birth path";
 }
 
 // ---------------------------------------------------------------------------

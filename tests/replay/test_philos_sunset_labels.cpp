@@ -69,9 +69,14 @@ TEST(PhilosSunsetLabels, LabelAwareDecomposition) {
             << "  (confirmed track-scans in SUPPRESS regions — a suppressor should shrink)\n"
             << "  false_unlabeled  = " << d.false_unlabeled << "  (remainder)\n"
             << std::flush;
-  // Instrument sanity: the clip has real moving vessels, so SOME confirmed
-  // track-scans land in KEEP regions under the current tracker.
-  EXPECT_GT(d.tracks_on_keep, 0);
+  // #24: the clip has real moving vessels, so a >0 floor only caught total KEEP
+  // blackout — a suppressor/base-config change that deleted the ferry and dropped
+  // KEEP mass ~99% still passed on a single grazing track-scan. Banded floor
+  // (measured ~1633 KEEP track-scans; 800 is ~49%, matching the sibling
+  // close_approach test's 45%-of-baseline gate) catches a partial KEEP collapse.
+  EXPECT_GT(d.tracks_on_keep, 800)
+      << "KEEP-region confirmed track-scans collapsed (measured ~1633): "
+      << d.tracks_on_keep;
 }
 
 // R8.3 gate 1 — KEEP canary. Each KEEP region must contain >=1 confirmed track

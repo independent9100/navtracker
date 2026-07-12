@@ -260,6 +260,17 @@ TEST(T2tFuser, SingleReportNotPromotedByAmbientTraffic) {
   feed(f, rep("A", "1", 0.0, 0, 0));            // A: a single report at the origin
   for (int i = 1; i <= 20; ++i)                  // B: sustained traffic far away
     feed(f, rep("B", "9", i, 5000, 5000));
+  // #24: the anti-promotion check below runs inside two loops; if a regression
+  // made the fuser birth nothing (or fused tracks with empty contributing lists),
+  // both loops would be empty and the test would pass while the birth mechanism
+  // is broken. Assert the fusion set is non-empty and that B (the sustained
+  // source) DID birth, so the "A must not appear" check runs against real state.
+  ASSERT_FALSE(f.fusedTracks().empty()) << "no fused track born at all";
+  bool b_present = false;
+  for (const auto& o : f.fusedTracks())
+    for (const auto& c : o.contributing_trackers)
+      if (c.source_tracker_id == "B") b_present = true;
+  ASSERT_TRUE(b_present) << "sustained source B did not birth a fused track";
   // Only B may have become a fused track; A's lone report must not have.
   for (const auto& o : f.fusedTracks()) {
     for (const auto& c : o.contributing_trackers)

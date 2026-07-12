@@ -1,0 +1,1372 @@
+
+################################################################################
+# tests/benchmark/test_bench_determinism.cpp  (1 findings)
+################################################################################
+
+L56 [b/within-noise-threshold] npc=False test=BenchDeterminism.RepeatedSweepProducesIdenticalRows
+  A: EXPECT_EQ(hashRows(rows1), hashRows(rows2))
+  WHY: hashRows() streams every metric row's value via `os << r.value` at line 30 with the ostringstream default
+       float format (~6 significant digits) then hashes the string. This is the closest test in the tree to
+       the CLAUDE.md invariant #4 'replay of a log -> byte-identical output' at the metric level, but any non-
+       determinism that changes a metric below the 6th significant figure (e.g. FP-reduction-order drift from
+       unordered-container iteration in an OSPA/GOSPA/NEES sum) hashes identically and passes green. It also
+       covers only ONE config (configs.front() = imm_cv_
+  MARGIN: catches only >6-significant-figure non-determinism; sub-6-sig-fig drift passes (needs-run to exhibit a concrete sub-threshold drif
+  FIX: Stream values at full precision (os << std::setprecision(17) << r.value, or hexfloat) so bit-level determinism
+       of the same-binary repeat is actually checked; and iterate defaultConfigs()/defaultSimScenarios() (at
+       least add the PMBM config) rather than only .front(). Same-binary repeated runs are bit-identical when
+       truly deterministic, so full precision is not fragile here.
+  W3: assertion-quality#4 output-determinism hash truncates metric values to ~6 significant digi
+
+################################################################################
+# tests/benchmark/test_bench_runner.cpp  (1 findings)
+################################################################################
+
+L38 [b/metric-exists-not-value] npc=False test=BenchRunner.ProducesPerTruthSnapshotsAndLifecycleEvents
+  A: EXPECT_FALSE(result.sink_events.empty());
+  WHY: The test is named '...AndLifecycleEvents' but the only lifecycle assertion is that the event vector is non-
+       empty. It asserts events EXIST, not which lifecycle transitions occurred. A regression where the track
+       Initiates but the Confirmed (or Updated/Deleted) transition never fires would still populate
+       sink_events with the Initiated event and pass green; the confirm-on-consecutive-hits wiring
+       (TrackManager(2,4)) is not verified through the sink at all here. The accompanying position check (line
+       41) gives the test its only real teeth, on accuracy not lifecycle
+  MARGIN: asserts >=1 event; for one clean straight-line target the expected sequence is Initiated then Confirmed then repeated Updated over
+  FIX: Assert the expected lifecycle sequence for the single target from sink_events: exactly one Initiated and one
+       Confirmed (and >=1 Updated), or count events by type == expected. sink_events already carries typed
+       events, so this is tests-only.
+
+################################################################################
+# tests/benchmark/test_harbor_boat_near_pier.cpp  (2 findings)
+################################################################################
+
+L148 [a/within-noise-threshold] npc=False test=TEST(HarborBoatNearPier, StaticTracksNearPierBoatAndSuppressesPier)
+  A: EXPECT_GT(life_static, 0.9);       // near-pier boat (1 of 6) is tracked
+  WHY: This is an aggregate lifetime_ratio over all 6 targets used as a PROXY for 'near-pier boat (id 6) stays
+       tracked'. The comment states the failure value ('a dropped boat would pull it to ~0.81'), so the guard
+       sits at 0.9 -- only ~0.09 above the failure and (per fully-tracked runs) only ~0.05-0.08 below the
+       measured value. That is well under the 20% headroom the ticket wants, so a benign FP/toolchain shift
+       that nudges any of the 6 per-truth lifetimes can tip the aggregate below 0.9 without dropping boat 6 ->
+       latent red. Also swap-weak: a dropped MOVER (not the n
+  MARGIN: failure ~0.81 (one dropped of 6); measured fully-tracked aggregate ~0.95-0.98 (needs-run for exact); asserted floor 0.9 -> ~5-8% h
+  FIX: Assert the boat-6 property DIRECTLY using the per-truth metric row that already exists (lifetime_ratio:truth_6
+       -- baselines CSVs carry lifetime_ratio:truth_N rows): EXPECT_GT(life_boat6, real_floor). That is both
+       robust (isolates the intended target) and toothy (a dropped boat-6 goes red regardless of the other 5).
+       Alternatively widen the aggregate band with real headroom.
+
+L149 [a/adaptive-vs-adaptive] npc=False test=TEST(HarborBoatNearPier, StaticTracksNearPierBoatAndSuppressesPier)
+  A: EXPECT_LT(card_static, card_base); // pier still suppressed
+  WHY: card_static (imm_cv_ct_pmbm_static) and card_base (imm_cv_ct_pmbm) are BOTH measured card_err_mean on
+       harbor_boat_near_pier. This is a bare strict '<' between two adaptive quantities with NO margin --
+       exactly the shape the ticket says must carry a margin ('A beats B BY A MARGIN, never a bare >'). If the
+       static config's pier-suppression benefit is small on this geometry, the two card_err values sit close
+       together and a toolchain/seed/FP perturbation flips the strict inequality with no real regression. The
+       invariant intended ('pier still suppressed') is a MARGI
+  MARGIN: card_err ~11.7 range on harbor_boat_near_pier (eval-log analogous land 11.7); base-minus-static gap likely ~1-2 but exact gap for 
+  FIX: Require a real margin: EXPECT_LT(card_static, card_base - margin) where margin is a healthy fraction of the
+       measured base-vs-static gap (>=20% headroom to the typical difference). If the gap is not reliably
+       large, instead assert the structural property that phantom pier tracks are absent under the static
+       config (a count/floor invariant), not a hairline card_err ordering.
+
+################################################################################
+# tests/benchmark/test_harbor_gate_scenarios.cpp  (4 findings)
+################################################################################
+
+L131 [b/print-only-no-assert] npc=False test=TEST(HarborGateScenarios, RecordOneBiBaseline)
+  A: SUCCEED();  // recorder, not a gate
+  WHY: The TEST body computes card_err_mean / gospa_false / lifetime_ratio for harbor_large_anchored_ship and
+       harbor_compact_dolphin, prints them, and ends in SUCCEED(). The only ASSERT_* are setup guards (config
+       found, scen.size()==2); there is ZERO metric-bearing assertion, so it passes unconditionally even if
+       the tracker diverges or emits NaN on these two gate scenarios. It is documented as a by-design recorder
+       for the future 1b-ii extent discriminator, but as a gtest case it can never fail on a tracking
+       regression. Same class as W3 assertion-quality#5 (print-onl
+  MARGIN: no metric assertion exists; recorder-only by design
+  FIX: If any invariant holds even under 1b-i (e.g. the large ship id-6 is tracked at all, or dolphin adds no truth
+       already asserted elsewhere), add a loose one-sided floor so a divergence/NaN on these scenarios is
+       caught; otherwise leave as an explicitly documented recorder but do not count it as coverage of the
+       1b-ii gate.
+
+L181 [b/metric-exists-not-value] npc=False test=TEST(HarborGateScenarios, ChurnSuppressionGateBaseline)
+  A: EXPECT_GT(hits, 0.0);                       // (1) mechanism is measurable here
+  WHY: This asserts the occupancy suppression metric merely FIRED (occ_suppress_hits nonzero) rather than any
+       meaningful magnitude. It catches only total death of the mechanism; a regression that lets the
+       mechanism limp along firing a handful of times still passes. Given the eval-log documents occupancy
+       birth-suppression as marginal/inert ('suppress_hits ~= 0 on every fixture' at P_D 0.9; churn is the one
+       place it is 'measurable at all'), the measured hits on churn may be small, in which case >0 also
+       becomes an (a) knife-edge -- one FP-tipped birth could zero it. Ei
+  MARGIN: eval-log frames occupancy suppress_hits as marginal (~0 on P_D-0.9 fixtures; churn P_D-0.4 is the exception); actual churn hits ma
+  FIX: Banded floor with margin: assert hits >= N where N is a healthy fraction of the measured typical hits (>=20%
+       headroom), so a partial-collapse of suppression also goes red. occ_suppress_hits is already an emitted
+       metric row, so tests-only.
+
+L182 [a/adaptive-vs-adaptive] npc=False test=TEST(HarborGateScenarios, ChurnSuppressionGateBaseline)
+  A: EXPECT_GE(life_occ, life_land - 1e-9);      // (2) boats preserved (ADR 0002)
+  WHY: life_occ and life_land are BOTH measured lifetime_ratio outputs from two different configs
+       (imm_cv_ct_pmbm_occupancy_sensitive vs _land) run over the same P_D-0.4 churn scenario. The 1e-9 slack
+       asserts the occupancy arm is no worse than the land arm to within one part in ~1e9 of a value near
+       ~0.96-0.98. When occupancy suppression fires (suppress_hits>0 is the point of this gate), it removes
+       phantom births, which shifts PMBM hypothesis normalization globally and perturbs the 3 boat tracks by
+       FP-scale amounts WITHOUT actually dropping any boat. A different comp
+  MARGIN: lifetime_ratio ~0.96-0.98 both arms (eval-log land 0.981 / detector 0.972); asserted slack 1e-9 vs plausible cross-config/toolchai
+  FIX: Replace the 1e-9 knife-edge with either an ABSOLUTE floor on life_occ (boats preserved => life_occ >= 0.90,
+       well below the measured ~0.96 and above a one-boat-drop), or a banded no-regression tolerance life_occ
+       >= life_land - 0.03 (below a single-boat-drop of ~0.04+ over 8 seeds, above FP noise). Assert the
+       PROPERTY 'occupancy does not drop a boat', not near-bit-equality of tw
+
+L183 [a/adaptive-vs-adaptive] npc=False test=TEST(HarborGateScenarios, ChurnSuppressionGateBaseline)
+  A: EXPECT_LE(gf_occ, gf_land + 1e-9);          // (3) false mass not worse
+  WHY: gf_occ and gf_land are both measured gospa_false (magnitude ~2000-2400) from two configs on the same scenario.
+       A 1e-9 additive slack on quantities of order 1e3 demands the occupancy arm be bit-identical-or-better
+       than the land arm. Because the two arms take different code paths (suppression fires on churn), FP
+       reordering alone can make gf_occ exceed gf_land by more than 1e-9 without any real increase in false
+       mass -> false red under a compiler/seed/config perturbation you cannot reproduce locally. Same
+       sunset-6c shape as line 182; the epsilon is ~12 orders of
+  MARGIN: gospa_false ~2000-2400 both arms (analogous harbor runs 1999-2433 in eval-log); asserted additive slack 1e-9 on an O(1e3) quantity
+  FIX: Assert a real no-worse-than margin proportional to magnitude: gf_occ <= gf_land * 1.02 (or gf_occ <= gf_land +
+       small_absolute_band). Better, encode the intended direction with margin: suppression should REDUCE
+       false mass on churn, so gate gf_occ <= gf_land - real_margin if the mechanism is meant to help, else a
+       loose no-regression band. Never a 1e-9 tie on an O(1e3) metric.
+
+################################################################################
+# tests/benchmark/test_occupancy_ab.cpp  (1 findings)
+################################################################################
+
+L178 [a/seed-or-tiebreak-count] npc=False test=OccupancyAB.BirthOnlySuppressionAcrossRegimes
+  A: EXPECT_GE(meanMetric(rows, B, "harbor_complete_truth", "occ_peak_structures"), 0.5);
+  WHY: 8-seed mean of a count the author explicitly flags as MARGINAL: 'the pier classifies as structure in a
+       majority of seeds (marginal on the 4-cell extent gate under return noise)'. A 0.5 mean-crossing on a
+       per-seed classification that flips near the extent gate is exactly a seed-fragile / within-noise
+       threshold: a different seed set or FP drift can push the mean below 0.5, giving a latent red that
+       cannot be reproduced locally. The rest of this file is a by-design measurement (prints only), so this
+       is its one gating number and it sits on a knife edge.
+  MARGIN: needs-run; author: 'majority of 8 seeds, marginal at 4-cell extent gate' => mean plausibly ~0.5-0.9 vs 0.5 floor (little headroom)
+  FIX: Replace the marginal 0.5 crossing with the config-independent CONTRAST the test is actually about:
+       occ_peak_structures on harbor >> on the churn/philos arms by a margin (mechanism fires here, vanishes
+       there), or a banded floor the measured mean clears by >=20%.
+  W3: scenario-bench-sim coverage-note (l150): occ A/B tests 'assert occ_* rows and cross-arm de
+
+################################################################################
+# tests/benchmark/test_philos_cluttermap_ab.cpp  (1 findings)
+################################################################################
+
+L149 [b/print-only-no-assert] npc=False test=PhilosClutterMapAB.ClutterFeedVsBaseline
+  A: std::cout << "\n=== clutter-map A/B ... " (test body has only ASSERT_FALSE(rows.empty()) + structural asserts; all A/B metrics are printed, none asserted)
+  WHY: After the structural setup asserts (probe.size()==1, land!=nullptr, rows not empty) this TEST body contains NO
+       metric-value EXPECT/ASSERT — every card_err/gospa/lifetime A/B number for philos and the four synthetic
+       arms is streamed to cout only. It cannot fail on any tracking regression. By-design measurement per the
+       file header ('Not a pass/fail gate — a measurement'), and the sibling PmbmClutterFeedR2 test (lines
+       106-107) does gate the dense_clutter finding with fixed bounds, so this is documented, not an
+       oversight.
+  MARGIN: all A/B metric deltas printed; none asserted
+  FIX: If any teeth are wanted, add a banded one-sided bound on the philos over-count (card_err) that the printed
+       table clears by >=20%; otherwise leave as a documented measurement — the R2 test already gates the
+       load-bearing finding.
+  W3: scenario-bench-sim coverage-note (l150): 'assert occ_* rows and cross-arm deltas' — REFUTE
+
+################################################################################
+# tests/benchmark/test_rbad_scenario_run.cpp  (1 findings)
+################################################################################
+
+L122 [b/metric-exists-not-value] npc=False test=RbadScenarioRun.MhtConsistencyReportVsReferenceTracker
+  A: EXPECT_GT(total_our_tracks, 0) << "tracker produced no confirmed tracks on any R-BAD approach";
+  WHY: The only assertion in an otherwise print-only report; total_our_tracks is summed across all 6 R-BAD
+       approaches, so it fires only on a total tracker collapse (zero confirmed tracks on every scenario). A
+       per-scenario regression -- tracker dropping to 0 or exploding to 20x the reference cardinality on one
+       port -- is invisible because it is a whole-battery liveness floor. The consistency numbers (ref_ids vs
+       our_trks, lifetime, id_sw, breaks, card_err) are all computed and printed but nothing is asserted on
+       any of them. W3 assertion-quality coverage notes explicit
+  MARGIN: needs-run; summed over 6 scenarios so only a battery-wide zero-track collapse can fail it
+  FIX: Accuracy cannot be gated (no independent truth), but a config-independent CROSS-TRACKER cardinality-
+       consistency band is available tests-only: per scenario assert distinctOurTracks within a band of
+       distinctReferenceIds (both already computed at :115/:118), e.g. [0.5x, 2x] framed as consistency-not-
+       tuning. Leaves the no-tuning ruling intact while giving per-case teeth. User's 
+  W3: assertion-quality coverage-note (test_rbad_scenario_run.cpp:122 deliberate non-gating arm)
+
+################################################################################
+# tests/benchmark/test_replay_scenario_run.cpp  (2 findings)
+################################################################################
+
+L41 [b/guarded-loop-vacuous] npc=False test=ReplayScenarioRun.GenerateReturnsNonEmpty
+  A: EXPECT_FALSE(data.measurements.empty()) << "replay " << s->descriptor().label << " produced no measurements";
+  WHY: The assertion at line 41 is dead code: line 39 does `if (data.measurements.empty()) continue;` immediately
+       before it, so by line 41 data.measurements is guaranteed non-empty and the EXPECT_FALSE can never fail.
+       It cannot catch the exact defect it names -- a fixture whose CSV exists but that loads to an
+       empty/partial measurement set is silently `continue`d, not flagged. When all fixtures are absent the
+       test GTEST_SKIPs; when present it passes tautologically. So a partial-load / empty-generate regression
+       on any one of the 3 replay labels ships green.
+  MARGIN: n/a (tautology; asserts a fact the preceding guard already established)
+  FIX: Track which labels produced empty measurements inside the loop; after the loop, when any_real is true, ASSERT
+       that the set of empty labels is itself empty (i.e. every reachable fixture yielded measurements).
+       Tests-only, uses data already in hand.
+
+L245 [a/within-noise-threshold] npc=False test=ReplayScenarioRun.PhilosResampledTruthAndMhtLifecycle
+  A: EXPECT_LT(m.ospa_mean, 470.0);
+  WHY: OSPA on this fixture is clipped at the 500 m cutoff; the healthy measured value documented in the comment is
+       430, and the pre-fix failure pegs at ~500. The bound 470 sits only ~9% above the healthy 430 and only
+       ~6% below the failure peg -- the entire dynamic range between healthy and broken is 430..500 and the
+       threshold splits it. A benign config or toolchain shift moving OSPA 430->471 (a 9-10% move, entirely
+       plausible on a ~20 s AIS-only snippet with loose multi-vessel tracking) flips it red with no real
+       regression. The sibling lifetime/breaks/switches pins 
+  MARGIN: measured 430, asserted <470, cutoff 500 -> ~9% headroom over healthy; only ~30 units between bound and the failure peg
+  FIX: Reframe as a pure not-pegged-at-cutoff tripwire with real margin to healthy: assert ospa_mean stays clear of
+       the cutoff (e.g. < 0.95*cutoff) and rely on the already-present lifetime>0.2 / breaks / id_switches
+       structural pins for accuracy teeth; the cutoff (500) is available in the harness. Tests-only.
+
+################################################################################
+# tests/benchmark/test_synthetic_clutter_ab.cpp  (4 findings)
+################################################################################
+
+L76 [a/adaptive-vs-adaptive] npc=False test=SyntheticClutterAB.ChartedPierSuppressesPierKeepsBoats
+  A: EXPECT_LT(card_stat, card_base);
+  WHY: Bare strict inequality between two measured card_err_mean aggregates with ZERO asserted margin — the sunset-6c
+       shape the ticket forbids ('A beats B ... REQUIRE A MARGIN, never a bare >'). The comment says charting
+       the pier makes card_err 'collapse', so the real gap is large, but the assertion encodes it as card_stat
+       < card_base with no headroom: any FP/toolchain/config drift that narrows the gap, or a scenario/config
+       change that reduces the baseline pier over-count, flips it spuriously; conversely a regression that
+       leaves the static config only 0.001 better s
+  MARGIN: needs-run; comment: pier over-count 'collapses' under static config => measured gap large, asserted margin 0
+  FIX: EXPECT_LT(card_stat, card_base - M) with M sized to the measured collapse, or (config-independent) assert
+       card_stat sits near the truth floor via a one-sided FIXED bound since the pier is charted-and-dropped.
+
+L77 [a/adaptive-vs-adaptive] npc=False test=SyntheticClutterAB.ChartedPierSuppressesPierKeepsBoats
+  A: EXPECT_LT(false_stat, false_base);
+  WHY: Same bare-strict shape as line 76 on gospa_false: two adaptive outputs compared with no margin. The intended
+       effect (pier phantom births hard-dropped => gospa_false collapses) is large, but the assertion
+       tolerates a near-tie and flips under drift or a baseline shift. In a real gate this must carry a
+       margin.
+  MARGIN: needs-run; comment implies gospa_false 'collapses' => measured gap large, asserted margin 0
+  FIX: EXPECT_LT(false_stat, false_base - M), or assert false_stat near a FIXED small bound (charted pier => ~0
+       false).
+
+L131 [a/adaptive-vs-adaptive] npc=False test=SyntheticClutterAB.LandAwarePoolResistsDockClutterPull
+  A: EXPECT_GE(life_water, life_plain - 1e-9);
+  WHY: Comparison of two adaptive lifetime_ratio means with a 1e-9 FP-equality tolerance masquerading as a slack
+       band. The stated intent ('the fix costs no track lifetime') is nominally life_water == life_plain, but
+       a 1e-9 tolerance means ANY sub-scan lifetime jitter under a different seed set/compiler (water pool
+       drops or gains one scan on one of 8 seeds) flips it meaninglessly in either direction. It is epsilon-
+       fragile, not a real no-regression guard.
+  MARGIN: needs-run; both means ~equal nominally (target fully tracked), tolerance 1e-9 is FP-equality not a physical margin
+  FIX: Real slack band EXPECT_GE(life_water, life_plain - 0.05), or one-sided fixed floor EXPECT_GT(life_water, 0.9).
+
+L155 [a/adaptive-vs-adaptive] npc=False test=SyntheticClutterAB.LandModelRemovesShoreOverCountKeepsRealTargets
+  A: EXPECT_LT(card_on, card_off) << scenario;
+  WHY: Bare strict A<B between two measured card_err_mean aggregates, no margin. Lower-risk than lines 76/77 because
+       the very next line (156, card_on <= 1.0 vs a FIXED bound) already carries most of the teeth and
+       card_off is a scenario property that stays high; but the SHAPE is still the forbidden bare-strict
+       adaptive-vs-adaptive compare and should be folded into the fixed-bound assertion.
+  MARGIN: needs-run; comment: land ON reduces over-count 'toward 0' => measured gap large, asserted margin 0
+  FIX: Drop the bare > and rely on / tighten the fixed-bound line 156 (card_on <= small), i.e. assert the land config
+       reaches the truth floor rather than merely beats the baseline.
+
+################################################################################
+# tests/benchmark/test_t2t_scenario_run.cpp  (8 findings)
+################################################################################
+
+L128 [a/adaptive-vs-adaptive] npc=False test=T2tScenarioRun.SharedAisDoubleCountingNeesGate
+  A: EXPECT_GT(nv_n.mean, ci_n.mean * 1.4);
+  WHY: Both operands are measured NEES MEANS over a heavy-tailed distribution (Consistency.hpp:57-78 documents the
+       mean as fragile and offers median/coverage_95 'for honesty'; the sibling test comment L172-176 admits
+       'mean-in-band result is tail-driven and fragile'). This is the sole quantitative double-count evidence
+       in this test (the only other hard assert is the class-presence check L129). A single outlier moving
+       in/out under compiler/toolchain FP drift shifts a tail-driven mean materially, so the 1.4x factor can
+       flip meaninglessly even though the double-counting
+  MARGIN: comment states ~1.7x measured vs 1.4 asserted -> ~21% headroom on a tail-driven mean
+  FIX: Gate on the outlier-insensitive quantity the sibling test uses: EXPECT_GT(ci_n.coverage_95, nv_n.coverage_95 +
+       delta) with the measured coverage gap documented, or assert the MEDIAN ratio with a real band; keep the
+       mean ratio as a printed characterization only.
+
+L189 [a/within-noise-threshold] npc=False test=T2tScenarioRun.PerArmNeesCalibrationAndBandViolationGate
+  A: EXPECT_GT(pa.mean, 1.5); ... EXPECT_LT(pa.mean, 3.0);
+  WHY: Calibration pin: sigma=12 is an empirically hand-tuned magic constant chosen so the per-arm AIS NEES mean
+       lands near 2 on THIS toolchain/seed. pa.mean is a tail-driven NEES mean, and the [1.5,3.0] band
+       brackets that hand-tuned lever. On a different compiler the 'sigma where NEES approx 2' shifts, so
+       pa.mean at fixed sigma=12 can drift out of the band and fail meaninglessly. Milder than the ratio
+       asserts (real two-sided band, ~33/50% headroom) but it is a toolchain-sensitive calibration bracket.
+  MARGIN: comment: pa.mean approx 2.0 measured (was 0.42 at 30 m default); band [1.5,3.0]
+  FIX: Assert per-arm NEES via coverage_95 (calibration- and outlier-invariant) landing in a generous band, rather
+       than pinning a tail-driven mean at a hand-tuned sigma; or drop the per-arm bracket and gate only the
+       CI-vs-naive coverage relationship.
+
+L191 [a/adaptive-vs-adaptive] npc=False test=T2tScenarioRun.PerArmNeesCalibrationAndBandViolationGate
+  A: EXPECT_GT(nn.mean, cn.mean * 1.4);
+  WHY: Same tail-driven mean-ratio shape as L128, at the calibrated sigma=12. Both NEES means are heavy-tailed
+       (Consistency.hpp comment + L172-176); a 1.4x factor on tail-driven means is fragile to a single outlier
+       under toolchain drift. Backed here by L192/L193 so the ensemble is less bad than L128, but the
+       assertion itself is the flagged shape.
+  MARGIN: needs-run; comment cites ~near-theoretical-2x for a duplicated estimate vs 1.4 asserted
+  FIX: Keep as printed characterization; make the coverage comparison (L193, with margin) the single hard double-
+       count gate.
+
+L192 [a/adaptive-vs-adaptive] npc=False test=T2tScenarioRun.PerArmNeesCalibrationAndBandViolationGate
+  A: EXPECT_GT(nn.mean, cn.band_hi);
+  WHY: Self-admitted fragile: the block comment (L172-177) states 'the fused-NEES distribution is heavy-tailed here
+       (median approx 0.5 << mean approx 2), so the mean-in-band result is tail-driven and fragile' and
+       explicitly moves the robust evidence to coverage. nn.mean (tail-driven) vs cn.band_hi (a Wilson-
+       Hilferty band edge that itself depends on sample count n) are both adaptive; whether the mean clears
+       band_hi is exactly the outcome the authors flag as unreliable across seed/toolchain.
+  MARGIN: needs-run; comment: naive mean ~2, CI mean ~2 heavy-tailed, breach margin undocumented
+  FIX: Demote the band-breach to report-only; hard-gate the double-count via the calibration-invariant coverage
+       comparison (L193) with an explicit margin. If a band check is wanted, apply it to the median (central)
+       NEES, not the tail-driven mean.
+
+L193 [a/adaptive-vs-adaptive] npc=False test=T2tScenarioRun.PerArmNeesCalibrationAndBandViolationGate
+  A: EXPECT_GT(cn.coverage_95, nn.coverage_95);
+  WHY: This is the intended ROBUST gate (coverage is outlier-insensitive) but it is a bare '>' between two measured
+       coverage fractions with no margin. Per #24 discipline an A-beats-B comparison of two adaptive
+       quantities must carry a margin; if CI and naive coverage are close (both high) a small FP/seed drift
+       flips it. Milder than L128/L192 because coverage is robust, but the shape (bare >) is the sunset-6c
+       pattern.
+  MARGIN: needs-run; coverage delta is not printed as a comparison, so headroom is unknown from the source
+  FIX: EXPECT_GT(cn.coverage_95, nn.coverage_95 + kMargin) with the measured gap documented, or a two-sided anchor:
+       CI coverage >= fixed floor AND naive coverage <= fixed ceiling.
+
+L335 [a/adaptive-vs-adaptive] npc=False test=T2tScenarioRun.DropoutContinuityAndLatencySkew
+  A: EXPECT_GT(mean_in, mean_out);
+  WHY: Bare '>' between two measured mean covariance traces (in-dropout vs out-of-dropout). The physical effect
+       (losing AIS for 60 s inflates the radar-only covariance) is likely large, so this is a mild case, but
+       with no margin it is the sunset-6c shape: if radar alone keeps the covariance nearly as tight on some
+       toolchain the bare inequality could flip without any real continuity regression.
+  MARGIN: needs-run; traces printed but not as a ratio, so the in/out gap is undocumented in source
+  FIX: Require a real margin: EXPECT_GT(mean_in, mean_out * 1.2) (or an absolute inflation floor), documenting the
+       measured ratio.
+
+L402 [b/vacuous-reversed-slack] npc=False test=T2tScenarioRun.ConflictBiasedOverconfidentSourceCharacterization
+  A: EXPECT_GE(nv_n.mean, ci_n.mean * 0.9);
+  WHY: The intended claim is 'naive is at least as overconfident as CI' (naive NEES >= CI NEES). But the 0.9 factor
+       slacks in the WRONG direction: it passes even when naive is up to 10% LESS overconfident than CI. Given
+       the mechanism (naive trusts the tight-lying source more) the inequality nv >= 0.9*ci is essentially
+       always true and cannot fail under any plausible defect - notably it stays green even if CI's omega
+       optimization regressed so CI became as overconfident as naive (ratio ~1.0 >= 0.9), i.e. it does not
+       guard CI's conservatism at all.
+  MARGIN: needs-run; ratio expected >=1 by the mechanism, so a 0.9 floor is near-unfalsifiable
+  FIX: If kept as a gate, assert the true direction with a real margin (EXPECT_GE(nv_n.mean, ci_n.mean) or nv>=ci*1.1
+       if measured supports it); otherwise make it a printed characterization consistent with the test's
+       stated intent.
+
+L451 [b/EXPECT_GT_structurally_positive] npc=True test=T2tScenarioRun.CrossMmsiConflictReducesWrongPairings
+  A: EXPECT_GE(max_tracks, 2);
+  WHY: For a two-target crossing scenario, 'at least 2 tracks at some step' is a near-structural floor (even with
+       zero fusion you get >=2). More importantly it guards the WRONG direction relative to its stated purpose
+       (invariant 5: an MMSI conflict must NOT PREVENT fusion): if the conflict penalty wrongly prevented
+       fusion, each vessel would split into separate radar+ais tracks -> MORE tracks, which a lower bound
+       cannot catch. The real invariant-5 evidence is the unit test
+       ConflictingMmsiStillAssociatesWhenKinematicsAgree; this scenario assert is a weak floor mislabe
+  MARGIN: needs-run; 2 real targets make max_tracks>=2 near-certain
+  FIX: To guard invariant 5 in scenario context, assert both targets are fused ACROSS both arms and the conflict did
+       not split them - which needs per-fused-track contributing-arm counts exposed in
+       BenchResult.steps.tracks (currently only id/position/pos_covariance). A tests-only upper bound on
+       distinct fused tracks would catch the split but is fragile to the head-on/crossing MHT chur
+
+################################################################################
+# tests/benchmark/test_veto_isolation_haxr_ab.cpp  (1 findings)
+################################################################################
+
+L174 [b/EXPECT_GT_structurally_positive] npc=False test=VetoIsolationHaxrAB.VetoIsolatedOnAisArmThreeSites
+  A: EXPECT_GT(meanMetric(rows, "veto_off", "gospa_mean"), 0.0) << s.station;
+  WHY: gospa_mean is structurally >0 on any real HAXR scene with tracking error, so this cannot fail on any tracking
+       defect (it only trips if meanMetric returns 0.0 because no gospa row exists — a weak wiring guard). The
+       paired veto_on assertion at line 175 is identical. The test's entire deliverable — the veto ON-vs-OFF
+       delta — is PRINTED, never asserted. This is by-design per #24 ('no cross-config pin on the marginal
+       occupancy metrics'), so it is not a stop-and-report, but as a metric-quality assertion it is vacuous.
+  MARGIN: gospa_mean always >0 on a real scene; asserted >0 => vacuous. meanMetric returns 0.0 only when no row => doubles as a weak 'arm sc
+  FIX: Keep gospa>0 as an explicit wiring/well-formedness guard; only add teeth once the baseline doc shows a stable-
+       sign protective delta with headroom, then gate the SIGN as a banded claim (e.g. ON missed <= OFF missed
+       by a margin).
+  W3: scenario-bench-sim coverage-note (l150): 'assert ... cross-arm deltas' — REFUTE (only gosp
+
+################################################################################
+# tests/benchmark/test_veto_isolation_sim_ab.cpp  (1 findings)
+################################################################################
+
+L110 [b/EXPECT_GT_structurally_positive] npc=False test=VetoIsolationSimAB.VetoProtectiveEffectOnAnchoredVesselWithPerfectTruth
+  A: EXPECT_GT(meanMetric(rows, "veto_off", "gospa_mean"), 0.0);
+  WHY: Same vacuous shape as the HAXR twin (line 111 is the veto_on pair). Sharper here because this scenario has
+       PERFECT TRUTH and the test's declared purpose is to measure the veto's protective effect on the
+       anchored vessel — yet the protective delta (gospa_missed/lifetime ON vs OFF) is only printed; the sole
+       assertion is gospa_mean>0, which cannot fail on any protective regression. By-design non-gating per #24
+       (the comment says the sign IS the verdict, reported not frozen).
+  MARGIN: gospa_mean structurally >0; the protective ON-OFF deltas (the actual finding) are printed, not asserted
+  FIX: If teeth are wanted with perfect truth available: gate the protective SIGN as a banded structural claim
+       (gospa_missed[on] <= gospa_missed[off] and lifetime[on] >= lifetime[off] - slack) once the baseline doc
+       confirms a stable sign; else document as a measurement.
+  W3: scenario-bench-sim coverage-note (l150): 'assert ... cross-arm deltas' — REFUTE (no cross-
+
+################################################################################
+# tests/pmbm/test_pmbm_birth_floor.cpp  (3 findings)
+################################################################################
+
+L97 [a/within-noise-threshold] npc=False test=PmbmBirthFloor.LandPlusObstacleCreatesSuppressedBernoulli
+  A: EXPECT_GT(r, 0.0);    // NOT hard-dropped by the floor (was killed pre-R1)
+  WHY: The born-vs-killed outcome (EXPECT_GT(r,0)) hinges on the admission gate, which per finding-#3 uses the LAND-
+       only suppressed r_new. With FakeLand(0.5) the file's own comments state land-only r_new approx 0.053,
+       only ~6% above the 0.05 floor. A small change in how land suppression composes (refactor/toolchain)
+       that moves 0.053 to 0.049 flips admission and makes this test fail spuriously with no real regression.
+       The assertion shape is fine; the scenario sits on a 6% knife-edge at the gate.
+  MARGIN: land-only r_new approx 0.053 vs floor 0.05 = 0.003 margin (~6%); materialised r approx 0.005 (comment)
+  FIX: Choose a land value whose land-only r_new clears the 0.05 floor with real headroom (e.g. r_new approx 0.08) so
+       admission is robust, and keep a clearly-below-floor companion (the existing land=0.9 case) as the
+       reject discriminator.
+
+L185 [a/within-noise-threshold] npc=False test=PmbmBirthFloor.ObstacleOverlapStillBirthsWhereLandIsMild
+  A: EXPECT_GT(maxExistence(t), 0.0);   // admitted (obstacle relaxed)
+  WHY: Same FakeLand(0.5)/FakeObstacle(0.9) config and same 0.053-vs-0.05 admission knife-edge as
+       LandPlusObstacleCreatesSuppressedBernoulli (this test is effectively a duplicate scenario with
+       different intent comments). Born-vs-killed depends on the ~6% land-only margin over the floor.
+  MARGIN: land-only r_new approx 0.053 vs floor 0.05 = ~6% margin
+  FIX: Same as the LandPlusObstacle upgrade: move the mild-land case to a land value giving clearly-above-floor r_new
+       so 'still births' is robust; keep the land=0.9 reject companion.
+
+L212 [a/within-noise-threshold] npc=False test=PmbmBirthFloor.DeepCompositionNotTrackablePositionOnly
+  A: EXPECT_NEAR(maxExistence(t), 0.0, 1e-9);  // pruned by r_min (A3 territory)
+  WHY: The exact-zero assertion passes only if the composed birth r_new (comment: approx 5.5e-4) is pruned by r_min
+       (1e-3). The margin to the pruning boundary is only ~1.8x. If the land x obstacle composition math
+       drifts so r_new crosses 1e-3, the Bernoulli survives, maxExistence becomes ~1e-3 (NOT near 0 within
+       1e-9) and the test fails without a real behavioral change. Lower severity than the 6% admission cases
+       but still a threshold-boundary fragility.
+  MARGIN: composed r_new approx 5.5e-4 vs r_min 1e-3 (~1.8x below the prune boundary)
+  FIX: Drive the composed r_new well below r_min (e.g. an order of magnitude) so the prune outcome is unambiguous,
+       keeping the 'not trackable from position alone' characterization intact.
+
+################################################################################
+# tests/pmbm/test_pmbm_phase8.cpp  (7 findings)
+################################################################################
+
+L382 [a/adaptive-vs-adaptive] npc=False test=PmbmTrackerPhase8.PerSensorDetectionModelDifferentiatesBernoulliExistence
+  A: EXPECT_GT(r_hi, r_lo)
+  WHY: r_hi and r_lo are both measured Bernoulli existence outputs from the same processBatch; the comparison is a
+       bare > with no margin (the sunset-6c shape the ticket names). The Lidar arm varies BOTH P_D (0.99 vs
+       0.30) and lambda_C (1e-6 vs 1e-1), so the gap is large and its ORDERING is structurally robust
+       (practical flip risk is low). But the shape encodes no documented separation, so an attenuated-
+       mechanism regression (per-sensor detection model consulted but with a scaling/index bug that halves the
+       differentiation) can shrink the gap toward zero without flipp
+  MARGIN: needs-run (r_hi approx 1.0 with lambda_C=1e-6; r_lo materially lower; gap likely >0.2)
+  FIX: EXPECT_GT(r_hi, r_lo + margin) with margin encoding a meaningful separation (e.g. 0.1): high-quality sensor
+       birth must beat the noisy one by >=margin, not merely tie-break above it.
+
+L512 [a/adaptive-vs-adaptive] npc=False test=PmbmTrackerPhase8.PerSensorPdAloneDifferentiatesBernoulliExistence
+  A: EXPECT_GT(r_hi, r_lo)
+  WHY: Single-channel isolation (lambda_C equal, only P_D differs 0.99 vs 0.30), so the r_hi/r_lo separation is
+       SMALLER than the combined T4 test and thus more susceptible to becoming near-degenerate under a P_D-
+       plumbing attenuation. Still a bare > between two measured existences with no margin.
+  MARGIN: needs-run (single-channel P_D gap is narrower than the combined test)
+  FIX: EXPECT_GT(r_hi, r_lo + margin); pick margin from the analytic r_new(P_D=0.99) - r_new(P_D=0.30) at equal
+       lambda_C so the assertion pins the P_D lever's expected size.
+
+L552 [a/adaptive-vs-adaptive] npc=False test=PmbmTrackerPhase8.PerSensorLambdaCAloneDifferentiatesBernoulliExistence
+  A: EXPECT_GT(r_hi, r_lo)
+  WHY: Single-channel isolation (P_D equal, only lambda_C differs 1e-6 vs 1e-1). Same bare-> adaptive-vs-adaptive
+       shape; the lambda_C-only gap is the sole discriminator so a bug that ignores per-sensor lambda_C would
+       need only to collapse the gap below zero, and a bare > gives no headroom to detect a partial collapse.
+  MARGIN: needs-run (r_new = rho/(rho+lambda_C); gap driven only by lambda_C)
+  FIX: EXPECT_GT(r_hi, r_lo + margin) with margin from the analytic lambda_C-only separation.
+
+L779 [b/guarded-loop-vacuous] npc=False test=PmbmTrackerPhase8.KBestDominanceCutoffDropsSiblingsBelowGap
+  A: EXPECT_LT(n_on, n_off) << "log_gap=0.5 must drop >= 1 close-weight sibling ...
+  WHY: The only toothy assertion (gap-on produces strictly fewer children) is gated by `if (n_off >= 2)` (line 778)
+       with no ASSERT that n_off >= 2. The preceding EXPECT_GE(n_off, n_on) is a weak one-sided guard (gap
+       cannot ADD hypotheses). If a regression collapses Murty child generation to a single child, n_off=1,
+       the guard is skipped, and the dominance-cutoff mechanism goes entirely unverified while the test stays
+       green. Same family as W3 assertion-quality#3 but a distinct test.
+  MARGIN: comment claims scan 'reliably produces >= 2 K-children'; unasserted
+  FIX: ASSERT_GE(n_off, 2) before the EXPECT_LT so the cutoff's drop effect is always exercised; consider
+       EXPECT_LE(n_on, n_off) plus an explicit expected drop count.
+
+L900 [b/guarded-loop-vacuous] npc=False test=PmbmTrackerPhase9S3.AltBirthGateStripsBirthsInWeakAltOnly
+  A: EXPECT_NE(b.birth_time.seconds(), scan_t) << "alt child (lw=" ...
+  WHY: CONFIRM W3 assertion-quality#3. The loop does `if (h.log_weight >= top_lw - 0.5) continue;` then only asserts
+       EXPECT_NE on gated alts. The outer ASSERT_FALSE(mbm.empty()) guarantees hypotheses exist but NOT that
+       any hypothesis is below the top-0.5 gate. If a regression collapses alt-hypothesis generation (only the
+       top child survives, or all children within 0.5 nat of the top), every iteration hits `continue`, the
+       fresh-birth assertion never executes, and the test -- the sole discriminator for the alt-birth gate
+       stripping births -- passes vacuously.
+  MARGIN: needs-run (must confirm the 3-measurement scan deterministically yields >=1 hypothesis below top_lw-0.5)
+  FIX: Count gated alts and ASSERT_GT(gated_count, 0) so the discriminating branch is guaranteed to run; additionally
+       assert the TOP child DID retain a fresh birth to prove the gate is selective, not globally suppressing.
+  W3: assertion-quality#3 (alt-birth 'no fresh birth in gated alt children' skips all assertions
+
+L1004 [b/symmetric-swap-blind] npc=False test=PmbmTrackerPhase9XParent.CrossParentCacheWorksWithoutAdaptiveKBest
+  A: EXPECT_LE(run(true), run(false)) << "xparent must reduce or equal id count even without adaptive_k_best (post-review-2 fix)";
+  WHY: This test exists precisely because the flag 'silently no-op'd when adaptive_k_best=false' (its own comment).
+       But EXPECT_LE(on, off) passes when on == off, which is exactly what a re-introduced no-op produces. The
+       assertion therefore CANNOT catch the regression it was written to guard. The 2-parent / 1-measurement
+       scenario deterministically yields distinct birth ids with the cache off and a single shared id with it
+       on, so a strict reduction is available and expected.
+  MARGIN: off yields 2 distinct birth ids, on yields 1; EXPECT_LE admits on==off (no-op)
+  FIX: EXPECT_LT(run(true), run(false)) (strict) so a no-op flag turns the test red; or pin the exact ids: on ==
+       number-of-measurements-birthed, off > that.
+
+L1046 [b/symmetric-swap-blind] npc=False test=PmbmTrackerPhase9XParent.CrossParentCacheSharesIdsAcrossParents
+  A: EXPECT_LE(n_on, n_off) << "cross-parent cache must NOT increase distinct ids; " ...
+  WHY: Primary test for the cross-parent-cache feature, yet EXPECT_LE(n_on, n_off) passes when the cache is a
+       complete no-op (n_on == n_off). The comment describes the intended behavior (off -> distinct ids grow
+       >=2 across parents; on -> bounded by #measurements), i.e. a strict reduction, but the assertion only
+       forbids an INCREASE. It cannot distinguish 'cache shares ids' from 'cache does nothing'.
+  MARGIN: comment: off distinct-ids >=2, on bounded by measurements; EXPECT_LE admits equality
+  FIX: EXPECT_LT(n_on, n_off) when the 2-parent scenario guarantees off>on, or assert n_on == distinct-measurements-
+       birthed and n_off > that -- turning 'must not increase' into 'must actually share'.
+
+################################################################################
+# tests/pmbm/test_pmbm_scenario.cpp  (1 findings)
+################################################################################
+
+L84 [b/EXPECT_GT_structurally_positive] npc=False test=PmbmScenario.TwoTargetsCrossingTracked
+  A: EXPECT_GE(o.final_track_count, 1u);
+  WHY: The scenario has TWO true crossing targets, but the count band asserted is [1,5] (this line plus
+       EXPECT_LE(...,5u) on line 85). The lower bound of 1 passes even when one of the two targets is entirely
+       lost or the two are merged into a single track, so it does not verify that both targets are tracked. It
+       only fails on total collapse to 0 tracks. Combined with the loose OSPA<25 (cutoff 30) on line 83, a
+       regression that keeps one track alive and drifts/merges the other ships green.
+  MARGIN: true cardinality 2; asserted band [1,5] admits losing a target
+  FIX: Assert a banded floor that pins both targets tracked (e.g. count in [2,3] once confirmed, or
+       EXPECT_GE(...,2u)) rather than >=1; optionally add a per-target continuity/id-stability check.
+
+################################################################################
+# tests/pmbm/test_pmbm_sensor_activity.cpp  (1 findings)
+################################################################################
+
+L961 [b/metric-exists-not-value] npc=False test=PmbmStaleSignal.AisAsCooperativeFlagsStaleAndRetires
+  A: EXPECT_NEAR(it->existence_probability, it->existence_probability, 0.0) << "sanity: existence is a valid double"
+  WHY: Self-comparison: existence is compared to ITSELF with tol 0.0, so it can only fail on NaN. It asserts nothing
+       about the actual existence value of the AIS-as-cooperative track that is being kept alive (coasting) at
+       t=31. The whole point of this branch of the test is that the AIS detection at t=20 drove existence high
+       and the cooperative-overdue path at t=31 must leave it UNCHANGED (comms-loss != vessel-sank, spec 9c).
+       A regression that wrongly applied surveillance/miss math to the overdue cooperative track (dropping
+       existence from ~1.0 toward 0.73) would still
+  MARGIN: expected ~1.0 (AIS-detected at t=20, survival=1.0, cooperative-overdue leaves existence unchanged); asserted: nothing (x==x)
+  FIX: Replace with a value-bearing floor: EXPECT_GT(it->existence_probability,
+       tracker.config().output_existence_floor) or, since the overdue path must not change existence,
+       EXPECT_NEAR(it->existence_probability, r_after_detection, 1e-9) after capturing r_after_detection at
+       t=20. existence_probability is already a public Track field (core/types/Track.hpp:107) so tests-only.
+
+################################################################################
+# tests/pmbm/test_pmbm_tracker_update.cpp  (2 findings)
+################################################################################
+
+L152 [b/guarded-loop-vacuous] npc=False test=PmbmTrackerUpdate.NoPriorNoPppMeasurementProducesClutterOnly
+  A: EXPECT_GE(b.existence_probability, cfg.r_min);
+  WHY: The test is named 'ProducesClutterOnly' and the comment states the new-target Bernoulli has rho_target=0 ->
+       r=0 -> pruned. But the only assertion is a loop that checks surviving Bernoullis respect r_min -- a
+       pruning invariant that holds ALWAYS, regardless of whether the phantom was suppressed. There is no
+       ASSERT that the hypothesis has zero (target) Bernoullis. A regression that births a phantom with r=0.9
+       satisfies r>=r_min and passes green, so the assertion cannot catch the exact failure the test exists to
+       prevent.
+  MARGIN: expected: no target Bernoulli materialised; asserted: survivors >= r_min (tautology)
+  FIX: ASSERT that no target Bernoulli survives (e.g. every hypothesis's bernoullis list is empty, or the new-target
+       r is < r_min) -- test-only, density() already exposes this.
+
+L913 [b/guarded-loop-vacuous] npc=False test=PmbmTrackerUpdate.BirthExistenceTargetOutOfRangeFallsBackToLambdaBirth
+  A: EXPECT_NEAR(r_max, r_expected, 1e-6) << "fallback must use scalar lambda_birth path";
+  WHY: CONFIRM W3 assertion-quality#2. The isfinite check and this r_expected check are both gated by iterating
+       mbm->bernoullis and by the outer `if (any_bernoulli)` (line 912). There is no ASSERT_FALSE(mbm.empty())
+       or ASSERT_TRUE(any_bernoulli). If a regression in the out-of-range guard makes the birth path emit
+       nothing, every value assertion is skipped and the test passes green -- masking the exact NaN/negative-
+       existence poisoning the test was written to catch. In current code a Bernoulli IS born (r_new approx
+       0.833 from lambda_birth 5e-4 / (5e-4+1e-4)), so the g
+  MARGIN: r_expected = 5e-4/(5e-4+1e-4) approx 0.833; guard vacuous if zero Bernoullis born
+  FIX: ASSERT_TRUE(any_bernoulli) (or ASSERT_FALSE(mbm[0].bernoullis.empty())) before the value checks so a no-birth
+       regression turns the test red.
+  W3: assertion-quality#2 (birth-existence-target out-of-range fallback vacuous when no Bernoull
+
+################################################################################
+# tests/replay/test_camera_bearing_loader.cpp  (1 findings)
+################################################################################
+
+L262 [b/metric-exists-not-value] npc=False test=TEST(CameraBearingSmoke, RadarBornTrackReceivesBearingUpdate)
+  A: EXPECT_GT(sink.events.size(), 0u);
+  WHY: Weak existence check. The sink fires once per Bearing2D/RangeBearing2D update on a track; >0 proves the gating
+       mechanism worked at least ONCE over the whole ais_ferry_near replay. It catches total mechanism failure
+       (no camera bearing ever gates -> 0 -> red) but is blind to partial regression: if a gating/association
+       change caused only 1 of N camera bearings to gate while the rest were silently dropped, events stays >0
+       and the test passes green. It is the intended MECHANICS smoke per the file header (a Bearing2D update
+       lands on a radar-born track; accuracy del
+  MARGIN: asserted floor 0; number of camera bearings expected to gate onto the radar-born ferry track is not printed — needs-run
+  FIX: Banded floor on the gating RATE, not existence: assert sink.events.size() >= X% of the camera bearings whose
+       timestamp overlaps a live radar track (bearings.size() is known; a gated-fraction floor is a mechanics
+       rate, not an accuracy claim, so it does not violate the circularity rule). Fix the band from the
+       measured fraction (needs-run). Tests-only — the sink already exposes t
+
+################################################################################
+# tests/replay/test_haxr_ospa.cpp  (2 findings)
+################################################################################
+
+L159 [b/EXPECT_GT_structurally_positive] npc=False test=TEST(HaxrOspa, KattwykHourEkfGnnBaseline)
+  A: EXPECT_GT(seen_ids.size(), 0u);
+  WHY: Classic 'assert the metric merely exists' shape. seen_ids accumulates every track id ever seen over a full
+       hour of real HAXR radar plots; with real targets plus CFAR clutter the tracker forms tens-to-hundreds
+       of tracks, so >0 is satisfied by literally any surviving track (including pure clutter tracks). It
+       cannot catch a birth/confirmation regression that drops the true-vessel tracks while clutter keeps one
+       alive, nor any accuracy/cardinality regression. Labeled 'Sanity' by the author (line 156).
+  MARGIN: asserted floor 0; typical unique-id count is tens-to-hundreds on kattwyk_08 — trivially cleared; exact value needs-run
+  FIX: Tie the count to truth cardinality: assert concurrent track count covers a band of the concurrent AIS-truth
+       vessel count (truth is already loaded via loadHaxrTruth and truth_now is computed per window), e.g.
+       tracks_now.size() >= 0.5 * distinct concurrent truth vessels on a representative window. Tests-only (no
+       new accessor needed).
+
+L160 [b/metric-exists-not-value] npc=False test=TEST(HaxrOspa, KattwykHourEkfGnnBaseline)
+  A: EXPECT_LT(mean_ospa, 200.0);
+  WHY: Vacuous by construction. mean_ospa is the mean of ospaGreedy(truth_now, tracks_now, 200.0) calls (line 119)
+       whose cutoff c is 200.0; Ospa.hpp clips squared distance at c so each window's OSPA is in [0,200] and
+       the mean is in [0,200]. The assertion can therefore only fail if EVERY 1-second window scored the full
+       cutoff exactly (200.0), i.e. total cardinality/position mismatch at every tick for the whole hour. It
+       cannot distinguish a good tracker from one that mis-tracks nearly everything (mean 150 still passes).
+       The test's own comment (lines 147-149) states it
+  MARGIN: bound 200.0 == the OSPA cutoff c (structural maximum); typical mean OSPA not printed as a constant, so headroom is whatever the ru
+  FIX: Banded floor with real margin below the measured mean (needs-run to fix the band), e.g. EXPECT_LT(mean_ospa,
+       0.6*c) once the typical value is known; or better, a config-independent structural invariant: peak
+       concurrent track count covers >= X% of the concurrent AIS-truth vessel count (both truth_now and
+       tracks_now are already computed inside evalWindow). Tests-only. Caveat: th
+
+################################################################################
+# tests/replay/test_heldout_sailboats_probe.cpp  (1 findings)
+################################################################################
+
+L104 [b/print-only-no-assert] npc=False test=TEST(HeldoutSailboats, Probe)
+  A: SUCCEED();  // entire TEST body is print-only: dumpRun x4, no EXPECT/ASSERT on any metric
+  WHY: The whole TEST calls dumpRun() four times (printing scans, distinct_confirmed_ids,
+       total_confirmed_track_scans, peak_simultaneous_hazards, hazard clusters, and the pred-3 far-bank
+       anchor) then ends with SUCCEED(). Zero metric is gated; the eight held-out predictions are scored by
+       hand into docs/baselines. It passes unconditionally even if the frozen Stage-1b-ii detector emits zero
+       hazards, zero confirmed ids, or diverges on the scored sailboats_busy clip. Same category as W3
+       assertion-quality#5 (print-only comparison TESTs), extended to a file W3 did not enum
+  MARGIN: n/a (no assertion); dump reports distinct_confirmed_ids/track_scans/peak_hazards but gates none
+  FIX: Have dumpRun return its stats; on the SCORED arm (sailboats_busy / imm_cv_ct_pmbm_occupancy_detector) add
+       structural gates matching the pre-registered predictions with real margin: ASSERT run.valid,
+       distinct_confirmed_ids >= a banded floor, >=1 hazard cluster within X m of the pred-3 far-bank anchor
+       on >=N scans. Leave the measured-only arms (almost_cross, ais_ferry_far) repor
+  W3: assertion-quality#5 (print-only comparison TESTs) — confirm, same category extended to thi
+
+################################################################################
+# tests/replay/test_philos_close_approach_cpa.cpp  (1 findings)
+################################################################################
+
+L165 [a/within-noise-threshold] npc=False test=TEST(PhilosCloseApproachCpa, CollisionAlarmFiresBeforeContact)
+  A: EXPECT_LT(collider_min_range, 15.0)
+  WHY: collider_min_range is the tracker's ESTIMATED minimum range to own-ship near contact. The file header (lines
+       6-9) documents the closest radar RETURN on the collider at 17 m, yet the bar is 15 m — below the
+       nearest measurement — so passing requires the EKF's velocity-lead/smoothing to pull the state estimate
+       inside the last plot. A small estimator/gate/toolchain change or a slightly different last-plot
+       association moves the estimated closest approach across 15 m and flips the test with no real change in
+       'did we track the collider'. The genuine intent (we close
+  MARGIN: needs-run (documented closest sensor return = 17 m vs a 15 m bar → the estimate must beat its nearest measurement; effective margi
+  FIX: Assert against a physically-justified bound with real margin that still separates the collider from ambient
+       berthed boats — e.g. EXPECT_LT(collider_min_range, 25.0) (well inside the 50 m CPA ring, unambiguously
+       a close pass) — or key the bar to the measured nearest-return plus headroom, not under it.
+
+################################################################################
+# tests/replay/test_philos_farcross.cpp  (3 findings)
+################################################################################
+
+L107 [b/metric-exists-not-value] npc=False test=TEST(PhilosFarCross, AisFerryFarLoadsIsDeterministicAndTrackable)
+  A: EXPECT_GT(r.unique_ids, 0u);
+  WHY: ais_ferry_far HAS truth (AIS, 20 MMSIs) so accuracy is scoreable, but the test defers all accuracy to the
+       bench doc and asserts only that some id formed on the fused stream. Near-structurally positive in the
+       EKF+GNN harness; catches only total track failure, not accuracy/continuity regressions the clip is
+       designed to stress (far crossing).
+  MARGIN: unique_ids >=1; accuracy deferred to docs/baselines/2026-07-06_philos_farcross.md
+  FIX: If accuracy stays bench-only, at least assert a config-independent structural invariant (the ferry track
+       survives the far crossing with one id). A banded OSPA floor would need AIS-as-truth scoring wired here
+       (the ospa test's harness), tests-only.
+
+L149 [b/metric-exists-not-value] npc=False test=TEST(PhilosFarCross, AlmostCrossHasNoAisAndPersistsRadarTracks)
+  A: EXPECT_GT(r.unique_ids, 0u) << "radar returns produced no confirmed track — ADR-0002 'never vanish into nothing' violated";
+  WHY: The message frames this as the ADR-0002 'presence over classification / never suppressed into nothing' canary,
+       but the harness (driveTracker) wires ONLY EkfEstimator + GnnAssociator + TrackManager — there is NO
+       occupancy/static/PMBM suppression stage in this pipeline. The suppression-into-nothing failure mode
+       ADR-0002 guards against lives in the PMBM/LiveOccupancyModel path, which this test does not exercise.
+       On persistent radar plots a plain EKF+GNN tracker will always confirm at least one id, so unique_ids>0
+       is effectively structurally positive here; it can
+  MARGIN: unique_ids >=1, structurally positive in an EKF+GNN harness with no suppression stage
+  FIX: To genuinely exercise ADR-0002 'never invisible', run almost_cross through the SUPPRESSION-capable config
+       (imm_cv_ct_pmbm_occupancy...) and assert a persistent radar contact yields a confirmed track OR an
+       emitted static hazard covering it — the property that can actually regress. This is a test-config
+       change (suppression pipeline already exists), not a production accessor.
+
+L151 [b/EXPECT_GT_structurally_positive] npc=False test=TEST(PhilosFarCross, AlmostCrossHasNoAisAndPersistsRadarTracks)
+  A: EXPECT_GT(r.final_tracks, 0u) << "no track survived to end-of-clip";
+  WHY: Same mis-harness as line 149. final_tracks counts tracks alive at end-of-clip; with persistent radar and a
+       plain EKF+GNN tracker (delete_after=8 misses), a contact re-confirms continuously, so this is near-
+       structurally positive. It does not exercise the ADR-0002 suppression path and can only catch a
+       wholesale tracker/confirmation failure covered elsewhere.
+  MARGIN: final_tracks >=1, near-structural for persistent-return EKF+GNN
+  FIX: Assert track SURVIVES THE PASS WITH A STABLE ID (final_tracks==unique_ids over the persistent contact, or one
+       id continuous end-to-end) under the suppression config; a bare >0 on this harness is toothless.
+
+################################################################################
+# tests/replay/test_philos_los_shadow_probe.cpp  (4 findings)
+################################################################################
+
+L343 [a/adaptive-vs-adaptive] npc=False test=TEST(LosShadowGuard, CarCarrierNearYachtCellGuardOnVsOff)
+  A: EXPECT_GT(haz_on, haz_off);
+  WHY: Bare strict > between two measured hazard-presence fractions (both move under FP/config/toolchain drift) — the
+       sunset-6c shape with NO required margin. It is de-fanged in practice by the two bracketing fixed-bound
+       assertions (line 326 haz_off<0.7, line 344 haz_on>=0.8) which already imply haz_on>haz_off with a 0.1
+       margin, making this line redundant. Flagged because the SHAPE is the latent-red pattern: if the
+       neighbouring fixed bounds were ever relaxed, this bare adaptive-vs-adaptive comparison would be the
+       only separation check and could flip on a sub-scan ha
+  MARGIN: haz_on ~1.0 vs haz_off ~0.51 (header: OFF hazard ~51%); asserted bound is 0 (bare >), practical gap ~0.49
+  FIX: Delete as redundant (326+344 cover it), or make the margin explicit: EXPECT_GT(haz_on, haz_off + 0.2). Never
+       rely on a bare > between two measured fractions.
+
+L412 [a/within-noise-threshold] npc=False test=TEST(LosShadowGuard, SimAnchoredControlGuardInert)
+  A: EXPECT_NEAR(w_on.pre.mean_mass, w_off.pre.mean_mass, 0.02);
+  WHY: Same shape/fragility as line 413 for the pre-interval: fixed 0.02 absolute epsilon on an adaptive mean-mass
+       ON-vs-OFF inertness delta. Lower priority (pre interval is un-occluded so Δ should be ~0), but the
+       epsilon-on-metric pattern is the same latent red.
+  MARGIN: needs-run (Δ printed only)
+  FIX: See line 413 — rely on fire_frac<0.2 and/or a relative-tolerance bound with headroom.
+
+L413 [a/within-noise-threshold] npc=False test=TEST(LosShadowGuard, SimAnchoredControlGuardInert)
+  A: EXPECT_NEAR(w_on.shadow.mean_mass, w_off.shadow.mean_mass, 0.02);
+  WHY: Inertness check (guard ON must equal guard OFF where nothing occludes). Encodes a legitimate proof-
+       obligation-#2 property, but as a fixed absolute epsilon (0.02) on an adaptive mean-mass metric. The
+       ON/OFF delta is exactly the perturbation from the guard firing on a rare cross-traffic scan; if a
+       different toolchain/tie-break shifts the guard's firing by one scan, mean_mass Δ can drift toward the
+       0.02 bound and flip meaninglessly. The companion robust bound (line 409 fire_frac<0.2, one-sided vs
+       fixed bound) already captures inertness safely, so this absolute-
+  MARGIN: needs-run (ON-OFF mass Δ is printed to 4 decimals at line 399 but not in a comment; author's framing 'essentially unchanged' impli
+  FIX: Lean on the one-sided fire_frac<0.2 inertness bound (line 409) and, if a mass check is kept, bound the per-
+       scan max |Δmass| as a fraction of the OFF scale with real headroom rather than a bare absolute 0.02.
+
+L414 [a/within-noise-threshold] npc=False test=TEST(LosShadowGuard, SimAnchoredControlGuardInert)
+  A: EXPECT_NEAR(w_on.post.mean_mass, w_off.post.mean_mass, 0.02);
+  WHY: Same shape/fragility as lines 412-413 for the post-interval. Fixed 0.02 absolute epsilon on an adaptive ON-vs-
+       OFF mass delta.
+  MARGIN: needs-run (Δ printed only)
+  FIX: See line 413.
+
+################################################################################
+# tests/replay/test_philos_occupancy_coverage_6c.cpp  (7 findings)
+################################################################################
+
+L347 [b/guarded-loop-vacuous] npc=False test=PhilosCoverageDecay6c.CloseApproachKeepMixedPresenceHeldUnderSuppressor
+  A: for (const auto& l : labels) { if (l.label != ExistenceLabelClass::KeepMixed) continue; ... EXPECT_GE(fu, fl - 0.02) ...; EXPECT_GE(fc, fl - 0.02) ...; }
+  WHY: The ADR-0002 conservation assertions (357/359) run only inside a `continue`-filtered loop that matches
+       KEEP_MIXED labels, and there is NO counter asserting the loop body ever executed. If
+       close_approach_labels.csv renames/drops the KEEP_MIXED class or a loader regression misclassifies it,
+       the loop matches nothing and the WHOLE conservation test — its entire purpose — passes green with zero
+       assertions run. W3 assertion-quality coverage-note-8 explicitly praises the SIBLING file
+       test_philos_close_approach_labels.cpp:141 for guarding its identical filtered loop 
+  MARGIN: needs-run / latent (loop matches today because the labels file has KEEP_MIXED regions by design; unguarded against any future labe
+  FIX: Add `int keep_mixed_seen = 0;` incremented in the matched branch and `ASSERT_GE(keep_mixed_seen, 1)` (or the
+       expected count) after the loop, matching the sibling test.
+  W3: assertion-quality coverage-note-8 (philos close_approach KEEP_MIXED loop guard)
+
+L357 [a/adaptive-vs-adaptive] npc=False test=PhilosCoverageDecay6c.CloseApproachKeepMixedPresenceHeldUnderSuppressor
+  A: EXPECT_GE(fu, fl - 0.02);  EXPECT_GE(fc, fl - 0.02);
+  WHY: fu/fc are detector-arm presence fractions (full-pipeline outputs of
+       imm_cv_ct_pmbm_occupancy_detector[_coverage]) compared against fl, the land-baseline presence fraction
+       (a DIFFERENT full-pipeline config, imm_cv_ct_pmbm_land), with only a fixed 0.02 slack. This is the
+       sunset-6c adaptive-vs-adaptive shape: both operands are feedback-coupled full-pipeline outputs that
+       move under toolchain/config/FP drift, and the sign flips if land drifts up or detector drifts down by
+       >0.02 relative to each other. The file prints no presence values, so the true margin is needs
+  MARGIN: needs-run (presence fractions land/uni/cov are only fprintf'd at 351-353, not asserted; likely ~1.0 in all arms under ADR-0002 but
+  FIX: Gate on a FIXED conservation floor with real margin instead of a co-moving baseline: ASSERT each of fl, fu, fc
+       is >= 0.90 (measured ~1.0) — 'no KEEP_MIXED object suppressed into nothing in ANY arm' — and keep the
+       detector-vs-land delta as a logged diagnostic only, not a pass/fail comparison.
+
+L409 [b/metric-exists-not-value] npc=False test=PhilosCoverageDecay6c.SunsetChartCorroborationLabelsStructureNotDepartedVessel
+  A: EXPECT_GT(corr, 0)
+  WHY: corr is the total count of chart-corroborated hazard-scans across the whole run. Asserting merely >0 is an
+       exists-not-value floor: it catches only TOTAL chart-wiring death, not partial regression. The clip's
+       own docstring (test 5, line 572) states astern_blob alone is chart-confirmed 31/31, so corr is measured
+       ~31+; a regression that collapses corroboration to a single scan still passes with ~30 scans of
+       headroom.
+  MARGIN: measured ~31+ (astern_blob 31/31 per line 572) vs asserted >0 floor
+  FIX: Banded floor sized to the measured value with >=20% headroom, e.g. EXPECT_GE(corr, 20), or assert a
+       corroboration fraction — catches partial chart-match regression, not just total wiring death.
+
+L533 [b/metric-exists-not-value] npc=False test=PhilosCoverageDecay6c.SunsetCameraObservedEmptyFlagsVacatedCells
+  A: EXPECT_GT(streakMaturedScans(*ferry_a), 0)
+  WHY: Exists-not-value floor on the config-independent camera-empty CELL streak for the vacated ferry berth. Catches
+       only total camera/FOV-wiring death; a regression that matures the streak on 1 scan instead of the
+       multi-scan empty window still passes. Note the authors already did the important #24 upgrade here —
+       moving off the adaptive-bar-fragile emitted-hazard flag onto the config-independent streak (the c0ac493
+       loiterer fix) — so this is a residual weak floor, not a fragile shape.
+  MARGIN: needs-run (streak count not printed; berth camera-observed-empty over the post-t98 vacate window)
+  FIX: Banded floor sized to the measured streak length with margin, e.g. EXPECT_GE(streakMaturedScans(*ferry_a), K)
+       where K reflects the vacate-window scan count with >=20% headroom.
+
+L543 [b/metric-exists-not-value] npc=False test=PhilosCoverageDecay6c.SunsetCameraObservedEmptyFlagsVacatedCells
+  A: EXPECT_GT(streakMaturedScans(*loit), 0)
+  WHY: Same exists-not-value floor as line 533, for the loiterer's cleanly-empty bearing. The comment (line 495) says
+       the camera saw '0 detections +/-10 deg over 20 s', implying a multi-scan matured streak, but the
+       assertion demands only >0, so a streak-length off-by-one or FOV-narrowing regression that matures a
+       single scan passes. Config-independent (streak, not the fragile emitted-hazard flag) — a good #24 base,
+       but still a bare existence floor.
+  MARGIN: needs-run (comment implies ~20 s clean-empty window; exact scan count not printed)
+  FIX: Banded floor sized to the ~20 s window scan count with margin.
+
+L660 [b/EXPECT_GT_structurally_positive] npc=False test=PhilosCoverageDecay6c.SunsetCameraEvictionRemovesDepartedPinsHoldsChartStructure
+  A: EXPECT_LE(ferry_on_pp.second, ferry_off_pp.second)
+  WHY: The test's own comment (lines 655-659) documents that both operands are 0/0 on this clip ('0/0 here — nothing
+       left to remove') and that eviction is structurally one-sided ('eviction can only spend pins, never add
+       them'), so ferry_on <= ferry_off is guaranteed by construction. The assertion therefore cannot fail on
+       this clip (0<=0) and could not fail in principle unless eviction violated its own one-sided contract.
+       It is a deliberate, documented #24-aware replacement for the old fragile strict `on < off`, with real
+       post-move-eviction correctness gated on the s
+  MARGIN: 0/0 on this clip (documented at line 657) — vacuous
+  FIX: Cannot be made toothy on this fixture (no persistent post-move ferry phantom exists here); correctness rightly
+       lives in synthetic EvictionScene*. Optionally add a comment or a loud guard that this arm is inert on
+       sunset_cruise so a reader does not credit it as coverage.
+
+L675 [b/EXPECT_GT_structurally_positive] npc=False test=PhilosCoverageDecay6c.SunsetCameraEvictionRemovesDepartedPinsHoldsChartStructure
+  A: EXPECT_GE(astern_on, astern_off)
+  WHY: The comment (lines 669-674) documents astern_blob is de-emitted under the coverage config on this clip
+       ('universal=13/coverage=0'), so astern_off = astern_on = 0 (both arms here are the coverage config with
+       only eviction toggled); combined with eviction being structurally one-sided, EXPECT_GE(0,0) is vacuous
+       and cannot fail. It is a deliberate documented replacement for the dropped `astern_on > 0` existence
+       pin, with chart-hold-beats-camera precedence gated on the synthetic EvictionScene*. Test name promises
+       chart-confirmed structure is held regardless of cam
+  MARGIN: 0/0 (astern de-emitted under coverage config, per lines 671-673) — vacuous
+  FIX: Inert on this clip by design; the toothy chart-precedence check lives in synthetic EvictionScene*. To be
+       exercised here would need a fixture where chart-confirmed structure is actually emitted under the
+       coverage arm.
+
+################################################################################
+# tests/replay/test_philos_ospa.cpp  (4 findings)
+################################################################################
+
+L182 [b/metric-exists-not-value] npc=False test=TEST(PhilosOspa, AisFerryNearMultiSensorBaseline)
+  A: EXPECT_GT(a.unique_ids, 0u);
+  WHY: The whole test computes mean OSPA per 1 s window for config A (radar-only) and config B (radar+AIS) — the
+       header calls the numbers 'the deliverable' — but the ONLY assertions are that >=1 track id ever
+       appeared. mean_ospa (RunStats.mean_ospa) is fprintf'd and discarded; no assertion gates it, and A vs B
+       are never compared despite the header claiming 'the two numbers together tell you whether AIS fusion
+       materially changes the tracker'. An OSPA blow-up (estimator/association/detector regression) that still
+       forms at least one track passes green. Effectively a pr
+  MARGIN: unique_ids >=1 (some track always forms on hundreds of real radar plots); mean OSPA needs-run (computed, discarded; per-config acc
+  FIX: Add a banded floor / one-sided ceiling on mean_ospa with >=20% headroom to the measured typical (e.g.
+       a.mean_ospa < K where K is well below the bench value and below the 100 m clip), and assert the A-vs-B
+       property the header promises WITH A MARGIN (e.g. fusion does not regress: b.mean_ospa <= a.mean_ospa *
+       1.1). mean_ospa is already returned in RunStats, so this is tests-only.
+
+L183 [b/metric-exists-not-value] npc=False test=TEST(PhilosOspa, AisFerryNearMultiSensorBaseline)
+  A: EXPECT_GT(b.unique_ids, 0u);
+  WHY: Same defect as line 182 for the fused config B: the fused-stream mean OSPA is computed and discarded; only
+       presence (>=1 id) is asserted. Cannot catch a fusion accuracy regression.
+  MARGIN: unique_ids >=1; mean OSPA needs-run
+  FIX: Banded floor on b.mean_ospa plus the A-vs-B margin comparison (see line 182).
+
+L184 [b/EXPECT_GT_structurally_positive] npc=False test=TEST(PhilosOspa, AisFerryNearMultiSensorBaseline)
+  A: EXPECT_GT(a.n_windows, 0u);
+  WHY: n_windows is the count of OSPA evaluation windows. evalWindow(t1) is called unconditionally at line 114 after
+       the loop, pushing at least one window regardless of data, so ospa_per_window.size() is always >=1. The
+       assertion cannot fail under any plausible defect.
+  MARGIN: n_windows >=1 by construction (unconditional evalWindow(t1))
+  FIX: Drop, or replace with an assertion on window coverage that could actually regress (e.g. n_windows within a
+       band of (t1-t0) seconds, so a broken eval clock is caught).
+
+L185 [b/EXPECT_GT_structurally_positive] npc=False test=TEST(PhilosOspa, AisFerryNearMultiSensorBaseline)
+  A: EXPECT_GT(b.n_windows, 0u);
+  WHY: Same as line 184 for config B: n_windows always >=1 because evalWindow(t1) is unconditional. Vacuous.
+  MARGIN: n_windows >=1 by construction
+  FIX: Drop or replace with a windows-vs-duration band (see line 184).
+
+################################################################################
+# tests/replay/test_philos_sunset_labels.cpp  (2 findings)
+################################################################################
+
+L74 [b/metric-exists-not-value] npc=False test=TEST(PhilosSunsetLabels, LabelAwareDecomposition)
+  A: EXPECT_GT(d.tracks_on_keep, 0);
+  WHY: tracks_on_keep is the count of confirmed track-scans landing in KEEP regions — a KEEP-mass magnitude.
+       Asserting only >0 cannot catch the exact failure this instrument exists to catch: a base-config change
+       or suppressor that deletes the ferry / real vessels and drops KEEP mass by ~99% still passes as long as
+       a single track-scan grazes one KEEP region. The sibling close_approach test does this correctly with a
+       banded floor (EXPECT_GE(tracks_on_keep, 2500) at 45% of its 5570 baseline). The in-file comment even
+       labels this a mere 'sanity bound', not a gate.
+  MARGIN: needs-run (sunset tracks_on_keep baseline not recorded in-file; close_approach analogue is 5570 with a 2500 floor). Asserted only 
+  FIX: Record the sunset baseline once and assert EXPECT_GE(d.tracks_on_keep, floor) with floor ~= 45% of that
+       baseline (mirror close_approach line 71), keeping the decomposition print as the A/B surface.
+
+L102 [b/metric-exists-not-value] npc=False test=TEST(PhilosSunsetLabels, KeepCanariesHaveTracks)
+  A: EXPECT_TRUE(covered) << "KEEP region " << l.region_id << " has no confirmed track within " << l.radius_m << " m during its window (closest " << best << " m)";
+  WHY: covered is set if ANY confirmed track is within radius on ANY scan across the region's whole active window.
+       This is exactly the whole-clip existential shape the sibling close_approach test explicitly rejects
+       ('the dense scene satisfies that ~6x per scan for free and it cannot tell a real dinghy from a
+       phantom') and upgraded to a per-scan coverage FRACTION floor. It catches total region blackout but not
+       partial erosion of a region's real-craft coverage or phantom-satisfaction — the very
+       suppressor/regression failure the canary is meant to guard. Sunset's lower
+  MARGIN: needs-run (per-region closest-track distance 'best' printed at runtime). Asserted only covered==true (existence over the whole win
+  FIX: Adopt the sibling's per-scan coverage-fraction floor: covered_scans/active_scans >= 0.7 * per-region baseline
+       (banded, real margin), replacing the single-scan existential.
+
+################################################################################
+# tests/scenario/test_cpa_scenario.cpp  (4 findings)
+################################################################################
+
+L119 [b/EXPECT_GT_structurally_positive] npc=False test=TEST(CpaScenario, PerpendicularPassTwoSigmaBandContainsTruth)
+  A: EXPECT_GT(p.sigma_cpa_m, 0.0)
+  WHY: sigma_cpa_m is the square root of a projected position/velocity variance; with the own-ship carrying a 1 m
+       position sigma the joint covariance is strictly positive-definite, so sigma_cpa is structurally > 0. No
+       plausible defect in the CPA uncertainty propagation drives it to exactly 0 here. The only way to reach
+       0 is an all-zero covariance, which this scenario never constructs. The meaningful magnitude check
+       already lives at line 122; line 119 adds no teeth.
+  MARGIN: >0 by construction (own-ship sigma=1 m guarantees positive joint cov); bound 0.0 -> zero discriminating power.
+  FIX: Drop it as redundant, or replace with a physical band floor/ceiling (e.g. 0.5 m < sigma_cpa < 100 m) so a
+       covariance-collapse or covariance-blowup regression is actually caught.
+
+L122 [a/adaptive-vs-adaptive] npc=False test=TEST(CpaScenario, PerpendicularPassTwoSigmaBandContainsTruth)
+  A: EXPECT_LT(std::abs(p.cpa_distance_m - kTruthCpaM), 2.0 * p.sigma_cpa_m)
+  WHY: 2-sigma containment where the LHS is a FIXED ~4.99 m geometric offset (past-CPA branch reports the CURRENT
+       separation sqrt(100^2+1000^2)=1004.99 m against the constant kTruthCpaM=1000) and the RHS is
+       2*sigma_cpa, an ADAPTIVE quantity driven by the EKF's converged covariance (fixed seed 13) plus the
+       synthesized own-ship 1 m sigma. Pass requires sigma_cpa > ~2.5 m. If a compiler/toolchain change or
+       seed shift converges the EKF covariance slightly tighter, 2*sigma_cpa can drop below 4.99 m and flip
+       the test red even though the CPA-uncertainty math never regresse
+  MARGIN: needs-run: LHS fixed ~4.99 m; RHS=2*sigma_cpa, sigma_cpa magnitude unknown without running (own-ship 1 m sigma + EKF steady-state 
+  FIX: Assert calibration with headroom against a FIXED bound: either use 3-sigma (band = 3*sigma_cpa) so a modest
+       covariance drift can't flip it, or assert sigma_cpa itself lies in a physical band [lo,hi] with >=20%
+       margin AND separately assert the fixed geometric deviation |cpa-truth| < a fixed constant (e.g. 10 m).
+       Keeps teeth (overconfidence still fails) without pinning to a razo
+
+L189 [b/print-only-no-assert] npc=False test=TEST(CpaScenario, PerpendicularPassNoiseSweepReport)
+  A: SUCCEED();
+  WHY: The body sweeps four (sigma_meas, sigma_own) rows, computes cpa_distance_m / sigma_cpa_m /
+       probability_below_threshold and the in_2sigma flag, then only fprintf's them and calls SUCCEED(). Zero
+       EXPECT/ASSERT on any CPA quantity, so it passes unconditionally even if a filter produces NaN/diverged
+       CPA or the 2-sigma band fails to contain truth on some rows (the 'in_2sigma' bool is printed, never
+       asserted). Same family as W3 assertion-quality#5 (print-only comparison tests), which enumerated
+       test_filter_comparison/test_jpda_comparison/test_mht_comparison/test_mu
+  MARGIN: n/a (no assertion present)
+  FIX: Convert the printed in_2sigma column into an assertion: EXPECT_TRUE(in_2sigma) per row (with the wider-band
+       hardening from the finding above), and EXPECT_GT(p.cpa_distance_m, 0.0)/isfinite on each row so a
+       NaN/divergence on any sweep point turns the report red.
+  W3: assertion-quality#5 print-only estimator/associator comparison TESTs (same shape; this fil
+
+L303 [b/print-only-no-assert] npc=False test=TEST(CpaScenario, PerpendicularPassVelocityUncertaintySweepReport)
+  A: SUCCEED();
+  WHY: Future-CPA velocity-uncertainty sweep over sigma_v in {0,0.5,1,2}: computes and prints
+       cpa_distance_m/sigma_cpa_m/probability_below_threshold for each row, then SUCCEED(). No assertion, so a
+       regression that stops sigma_cpa from growing with sigma_v (the exact property the paired non-report
+       test at line 242 guards) or that NaNs on a row would still pass here.
+  MARGIN: n/a (no assertion present)
+  FIX: Assert monotonicity across the swept rows (sigma_cpa strictly increasing in sigma_v with a margin) and
+       finiteness of each cpa/sigma, instead of SUCCEED().
+  W3: assertion-quality#5 (same print-only family; not enumerated in W3)
+
+################################################################################
+# tests/scenario/test_crossing.cpp  (1 findings)
+################################################################################
+
+L34 [b/symmetric-swap-blind] npc=False test=TEST(Stress, CrossingTargetsStayCountedAndIdsMostlyStable)
+  A: EXPECT_LE(countIdSwitches(r.steps, 30.0), 2);
+  WHY: countIdSwitches (core/scenario/Metrics.cpp:25) increments once per truth index when its nearest track_id
+       changes; a clean full swap of the two crossing targets at CPA produces exactly ONE switch per truth
+       target = 2 total, which satisfies EXPECT_LE(...,2). So the bound admits the exact failure it is meant
+       to guard (a crossing-point ID swap). It is also DRIFT-BLIND: when no track is within cutoff=30 m the
+       metric sets best_id=0, counts no switch and does not update last[i], so an estimator/association
+       regression that keeps two tracks alive but drives them >30 m
+  MARGIN: typical id_switches=0; bound=2 exactly equals a clean full-swap count; needs-run for exact
+  FIX: Add a banded accuracy floor EXPECT_LT(r.mean_ospa, <bound with >=20% headroom over measured>) (mean_ospa
+       already in ScenarioResult) to catch off-truth drift; and tighten the ID invariant to a swap-proof form
+       — either EXPECT_EQ(countIdSwitches,0) if achievable on this geometry, or a per-truth 'kept a single id
+       through the pass' invariant. Bound needs-run to set.
+  W3: required-scenarios#2 crossing <=2 admits full swap; assertion-quality#1 degenerate metric,
+
+################################################################################
+# tests/scenario/test_filter_comparison.cpp  (8 findings)
+################################################################################
+
+L125 [b/symmetric-swap-blind] npc=False test=FilterComparison.Crossing
+  A: EXPECT_LE(e.id_switches, 2);  // and line 126 EXPECT_LE(u.id_switches, 2);
+  WHY: Same defect as test_crossing:34 on the same builder/geometry: a clean full two-target swap yields exactly 2
+       counted switches, which passes EXPECT_LE(...,2), so the bound admits the failure mode. Drift-blind for
+       the same cutoff reason. This TEST computes e.mean_ospa / u.mean_ospa but only fprintfs them (lines
+       117-121) — no accuracy assertion. final_track_count==2u (lines 123-124) is swap/drift-blind. Applies to
+       both the EKF (line 125) and UKF (line 126) assertions. CONFIRMS W3 assertion-quality#1 (verifier
+       explicitly notes 'FilterComparison.Crossing asserts on
+  MARGIN: typical id_switches=0; bound=2 == full-swap count; mean_ospa discarded; needs-run
+  FIX: Assert EXPECT_LT(e.mean_ospa, X) / EXPECT_LT(u.mean_ospa, X) against a fixed bound with margin (values already
+       computed) and tighten id_switches to a swap-proof invariant. Bound needs-run.
+  W3: assertion-quality#1 FilterComparison.Crossing count+id_switches only, mean_ospa fprintf-on
+
+L129 [b/print-only-no-assert] npc=False test=FilterComparison.ShortRangePass
+  A: (TEST body has zero EXPECT/ASSERT — EKF/UKF/PF metrics only fprintf'd to stderr, lines 149-155)
+  WHY: The TEST runs EKF/UKF/PF over a short-range range/bearing pass and prints mean_ospa/id_switches/track counts
+       but asserts nothing, so it passes unconditionally even if a filter diverges or emits NaN OSPA on this
+       exact config. The comment claims 'UKF should pull ahead' but nothing enforces it. By-design reporting
+       harness per W3, but currently unfalsifiable. CONFIRMS W3 assertion-quality#5 (names line 129).
+  MARGIN: no assertion; needs-run
+  FIX: Add a cheap falsifiable floor: EXPECT_TRUE(std::isfinite(e.mean_ospa)) plus a one-sided fixed sanity bound
+       (e.g. EXPECT_LT(e.mean_ospa, <cutoff-scaled bound>)) for each filter so a diverged/NaN OSPA fails. If a
+       comparative claim is wanted, assert 'UKF <= EKF*factor' only WITH a margin, never a bare >.
+  W3: assertion-quality#5 print-only comparison tests (line 129 named)
+
+L158 [b/print-only-no-assert] npc=False test=FilterComparison.VeryShortRangePass
+  A: (TEST body has zero EXPECT/ASSERT — metrics only fprintf'd, lines 178-184)
+  WHY: Print-only; runs EKF/UKF/PF on a sharper 20 m pass and prints results with no assertion. Passes even on
+       divergence/NaN. CONFIRMS W3 assertion-quality#5 (names line 158).
+  MARGIN: no assertion; needs-run
+  FIX: Add isfinite + one-sided fixed OSPA sanity floor per filter; any comparative claim must carry a margin.
+  W3: assertion-quality#5 print-only (line 158 named)
+
+L211 [b/print-only-no-assert] npc=False test=FilterComparison.BearingOnlyPass
+  A: (TEST body has zero EXPECT/ASSERT — metrics only fprintf'd, lines 231-237)
+  WHY: Print-only bearing-only pass (EKF/UKF/PF). No assertion, so a NaN/diverged banana-posterior collapse ships
+       green. Also relates to the non-cooperative bearing-only coverage gap (W3 required-scenarios#5).
+       CONFIRMS W3 assertion-quality#5 (names line 211).
+  MARGIN: no assertion; needs-run
+  FIX: Add isfinite + one-sided fixed OSPA sanity floor per filter, plus final_track_count==1 (presence/continuity)
+       so a non-cooperative target is asserted tracked.
+  W3: assertion-quality#5 print-only (line 211); related required-scenarios#5 bearing-only conti
+
+L240 [b/print-only-no-assert] npc=False test=FilterComparison.ManeuveringTarget
+  A: (TEST body has zero EXPECT/ASSERT — EKF/UKF/PF/IMM metrics only fprintf'd, lines 269-277)
+  WHY: Print-only; drives the correlated-S Position2D path through IMM (the one place a 2x2 kernel cross-term would
+       bite, per W3 T1 finding) but asserts nothing. Passes on any IMM divergence. CONFIRMS W3 assertion-
+       quality#5 (names line 240).
+  MARGIN: no assertion; needs-run
+  FIX: Add isfinite + one-sided fixed OSPA sanity floor for each of EKF/UKF/PF/IMM; if asserting IMM benefit, require
+       a margin over EKF averaged, not a bare >.
+  W3: assertion-quality#5 print-only (line 240); touches T1 IMM correlated-S uncovered path
+
+L280 [b/print-only-no-assert] npc=False test=FilterComparison.Maneuvering3ModeIMM
+  A: (TEST body has zero EXPECT/ASSERT — EKF/IMM-2/IMM-3 metrics only fprintf'd, lines 325-331)
+  WHY: Print-only; comment says 'IMM-3 should win discrimination during the turn' but nothing asserts it. Passes on
+       divergence. CONFIRMS W3 assertion-quality#5 (names line 280).
+  MARGIN: no assertion; needs-run
+  FIX: Add isfinite + one-sided fixed OSPA sanity floor per config; a 'IMM-3 beats EKF' claim needs an explicit
+       margin.
+  W3: assertion-quality#5 print-only (line 280 named)
+
+L334 [b/print-only-no-assert] npc=False test=FilterComparison.ShortRangeMultiSeedSweep
+  A: (TEST body has zero EXPECT/ASSERT — 20-seed mean+/-sd only fprintf'd, lines 381-388)
+  WHY: Print-only 20-seed Monte-Carlo sweep. This is the IDEAL place for a robust banded floor (aggregate over 20
+       seeds is seed-noise-averaged) yet it asserts nothing. CONFIRMS W3 assertion-quality#5 (names line 334).
+  MARGIN: no assertion; needs-run
+  FIX: Assert the 20-seed MEAN mean_ospa < fixed bound with >=20% margin for EKF/UKF/each PF N (banded floor over the
+       Monte-Carlo mean is the robust shape).
+  W3: assertion-quality#5 print-only (line 334 named)
+
+L391 [b/print-only-no-assert] npc=False test=FilterComparison.BearingOnlyMovingSensor
+  A: (TEST body has zero EXPECT/ASSERT — EKF/UKF/PF metrics only fprintf'd, lines 420-426)
+  WHY: Print-only; comment says 'PF should outperform the Gaussian filters' but nothing enforces it, and a diverged
+       bearing-only observability collapse would pass. CONFIRMS W3 assertion-quality#5 (names line 391).
+  MARGIN: no assertion; needs-run
+  FIX: Add isfinite + one-sided fixed OSPA sanity floor per filter; PF-beats-Gaussian claim needs a margin.
+  W3: assertion-quality#5 print-only (line 391 named)
+
+################################################################################
+# tests/scenario/test_jpda_comparison.cpp  (1 findings)
+################################################################################
+
+L42 [b/print-only-no-assert] npc=False test=JpdaComparison.ClutterCrossing
+  A: (entire TEST body has zero EXPECT/ASSERT — GNN/JPDA metrics only fprintf'd, lines 62-66)
+  WHY: The only TEST is print-only. It drives the production estimator-routed JPDA path (runBatched -> Tracker ->
+       associate(tracks,batch,&estimator)) under clutter but asserts nothing, so JPDA's clutter-resistance
+       benefit is executed yet never verified. CONFIRMS W3 assertion-quality#5 (names
+       test_jpda_comparison.cpp:42) and the W3 T1 low finding ('scenario tests that route through an estimator
+       print OSPA/id_switch diagnostics with no EXPECT/ASSERT').
+  MARGIN: no assertion; needs-run
+  FIX: Assert isfinite + fixed one-sided OSPA sanity floor for both GNN and JPDA and both-targets-tracked
+       (final_track_count==2); a 'JPDA beats GNN under clutter' claim needs a margin over the 20-seed mean
+       (see test_multi_seed_sweep).
+  W3: assertion-quality#5 print-only (test_jpda_comparison.cpp:42 named); T1 JPDA estimator-rout
+
+################################################################################
+# tests/scenario/test_mht_comparison.cpp  (1 findings)
+################################################################################
+
+L53 [b/print-only-no-assert] npc=False test=MhtComparison.CrossingWithDropout
+  A: (entire TEST body has zero EXPECT/ASSERT — GNN/JPDA/MHT metrics only fprintf'd, lines 78-84)
+  WHY: The only TEST in the file is print-only: it runs GNN, JPDA and MHT over a crossing-with-dropout scenario and
+       prints mean_ospa/id_switches/track counts, asserting nothing. It cannot fail even if MHT loses both
+       tracks or emits NaN OSPA. CONFIRMS W3 assertion-quality#5 (names test_mht_comparison.cpp:53) and W3
+       assertion-quality#1 verifier ('MhtComparison.CrossingWithDropout is entirely print-only').
+  MARGIN: no assertion; needs-run
+  FIX: Assert per-tracker isfinite + a fixed one-sided OSPA sanity floor and final track count (>=1 present through
+       dropout); MHT-vs-GNN comparative claims need a margin.
+  W3: assertion-quality#5 print-only (test_mht_comparison.cpp:53 named)
+
+################################################################################
+# tests/scenario/test_multi_seed_sweep.cpp  (4 findings)
+################################################################################
+
+L84 [b/print-only-no-assert] npc=False test=MultiSeedSweep.IMM3OnManeuvering
+  A: (TEST body has zero EXPECT/ASSERT — 20-seed AggStats only fprintf'd, lines 120-128)
+  WHY: Print-only 20-seed sweep of EKF vs IMM-2 vs IMM-3; aggregates mean/std OSPA and mean id-switches but asserts
+       nothing. The seed-averaged aggregate is exactly the robust substrate for a banded floor, wasted.
+       CONFIRMS W3 assertion-quality#5 (names all four multi_seed cases).
+  MARGIN: no assertion; needs-run
+  FIX: Assert e.mean_ospa/i2.mean_ospa/i3.mean_ospa (20-seed means) each < fixed bound with >=20% margin, and if
+       claiming IMM benefit, 'i3.mean_ospa < e.mean_ospa - delta' with an explicit delta margin (never a bare
+       <).
+  W3: assertion-quality#5 print-only (all four test_multi_seed_sweep cases named)
+
+L131 [b/print-only-no-assert] npc=False test=MultiSeedSweep.JpdaOnClutterCrossing
+  A: (TEST body has zero EXPECT/ASSERT — 20-seed AggStats only fprintf'd, lines 151-157)
+  WHY: Print-only 20-seed GNN-vs-JPDA clutter sweep. No assertion; a JPDA regression under clutter ships green.
+       CONFIRMS W3 assertion-quality#5.
+  MARGIN: no assertion; needs-run
+  FIX: Assert 20-seed mean OSPA < fixed bound with margin for GNN and JPDA; JPDA-beats-GNN claim needs a margin over
+       the mean.
+  W3: assertion-quality#5 print-only (test_multi_seed_sweep named)
+
+L160 [b/print-only-no-assert] npc=False test=MultiSeedSweep.MhtOnCrossingDropout
+  A: (TEST body has zero EXPECT/ASSERT — 20-seed AggStats only fprintf'd, lines 182-190)
+  WHY: Print-only 20-seed GNN/JPDA/MHT crossing-with-dropout sweep. No assertion. CONFIRMS W3 assertion-quality#5.
+  MARGIN: no assertion; needs-run
+  FIX: Assert 20-seed mean OSPA < fixed bound with margin for each of GNN/JPDA/MHT; MHT-benefit claim needs a margin.
+  W3: assertion-quality#5 print-only (test_multi_seed_sweep named)
+
+L193 [b/print-only-no-assert] npc=False test=MultiSeedSweep.PFOnBearingOnlyMovingSensor
+  A: (TEST body has zero EXPECT/ASSERT — 20-seed AggStats only fprintf'd, lines 219-227)
+  WHY: Print-only 20-seed EKF/UKF/PF bearing-only moving-sensor sweep. No assertion; a PF observability/divergence
+       regression ships green. CONFIRMS W3 assertion-quality#5.
+  MARGIN: no assertion; needs-run
+  FIX: Assert 20-seed mean OSPA < fixed bound with margin for EKF/UKF/PF; PF-beats-Gaussian claim needs a margin over
+       the mean.
+  W3: assertion-quality#5 print-only (test_multi_seed_sweep named)
+
+################################################################################
+# tests/scenario/test_overtaking.cpp  (1 findings)
+################################################################################
+
+L34 [b/degenerate-cutoff-metric] npc=False test=TEST(Stress, OvertakingKeepsBothTracksDistinct)
+  A: EXPECT_EQ(countIdSwitches(r.steps, 30.0), 0);
+  WHY: The ==0 does catch a clean ID swap (it would read >=1), but it CANNOT fail under a whole class of plausible
+       defects: countIdSwitches is drift-degenerate (best_id=0 when nearest track is beyond cutoff=30 m, no
+       switch counted, last[i] not updated), so a geometry-specific accuracy collapse that keeps both tracks
+       alive but pushes them off truth reads 0. r.mean_ospa is discarded and mgr.size()==2u (line 33) is
+       swap/drift-blind, so the file asserts NO accuracy vs truth. Secondary fragility: a strict ==0 count on
+       an overtaking pass can flip on an association tie-bre
+  MARGIN: typical id_switches=0; ==0 is drift-blind (saturates at 0 for tracks >30 m off truth); needs-run
+  FIX: Add EXPECT_LT(r.mean_ospa, <fixed bound, >=20% margin over measured>) as the accuracy backstop (mean_ospa in
+       ScenarioResult); keep ==0 as the swap check. Optionally harden core/scenario/Metrics.cpp so off-truth
+       drift is not scored as 0 switches (test-harness change).
+  W3: assertion-quality#1 continuity via degenerate metric, never asserts accuracy
+
+################################################################################
+# tests/sim/test_bus_adaptive_uere.cpp  (1 findings)
+################################################################################
+
+L224 [b/print-only-no-assert] npc=False test=BusAdaptiveUere.AdaptiveSweepClutterCrossing
+  A: SUCCEED();
+  WHY: This second TEST builds a three-row (R-off / R-on static / R-on adaptive) OSPA+id_switch table across sigma x
+       20 seeds and SUCCEED()s (line 224); only the sibling TEST AdaptiveTracksSimInjectedSigma actually
+       asserts. The adaptive-vs-static comparison the table exists to make is not gated. (Contrast: the first
+       TEST is properly toothy.)
+  MARGIN: no assertion (SUCCEED-only)
+  FIX: Assert R-on adaptive is within a margin of R-on static (adaptive should recover static-UERE accuracy without
+       being told sigma) at sigma>=1 m; keep as one-sided band. Data already in cells.
+  W3: scenario-bench-sim#1 (bus sweeps print+SUCCEED)
+
+################################################################################
+# tests/sim/test_bus_bias_estimator_sweep.cpp  (1 findings)
+################################################################################
+
+L368 [b/print-only-no-assert] npc=False test=BusBiasEstimatorSweep.ClutterCrossing
+  A: SUCCEED();
+  WHY: All three TESTs (ClutterCrossing:368, BearingOnlyMoving:403, Maneuvering:436) build per-window OSPA mean/std
+       and mean id_switches for R-off/R-on/R-on+est rows across sigma x 20 seeds, print via printCellsTable,
+       then SUCCEED(). Header line 18 states 'SUCCEED-only.' The whole point of the sweep (does the closed-
+       loop heading-bias estimator reduce OSPA? row_c<row_b) is never asserted, so an estimator regression
+       that makes R-on+est WORSE than R-on, or diverges OSPA, passes green. row_c for BearingOnlyMoving is
+       documented to equal row_b (estimator never publishes)
+  MARGIN: no assertion (SUCCEED-only); AggStats.mean_ospa/mean_id_sw computed then discarded
+  FIX: Assert the structural claim the sweep exists to show, with a margin: for injected sigma>0,
+       EXPECT_LT(row_c.mean_ospa, row_b.mean_ospa * 0.9) (estimator helps BY >=10%); for BearingOnlyMoving
+       assert row_c within noise of row_b (documented gating). Plus a fixed-bound baseline gate
+       EXPECT_LT(row_a.mean_ospa at sigma=0, cutoff). Metrics already computed.
+  W3: scenario-bench-sim#1 (bus sweeps print+SUCCEED)
+
+################################################################################
+# tests/sim/test_bus_cpa_uncertainty.cpp  (1 findings)
+################################################################################
+
+L262 [b/print-only-no-assert] npc=False test=BusCpaUncertainty.SweepAcrossScenarios
+  A: SUCCEED();
+  WHY: The entire TEST computes metric-bearing CPA quantities (cpa_distance_m, sigma_cpa_m,
+       probability_below_threshold) per (scenario x knob) cell across 20 seeds, then only fprintf's them via
+       printCpaRow and calls SUCCEED(). File header (line 6) explicitly states 'SUCCEED-only: this is
+       reporting, not asserting.' A regression that produced NaN CPA, sigma_cpa collapsing to 0, or P(<200m)
+       inverting on these configs ships green. No W3 assertion-quality/required-scenarios finding names this
+       file, but it is the same print-only pattern as assertion-quality#5 and the swee
+  MARGIN: no assertion (SUCCEED-only); CPA metrics computed then discarded
+  FIX: On the baseline (sigma_h=0,sigma_gps=0) cells where geometry is deterministic, add a one-sided gate vs a FIXED
+       bound with margin: EXPECT_GT(a.n_pairs,0) AND EXPECT_LT(mean sigma_cpa, fixed cap) AND assert monotone
+       sigma_cpa growth baseline<noisy cell BY A MARGIN. All quantities are already in CpaAgg.
+  W3: scenario-bench-sim#1 (bus sweeps print+SUCCEED, no value assertion)
+
+################################################################################
+# tests/sim/test_bus_gps_sweep.cpp  (1 findings)
+################################################################################
+
+L99 [b/print-only-no-assert] npc=False test=BusGpsSweep.ClutterCrossing
+  A: SUCCEED();
+  WHY: Both TESTs (ClutterCrossing:99, BearingOnlyMoving:124) sweep sigma_gps x R-on/off x 20 seeds building per-
+       window OSPA and id_switches, print, then SUCCEED(). No assertion at all. The metric-bearing outputs
+       (mean_ospa, mean_id_sw) are computed by runBatchedCell/runStandardCell and discarded. A GNN/EKF
+       regression that inflates OSPA or id-switch churn under GPS noise on these configs is invisible.
+  MARGIN: no assertion (SUCCEED-only)
+  FIX: Add a monotone-degradation-with-margin invariant (OSPA at sigma=5 >= OSPA at sigma=0 by a margin, or R-on
+       beats R-off under noise by a margin) and a fixed-bound baseline cap at sigma=0. Data already in
+       AggStats.
+  W3: scenario-bench-sim#1 (bus sweeps print+SUCCEED)
+
+################################################################################
+# tests/sim/test_bus_heading_sweep.cpp  (1 findings)
+################################################################################
+
+L100 [b/print-only-no-assert] npc=False test=BusHeadingSweep.ClutterCrossing
+  A: SUCCEED();
+  WHY: All three TESTs (ClutterCrossing:100, BearingOnlyMoving:125, Maneuvering:150) sweep sigma_heading x R-on/off x
+       20 seeds, compute per-window OSPA + id_switches, print, then SUCCEED(). No assertion. The R-inflation-
+       helps hypothesis (R-on OSPA <= R-off under heading noise) that the test is built to demonstrate is
+       never gated, so a regression in the #16 heading-sigma R-inflation path passes green.
+  MARGIN: no assertion (SUCCEED-only)
+  FIX: Assert R-on beats/ties R-off under injected heading noise BY A MARGIN, plus a fixed OSPA cap on the sigma=0
+       baseline cell. Metrics already computed in the cells vector.
+  W3: scenario-bench-sim#1 (bus sweeps print+SUCCEED)
+
+################################################################################
+# tests/sim/test_bus_imm3_comparison.cpp  (1 findings)
+################################################################################
+
+L71 [a/adaptive-vs-adaptive] npc=False test=BusComparison.Imm3VsCvManeuvering
+  A: EXPECT_TRUE(i.mean_ospa < e.mean_ospa || i.mean_id_sw < e.mean_id_sw)
+  WHY: Bare `<` between two adaptive aggregates (IMM-3 vs EKF) with ZERO margin, OR'd across two metrics. On a near-
+       tie an FP/toolchain/seed-set drift flips the winner and reddens the test for no real reason (seeds
+       201..220 are fixed, but the tie is what matters). The OR also removes teeth: an IMM regression
+       worsening both OSPA and id_sw but staying marginally ahead on ONE still passes. W3 estimation#1
+       verifier flags this same assertion: single-target trivial association means a scoring sign-flip 'may
+       not move the aggregate past the assertion' -> CONFIRM the toothl
+  MARGIN: needs-run (values only fprintf'd at runtime, none in comments)
+  FIX: Require a real margin on the metric where the design predicts an advantage: EXPECT_LT(i.mean_ospa, e.mean_ospa
+       - k) or i.mean_ospa <= e.mean_ospa*(1-m) with m/k calibrated to measured headroom (and cross-checked >
+       aggregate stddev). If the maneuvering scenario yields no separating margin, strengthen the maneuver
+       (test-only) rather than shipping a bare OR.
+  W3: estimation#1 (verifier: soft 'IMM beats CV on OSPA OR id_switches' comparative)
+
+################################################################################
+# tests/sim/test_bus_jpda_comparison.cpp  (1 findings)
+################################################################################
+
+L58 [a/adaptive-vs-adaptive] npc=False test=BusComparison.JpdaVsGnnClutterCrossing
+  A: EXPECT_TRUE(j.mean_ospa < g.mean_ospa || j.mean_id_sw < g.mean_id_sw)
+  WHY: Identical shape to imm3 L71: two adaptive aggregates (JPDA vs GNN) compared with a zero-margin `<` OR'd across
+       OSPA and id_sw. Fragile near a tie under FP/toolchain drift and toothless against a JPDA regression
+       that stays marginally ahead on one metric. W3 did not cover this sim-bus JPDA comparison directly (its
+       assertion-quality#5 print-only list and estimation#1 name the tests/scenario JPDA file, not tests/sim),
+       so this is the sim-bus analogue of the same pattern.
+  MARGIN: needs-run (values only fprintf'd)
+  FIX: Require a margin (JPDA <= GNN by a calibrated m on the clutter-crossing where JPDA should genuinely win) OR
+       replace with a bounded-OSPA absolute floor for both arms if no separating margin exists on this
+       geometry.
+
+################################################################################
+# tests/sim/test_bus_mht_comparison.cpp  (1 findings)
+################################################################################
+
+L79 [b/EXPECT_GT_structurally_positive] npc=False test=BusComparison.MhtVsJpdaClutterCrossing
+  A: EXPECT_GT(j.mean_ospa, 0.0); (and L80 EXPECT_GT(m.mean_ospa, 0.0);)
+  WHY: Both assertions test a structurally-positive quantity: per-window OSPA over noisy multi-sensor clutter data is
+       essentially always > 0, so neither can fail under any tracking defect (track loss, divergence, ID churn
+       all keep OSPA > 0). The directional MHT-vs-JPDA win was deliberately retracted (comment + memory:
+       'prior sweep retracted the MHT win'), leaving the test effectively print-only with two vacuous guards.
+       A tracker that lost every target still passes.
+  MARGIN: measured mean_ospa > 0 (structurally); asserted > 0 -> zero teeth
+  FIX: Keep the aggregates printed for the eval log, but add a non-directional bounded-OSPA floor with margin for
+       BOTH arms: EXPECT_LT(j.mean_ospa, BOUND) and EXPECT_LT(m.mean_ospa, BOUND), BOUND >=20% above the
+       measured typical. That catches divergence/collapse without re-litigating the retracted directional
+       claim.
+  W3: assertion-quality#5 (adjacent: names tests/scenario/test_mht_comparison.cpp:53 print-only;
+
+################################################################################
+# tests/sim/test_bus_pf_comparison.cpp  (1 findings)
+################################################################################
+
+L63 [b/EXPECT_GT_structurally_positive] npc=False test=BusComparison.PfVsEkfBearingOnlyMoving
+  A: EXPECT_GT(e.mean_ospa, 0.0); (and L64 EXPECT_GT(p.mean_ospa, 0.0);)
+  WHY: Structurally-positive guard, but here the vacuity is sharper because the comment states the intent is the
+       OPPOSITE of what it tests: 'make sure neither blows up.' A blown-up/diverged run saturates OSPA at the
+       cutoff (500) which is still > 0, so EXPECT_GT(...,0) PASSES exactly the failure it claims to guard.
+       Cannot fail under any PF or EKF defect on this bearing-only geometry.
+  MARGIN: measured mean_ospa > 0 (structurally); asserted > 0 -> cannot detect the 'blow-up' the comment targets
+  FIX: Invert to a bounded-OSPA ceiling per arm: EXPECT_LT(e.mean_ospa, BOUND) and EXPECT_LT(p.mean_ospa, BOUND),
+       BOUND a fixed value >=20% above measured typical (this is what 'neither blows up' actually means).
+       Directional PF-vs-EKF stays diagnostic since the prior sweep found overlapping CIs.
+
+################################################################################
+# tests/sim/test_bus_regression.cpp  (4 findings)
+################################################################################
+
+L143 [a/adaptive-vs-adaptive] npc=False test=BusRegression.CrossingMeanOspaWithinTolerance
+  A: EXPECT_LT(r.mean_ospa, baseline * 5.01)
+  WHY: Both operands are measured tracking outputs: r.mean_ospa is the bus (emitter+adapter) run and baseline is
+       baselineOspaCrossing() recomputed through the SAME EKF+GNN+CV2D makeTracker. A global estimator/motion-
+       model regression degrades BOTH, so the ratio holds near ~4.35 and the test stays green -> it does not
+       hard-gate absolute accuracy. Worse, mean_ospa saturates at the cutoff (runScenario cutoff=50 m): under
+       a bus-side total track collapse mean_ospa pins near 50, and if baseline is ~10 m the collapsed ratio
+       ~5.0 sits right under the 5.01 bound (vacuous und
+  MARGIN: ratio ~4.35x measured (comment) vs <5.01x asserted = 15% headroom on ratio; absolute baseline OSPA and saturation proximity needs-
+  FIX: Replace the adaptive baseline*K bound with (1) a FIXED absolute banded floor EXPECT_LT(r.mean_ospa, ABS_BOUND)
+       where ABS_BOUND has >=20% margin over the measured bus value, plus (2) a structural continuity
+       invariant on the two crossing targets (countIdSwitches <= small bound). Both metrics already exist on
+       ScenarioResult/RunStats.
+  W3: assertion-quality#1 (verifier: BusRegression OSPA-ratio co-inflates/saturates, does not ha
+
+L179 [a/adaptive-vs-adaptive] npc=False test=BusRegression.OvertakingMeanOspaWithinTolerance
+  A: EXPECT_LT(r.mean_ospa, baseline * 5.22)
+  WHY: Same sunset-6c shape as L143: bus r.mean_ospa vs baseline recomputed from the identical EKF+GNN+CV2D pipeline
+       (baselineOspaOvertaking). Co-inflates under a shared-pipeline regression and saturates at cutoff=50, so
+       a global accuracy collapse can pass; the 15% ratio headroom encodes no physical bound and is
+       FP/toolchain fragile.
+  MARGIN: ratio ~4.53x measured (comment) vs <5.22x asserted = 15% headroom; absolute values needs-run
+  FIX: Fixed absolute OSPA band with >=20% margin + a strict id-stability invariant (overtaking should hold both ids;
+       cf. test_overtaking uses ==0 switches).
+  W3: assertion-quality#1 (verifier note on BusRegression ratio)
+
+L212 [a/adaptive-vs-adaptive] npc=False test=BusRegression.ParallelTargetsMeanOspaWithinTolerance
+  A: EXPECT_LT(r.mean_ospa, baseline * 3.19)
+  WHY: Same shape as L143: bus mean_ospa compared to a same-pipeline recomputed baseline (baselineOspaParallel). Two
+       adaptive quantities, co-inflating; 15% ratio headroom on an adaptive bound. Ratio (~2.77) is further
+       from the saturation ceiling here, so less vacuity risk than crossing, but the fragility/co-inflation
+       defect is identical.
+  MARGIN: ratio ~2.77x measured (comment) vs <3.19x asserted = 15% headroom; absolute values needs-run
+  FIX: Fixed absolute OSPA band with >=20% margin; parallel targets are a clean geometry so an absolute bound is easy
+       to calibrate.
+  W3: assertion-quality#1 (verifier note on BusRegression ratio)
+
+L279 [a/adaptive-vs-adaptive] npc=False test=BusRegression.BearingOnlyMovingSensorMeanOspaWithinTolerance
+  A: EXPECT_LT(r.mean_ospa, baseline * 5.04)
+  WHY: Same shape as L143 on a single bearing-only target: bus mean_ospa vs same-pipeline recomputed baseline
+       (baselineOspaBearingOnlyMoving). High-variance geometry, 15% ratio headroom, co-inflates, saturates at
+       cutoff=400 here. Fragile adaptive-vs-adaptive with no physical anchor.
+  MARGIN: ratio ~4.38x measured (comment) vs <5.04x asserted = 15% headroom; absolute values needs-run
+  FIX: Fixed absolute OSPA band with >=20% margin against a hand-set bearing-only tolerance; add a single-target
+       continuity assertion (one surviving track) per required-scenarios#5.
+  W3: assertion-quality#1 (verifier note on BusRegression ratio); also required-scenarios#5 (bea
+
+################################################################################
+# tests/sim/test_own_ship_emitter.cpp  (1 findings)
+################################################################################
+
+L76 [b/metric-exists-not-value] npc=False test=OwnShipEmitter.AppliesGpsPositionNoise
+  A: EXPECT_NE(provider.latest()->lat_deg, 53.5);
+  WHY: Single-sample check: it only confirms injected GPS position noise is non-zero (and the paired line 78
+       EXPECT_NEAR bounds it below ~30 m). Neither pins the MAGNITUDE, so a regression that injects noise at
+       the wrong scale (e.g. 1 m or 0.5 m instead of the requested 5 m, or a dropped sqrt/variance-vs-std
+       confusion) passes as long as the one draw is non-zero and <30 m. This is exactly the position half of
+       W3 scenario-bench-sim#1 ('nothing asserts requested std=X -> empirical spread=X'); the heading channel
+       IS covered (HeadingNoiseShowsUpAsExpectedStddev) but the 
+  MARGIN: single sample; asserts noise!=0 and <30 m only; empirical spread vs requested 5 m unchecked (needs-run)
+  FIX: Mirror the heading test: pull ~400 1-Hz GGA fixes, convert lat/lon deviations to metres, compute empirical
+       stddev, EXPECT_NEAR(stddev, 5.0, band) with a band giving >=20% headroom. No new accessor needed
+       (provider.latest() already exposes lat/lon).
+  W3: scenario-bench-sim#1 (emitter-noise magnitude not asserted; position channel)
+
+################################################################################
+# tests/t2t/test_fuser.cpp  (1 findings)
+################################################################################
+
+L266 [b/guarded-loop-vacuous] npc=False test=T2tFuser.SingleReportNotPromotedByAmbientTraffic
+  A: EXPECT_NE(c.source_tracker_id, "A") << "single A report was wrongly promoted";
+  WHY: The only assertion is nested inside two loops (over f.fusedTracks() then over o.contributing_trackers) with NO
+       ASSERT that any fused track was born or that B's track is present. If a regression makes the fuser
+       birth NOTHING (or produce fused tracks with empty contributing_trackers), both loops are empty and the
+       test passes green while the birth mechanism is broken. Same shape family as W3 assertion-quality #2/#3
+       (assertions skipped when the guarded mechanism produces nothing).
+  MARGIN: N/A (vacuity, not a numeric margin)
+  FIX: Before the loop: ASSERT_FALSE(f.fusedTracks().empty()) and ASSERT that some contributing_tracker == "B" (the
+       ambient source DID birth), so the anti-promotion check runs against a non-empty, correctly-populated
+       fusion set.

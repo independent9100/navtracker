@@ -126,6 +126,16 @@ TEST(MultiSeedSweep, IMM3OnManeuvering) {
       e.mean_ospa, e.std_ospa, e.mean_id_sw,
       i2.mean_ospa, i2.std_ospa, i2.mean_id_sw,
       i3.mean_ospa, i3.std_ospa, i3.mean_id_sw);
+
+  // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+  // mean_ospa is the 20-seed aggregate of per-seed mean_ospa; per-seed OSPA
+  // is clipped at the scenario cutoff 100.0.
+  EXPECT_TRUE(std::isfinite(e.mean_ospa)) << "IMM3OnManeuvering EKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(i2.mean_ospa)) << "IMM3OnManeuvering IMM-2: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(i3.mean_ospa)) << "IMM3OnManeuvering IMM-3: non-finite OSPA (filter diverged)";
+  EXPECT_LT(e.mean_ospa, 100.0) << "IMM3OnManeuvering EKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(i2.mean_ospa, 100.0) << "IMM3OnManeuvering IMM-2: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(i3.mean_ospa, 100.0) << "IMM3OnManeuvering IMM-3: OSPA saturated at cutoff (total mis-track)";
 }
 
 TEST(MultiSeedSweep, JpdaOnClutterCrossing) {
@@ -155,6 +165,14 @@ TEST(MultiSeedSweep, JpdaOnClutterCrossing) {
       kNumSeeds,
       g.mean_ospa, g.std_ospa, g.mean_id_sw,
       j.mean_ospa, j.std_ospa, j.mean_id_sw);
+
+  // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+  // mean_ospa is the 20-seed aggregate of per-seed mean_ospa; per-seed OSPA
+  // is clipped at the scenario cutoff 50.0.
+  EXPECT_TRUE(std::isfinite(g.mean_ospa)) << "JpdaOnClutterCrossing GNN: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(j.mean_ospa)) << "JpdaOnClutterCrossing JPDA: non-finite OSPA (filter diverged)";
+  EXPECT_LT(g.mean_ospa, 50.0) << "JpdaOnClutterCrossing GNN: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(j.mean_ospa, 50.0) << "JpdaOnClutterCrossing JPDA: OSPA saturated at cutoff (total mis-track)";
 }
 
 TEST(MultiSeedSweep, MhtOnCrossingDropout) {
@@ -188,6 +206,16 @@ TEST(MultiSeedSweep, MhtOnCrossingDropout) {
       g.mean_ospa, g.std_ospa, g.mean_id_sw,
       j.mean_ospa, j.std_ospa, j.mean_id_sw,
       m.mean_ospa, m.std_ospa, m.mean_id_sw);
+
+  // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+  // mean_ospa is the 20-seed aggregate of per-seed mean_ospa; per-seed OSPA
+  // is clipped at the scenario cutoff 20.0.
+  EXPECT_TRUE(std::isfinite(g.mean_ospa)) << "MhtOnCrossingDropout GNN: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(j.mean_ospa)) << "MhtOnCrossingDropout JPDA: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(m.mean_ospa)) << "MhtOnCrossingDropout MHT: non-finite OSPA (filter diverged)";
+  EXPECT_LT(g.mean_ospa, 20.0) << "MhtOnCrossingDropout GNN: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(j.mean_ospa, 20.0) << "MhtOnCrossingDropout JPDA: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(m.mean_ospa, 20.0) << "MhtOnCrossingDropout MHT: OSPA saturated at cutoff (total mis-track)";
 }
 
 TEST(MultiSeedSweep, PFOnBearingOnlyMovingSensor) {
@@ -225,4 +253,14 @@ TEST(MultiSeedSweep, PFOnBearingOnlyMovingSensor) {
       e.mean_ospa, e.std_ospa, e.mean_id_sw,
       u.mean_ospa, u.std_ospa, u.mean_id_sw,
       p.mean_ospa, p.std_ospa, p.mean_id_sw);
+
+  // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+  // mean_ospa is the 20-seed aggregate of per-seed mean_ospa; per-seed OSPA
+  // is clipped at the scenario cutoff 500.0.
+  EXPECT_TRUE(std::isfinite(e.mean_ospa)) << "PFOnBearingOnlyMovingSensor EKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(u.mean_ospa)) << "PFOnBearingOnlyMovingSensor UKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(p.mean_ospa)) << "PFOnBearingOnlyMovingSensor PF: non-finite OSPA (filter diverged)";
+  EXPECT_LT(e.mean_ospa, 500.0) << "PFOnBearingOnlyMovingSensor EKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(u.mean_ospa, 500.0) << "PFOnBearingOnlyMovingSensor UKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(p.mean_ospa, 500.0) << "PFOnBearingOnlyMovingSensor PF: OSPA saturated at cutoff (total mis-track)";
 }

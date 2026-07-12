@@ -343,22 +343,40 @@ TEST(PhilosCoverageDecay6c, CloseApproachKeepMixedPresenceHeldUnderSuppressor) {
     return active ? static_cast<double>(covered) / active : 0.0;
   };
 
+  int keep_mixed_seen = 0;
   for (const auto& l : labels) {
     if (l.label != ExistenceLabelClass::KeepMixed) continue;
+    ++keep_mixed_seen;
     const double fl = presenceFrac(land, l);
     const double fu = presenceFrac(uni, l);
     const double fc = presenceFrac(cov, l);
     std::cout << "  " << l.region_id << " (r=" << l.radius_m
               << "m): presence land=" << fl << " detector(uni)=" << fu
               << " detector(cov)=" << fc << "\n";
-    // ADR 0002 conservation: the suppressor must not DROP presence below the
-    // land baseline (a KEEP_MIXED object suppressed into nothing). Track-loss to
-    // suppression must be backfilled by an emitted hazard. Small numerical slack.
-    EXPECT_GE(fu, fl - 0.02)
-        << "universal detector lost KEEP_MIXED presence on " << l.region_id;
-    EXPECT_GE(fc, fl - 0.02)
-        << "coverage detector lost KEEP_MIXED presence on " << l.region_id;
+    // ADR 0002 conservation: the suppressor must not DROP KEEP_MIXED presence
+    // below the land baseline (an object suppressed into nothing). This is an
+    // inherently RELATIVE invariant — the land baseline itself is region-varying
+    // (measured: sailing_dock ~0.96 but far_bank_line ~0.49, a far/partly-covered
+    // region), so a fixed absolute floor would be wrong. #24: the old additive
+    // `fu >= fl - 0.02` slack is fragile (flips on a ~3% cross-config drift). A
+    // RATIO floor is robust (scales with the baseline) and toothy: the detector
+    // arm must retain ≥80% of land's presence. Measured ratios are ≥1.0 in every
+    // arm/region (detector ≥ land), so 0.8 carries ≥20% headroom; a suppression-
+    // into-nothing regression drops the arm well under 0.8·land and goes red.
+    EXPECT_GE(fu, 0.8 * fl)
+        << "universal detector suppressed KEEP_MIXED presence below the land "
+           "baseline on " << l.region_id << " (fu=" << fu << " land=" << fl << ")";
+    EXPECT_GE(fc, 0.8 * fl)
+        << "coverage detector suppressed KEEP_MIXED presence below the land "
+           "baseline on " << l.region_id << " (fc=" << fc << " land=" << fl << ")";
   }
+  // #24 (W3 assertion-quality coverage-note-8): guard the filtered loop — if the
+  // labels file ever drops/renames KEEP_MIXED, the loop would match nothing and
+  // this whole conservation test would pass with zero assertions run. The sibling
+  // test_philos_close_approach_labels.cpp:141 already carries this guard.
+  ASSERT_GT(keep_mixed_seen, 0)
+      << "no KEEP_MIXED region found in close_approach labels — the conservation "
+         "loop never executed (fixture/label regression)";
   std::cout << std::flush;
 }
 
@@ -406,8 +424,11 @@ TEST(PhilosCoverageDecay6c, SunsetChartCorroborationLabelsStructureNotDepartedVe
   // Load-bearing invariants:
   // (1) The mechanism fires on real data — SOME emitted structure is chart-
   //     confirmed (the philos inner harbour has charted piers/wharves).
-  EXPECT_GT(corr, 0) << "no live hazard was chart-corroborated — chart wiring "
-                        "or densified fixture is broken";
+  // #24: banded floor, not a bare >0. Measured chart-corroborated ~4819 of 6128
+  // hazard-scans (~79%); a floor of 3000 (~62% of measured) catches a PARTIAL
+  // corroboration collapse, not only total chart-wiring death.
+  EXPECT_GT(corr, 3000) << "chart corroboration collapsed (measured ~4819): corr="
+                        << corr << " — chart wiring or densified fixture broken";
   // (2) The loiterer pin is NOT chart-corroborated: it is a departed vessel in
   //     open water, not charted structure. This is exactly the departed-vs-held
   //     discriminator — chart ABSENCE flags it as the eviction candidate.
@@ -530,9 +551,12 @@ TEST(PhilosCoverageDecay6c, SunsetCameraObservedEmptyFlagsVacatedCells) {
   //     current stack the ferry berth decays first (0 emitted hazards after t98 —
   //     see the eviction A/B, test SunsetCameraEviction*), so countCam is a #24
   //     knife-edge. This is the c0ac493 loiterer fix applied to the ferry.
-  EXPECT_GT(streakMaturedScans(*ferry_a), 0)
-      << "the vacated ferry berth cell was never camera-observed-empty (streak "
-         "never matured) — camera wiring or FOV gate broken";
+  // #24: banded floor (measured 41 matured scans) — catches a FOV-gate/streak
+  // regression that matures only a scan or two, not just total camera death.
+  EXPECT_GT(streakMaturedScans(*ferry_a), 20)
+      << "the vacated ferry berth cell's camera-observed-empty streak collapsed "
+         "(measured ~41): " << streakMaturedScans(*ferry_a)
+      << " — camera wiring or FOV gate broken";
   // (2) The loiterer's cleanly-empty bearing is proven by the CELL streak
   //     maturing (config-independent — what the camera actually observed), not by
   //     the fragile hazard∧streak coincidence (which the frozen detector's
@@ -540,8 +564,10 @@ TEST(PhilosCoverageDecay6c, SunsetCameraObservedEmptyFlagsVacatedCells) {
   //     see the 2026-07-05 held-out freeze decision). Both the loiterer (case 2)
   //     and the ferry (case 1) are now asserted on the config-independent cell
   //     streak, not the adaptive-bar-fragile emitted-hazard flag.
-  EXPECT_GT(streakMaturedScans(*loit), 0)
-      << "the loiterer's cell was never camera-observed-empty (streak never matured)";
+  // #24: banded floor (measured 203 matured scans over the ~20 s clean window).
+  EXPECT_GT(streakMaturedScans(*loit), 100)
+      << "the loiterer's camera-observed-empty streak collapsed (measured ~203): "
+      << streakMaturedScans(*loit);
   // (3) Every camera-flagged cell here is chart-UNconfirmed → the eviction
   //     candidates (departed vessels, not charted structure).
   EXPECT_EQ(countCorr(*loit), 0) << "loiterer unexpectedly chart-corroborated";

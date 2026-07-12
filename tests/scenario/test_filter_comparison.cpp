@@ -153,6 +153,14 @@ TEST(FilterComparison, ShortRangePass) {
                e.mean_ospa, e.id_switches, e.final_track_count,
                u.mean_ospa, u.id_switches, u.final_track_count,
                p.mean_ospa, p.id_switches, p.final_track_count);
+
+  // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+  EXPECT_TRUE(std::isfinite(e.mean_ospa)) << "ShortRangePass EKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(u.mean_ospa)) << "ShortRangePass UKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(p.mean_ospa)) << "ShortRangePass PF: non-finite OSPA (filter diverged)";
+  EXPECT_LT(e.mean_ospa, 200.0) << "ShortRangePass EKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(u.mean_ospa, 200.0) << "ShortRangePass UKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(p.mean_ospa, 200.0) << "ShortRangePass PF: OSPA saturated at cutoff (total mis-track)";
 }
 
 TEST(FilterComparison, VeryShortRangePass) {
@@ -182,6 +190,14 @@ TEST(FilterComparison, VeryShortRangePass) {
                e.mean_ospa, e.id_switches, e.final_track_count,
                u.mean_ospa, u.id_switches, u.final_track_count,
                p.mean_ospa, p.id_switches, p.final_track_count);
+
+  // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+  EXPECT_TRUE(std::isfinite(e.mean_ospa)) << "VeryShortRangePass EKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(u.mean_ospa)) << "VeryShortRangePass UKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(p.mean_ospa)) << "VeryShortRangePass PF: non-finite OSPA (filter diverged)";
+  EXPECT_LT(e.mean_ospa, 300.0) << "VeryShortRangePass EKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(u.mean_ospa, 300.0) << "VeryShortRangePass UKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(p.mean_ospa, 300.0) << "VeryShortRangePass PF: OSPA saturated at cutoff (total mis-track)";
 }
 
 TEST(FilterComparison, AisDropout) {
@@ -235,6 +251,14 @@ TEST(FilterComparison, BearingOnlyPass) {
                e.mean_ospa, e.id_switches, e.final_track_count,
                u.mean_ospa, u.id_switches, u.final_track_count,
                p.mean_ospa, p.id_switches, p.final_track_count);
+
+  // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+  EXPECT_TRUE(std::isfinite(e.mean_ospa)) << "BearingOnlyPass EKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(u.mean_ospa)) << "BearingOnlyPass UKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(p.mean_ospa)) << "BearingOnlyPass PF: non-finite OSPA (filter diverged)";
+  EXPECT_LT(e.mean_ospa, 300.0) << "BearingOnlyPass EKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(u.mean_ospa, 300.0) << "BearingOnlyPass UKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(p.mean_ospa, 300.0) << "BearingOnlyPass PF: OSPA saturated at cutoff (total mis-track)";
 }
 
 TEST(FilterComparison, ManeuveringTarget) {
@@ -275,6 +299,16 @@ TEST(FilterComparison, ManeuveringTarget) {
                u.mean_ospa, u.id_switches, u.final_track_count,
                p.mean_ospa, p.id_switches, p.final_track_count,
                i.mean_ospa, i.id_switches, i.final_track_count);
+
+  // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+  EXPECT_TRUE(std::isfinite(e.mean_ospa)) << "ManeuveringTarget EKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(u.mean_ospa)) << "ManeuveringTarget UKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(p.mean_ospa)) << "ManeuveringTarget PF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(i.mean_ospa)) << "ManeuveringTarget IMM: non-finite OSPA (filter diverged)";
+  EXPECT_LT(e.mean_ospa, 100.0) << "ManeuveringTarget EKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(u.mean_ospa, 100.0) << "ManeuveringTarget UKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(p.mean_ospa, 100.0) << "ManeuveringTarget PF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(i.mean_ospa, 100.0) << "ManeuveringTarget IMM: OSPA saturated at cutoff (total mis-track)";
 }
 
 TEST(FilterComparison, Maneuvering3ModeIMM) {
@@ -329,6 +363,14 @@ TEST(FilterComparison, Maneuvering3ModeIMM) {
                e.mean_ospa,  e.id_switches,  e.final_track_count,
                i2.mean_ospa, i2.id_switches, i2.final_track_count,
                i3.mean_ospa, i3.id_switches, i3.final_track_count);
+
+  // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+  EXPECT_TRUE(std::isfinite(e.mean_ospa)) << "Maneuvering3ModeIMM EKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(i2.mean_ospa)) << "Maneuvering3ModeIMM IMM-2: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(i3.mean_ospa)) << "Maneuvering3ModeIMM IMM-3: non-finite OSPA (filter diverged)";
+  EXPECT_LT(e.mean_ospa, 100.0) << "Maneuvering3ModeIMM EKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(i2.mean_ospa, 100.0) << "Maneuvering3ModeIMM IMM-2: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(i3.mean_ospa, 100.0) << "Maneuvering3ModeIMM IMM-3: OSPA saturated at cutoff (total mis-track)";
 }
 
 TEST(FilterComparison, ShortRangeMultiSeedSweep) {
@@ -381,10 +423,21 @@ TEST(FilterComparison, ShortRangeMultiSeedSweep) {
   std::fprintf(stderr, "\n[Sweep ShortRangePass, %zu seeds]\n", seeds.size());
   std::fprintf(stderr, "  EKF            : %.4f ± %.4f m\n", e.first, e.second);
   std::fprintf(stderr, "  UKF            : %.4f ± %.4f m\n", u.first, u.second);
+
+  // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+  // e.first/u.first/p.first are the 20-seed aggregate mean of per-seed
+  // mean_ospa; per-seed OSPA is clipped at the scenario cutoff 200.0.
+  EXPECT_TRUE(std::isfinite(e.first)) << "ShortRangeMultiSeedSweep EKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(u.first)) << "ShortRangeMultiSeedSweep UKF: non-finite OSPA (filter diverged)";
+  EXPECT_LT(e.first, 200.0) << "ShortRangeMultiSeedSweep EKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(u.first, 200.0) << "ShortRangeMultiSeedSweep UKF: OSPA saturated at cutoff (total mis-track)";
   for (std::size_t k = 0; k < Ns.size(); ++k) {
     const auto p = stats(pf_ospa[k]);
     std::fprintf(stderr, "  PF  N=%-4d     : %.4f ± %.4f m\n",
                  Ns[k], p.first, p.second);
+    // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+    EXPECT_TRUE(std::isfinite(p.first)) << "ShortRangeMultiSeedSweep PF: non-finite OSPA (filter diverged)";
+    EXPECT_LT(p.first, 200.0) << "ShortRangeMultiSeedSweep PF: OSPA saturated at cutoff (total mis-track)";
   }
 }
 
@@ -424,4 +477,12 @@ TEST(FilterComparison, BearingOnlyMovingSensor) {
                e.mean_ospa, e.id_switches, e.final_track_count,
                u.mean_ospa, u.id_switches, u.final_track_count,
                p.mean_ospa, p.id_switches, p.final_track_count);
+
+  // #24: falsifiable blow-up guard (was print-only; W3 assertion-quality#5).
+  EXPECT_TRUE(std::isfinite(e.mean_ospa)) << "BearingOnlyMovingSensor EKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(u.mean_ospa)) << "BearingOnlyMovingSensor UKF: non-finite OSPA (filter diverged)";
+  EXPECT_TRUE(std::isfinite(p.mean_ospa)) << "BearingOnlyMovingSensor PF: non-finite OSPA (filter diverged)";
+  EXPECT_LT(e.mean_ospa, 500.0) << "BearingOnlyMovingSensor EKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(u.mean_ospa, 500.0) << "BearingOnlyMovingSensor UKF: OSPA saturated at cutoff (total mis-track)";
+  EXPECT_LT(p.mean_ospa, 500.0) << "BearingOnlyMovingSensor PF: OSPA saturated at cutoff (total mis-track)";
 }

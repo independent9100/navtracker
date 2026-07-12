@@ -36,10 +36,16 @@ TEST(ReplayScenarioRun, GenerateReturnsNonEmpty) {
   bool any_real = false;
   for (auto& s : defaultReplayScenarios()) {
     const auto data = s->generate(0);
-    if (data.measurements.empty()) continue;
+    if (data.measurements.empty()) continue;  // fixture unreachable from cwd
     any_real = true;
-    EXPECT_FALSE(data.measurements.empty())
-        << "replay " << s->descriptor().label << " produced no measurements";
+    // #24: the old EXPECT_FALSE(empty) was dead code — the guard above already
+    // established non-empty. The regression that actually slips through is a
+    // fixture whose CSV is present but loads to a PARTIAL/truncated set (still
+    // "non-empty", so silently accepted). A real replay clip carries hundreds of
+    // measurements, so a substantial floor traps a truncated/1-row load.
+    EXPECT_GT(data.measurements.size(), 50u)
+        << "replay " << s->descriptor().label << " loaded only "
+        << data.measurements.size() << " measurements — partial/truncated load";
   }
   if (!any_real) GTEST_SKIP() << "replay fixtures not reachable from cwd";
 }
