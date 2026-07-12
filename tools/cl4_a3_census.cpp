@@ -36,11 +36,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <random>
+#include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -184,6 +187,251 @@ int main(int argc, char** argv) {
         if (c > 0.0) rad.push_back(rstar * (1.0 - c));
       }
     surviveRow(rad, "radar_in_band(clutter)");
+    return 0;
+  }
+
+  // ---- Cl-4 endgame (amended): geography — distance-from-shore ----
+  // The user's spatial-split proposal (2026-07-11) hangs on ONE fact: do the
+  // philos clutter returns hug the inner strip while the env-2 vessels ride the
+  // outer strip? If they separate, narrowing offshore_halfwidth wins cheaply;
+  // if they overlap, the surface prices it directly. This mode measures the
+  // signed distance-from-shore (m, <0 inland) of (a) each env-2 truth target's
+  // positions and (b) the philos in-band radar population, split structure vs
+  // water-clutter residual via the shipped LiveOccupancyModel persistence grid.
+  //
+  // Exact distance: a WIDE-ramp reference CoastlineModel (W_off=W_in=5000 m)
+  // never saturates within 5 km of shore, so d = 5000 - 10000*c_wide is the
+  // exact signed distance for every near-band point (the shipped 50/50 ramp
+  // clamps beyond ±50 m and cannot recover d there).
+  if (mode == "geo") {
+    if (!land) { std::cerr << "no land model (need coastline)\n"; return 2; }
+    const double bar = std::stod(arg(argc, argv, "--bar", "0.5"));
+    const double cell = std::stod(arg(argc, argv, "--cell", "25.0"));
+    auto geomWide =
+        loadCoastlineGeoJson(coast_path, CoastlinePriorParams{5000.0, 5000.0});
+    CoastlineModel land_wide(std::move(geomWide), *scen.datum);
+    auto distM = [&](const Eigen::Vector2d& p) {
+      return 5000.0 - 10000.0 * land_wide.clutterPrior(p);
+    };
+    auto histRow = [&](std::vector<double> ds, const char* name) {
+      if (ds.empty()) { std::printf("  %-24s (none)\n", name); return; }
+      std::sort(ds.begin(), ds.end());
+      int b[7] = {0, 0, 0, 0, 0, 0, 0};  // <0 | 0-10 10-20 20-30 30-40 40-50 | >=50
+      for (double d : ds) {
+        if (d < 0) ++b[0];
+        else if (d >= 50.0) ++b[6];
+        else ++b[1 + static_cast<int>(d / 10.0)];
+      }
+      std::printf(
+          "  %-24s n=%4zu d[min=%6.1f med=%6.1f max=%6.1f]  <0:%-4d 0-10:%-4d "
+          "10-20:%-4d 20-30:%-4d 30-40:%-4d 40-50:%-4d >=50:%-4d\n",
+          name, ds.size(), ds.front(), ds[ds.size() / 2], ds.back(), b[0], b[1],
+          b[2], b[3], b[4], b[5], b[6]);
+    };
+    std::printf("=== distance-from-shore (m, <0 inland): %s ===\n", label.c_str());
+    // (a) truth targets — ALL positions, per target + aggregate.
+    std::map<std::uint64_t, std::vector<double>> tby;
+    std::vector<double> tall;
+    int tin = 0;
+    for (const auto& ts : scen.truth) {
+      const double d = distM(ts.position);
+      tby[ts.truth_id].push_back(d);
+      tall.push_back(d);
+      if (inBand(ts.position)) ++tin;
+    }
+    for (auto& [id, v] : tby)
+      histRow(v, ("truth_" + std::to_string(id)).c_str());
+    if (!tby.empty()) {
+      histRow(tall, "truth_ALL");
+      std::printf("  (%d/%zu truth samples in-band at shipped 50 m)\n", tin,
+                  tall.size());
+    }
+    // (b) in-band radar returns (the clutter-birth population), split by the
+    // EXACT geometric criterion: a return behind the waterline (d<0) is a land
+    // structure the radar painted; a return in front (d>=0) is water clutter.
+    // Also report how many 25 m cells the shipped LiveOccupancyModel would flag
+    // as persistent (a diffuseness diagnostic: 0 => the clutter is not a
+    // stationary point-structure the occupancy grid can lock onto).
+    struct P { double t; Eigen::Vector2d xy; };
+    std::vector<P> pts;
+    for (const auto& m : scen.measurements)
+      if (m.sensor == SensorKind::ArpaTtm && m.value.size() >= 2 &&
+          inBand(m.value.head<2>()))
+        pts.push_back({m.time.seconds(), m.value.head<2>()});
+    if (!pts.empty()) {
+      std::sort(pts.begin(), pts.end(),
+                [](const P& a, const P& b) { return a.t < b.t; });
+      std::vector<double> d_inland, d_offshore;
+      for (const auto& p : pts) {
+        const double d = distM(p.xy);
+        (d < 0.0 ? d_inland : d_offshore).push_back(d);
+      }
+      histRow(d_inland, "radar_INLAND(structure)");
+      histRow(d_offshore, "radar_OFFSHORE(water)");
+      // Persistence diagnostic (shipped LiveOccupancyModel, same feed as --veto).
+      LiveOccupancyParams op;
+      op.persistence_bar = bar;
+      op.cell_size_m = cell;
+      LiveOccupancyModel occ(*scen.datum, op);
+      auto keyOf = [&](const Eigen::Vector2d& p) {
+        return std::make_pair((long)std::floor(p.x() / cell),
+                              (long)std::floor(p.y() / cell));
+      };
+      std::set<std::pair<long, long>> struct_cells;
+      std::size_t i = 0;
+      while (i < pts.size()) {
+        std::size_t j = i;
+        std::vector<Eigen::Vector2d> ret;
+        const double ts = pts[i].t;
+        while (j < pts.size() && pts[j].t - ts < 1e-6) {
+          ret.push_back(pts[j].xy);
+          ++j;
+        }
+        ISensorDetectionModel::ScanObservation ob;
+        ob.sensor = SensorKind::ArpaTtm;
+        ob.model = MeasurementModel::Position2D;
+        ob.num_unassociated = (int)ret.size();
+        ob.positions = ret;
+        ob.clutter_positions = ret;
+        ob.time = Timestamp::fromSeconds(ts);
+        occ.observe({ob});
+        for (const auto& [c, ewma] : occ.persistenceCells())
+          if (ewma >= bar) struct_cells.insert(keyOf(c));
+        i = j;
+      }
+      std::printf("  (in-band radar returns: %zu total = %zu inland + %zu offshore; "
+                  "%zu persistence-flagged cells @bar=%.2f cell=%.0fm)\n",
+                  pts.size(), d_inland.size(), d_offshore.size(),
+                  struct_cells.size(), bar, cell);
+    }
+    return 0;
+  }
+
+  // ---- Cl-4 endgame (amended): analytic phantom footprint ----
+  // Which in-band radar returns (the philos clutter-birth population) survive
+  // the gate as births at a given offshore half-width W_off and floor, and
+  // WHERE they sit (distance-from-shore). r_new = 0.1*(1-c), with
+  // c(d,W_off) = clamp((W_off - d)/(W_off + W_in), 0, 1) and W_in fixed at 50 m
+  // (only the offshore dial moves). A return is re-admitted iff r_new >= floor.
+  // Sweeps W_off over the ticket set for a fixed --floor (default 0.10 =
+  // shipped) so the birth footprint's shrink/grow is visible per corner.
+  if (mode == "phantom") {
+    if (!land) { std::cerr << "no land model (need coastline)\n"; return 2; }
+    const double floor = std::stod(arg(argc, argv, "--floor", "0.10"));
+    const double W_in = std::stod(arg(argc, argv, "--inland-halfwidth", "50.0"));
+    const double rstar = 0.1;
+    const double Woffs[] = {50.0, 35.0, 25.0, 15.0};
+    auto geomWide =
+        loadCoastlineGeoJson(coast_path, CoastlinePriorParams{5000.0, 5000.0});
+    CoastlineModel land_wide(std::move(geomWide), *scen.datum);
+    auto distM = [&](const Eigen::Vector2d& p) {
+      return 5000.0 - 10000.0 * land_wide.clutterPrior(p);
+    };
+    std::vector<double> ds;  // in-band radar-return distances (shipped 50 m band)
+    for (const auto& m : scen.measurements)
+      if (m.sensor == SensorKind::ArpaTtm && m.value.size() >= 2 &&
+          inBand(m.value.head<2>()))
+        ds.push_back(distM(m.value.head<2>()));
+    std::printf("=== analytic phantom footprint (floor=%.2f, W_in=%.0f): %s ===\n",
+                floor, W_in, label.c_str());
+    std::printf("  in-band radar returns (shipped 50 m band): %zu\n", ds.size());
+    for (double W_off : Woffs) {
+      std::vector<double> adm;
+      for (double d : ds) {
+        double c = (W_off - d) / (W_off + W_in);
+        c = std::clamp(c, 0.0, 1.0);
+        if (rstar * (1.0 - c) >= floor - 1e-9) adm.push_back(d);
+      }
+      std::sort(adm.begin(), adm.end());
+      int b[7] = {0, 0, 0, 0, 0, 0, 0};
+      for (double d : adm) {
+        if (d < 0) ++b[0];
+        else if (d >= 50.0) ++b[6];
+        else ++b[1 + static_cast<int>(d / 10.0)];
+      }
+      std::printf(
+          "  W_off=%4.0f  re-admitted=%4zu  d[med=%6.1f max=%6.1f]  <0:%-3d "
+          "0-10:%-3d 10-20:%-3d 20-30:%-3d 30-40:%-3d 40-50:%-3d >=50:%-3d\n",
+          W_off, adm.size(), adm.empty() ? 0.0 : adm[adm.size() / 2],
+          adm.empty() ? 0.0 : adm.back(), b[0], b[1], b[2], b[3], b[4], b[5],
+          b[6]);
+    }
+    return 0;
+  }
+
+  // ---- Cl-4 endgame (amended): real phantom-track map ----
+  // The analytic footprint above shows where phantoms are BORN (always near
+  // shore, in-band by construction). The operator concern is where they END UP:
+  // a phantom confined to the near-land strip is an accepted price, one leaking
+  // into open water is not. This mode reads a bench --export-states-dir CSV
+  // (scan,time_s,kind,id,east_m,north_m) for THIS scenario, classifies each
+  // estimated-track sample as phantom (not matched to any truth within R at its
+  // scan — the SAME criterion the harness's gospa_false uses) and reports the
+  // phantom samples' distance-from-shore. Fraction beyond 50 m = open-water leak.
+  if (mode == "phantomtrack") {
+    if (!land) { std::cerr << "no land model (need coastline)\n"; return 2; }
+    const std::string states = arg(argc, argv, "--states", "");
+    const double R2 = std::stod(arg(argc, argv, "--radius", "20.0"));
+    if (states.empty()) { std::cerr << "need --states <csv>\n"; return 2; }
+    std::ifstream f(states);
+    if (!f.good()) { std::cerr << "cannot open states csv: " << states << "\n"; return 2; }
+    auto geomWide =
+        loadCoastlineGeoJson(coast_path, CoastlinePriorParams{5000.0, 5000.0});
+    CoastlineModel land_wide(std::move(geomWide), *scen.datum);
+    auto distM = [&](const Eigen::Vector2d& p) {
+      return 5000.0 - 10000.0 * land_wide.clutterPrior(p);
+    };
+    struct Row { int scan; std::string kind; double e, n; };
+    std::map<int, std::vector<Eigen::Vector2d>> truth_by_scan, track_by_scan;
+    std::string line;
+    std::getline(f, line);  // header
+    while (std::getline(f, line)) {
+      std::stringstream ss(line);
+      std::string tok;
+      Row r;
+      int col = 0;
+      while (std::getline(ss, tok, ',')) {
+        switch (col) {
+          case 0: r.scan = std::stoi(tok); break;
+          case 2: r.kind = tok; break;
+          case 4: r.e = std::stod(tok); break;
+          case 5: r.n = std::stod(tok); break;
+        }
+        ++col;
+      }
+      if (r.kind == "truth") truth_by_scan[r.scan].push_back({r.e, r.n});
+      else if (r.kind == "track") track_by_scan[r.scan].push_back({r.e, r.n});
+    }
+    std::vector<double> d_phantom, d_real;
+    for (const auto& [scan, tracks] : track_by_scan) {
+      const auto it = truth_by_scan.find(scan);
+      for (const auto& tr : tracks) {
+        bool real = false;
+        if (it != truth_by_scan.end())
+          for (const auto& tp : it->second)
+            if ((tr - tp).norm() <= R2) { real = true; break; }
+        (real ? d_real : d_phantom).push_back(distM(tr));
+      }
+    }
+    auto report = [&](std::vector<double> ds, const char* name) {
+      if (ds.empty()) { std::printf("  %-16s (none)\n", name); return; }
+      std::sort(ds.begin(), ds.end());
+      int strip = 0, near = 0, far = 0;  // <50 | 50-150 | >150 (open water)
+      for (double d : ds) {
+        if (d < 50.0) ++strip;
+        else if (d < 150.0) ++near;
+        else ++far;
+      }
+      std::printf(
+          "  %-16s n=%5zu  d[min=%6.1f med=%6.1f max=%7.1f]  in-strip(<50m)=%d "
+          "near(50-150m)=%d far(>150m)=%d\n",
+          name, ds.size(), ds.front(), ds[ds.size() / 2], ds.back(), strip, near,
+          far);
+    };
+    std::printf("=== real phantom-track map (R=%.0f m): %s  states=%s ===\n", R2,
+                label.c_str(), states.c_str());
+    report(d_phantom, "PHANTOM(false)");
+    report(d_real, "matched(truth)");
     return 0;
   }
 
