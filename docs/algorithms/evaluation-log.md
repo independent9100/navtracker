@@ -8,6 +8,33 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-12 — Cl-4 pending-band probe: shapes CAN'T beat the front (collapse confirmed); pending band = a genuine third operating point [Cl-4]
+
+Ticket `2026-07-12-cl4-pending-band-probe-ticket.md`; merged cd26165.
+Write-up: `docs/baselines/2026-07-12_cl4_pending_band_probe.md`.
+
+- **Shape-collapse CONFIRMED empirically:** with r_new pinned pre-suppression
+  (§3.2.2), any one-shot ramp×bar shape reduces to an admit boundary d*
+  already on the swept surface. Two non-linear shapes at d*=25 reproduce
+  W25/f0.10 (env-2 identical 8/8 / 13.376; philos byte-identical for quad,
+  +0.10 card_err residue for seg = 1/50th of a floor step). Shape is a red
+  herring — closed with proof.
+- **Pending band (admit in-band births only after K re-detection scans):**
+  philos offshore in-band = 345 returns (the 1361 inland are hard-gated —
+  the decisive split); transient water clutter dies fast (52/44 chains at
+  K=2, 23/13 at K=3); persistent-offshore survivors (the A2 failure mode)
+  single-digit at K≥3. All 8 env-2 targets revive at every K; cost = pure
+  latency (K3 ~5 s, K5 ~10 s, K8 ~15 s median).
+- **Verdict:** beats A2 for any K≥2; MATCHES (does not beat) the one-shot
+  W25/f0.10 front at K≈5–8 — while covering the full 0–50 m band the
+  one-shot's d≥25 boundary misses, at ~7–17 s latency, phantoms staying
+  in-strip. A third operating point: wider reach, latency-priced.
+
+Endgame options now fully priced: (a) one-shot W25/f0.10 (zero latency,
+25–50 m reach, 0–25 m stays blind), (b) pending-band Phase-2 build (full
+reach, 7–17 s latency, real build), (c) today's default (channel blind).
+User decision.
+
 ## 2026-07-12 — Cl-4 endgame Part 2: 2-D price surface + phantom map — dials are iso-cost but spatially DIFFERENT; W25/f0.10 = amended knee candidate [Cl-4]
 
 Amended-ticket second half (user's spatial split); merged 7080949.
