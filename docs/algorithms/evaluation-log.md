@@ -9194,3 +9194,41 @@ dossier §4.
   33.1 vs 67.2 reproduces.
 - **No promotion recommendation** (per ticket) — the dossier frames the trade;
   the arbiter/user own the call and the north-star edit.
+
+## 2026-07-12 — Pre-release fix wave 1: F1 (GGA no-fix CRITICAL) + F3 (TrackOutput dual-API) shipped; F2 (spurious SourceTouch) held as its own cycle
+
+Branch `fixwave-wave1` off master `43d955f` (F3 spec from the `fc39302`
+resolution). Full write-up: `docs/baselines/2026-07-12_fixwave_wave1.md`. Suite
+green at 0 skips (the 13 cwd-gated expected skips run from the worktree root:
+20/20 pass). F1/F2/F3 are separate commits so F1 is independently mergeable.
+
+- **F1 [CRITICAL, FIXED, byte-identical].** `OwnShipNmeaAdapter` now rejects a GGA
+  with fix-quality 0 / empty lat-lon / implausible position BEFORE any datum,
+  estimator, or provider side effect (was: a standard no-fix GGA → (0,0) pose →
+  datum teleports to Null Island, poisoning every ENU conversion). New
+  `skippedNoFixGga()` diagnostic. 6 tests incl. fix→no-fix→fix datum-safety (RED
+  showed 2 recenters + a (0,0) pose). Integration guide §4 updated.
+- **F2 [HIGH, fix correct + 4-lens review-confirmed, HELD not-merge-ready].** The
+  source-touch walk now keys on `Bernoulli::last_claimed_meas_index` (a
+  misdetection gets no touch) instead of the broken nearest-at-scan-time
+  heuristic. The A/B (pmbm configs × philos+autoferry+sim+simms) **disproved** the
+  ticket's byte-identical premise: `recent_contributions` is a tracking INPUT via
+  three coupled paths (source-aware miss gate, idle-decay, and emitted-provenance
+  → `applyBiasCorrection`). So the fix shifts tracking on all 18 pmbm configs —
+  IMPROVES philos (the sparse-AIS deployment target) but net-REGRESSES the seeded
+  autoferry/sim GOSPA battery (247 cells worse vs 55 better), with an untested
+  real-target continuity risk on the KEEP config (#25-adjacent). Held on the
+  branch → its own measured cycle (three questions in the write-up; sequence
+  after/with wave-3's bias-chain fix). Acceptance criterion #2 DISCOVERED
+  unachievable, not waived.
+- **F3 [HIGH, FIXED — dual API].** `toTrackOutput` split into `toTrackOutputENU`
+  (east-first = old behaviour) + `toTrackOutputNED` (north-first); the ambiguous
+  name is removed (the compile-break at each call site is the consumer audit); new
+  `TrackOutput::covariance_frame` tag. Foxglove track drain → NED (fixes its
+  90°-rotated error ellipses; the measurement drain corrected to explicit ENU),
+  T2T `FusedTrackOutput` → ENU. Both orderings pinned by elongated-covariance
+  tests. Docs updated (output-contract, integration guide §4/§5/§6, learning ch.10).
+- **Findings-file annotation deferred to the arbiter:** the review's
+  `10-bughunt-findings.md` is untracked (the live review session's uncommitted
+  working files, on no commit and not on this branch), so the FIXED marks were NOT
+  written into another session's work — the disposition lives in the write-up.
