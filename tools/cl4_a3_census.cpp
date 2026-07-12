@@ -435,6 +435,219 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  // ---- Cl-4 pending-band census (Step 2, 2026-07-12) ----
+  // Scheme under test (the user's two-threshold middle zone): an in-band birth
+  // candidate is neither killed nor confirmed at first sight — it confirms only
+  // after re-detection on >= K scans within a short window. This uses TIME,
+  // which distance alone cannot: the one-shot shape family collapses to an
+  // admit boundary (Step 1), so the only thing that can beat the measured
+  // front is a persistence requirement. Offline census, no tracker code.
+  //
+  //  (philos guard) the OFFSHORE in-band radar population (0 <= d < 50 m; the
+  //    d<0 inland returns are hard-gated regardless and kept OUT of the
+  //    denominator) is chained by re-detection (Phase-1b single-link NN
+  //    chainer). For K in {1,2,3,5,8}: how many chains reach length K (= would
+  //    confirm through the pending band), split by distance (0-10/10-25/25-50 m,
+  //    by the chain's START distance) and stationary vs moving. K=1 = no
+  //    persistence = the A2 anchor (unconditional floor-lowering) in-units.
+  //  (env-2 revival) each in-band truth target's latency to its K-th
+  //    re-detection within its first in-band window (seconds), and whether
+  //    every target reaches K (a vessel that never re-detects K times inside
+  //    its window would fail to revive).
+  //
+  // Projected phantom tracks/scan (the front's unit): a confirmed chain becomes
+  // a phantom track from its K-th detection to its last, so it is "present" on
+  // ceil((t_last - t_Kth)/scan + 1) scans; summed over confirmed chains and
+  // divided by the run's radar-scan count. Comparable to the W25/f0.10 front
+  // (+10.45 tracks/scan). Stated as a projection with its coast-to-last
+  // assumption; the raw confirmed-chain count is the primary, assumption-free
+  // number.
+  if (mode == "pending") {
+    if (!land) { std::cerr << "no land model (need coastline)\n"; return 2; }
+    const double r_chain = std::stod(arg(argc, argv, "--chain-radius", "25.0"));
+    const double max_gap_s = std::stod(arg(argc, argv, "--max-gap-s", "5.0"));
+    const double move_thr = std::stod(arg(argc, argv, "--move-thresh", "15.0"));
+    const double R2 = std::stod(arg(argc, argv, "--radius", "25.0"));
+    const int Ks[] = {1, 2, 3, 5, 8};
+    auto geomWide =
+        loadCoastlineGeoJson(coast_path, CoastlinePriorParams{5000.0, 5000.0});
+    CoastlineModel land_wide(std::move(geomWide), *scen.datum);
+    auto distM = [&](const Eigen::Vector2d& p) {
+      return 5000.0 - 10000.0 * land_wide.clutterPrior(p);
+    };
+    auto distBucket = [](double d) {  // 0:0-10 1:10-25 2:25-50
+      if (d < 10.0) return 0;
+      if (d < 25.0) return 1;
+      return 2;
+    };
+    const char* bnames[3] = {"0-10m", "10-25m", "25-50m"};
+
+    // --- philos guard: chain the OFFSHORE in-band radar population. ---
+    struct P { double t; Eigen::Vector2d xy; };
+    std::vector<P> pts;
+    int n_inland = 0;
+    for (const auto& m : scen.measurements)
+      if (m.sensor == SensorKind::ArpaTtm && m.value.size() >= 2 &&
+          inBand(m.value.head<2>())) {
+        const double d = distM(m.value.head<2>());
+        if (d < 0.0) { ++n_inland; continue; }  // hard-gated; out of denom
+        pts.push_back({m.time.seconds(), m.value.head<2>()});
+      }
+    std::sort(pts.begin(), pts.end(),
+              [](const P& a, const P& b) { return a.t < b.t; });
+    // radar scan count (denominator for tracks/scan) = distinct radar times.
+    std::set<long long> scan_keys;
+    for (const auto& m : scen.measurements)
+      if (m.sensor == SensorKind::ArpaTtm)
+        scan_keys.insert((long long)std::llround(m.time.seconds() * 1e3));
+    const double n_scans_total = std::max<std::size_t>(scan_keys.size(), 1);
+    // median scan interval (for env-2 latency = K scans in seconds).
+    std::vector<double> gaps;
+    {
+      std::vector<double> ts(scan_keys.begin(), scan_keys.end());
+      for (std::size_t i = 1; i < ts.size(); ++i)
+        gaps.push_back((ts[i] - ts[i - 1]) / 1e3);
+    }
+    std::sort(gaps.begin(), gaps.end());
+    const double scan_dt = gaps.empty() ? 1.0 : gaps[gaps.size() / 2];
+
+    // Single-link NN chainer (Phase-1b Tier-0): a point extends the nearest
+    // active chain within r_chain whose time gap is in (0, max_gap_s]; else it
+    // starts a new chain. Chain = re-detections of one object across scans.
+    struct Chain {
+      double t0, t1;
+      Eigen::Vector2d p0, plast;
+      int n;
+      double net_disp() const { return (plast - p0).norm(); }
+    };
+    std::vector<Chain> chains;
+    std::vector<int> active;
+    for (const auto& p : pts) {
+      int best = -1;
+      double bd = r_chain;
+      for (int ci : active) {
+        Chain& c = chains[ci];
+        const double dtc = p.t - c.t1;
+        if (dtc <= 1e-6 || dtc > max_gap_s) continue;
+        const double dd = (p.xy - c.plast).norm();
+        if (dd <= bd) { bd = dd; best = ci; }
+      }
+      if (best >= 0) {
+        Chain& c = chains[best];
+        c.plast = p.xy; c.t1 = p.t; ++c.n;
+      } else {
+        chains.push_back({p.t, p.t, p.xy, p.xy, 1});
+      }
+      active.clear();
+      for (int ci = 0; ci < (int)chains.size(); ++ci)
+        if (p.t - chains[ci].t1 <= max_gap_s) active.push_back(ci);
+    }
+
+    std::printf("=== PENDING-BAND census: %s  r_chain=%.0fm max_gap=%.0fs "
+                "move_thr=%.0fm scan~%.2fs ===\n",
+                label.c_str(), r_chain, max_gap_s, move_thr, scan_dt);
+    std::printf("  in-band radar returns: %zu offshore(d>=0, denom) + %d inland"
+                "(d<0, hard-gated, excluded); offshore chains=%zu; "
+                "radar scans=%.0f\n",
+                pts.size(), n_inland, chains.size(), n_scans_total);
+    std::printf("  %-3s | chains>=K | %-6s %-6s %-6s | stationary moving | "
+                "proj_tracks/scan\n", "K", bnames[0], bnames[1], bnames[2]);
+    for (int K : Ks) {
+      int total = 0, bybk[3] = {0, 0, 0}, stat = 0, mov = 0;
+      double alive_scans = 0.0;
+      for (const auto& c : chains) {
+        if (c.n < K) continue;
+        ++total;
+        ++bybk[distBucket(distM(c.p0))];
+        const bool moving = c.net_disp() >= move_thr;
+        (moving ? mov : stat)++;
+        // K-th detection time ~ t0 + (K-1) scans (chain is single-link in
+        // scan order); phantom present K-th..last.
+        const double t_kth = c.t0 + (K - 1) * scan_dt;
+        alive_scans += std::max(0.0, (c.t1 - t_kth)) / scan_dt + 1.0;
+      }
+      std::printf("  %-3d | %8d | %6d %6d %6d | %10d %6d | %.2f\n", K, total,
+                  bybk[0], bybk[1], bybk[2], stat, mov,
+                  alive_scans / n_scans_total);
+    }
+    // Same-instrument one-shot W25/f0.10 reference: the front admits d>=25 m
+    // offshore returns at FULL strength with NO persistence (see Step-1
+    // boundary d*=25). In this chain instrument that is every chain whose start
+    // sits in the 25-50 m bucket, projected as confirmed from its first
+    // detection (K=1). Directly comparable to the pending-band proj_tracks/scan
+    // above, and to the externally MEASURED front cost (+10.45 card_err delta).
+    {
+      int n25 = 0;
+      double alive25 = 0.0;
+      for (const auto& c : chains) {
+        if (distBucket(distM(c.p0)) != 2) continue;  // 25-50 m only
+        ++n25;
+        alive25 += std::max(0.0, (c.t1 - c.t0)) / scan_dt + 1.0;
+      }
+      std::printf("  one-shot W25/f0.10 reference (d>=25 m, no persistence): "
+                  "%d chains, proj_tracks/scan=%.2f  [external measured front = "
+                  "+10.45 card_err delta]\n",
+                  n25, alive25 / n_scans_total);
+    }
+
+    // --- env-2 revival: per in-band truth target, latency to K-th redetect. ---
+    // Position birth-candidate returns (radar+lidar+ais), time-sorted.
+    auto byTime = [](const std::pair<double, Eigen::Vector2d>& a,
+                     const std::pair<double, Eigen::Vector2d>& b) {
+      return a.first < b.first;
+    };
+    std::vector<std::pair<double, Eigen::Vector2d>> pos;
+    for (const auto& m : scen.measurements)
+      if (m.value.size() >= 2 &&
+          (m.sensor == SensorKind::ArpaTtm || m.sensor == SensorKind::Lidar ||
+           m.sensor == SensorKind::Ais))
+        pos.push_back({m.time.seconds(), m.value.head<2>()});
+    std::sort(pos.begin(), pos.end(), byTime);
+    std::map<std::uint64_t, std::vector<std::pair<double, Eigen::Vector2d>>> tr;
+    for (const auto& ts : scen.truth)
+      tr[ts.truth_id].push_back({ts.time.seconds(), ts.position});
+    bool any_inband_truth = false;
+    for (auto& [id, samps] : tr) {
+      std::sort(samps.begin(), samps.end(), byTime);
+      // First in-band window: the run of consecutive in-band samples starting
+      // at the first in-band sample. Count re-detections at the SCAN level =
+      // the DISTINCT birth-candidate measurement timestamps (ms-deduped) that
+      // fall within R of the truth inside that window. Truth is sampled far
+      // denser than the sensors, so counting truth samples would report the
+      // truth cadence, not the scan cadence — dedup to measurement times.
+      std::set<long long> redet_ms;
+      bool started = false;
+      for (auto& [t, p] : samps) {
+        if (!inBand(p)) { if (started) break; else continue; }
+        started = true;
+        for (auto& [mt, mp] : pos)
+          if (std::abs(mt - t) <= 0.5 && (mp - p).norm() <= R2)
+            redet_ms.insert((long long)std::llround(mt * 1e3));
+      }
+      if (!started) continue;  // never in-band (offshore vessel) — no pending
+      any_inband_truth = true;
+      std::vector<double> rt;
+      for (long long ms : redet_ms) rt.push_back(ms / 1e3);  // set => ascending
+      std::printf("  in-band truth_%llu: distinct-scan redetections=%zu"
+                  "  latency@K:", (unsigned long long)id, rt.size());
+      for (int K : Ks) {
+        if ((int)rt.size() >= K)
+          std::printf(" K%d=%.1fs", K, rt[K - 1] - rt.front());
+        else
+          std::printf(" K%d=FAIL", K);
+      }
+      std::printf("\n");
+    }
+    if (!any_inband_truth)
+      std::printf("  (no in-band truth targets — vessels offshore; latency "
+                  "n/a, pending band never engages a real target here)\n");
+    std::printf("  [note] a vessel re-detecting on every radar scan reaches K "
+                "in (K-1) x %.2fs ~ %.1fs at K=8; harbor+env-1 have no charted "
+                "in-band band (chart-free / offshore) => untouched by "
+                "construction.\n", scan_dt, 7 * scan_dt);
+    return 0;
+  }
+
   // ---- Phase 1d: occupancy floor-veto race (T_veto vs T_floor) ----
   // Feed the workload's birth-candidate returns, per fed scan (= one unique
   // timestamp), into an offline LiveOccupancyModel (shipped machinery, default

@@ -86,6 +86,56 @@ CoastlinePriorParams sweepCoastlineParams() {
   return p;
 }
 
+// Cl-4 pending-band ticket, Step 1 (shape-collapse verification, 2026-07-12).
+// A "ramp shape" is a monotone remap h:[0,1]->[0,1] applied to the shipped
+// linear clutter prior c_lin, with h(0)=0 and h(1)=1 so the open-water (c=0)
+// and hard-gate (c=1) endpoints — and therefore the admit boundary at the
+// shipped floor >= 0.1 — are preserved. Selected by PMBM_RAMP_SHAPE in
+// {linear (default = identity), quad, seg}; UNSET => the base model is wired
+// verbatim (byte-identical, no wrapper). Research-only lever, NOT a deployment
+// surface: proves the ticket's structural claim that under adaptive birth
+// (pre-suppression existence PINNED to 0.1, pmbm-design.md §3.2.2) every
+// one-shot shape collapses to its admit-boundary distance d*. At W25/f0.10
+// admission requires c==0, which every h with h(0)=0 preserves, so all three
+// shapes must produce a byte-identical run — the empirical check.
+enum class RampShape { Linear, Quad, Seg };
+RampShape sweepRampShape() {
+  const char* v = std::getenv("PMBM_RAMP_SHAPE");
+  if (!v || !*v) return RampShape::Linear;
+  const std::string s = v;
+  if (s == "quad") return RampShape::Quad;
+  if (s == "seg") return RampShape::Seg;
+  return RampShape::Linear;
+}
+double applyRampShape(RampShape shape, double c) {
+  switch (shape) {
+    case RampShape::Linear:
+      return c;
+    case RampShape::Quad:
+      return c * c;  // convex; h(0)=0, h(1)=1, non-linear (lenient mid-band)
+    case RampShape::Seg:
+      // Two-segment strict-then-lenient with a knee at c=0.5:
+      //   (0->0), (0.5->0.8), (1->1). Steep offshore side, shallow inland side.
+      return c <= 0.5 ? 1.6 * c : 0.8 + 0.4 * (c - 0.5);
+  }
+  return c;
+}
+
+// ILandModel decorator: applies a monotone shape remap over a base land model.
+// Only ever wired when shape != Linear, so the default path never allocates it.
+class ShapedLandModel : public ILandModel {
+ public:
+  ShapedLandModel(std::shared_ptr<ILandModel> base, RampShape shape)
+      : base_(std::move(base)), shape_(shape) {}
+  double clutterPrior(const Eigen::Vector2d& enu_xy) const override {
+    return applyRampShape(shape_, base_->clutterPrior(enu_xy));
+  }
+
+ private:
+  std::shared_ptr<ILandModel> base_;
+  RampShape shape_;
+};
+
 const char* sensorName(SensorKind s) {
   switch (s) {
     case SensorKind::Unknown:  return "unknown";
@@ -441,13 +491,13 @@ std::vector<MetricRow> runSweep(
           // tracker holds only a raw pointer). The datum is fixed for the whole
           // run, so no datum-sink registration is needed.
           std::shared_ptr<CoastlineModel> land;
+          std::shared_ptr<ILandModel> land_shaped;  // Step-1 shape wrapper (opt)
           if (config.use_land_model && scen.datum.has_value()) {
             std::optional<CoastlineGeometry> synth =
                 scenario_ptr->syntheticCoastline();
             if (synth.has_value()) {
               land = std::make_shared<CoastlineModel>(std::move(*synth),
                                                       *scen.datum);
-              tracker.setLandModel(land.get());
             } else if (!desc.coastline_geojson_path.empty()) {
               std::ifstream probe(desc.coastline_geojson_path);
               if (probe.good()) {
@@ -456,10 +506,22 @@ std::vector<MetricRow> runSweep(
                                                    sweepCoastlineParams());
                   land = std::make_shared<CoastlineModel>(std::move(geom),
                                                           *scen.datum);
-                  tracker.setLandModel(land.get());
                 } catch (const std::exception&) {
                   // GeoJSON parse failure — proceed without land model
                 }
+              }
+            }
+            // Wire the land model. PMBM_RAMP_SHAPE unset (Linear) => the base
+            // CoastlineModel verbatim, byte-identical to the shipped path; a
+            // non-linear shape wraps it in a ShapedLandModel that outlives the
+            // synchronous runBenchPmbm call (tracker holds a raw pointer).
+            if (land) {
+              const RampShape shape = sweepRampShape();
+              if (shape == RampShape::Linear) {
+                tracker.setLandModel(land.get());
+              } else {
+                land_shaped = std::make_shared<ShapedLandModel>(land, shape);
+                tracker.setLandModel(land_shaped.get());
               }
             }
           }
