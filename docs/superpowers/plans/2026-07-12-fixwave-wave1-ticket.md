@@ -101,3 +101,30 @@ must also check which convention their own middleware reads). Implement F1
 and F2 now; F3 becomes a one-liner + five doc/test touchups (NED) or a
 five-site doc fix (ENU) once decided. Whichever direction: the swap-test
 remains the permanent pin of the DECIDED convention.
+
+## RESOLUTION 2026-07-12 (user decision) — F3 goes DUAL-API; unhold
+
+The user resolved the direction question by dissolving it:
+**`toTrackOutputENU()` + `toTrackOutputNED()`**, and the ambiguous
+`toTrackOutput()` is REMOVED (house unreachable-footgun rule — the
+compile-time break at every call site IS the consumer audit; no caller can
+flip silently). Design riders (binding):
+
+1. `toTrackOutputENU` = the current behavior renamed to what it truly is
+   (east-north ordering); `toTrackOutputNED` = the north-first copy. No
+   deprecated alias for the old name.
+2. `TrackOutput` gains a `covariance_frame` enum field (ENU/NED) stamped by
+   the producing function, so a struct passed around retains its
+   convention; axis-sensitive consumers may assert on it. This is a new
+   output field → integration guide + output-contract.md updated in the
+   same PR (document BOTH entry points; the old "NED" claim is superseded).
+3. In-repo call-site migration is part of F3: Foxglove adapter →
+   `toTrackOutputNED` (this FIXES its rotated ellipses), T2T
+   `NavtrackerSource` → `toTrackOutputENU` (its swap-test stays green
+   unchanged — extend it to also assert the frame tag), `example.cpp` picks
+   one and says why in its comment.
+4. BOTH conventions get an end-to-end elongated-covariance pin test (which
+   output slot holds north), per the #24 teeth standard.
+5. Handoff note to the user stands: their middleware will hit the
+   compile-time break on upgrade and must pick the name matching their
+   downstream's expectation — that is by design.
