@@ -77,8 +77,15 @@ namespace {
 // user's 2026-07-11 spatial-split directive); PMBM_INLAND_HALFWIDTH_M is the
 // inland companion, kept for symmetry (default unchanged). The ramp math in
 // CoastlineGeometry is untouched — only its two half-width params move.
-CoastlinePriorParams sweepCoastlineParams() {
-  CoastlinePriorParams p{};  // shipped defaults: inland=offshore=50 m
+// `base` is the per-config coastline prior (Config::coastline_prior_params,
+// or the shipped 50/50 default when a config does not set one). The env vars
+// then override on top as RESEARCH levers (unset ⇒ the config value verbatim).
+// Cl-4 adoption (2026-07-12, ADR-0003): the deployable config
+// `imm_cv_ct_pmbm_coverage_land_ivgate` sets offshore_halfwidth_m = 25 via
+// `base`; every other config leaves it at the 50 m default → byte-identical to
+// master when no env var is set.
+CoastlinePriorParams sweepCoastlineParams(const CoastlinePriorParams& base) {
+  CoastlinePriorParams p = base;  // per-config value or shipped 50/50 default
   if (const char* v = std::getenv("PMBM_OFFSHORE_HALFWIDTH_M"); v && *v)
     p.offshore_halfwidth_m = std::strtod(v, nullptr);
   if (const char* v = std::getenv("PMBM_INLAND_HALFWIDTH_M"); v && *v)
@@ -502,8 +509,10 @@ std::vector<MetricRow> runSweep(
               std::ifstream probe(desc.coastline_geojson_path);
               if (probe.good()) {
                 try {
-                  auto geom = loadCoastlineGeoJson(desc.coastline_geojson_path,
-                                                   sweepCoastlineParams());
+                  auto geom = loadCoastlineGeoJson(
+                      desc.coastline_geojson_path,
+                      sweepCoastlineParams(config.coastline_prior_params.value_or(
+                          CoastlinePriorParams{})));
                   land = std::make_shared<CoastlineModel>(std::move(geom),
                                                           *scen.datum);
                 } catch (const std::exception&) {

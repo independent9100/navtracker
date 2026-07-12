@@ -951,6 +951,20 @@ provider.registerDatumSink(&coastline_model);  // §2
 > **`land_birth_hard_gate`** (default **`0.95`** — confidently inland only, never
 > the waterline) is dropped, protecting anchored near-shore vessels.
 
+> **Near-shore birth strip on the deployable config (Cl-4 / ADR-0003).**
+> With the shipped 50 m `offshore_halfwidth_m` and the deployable config's floor
+> (`min_new_bernoulli_existence == birth_existence_target == 0.1`), the inner 50 m
+> becomes a **no-birth strip**: a vessel within 50 m of shore never initiates. The
+> deployable config `imm_cv_ct_pmbm_coverage_land_ivgate` **narrows that strip to
+> 25 m** — build its `CoastlineModel` with
+> `CoastlinePriorParams{/*inland=*/50.0, /*offshore=*/25.0}`. Operational meaning:
+> movers in the **25–50 m** band now initiate; in **cluttered harbors expect
+> in-strip phantom tracks** (an operator-supervised, near-land nuisance — priced
+> and accepted); a vessel that stays within **0–25 m** of shore its whole track
+> **still does not initiate** (the residual blind band). Full rationale, the
+> measured phantom map, and the parked "pending band" escalation for 0–25 m
+> (quay/dock) operations: **`docs/adr/0003-near-shore-birth-policy-25m-strip.md`**.
+
 ### Live occupancy detector — *in active development*
 
 `LiveOccupancyModel` (`core/static/LiveOccupancyModel.hpp`) learns a persistence
@@ -1429,6 +1443,13 @@ on `core/pmbm/PmbmTracker.hpp`; a flag off = the wired model/port does nothing):
 | `use_pda_soft_detected_branch` | `false` | soft (β-weighted) detected-branch update instead of hard commit (§8) |
 | `pda_pool_excludes_land` | `false` | drops shore/structure returns from the PDA soft pool (§8) |
 | `pda_pool_land_clutter_gate` | `0.5` | land clutter-prior above which a non-winner is excluded from the pool (§8) |
+
+**Near-shore birth strip (deployable config, Cl-4 / ADR-0003).** Not a
+`PmbmTracker` flag but a `CoastlineModel` build parameter: the deployable config
+`imm_cv_ct_pmbm_coverage_land_ivgate` builds its coastline with
+`CoastlinePriorParams{inland_halfwidth_m = 50, offshore_halfwidth_m = 25}` (vs the
+struct default 50/50), narrowing the near-shore no-birth strip from 50 m to 25 m.
+See §7 (Land / coastline) and `docs/adr/0003-near-shore-birth-policy-25m-strip.md`.
 
 Non-`Config` tuning structs a consumer also touches: `DatumRecenterPolicy`
 (`core/own_ship/OwnShipProvider.hpp`, §2), `StaticObstacleParams`

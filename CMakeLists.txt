@@ -245,6 +245,7 @@ add_executable(navtracker_tests
   tests/pmbm/test_pmbm_sensor_activity.cpp
   tests/pmbm/test_pmbm_remote_track_fusion.cpp
   tests/pmbm/test_pmbm_land_model.cpp
+  tests/pmbm/test_cl4_near_shore_zone.cpp
   tests/pmbm/test_pmbm_static_obstacle.cpp
   tests/pmbm/test_pmbm_clutter_feed.cpp
   tests/pmbm/test_pmbm_birth_floor.cpp
