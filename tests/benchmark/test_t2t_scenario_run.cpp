@@ -471,5 +471,71 @@ TEST(T2tScenarioRun, CrossMmsiConflictReducesWrongPairings) {
   EXPECT_GE(max_tracks, 2);
 }
 
+// b24-2 (T2T invariant 5, END-TO-END). max_tracks>=2 guards the WRONG direction:
+// a conflict wrongly PREVENTING fusion SPLITS each vessel into separate radar/ais
+// tracks -> MORE tracks, which a lower bound cannot catch. With the per-fused-
+// track FUSER arm-id bookkeeping (b24-2) we can gate the real invariant: both
+// targets are GENUINELY FUSED (each fed by BOTH arms), not split. Setup: two
+// crossing targets; radar tags per-vessel MMSI, AIS reports one SPOOFED constant
+// MMSI -> every cross-arm pair carries an MMSI CONFLICT. The soft penalty is
+// uniform (all pairs conflict) so it is a no-op and kinematics fuses correctly.
+// If external id were the fusion KEY (teeth: forbid conflicting-MMSI pairs), the
+// conflict would prevent fusion and both vessels would split into single-arm
+// tracks -> the two-arm gate below goes red.
+TEST(T2tScenarioRun, CrossSpoofedMmsiStillFusesBothTargetsEndToEnd) {
+  auto run = findSim("sim_ms_crossing");
+  ASSERT_TRUE(run);
+  const auto full = run->generate(0);
+  if (full.measurements.empty())
+    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+
+  CovarianceIntersectionRule ci;
+  ArmSpec a{"radar", {SensorKind::ArpaTtm}, usedStreams({"radar"})};
+  ArmSpec b{"ais", {SensorKind::Ais}, usedStreams({"ais"})};
+  ArmPerturb pa, pb;
+  pa.mmsi_from_truth = true;    // radar: consistent per-vessel MMSI (A, B)
+  pb.force_mmsi = 999000999u;   // AIS: one spoofed MMSI on BOTH targets -> conflict
+
+  const BenchResult fused =
+      fuseTwoViewsPerturbed(*run, full, a, b, &ci, T2tConfig{}, pa, pb);
+  ASSERT_FALSE(fused.steps.empty());
+
+  auto twoArm = [](const benchmark::TrackStateSnapshot& s) {
+    bool r = false, ai = false;
+    for (const auto& arm : s.contributing_fuser_arm_ids) {
+      if (arm == "radar") r = true;
+      if (arm == "ais") ai = true;
+    }
+    return r && ai;
+  };
+  int steps_with_2_fused = 0, max_two_arm = 0, steps_with_any_two_arm = 0;
+  for (const auto& step : fused.steps) {
+    int n2 = 0;
+    for (const auto& tk : step.tracks)
+      if (twoArm(tk)) ++n2;
+    max_two_arm = std::max(max_two_arm, n2);
+    if (n2 >= 2) ++steps_with_2_fused;
+    if (n2 >= 1) ++steps_with_any_two_arm;
+  }
+  std::cerr << "[t2t_cross_spoof] steps=" << fused.steps.size()
+            << " steps_with_>=2_two-arm-fused=" << steps_with_2_fused
+            << " steps_with_>=1=" << steps_with_any_two_arm
+            << " max_two_arm=" << max_two_arm << "\n";
+  // Invariant 5, end-to-end: both crossing targets are GENUINELY fused (each fed
+  // by radar AND ais) simultaneously (max_two_arm>=2), and that holds on a
+  // sustained fraction of the run (measured 261/598 ≈ 44%; floor 100 ≈ 17% keeps
+  // >2.5x headroom under the fixed seed's per-arm churn). If external id were the
+  // fusion KEY, the spoofed-MMSI conflict would PREVENT fusion and each vessel
+  // would split into single-arm tracks -> zero two-arm-fused tracks -> both red.
+  // (The pre-b24-2 gate `max_tracks>=2` could not see this: a split raises the
+  // track count, satisfying a lower bound.)
+  EXPECT_GE(max_two_arm, 2)
+      << "the two crossing targets were never BOTH genuinely fused (each fed by "
+         "radar+ais) at one step — spoofed MMSI prevented fusion (invariant 5)";
+  EXPECT_GT(steps_with_2_fused, 100)
+      << "genuine 2-target 2-arm fusion was not sustained (measured ~261): "
+      << steps_with_2_fused;
+}
+
 }  // namespace
 }  // namespace navtracker::t2t::bench

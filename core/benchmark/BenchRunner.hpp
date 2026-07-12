@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 #include <Eigen/Core>
@@ -28,6 +29,18 @@ struct TrackStateSnapshot {
   // covariance (state.size() < 2 already filters those out). Used by
   // bench-side NEES (see core/benchmark/Consistency.hpp).
   Eigen::Matrix2d pos_covariance{Eigen::Matrix2d::Zero()};
+
+  // ADDITIVE, T2T-fused-path ONLY (b24-2). The set of FUSER source-tracker ARM
+  // ids that fed this fused track at its last fuse (e.g. {"radar","ais"}). This
+  // is T2T-engine-side BOOKKEEPING — which arms the FUSER combined — NOT upstream
+  // sensor pedigree: it is derived from T2tFuser::fusedTracks().contributing_
+  // trackers, never from a live tracker's Track::contributing_sources (the
+  // PmbmTracker:1666 spurious-SourceTouch caveat does not apply here). Populated
+  // only by the T2T view harness (tests/benchmark/T2tViewHarness.hpp); EMPTY for
+  // every non-T2T bench path, so all existing bench metrics stay byte-identical.
+  // Lets a scenario gate distinguish "N genuinely 2-arm-fused tracks" from
+  // "N single-arm tracks that FAILED to fuse" (T2T invariant 5, end-to-end).
+  std::vector<std::string> contributing_fuser_arm_ids;
 };
 
 /** Per truth snapshot at a single evaluation timestamp. */

@@ -69,6 +69,23 @@ PoissonComponent mkPpp(double w, double px, double py) {
   return c;
 }
 
+// An established point-target Bernoulli (σ = 1 m position/velocity) at (px,py).
+// Used by the b24-1 two-track/two-measurement AMBIGUITY scan: two of these plus
+// two straddling measurements make the identity and swap assignments gate with
+// comparable cost, so Murty sustains ≥2 competing global hypotheses (the
+// precondition the dominance-cutoff and alt-birth-strip mechanisms need).
+Bernoulli makeBern(BernoulliId id, double r, double px, double py) {
+  Bernoulli b;
+  b.id = id;
+  b.existence_probability = r;
+  b.mean = Eigen::VectorXd::Zero(4);
+  b.mean(0) = px;
+  b.mean(1) = py;
+  b.covariance = Eigen::MatrixXd::Identity(4, 4);
+  b.last_update = Timestamp::fromSeconds(0.0);
+  return b;
+}
+
 struct Fixture {
   std::shared_ptr<ConstantVelocity2D> motion =
       std::make_shared<ConstantVelocity2D>(0.1);
@@ -744,59 +761,63 @@ TEST(PmbmTrackerPhase8, OutputMergeFoldsCoincidentIds) {
 
 TEST(PmbmTrackerPhase8, KBestDominanceCutoffDropsSiblingsBelowGap) {
   Fixture f;
-  PmbmTracker::Config cfg;
-  cfg.probability_of_detection = 0.9;
-  cfg.clutter_intensity = 1e-3;
-  cfg.survival_probability = 1.0;
-  cfg.adaptive_birth = true;
-  cfg.adaptive_k_best = true;
-  cfg.k_best_per_hypothesis = 5;
-  cfg.lambda_birth = 1e-5;
-  cfg.min_new_bernoulli_existence = 0.05;
-  cfg.hypothesis_weight_min = 1e-9;  // don't let the regular floor prune
-  cfg.r_min = 1e-9;
-
-  // Run a 3-measurement scan with one parent and no PPP-aligned
-  // dominant assignment so Murty produces multiple comparable
-  // K-children. Then run the same scan with log_gap = 0 (control)
-  // and log_gap = 0.5 (aggressive). Assert the gap-on run produces
-  // strictly fewer children when alts exist within the gap.
+  // b24-1: an AMBIGUOUS two-track / two-measurement scan that PROVABLY sustains
+  // ≥2 competing global hypotheses. (The old 3-measurement / 2-PPP scan collapsed
+  // to a single hypothesis — n_off==1 — leaving the dominance cutoff with nothing
+  // to act on; sweep finding O1.) Two ESTABLISHED Bernoullis give the assignment
+  // MUTUAL EXCLUSION that PPP births lacked: at (0,0) and (kSep,0), with two
+  // measurements straddling the midpoint each ~equidistant from both, the
+  // identity and swap assignments gate with comparable cost. Murty emits the
+  // identity/swap pair at the top plus lower-weight partial-assignment siblings
+  // (measured: n_off=5, top pair ~5.4 nat above the 3 siblings; robust for
+  // kSep in {2,3,4}).
+  constexpr double kSep = 3.0, kOff = 0.5;
   auto run_with_gap = [&](double gap) {
-    PmbmTracker::Config c = cfg;
+    PmbmTracker::Config c;
+    c.probability_of_detection = 0.9;
+    c.clutter_intensity = 1e-3;
+    c.survival_probability = 1.0;
+    c.adaptive_birth = true;
+    c.adaptive_k_best = true;
+    c.k_best_per_hypothesis = 5;
+    c.lambda_birth = 1e-5;
+    c.min_new_bernoulli_existence = 0.05;
+    c.hypothesis_weight_min = 1e-9;  // don't let the regular floor prune
+    c.r_min = 1e-9;
     c.k_best_dominance_log_gap = gap;
     PmbmTracker tracker(f.ekf, c);
     tracker.predict(Timestamp::fromSeconds(0.0));
-    tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 0.0, 0.0));
-    tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 10.0, 10.0));
+    navtracker::pmbm::GlobalHypothesis h;
+    h.weight = 1.0;
+    h.log_weight = 0.0;
+    h.bernoullis.push_back(makeBern(1, 0.9, 0.0, 0.0));
+    h.bernoullis.push_back(makeBern(2, 0.9, kSep, 0.0));
+    tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
     tracker.processBatch({
-        pos2d(1.0, 0.0, 0.0,   SensorKind::Lidar, "r0"),
-        pos2d(1.0, 10.0, 10.0, SensorKind::Lidar, "r0"),
-        pos2d(1.0, 5.0, 5.0,   SensorKind::Lidar, "r0"),
+        pos2d(1.0, kSep / 2.0,  kOff, SensorKind::Lidar, "r0"),
+        pos2d(1.0, kSep / 2.0, -kOff, SensorKind::Lidar, "r0"),
     });
     return tracker.density().mbm.size();
   };
-  const auto n_off = run_with_gap(0.0);
-  const auto n_on  = run_with_gap(0.5);
+  const auto n_off = run_with_gap(0.0);  // no cutoff: keep all K children
+  const auto n_on = run_with_gap(0.5);   // cutoff: drop children > 0.5 nat below top
 
-  // The no-ADD invariant is the real, always-exercised teeth: a positive
-  // dominance log_gap must never GROW the hypothesis count (a regression that
-  // let the cutoff add children would go red here).
+  // PRECONDITION (b24-1): the scan MUST sustain ≥2 competing global hypotheses,
+  // else the cutoff has nothing to drop and the test is vacuous (sweep O1). Assert
+  // it so this test can never silently re-vacuate.
+  ASSERT_GE(n_off, 2u)
+      << "ambiguous scan must sustain ≥2 competing global hypotheses; n_off="
+      << n_off;
+  // A positive dominance gap must never GROW the hypothesis count...
   EXPECT_GE(n_off, n_on)
       << "positive log_gap must NOT add hypotheses; n_off=" << n_off
       << " n_on=" << n_on;
-  // #24 / STOP-AND-REPORT (backlog b24-1): the DROP half is UNCOVERED. The
-  // comment claimed "the 3-measurement scan reliably produces ≥2 K-children",
-  // but measured n_off == 1 — the MBM collapses to a single global hypothesis on
-  // this scan, so the cutoff has nothing to drop and EXPECT_LT(n_on, n_off) never
-  // ran (guarded-loop vacuity, exposed by the assertion sweep). Making it toothy
-  // needs a scenario with genuine assignment ambiguity (≥2 comparable surviving
-  // K-children) — a PMBM-scenario-construction task, not an assertion tweak.
-  if (n_off >= 2) {
-    EXPECT_LT(n_on, n_off)
-        << "log_gap=0.5 must drop ≥ 1 close-weight sibling when "
-           "the cost matrix admits multiple K-children with alts "
-           "within 0.5 nat of the top";
-  }
+  // ...and here it must STRICTLY DROP the far siblings below the top pair
+  // (measured n_off=5, n_on=2). Teeth (b24-1): making the dominance cutoff a
+  // no-op leaves n_on==n_off → this goes red.
+  EXPECT_LT(n_on, n_off)
+      << "log_gap=0.5 must drop ≥1 close-weight sibling below the top pair; n_on="
+      << n_on << " n_off=" << n_off;
 }
 
 // ---------------------------------------------------------------------------
@@ -888,49 +909,78 @@ TEST(PmbmTrackerPhase9S3, AltBirthGateStripsBirthsInWeakAltOnly) {
   // detections kept" — the discriminator the M3 output-merge probe
   // lacked.
   Fixture f;
-  PmbmTracker::Config c;
-  c.probability_of_detection = 0.9;
-  c.clutter_intensity = 1e-4;
-  c.survival_probability = 1.0;
-  c.k_best_per_hypothesis = 5;
-  c.alt_birth_log_gap_threshold = 0.5;
-  PmbmTracker tracker(f.ekf, c);
-  tracker.predict(Timestamp::fromSeconds(0.0));
-  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 0.0, 0.0));
-  tracker.mutableDensityForTesting().ppp.push_back(mkPpp(1.0, 10.0, 10.0));
-  tracker.processBatch({
-      pos2d(1.0, 0.0, 0.0,   SensorKind::Lidar, "r0"),
-      pos2d(1.0, 10.0, 10.0, SensorKind::Lidar, "r0"),
-      pos2d(1.0, 5.0, 5.0,   SensorKind::Lidar, "r0"),
-  });
-  ASSERT_FALSE(tracker.density().mbm.empty());
-  const double top_lw = std::max_element(
-      tracker.density().mbm.begin(), tracker.density().mbm.end(),
-      [](const auto& a, const auto& b) {
-        return a.log_weight < b.log_weight;
-      })->log_weight;
-  const double scan_t = 1.0;
-  int gated_alts = 0;
-  for (const auto& h : tracker.density().mbm) {
-    if (h.log_weight >= top_lw - 0.5) continue;  // not a gated alt
-    ++gated_alts;
-    for (const auto& b : h.bernoullis) {
-      EXPECT_NE(b.birth_time.seconds(), scan_t)
-          << "alt child (lw=" << h.log_weight << " vs top=" << top_lw
-          << ") still contains a fresh birth";
+  // b24-1: same AMBIGUOUS two-track / two-measurement scan as
+  // KBestDominanceCutoffDropsSiblingsBelowGap (two established Bernoullis + two
+  // straddling measurements) so the MBM sustains gated ALT hypotheses. In the
+  // partial-assignment siblings one measurement detects a Bernoulli and the other
+  // BIRTHS a fresh Bernoulli — so those gated alts genuinely carry fresh births,
+  // which is exactly what the alt-birth-strip gate must remove. (The old 3-meas /
+  // 2-PPP scan collapsed to one hypothesis → gated_alts==0 → the strip check never
+  // ran; sweep finding O2.)
+  constexpr double kSep = 3.0, kOff = 0.5, kScanT = 1.0;
+  auto count_fresh_births_in_gated_alts = [&](double strip_threshold) {
+    PmbmTracker::Config c;
+    c.probability_of_detection = 0.9;
+    c.clutter_intensity = 1e-3;
+    c.survival_probability = 1.0;
+    c.adaptive_birth = true;
+    c.adaptive_k_best = true;
+    c.k_best_per_hypothesis = 5;
+    // λ_birth = 1e-2 (not the 1e-5 used by the KBest sibling): here an unassigned
+    // measurement in a partial-assignment sibling must be explained as a BIRTH
+    // rather than clutter (λ_C=1e-3), so the gated alts genuinely carry fresh
+    // Bernoullis for the strip to remove. Measured: top pair 0 births, each of the
+    // 3 gated siblings carries 1 fresh birth.
+    c.lambda_birth = 1e-2;
+    c.min_new_bernoulli_existence = 0.05;
+    c.hypothesis_weight_min = 1e-9;
+    c.r_min = 1e-9;
+    c.alt_birth_log_gap_threshold = strip_threshold;
+    PmbmTracker tracker(f.ekf, c);
+    tracker.predict(Timestamp::fromSeconds(0.0));
+    navtracker::pmbm::GlobalHypothesis h;
+    h.weight = 1.0;
+    h.log_weight = 0.0;
+    h.bernoullis.push_back(makeBern(1, 0.9, 0.0, 0.0));
+    h.bernoullis.push_back(makeBern(2, 0.9, kSep, 0.0));
+    tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
+    tracker.processBatch({
+        pos2d(kScanT, kSep / 2.0,  kOff, SensorKind::Lidar, "r0"),
+        pos2d(kScanT, kSep / 2.0, -kOff, SensorKind::Lidar, "r0"),
+    });
+    const double top_lw = std::max_element(
+        tracker.density().mbm.begin(), tracker.density().mbm.end(),
+        [](const auto& a, const auto& b) { return a.log_weight < b.log_weight; })
+        ->log_weight;
+    int gated_alts = 0, fresh_births = 0;
+    for (const auto& hyp : tracker.density().mbm) {
+      if (hyp.log_weight >= top_lw - 0.5) continue;  // not a gated alt
+      ++gated_alts;
+      for (const auto& b : hyp.bernoullis)
+        if (b.birth_time.seconds() == kScanT) ++fresh_births;
     }
-  }
-  // #24 / STOP-AND-REPORT (backlog b24-1): CONFIRMS W3 assertion-quality#3, and
-  // worse — measured gated_alts == 0. The 3-measurement scan collapses to a
-  // single global hypothesis (same root cause as KBestDominanceCutoffDropsSiblings
-  // BelowGap: n_off==1), so NO hypothesis sits below top_lw-0.5 and the strip
-  // check above never runs. The alt-birth-strip mechanism therefore has zero
-  // behavioral coverage. An ASSERT_GT(gated_alts,0) here correctly turns this
-  // vacuity RED, but the fix is a scenario redesign that produces a genuine
-  // gated alt hypothesis (not a mechanical assertion change) — deferred to the
-  // backlog. Documented rather than shipped red; the mechanism's default==legacy
-  // invariant is covered by AltBirthGateDefaultIsBitIdenticalToLegacy.
-  (void)gated_alts;
+    return std::pair<int, int>{gated_alts, fresh_births};
+  };
+
+  const auto [gated_on, fresh_on] = count_fresh_births_in_gated_alts(0.5);
+  // PRECONDITION (b24-1): gated alts MUST exist, else the strip check is vacuous
+  // (sweep O2). Assert so this test can never silently re-vacuate.
+  ASSERT_GT(gated_on, 0)
+      << "ambiguous scan must produce ≥1 gated alt hypothesis; gated=" << gated_on;
+  // With the strip ON, every fresh birth (birth_time == scan time) in a gated
+  // alt has been removed — "births dropped, detections kept".
+  EXPECT_EQ(fresh_on, 0)
+      << "alt-birth gate left " << fresh_on
+      << " fresh birth(s) in gated alt hypotheses (should be stripped)";
+  // Teeth (b24-1): the strip is what removes them. Disabling it (threshold 0)
+  // must leave the fresh births in the gated alts — proving the assertion above
+  // is not vacuous. Confirmed here as part of the same run so the coverage can
+  // never silently regress: strip OFF keeps ≥1 fresh birth the strip removed.
+  const auto [gated_off, fresh_off] = count_fresh_births_in_gated_alts(0.0);
+  ASSERT_GT(gated_off, 0) << "control run lost its gated alts";
+  EXPECT_GT(fresh_off, 0)
+      << "with the strip OFF the gated alts must retain fresh births (else the "
+         "ON assertion above proves nothing); fresh_off=" << fresh_off;
 }
 
 // ---------------------------------------------------------------------------
