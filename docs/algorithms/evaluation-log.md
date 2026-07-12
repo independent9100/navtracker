@@ -8,6 +8,32 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-12 — Cl-4 endgame Part 2: 2-D price surface + phantom map — dials are iso-cost but spatially DIFFERENT; W25/f0.10 = amended knee candidate [Cl-4]
+
+Amended-ticket second half (user's spatial split); merged 7080949.
+Write-up: `docs/baselines/2026-07-11_cl4_cliff_price_list.md` Part 2.
+
+- **Geography (exact signed distance):** env-2 vessels ride 6–42 m offshore
+  (median ~25–31 m), never inland. philos in-band radar: 1361/1706 returns
+  are INLAND structure (gated regardless); the 345 offshore water-clutter
+  returns span 0–50 m — dense at 0–10 m, tail of 41 at 40–50 m. Density
+  gradient, no clean inner/outer cut → the split buys no discount.
+- **2-D surface (W_off × floor, 24 cells):** narrowing W_off shifts the
+  env-2 revival cliff to higher floors (8/8 holds to f0.10 at W_off ≤ 25 m)
+  but the philos bill tracks one-for-one — iso-cost ridges; cheapest 8/8 ≈
+  +17 card_err either way (W25/f0.10 +17.35 ≈ W50/f0.08 +19.35). env-1
+  (16.57) and harbor (9.53) unchanged at every cell.
+- **Phantom MAP (the discriminator):** narrowing W_off adds phantoms
+  almost entirely IN-STRIP (in-strip 37→228, far field 88→88 flat, max
+  264 m). Lowering the floor SPILLS into open water (far 88→117, max
+  5000 m flyers). Same price, different placement — the spatial split is
+  partially vindicated: not a cheaper door, a spatially CLEANER one.
+- **Amended knee candidate: W_off=25 m, floor=0.10** — 8/8 env-2,
+  best-on-surface env-2 GOSPA 13.38 (beats pmbm_land 17.74), phantoms
+  strip-leaning (+10.45 tracks/scan vs today, mostly in the supervised
+  near-land strip), far open-water field flat. Decision (user): revive at
+  all, and if so which dial.
+
 ## 2026-07-12 — #24 assertion sweep: 214 triaged, 46 upgraded with teeth proofs, 2 design gaps exposed [suite health]
 
 Ticket `2026-07-11-backlog24-assertion-sweep-ticket.md`; merged 164749f;
