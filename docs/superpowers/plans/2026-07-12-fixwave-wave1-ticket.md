@@ -82,3 +82,22 @@ reading of `TrackOutput` covariance.
    mark the three findings FIXED in a dated note in the review's findings
    file (do not rewrite the original finding text).
 6. Commit on your branch; do not merge or push master.
+
+## AMENDMENT 2026-07-12 (arbiter) — F3 direction is now a USER DECISION; hold F3, do F1+F2 first
+
+The open-points synthesis (§B Theme 4) surfaced evidence that flips the
+F3 analysis: the NED assumption is not just in the header — it is in
+`output-contract.md`, `example.cpp`, the integration guide, AND the
+Foxglove adapter, which is rendering every anisotropic error ellipse 90°
+rotated TODAY. So "align docs to code (ENU)" means fixing five
+consumer-facing sites; "align code to docs (NED)" means one code change
+that makes all five right at once (and flips the T2T swap-test, which was
+designed for exactly this). The synthesis recommends code→NED. The
+arbiter's earlier docs→ENU rationale ("every live consumer verified against
+actual ordering") is WRONG for Foxglove — it assumed NED and is bitten.
+
+**Do NOT implement F3 until the user decides the contract direction** (they
+must also check which convention their own middleware reads). Implement F1
+and F2 now; F3 becomes a one-liner + five doc/test touchups (NED) or a
+five-site doc fix (ENU) once decided. Whichever direction: the swap-test
+remains the permanent pin of the DECIDED convention.
