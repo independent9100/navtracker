@@ -1666,11 +1666,11 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     rebuildPerTrackViewFromFlat(density_);
   }
 
-  // Source-touch history. Walk the highest-weighted hypothesis; for
-  // each Bernoulli whose last_update equals this scan's time it was
-  // detected, find the nearest measurement in this scan, and append
-  // a SourceTouch under that Bernoulli's id. Same window-prune /
-  // alive-id-keep semantics as MhtTracker::contribution_history_.
+  // Source-touch history. Walk the highest-weighted hypothesis; for each
+  // Bernoulli that CLAIMED a measurement this scan (last_claimed_meas_index
+  // >= 0; misdetections carry -1), append a SourceTouch for that exact
+  // measurement under the Bernoulli's id. Same window-prune / alive-id-keep
+  // semantics as MhtTracker::contribution_history_.
   if (!density_.mbm.empty() && !scan.empty()) {
     const auto& dom = *std::max_element(
         density_.mbm.begin(), density_.mbm.end(),
@@ -1678,25 +1678,21 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
           return a.weight < b.weight;
         });
     for (const auto& b : dom.bernoullis) {
-      // Find the scan measurement at b.last_update == scan time AND
-      // nearest to b.mean in position. Detected Bernoullis carry their
-      // measurement's timestamp; misdetected ones inherit the parent
-      // pre-predict timestamp, so an exact-match filter cleanly
-      // separates the two.
-      double best_d = std::numeric_limits<double>::infinity();
-      const Measurement* best = nullptr;
-      for (const auto& z : scan) {
-        if (!(z.time == b.last_update)) continue;
-        // Use the measurement's ENU position (Position2D models) or
-        // the sensor position fallback (range/bearing-only).
-        Eigen::Vector2d z_xy = (z.value.size() >= 2)
-            ? Eigen::Vector2d(z.value(0), z.value(1))
-            : z.sensor_position_enu;
-        const Eigen::Vector2d b_xy = b.mean.head<2>();
-        const double d = (z_xy - b_xy).squaredNorm();
-        if (d < best_d) { best_d = d; best = &z; }
-      }
-      if (!best) continue;
+      // Attribute a SourceTouch only to the measurement this Bernoulli
+      // ACTUALLY claimed this scan. Bernoulli::last_claimed_meas_index (the
+      // R2 true-assignment field) is the scan index of the detection/birth
+      // that updated it, or -1 for a misdetection (PmbmTracker.cpp:965/1027/
+      // 1176). The old "nearest measurement at z.time == b.last_update"
+      // heuristic was broken: PmbmTracker::predict advances last_update to the
+      // scan time on EVERY Bernoulli (PmbmTypes.hpp:433), detected or not, so
+      // a misdetected Bernoulli matched any same-time measurement and was
+      // falsely credited the nearest one (no distance bound) — a contribution
+      // it never made. That polluted recent_contributions (the emitted
+      // SourceTouch provenance) and, under source_aware_misdetection /
+      // idle_halflife, fed the miss gate itself.
+      const int claimed = b.last_claimed_meas_index;
+      if (claimed < 0 || claimed >= static_cast<int>(scan.size())) continue;
+      const Measurement* best = &scan[claimed];
       Track::SourceTouch touch;
       touch.sensor = best->sensor;
       touch.source_id = best->source_id;
