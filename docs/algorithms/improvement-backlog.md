@@ -1030,6 +1030,24 @@ counts, no duplicate disks) is the pull-based prerequisite if it re-opens.
 
 ## 24. Adaptive/threshold & feedback-coupled-A/B decision robustness (PARKED, pull-based)
 
+**ASSERTION SWEEP DONE 2026-07-12 (merged 164749f, verified 1155/1155/
+0-skip):** the test-suite half of this item is closed — 214 metric-bearing
+assertions inventoried (35 knife-edge / 66 vacuous / 113 sound), ~46
+upgraded to valid shapes across 20 files, every upgrade teeth-proven
+(mutation → observed FAIL → revert), all 5 W3 assertion-quality findings
+dispositioned. Residual: ~43 lower-severity instances queued with a
+recorded recipe in `2026-07-11_b24_assertion_sweep.triage.txt`. Two
+stop-and-report DESIGN gaps promoted to their own ticket
+(`2026-07-12-b24-gaps-ticket.md`): **b24-1** — `test_pmbm_phase8`'s
+dominance-cutoff + alt-birth-strip tests run on a scan that collapses to
+one global hypothesis (n_off==1, gated_alts==0): the k-best machinery has
+ZERO behavioral coverage; needs a multi-hypothesis scenario. **b24-2** —
+T2T scenario-6 invariant-5 can't gate a vessel split end-to-end without
+per-fused-track contributing-arm counts on the T2T bench-result path
+(small additive production surface). The PRODUCTION-side epsilon-fragility
+below (output-class flips at thresholds) remains parked pull-based as
+before.
+
 **Adaptive/threshold & feedback-coupled-A/B decision robustness (raised
 2026-07-07, LOS-guard work; pull-based, post-water):** four epsilon-fragility
 cases surfaced this week where a small mass/parameter change flips an output

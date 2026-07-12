@@ -8,6 +8,23 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-12 — #24 assertion sweep: 214 triaged, 46 upgraded with teeth proofs, 2 design gaps exposed [suite health]
+
+Ticket `2026-07-11-backlog24-assertion-sweep-ticket.md`; merged 164749f;
+arbiter ceremony 1155/1155, 0 failed, 0 SKIPPED (inner-level fixtures).
+Tests+docs only — production diff verified empty. Full record:
+`docs/baselines/2026-07-11_b24_assertion_sweep.md` (+ inventory.json /
+triage.txt). Highlights: 35 knife-edge + 66 vacuous of 214 metric-bearing
+assertions; ~46 upgraded (banded floors, structural invariants, margined
+adaptive comparisons, one-sided physical bounds); every upgrade
+teeth-proven by mutation (EKF divergence trips accuracy gates 5.96→47.28;
+NaN trips all 76 print-only guards; suppression-off trips harbor margins;
+λ_birth=0 trips the birth ASSERT). W3 aq#1–5 dispositioned; aq#3 WORSE than
+stated → b24-1 (PMBM k-best machinery has zero behavioral coverage);
+b24-2 (T2T invariant-5 needs contributing-arm bench surface). Residual ~43
+low-severity queued with recipe. Gaps ticket:
+`2026-07-12-b24-gaps-ticket.md`.
+
 ## 2026-07-11 — Cl-4 endgame: floor-sweep price list (0.05–0.10) — NO KNEE in floor-space; spatial half still open [Cl-4]
 
 Ticket `2026-07-11-cl4-endgame-cliff-reprice-ticket.md` (pre-amendment
