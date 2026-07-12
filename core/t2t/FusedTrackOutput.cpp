@@ -10,7 +10,11 @@ FusedTrackOutput toFusedTrackOutput(
     IndependenceClass independence_class,
     bool covariance_is_pessimistic_default) {
   FusedTrackOutput out;
-  out.track = toTrackOutput(fused, datum);  // reuse the canonical drain
+  // ENU ordering: the T2T fuser works entirely in the shared datum-ENU frame
+  // (NavtrackerSource feeds raw ENU covariance straight through), so the fused
+  // drain stays ENU. Consumers wanting north-first can re-drain via
+  // toTrackOutputNED. (F3 dual-API, 2026-07-12.)
+  out.track = toTrackOutputENU(fused, datum);
   out.contributing_trackers = std::move(contributing_trackers);
   out.independence_class = independence_class;
   out.fusion_rule = "CI";

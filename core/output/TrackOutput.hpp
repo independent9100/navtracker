@@ -13,18 +13,30 @@
 namespace navtracker {
 
 /**
- * Position in geodetic coordinates (lat, lon) with covariance in m^2
- * expressed in the target's local NED frame (north-east). The rotation
- * from datum-ENU to target-local-NED is applied automatically per Option A
- * of the output-interface design (2026-06-04). For tracks within 30 km
- * of the current datum, this rotation is < 0.5° and the magnitudes
- * of sigma_north / sigma_east match the datum-ENU magnitudes within
- * numerical precision.
+ * Ordering convention of a TrackOutput's position covariance. Stamped by the
+ * producing function (toTrackOutputENU / toTrackOutputNED) so a struct passed
+ * around retains its convention and an axis-sensitive consumer may assert on
+ * it. See docs/output-contract.md.
+ *   Enu — slot (0,0) = east variance, (1,1) = north variance.
+ *   Ned — slot (0,0) = north variance, (1,1) = east variance.
+ */
+enum class CovarianceFrame { Enu, Ned };
+
+/**
+ * Position in geodetic coordinates (lat, lon) with covariance in m² expressed
+ * in the target's local frame. `toGeodeticWithCov` applies only the datum→
+ * target meridian-convergence rotation (Option A of the output-interface
+ * design, 2026-06-04) — a small rotation between two ENU frames, NEVER an axis
+ * relabel — so the ordering it emits is **ENU (east, north)**: slot (0,0) is
+ * east variance, (1,1) is north. For tracks within 30 km of the current datum
+ * the rotation is < 0.5°, so the σ_east / σ_north magnitudes match the
+ * datum-ENU magnitudes within numerical precision. The operator-facing
+ * north-first (NED) ordering is available via toTrackOutputNED.
  */
 struct PositionGeodeticWithCov {
   double lat_deg;
   double lon_deg;
-  Eigen::Matrix2d position_covariance_m2;   // local NED at target, m²
+  Eigen::Matrix2d position_covariance_m2;   // local ENU at target (east,north), m²
 };
 
 /**
@@ -61,6 +73,8 @@ struct TrackOutput {
   TrackAttributes attributes;
   std::vector<std::string> contributing_sources;
   bool covariance_is_default{false};
+  // Ordering of position.position_covariance_m2, stamped by the producer.
+  CovarianceFrame covariance_frame{CovarianceFrame::Enu};
 };
 
 /**
@@ -84,10 +98,25 @@ VelocityGeodeticWithSigma toVelocityOutput(
     bool is_valid);
 
 /**
- * Build a TrackOutput from a Track and the current datum. Drives
- * the two helpers above and copies metadata fields verbatim.
+ * Build a TrackOutput from a Track and the current datum. Drives the two
+ * helpers above and copies metadata fields verbatim.
+ *
+ * Two entry points, one per covariance-ordering convention — a caller MUST
+ * choose (there is deliberately no ambiguous `toTrackOutput`; the compile-time
+ * break at every call site is the consumer audit — no caller can flip
+ * silently). Position (lat/lon), velocity (SOG/COG) and all metadata are
+ * identical between the two; ONLY the position-covariance axis ordering and
+ * the stamped `covariance_frame` differ.
+ *
+ *   toTrackOutputENU — position_covariance_m2 in ENU order: (0,0)=east
+ *                      variance, (1,1)=north. This is what the internal ENU
+ *                      state carries; frame = CovarianceFrame::Enu.
+ *   toTrackOutputNED — the operator-facing north-first copy: (0,0)=north
+ *                      variance, (1,1)=east; frame = CovarianceFrame::Ned.
+ *
+ * See docs/output-contract.md for unit semantics and a worked example.
  */
-TrackOutput toTrackOutput(const Track& track,
-                          const geo::Datum& datum);
+TrackOutput toTrackOutputENU(const Track& track, const geo::Datum& datum);
+TrackOutput toTrackOutputNED(const Track& track, const geo::Datum& datum);
 
 }  // namespace navtracker

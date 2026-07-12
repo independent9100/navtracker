@@ -63,9 +63,10 @@ VelocityGeodeticWithSigma toVelocityOutput(
   return out;
 }
 
-TrackOutput toTrackOutput(const Track& track,
-                          const geo::Datum& datum) {
+TrackOutput toTrackOutputENU(const Track& track,
+                             const geo::Datum& datum) {
   TrackOutput out;
+  out.covariance_frame = CovarianceFrame::Enu;
   out.id = track.id;
   out.status = track.status;
   out.last_update = track.last_update;
@@ -106,6 +107,22 @@ TrackOutput toTrackOutput(const Track& track,
   } else {
     out.velocity = VelocityGeodeticWithSigma{};  // default: is_valid=false, zeros
   }
+  return out;
+}
+
+TrackOutput toTrackOutputNED(const Track& track, const geo::Datum& datum) {
+  // Identical to ENU except the position covariance is permuted to north-first
+  // (the operator-facing NED ordering) and the frame tag is stamped Ned.
+  // Everything else — lat/lon, velocity, metadata — is frame-independent.
+  TrackOutput out = toTrackOutputENU(track, datum);
+  const Eigen::Matrix2d& enu = out.position.position_covariance_m2;
+  Eigen::Matrix2d ned;
+  ned(0, 0) = enu(1, 1);  // north variance
+  ned(1, 1) = enu(0, 0);  // east variance
+  ned(0, 1) = enu(1, 0);  // north-east
+  ned(1, 0) = enu(0, 1);  // east-north
+  out.position.position_covariance_m2 = ned;
+  out.covariance_frame = CovarianceFrame::Ned;
   return out;
 }
 

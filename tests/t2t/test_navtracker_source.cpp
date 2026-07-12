@@ -97,10 +97,12 @@ TEST(NavtrackerSource, PedigreeComposesWithAnotherSharedStreamSource) {
 // (1) Empirical ordering probe + swap-detector. Target sits AT the datum origin,
 // so R = I exactly and the emitted covariance is the ENU covariance verbatim —
 // any reordering would be a relabel, not a rotation. This test asserts the
-// ordering the code emits TODAY; if the upstream fix wave makes toTrackOutput
-// actually emit NED (north,east), these assertions flip and this test goes RED.
-// That loud failure is the deliverable (Rider A step 2).
-TEST(TrackOutputCovarianceAxis, EmittedOrderingIsEnuEastNorthNotHeaderNed) {
+// ordering toTrackOutputENU emits by contract (F3 resolution 2026-07-12: dual
+// API toTrackOutputENU / toTrackOutputNED; the ambiguous toTrackOutput was
+// removed). This was the Rider-A empirical probe; it is now the permanent
+// ENU-side contract pin. The NED-side pin lives in
+// tests/output/test_track_output.cpp.
+TEST(TrackOutputCovarianceAxis, ToTrackOutputEnuEmitsEastNorthByContract) {
   const geo::Datum datum(geo::Geodetic{59.0, 10.0, 0.0});
   Track t;
   t.id = TrackId{1};
@@ -112,12 +114,13 @@ TEST(TrackOutputCovarianceAxis, EmittedOrderingIsEnuEastNorthNotHeaderNed) {
   t.covariance(0, 0) = 1.0;            // ENU east variance
   t.covariance(1, 1) = 100.0;          // ENU north variance (deliberately asymmetric)
 
-  const TrackOutput out = toTrackOutput(t, datum);
+  const TrackOutput out = toTrackOutputENU(t, datum);
   const Eigen::Matrix2d& P = out.position.position_covariance_m2;
 
-  // VERIFIED 2026-07-11 on this code state: slot (0,0) carries EAST, (1,1) NORTH
-  // — ENU order, NOT the header's claimed NED (north,east). Do not "trust the
-  // header": trust this.
+  // toTrackOutputENU emits ENU order by contract: slot (0,0) = EAST, (1,1) =
+  // NORTH, and the frame tag says so. (Operator-facing north-first is the
+  // separate toTrackOutputNED entry point.)
+  EXPECT_EQ(out.covariance_frame, navtracker::CovarianceFrame::Enu);
   EXPECT_NEAR(P(0, 0), 1.0, 1e-6) << "slot (0,0) must carry the EAST variance";
   EXPECT_NEAR(P(1, 1), 100.0, 1e-6) << "slot (1,1) must carry the NORTH variance";
   EXPECT_NEAR(P(0, 1), 0.0, 1e-9);

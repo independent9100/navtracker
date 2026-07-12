@@ -1,19 +1,46 @@
 # Output Contract
 
-How to interpret `TrackOutput` and read the track position, velocity, and metadata fields. Canonical drain function: `toTrackOutput(track, datum)` in `core/output/TrackOutput.hpp`.
+How to interpret `TrackOutput` and read the track position, velocity, and metadata fields.
+
+## Choosing a drain — covariance-ordering convention (F3, 2026-07-12)
+
+There are **two** canonical drains in `core/output/TrackOutput.hpp`, one per
+position-covariance axis ordering. A caller MUST pick one — there is
+deliberately no ambiguous `toTrackOutput` (it was removed; the compile-time
+break at each call site is the consumer audit, so no caller flips silently):
+
+- **`toTrackOutputENU(track, datum)`** — east-first: `position_covariance_m2`
+  slot (0,0) = east variance, (1,1) = north. This is the ordering the internal
+  ENU state carries. Stamps `covariance_frame = CovarianceFrame::Enu`.
+- **`toTrackOutputNED(track, datum)`** — north-first (operator-facing):
+  slot (0,0) = north variance, (1,1) = east. Stamps `covariance_frame =
+  CovarianceFrame::Ned`.
+
+The two are identical in every other field (lat/lon, velocity, metadata) —
+ONLY the covariance axis ordering and the `covariance_frame` tag differ. Read
+`covariance_frame` to know which convention a `TrackOutput` in hand carries;
+axis-sensitive consumers may assert on it.
+
+> **Upgrade note (for consumers of the pre-2026-07-12 API).** The old
+> `toTrackOutput` documented NED but its covariance was actually emitted in ENU
+> (east-first) order — so any consumer that trusted the old *doc* and read slot
+> (0,0) as north was silently transposing axes for anisotropic tracks. On
+> upgrade your build breaks at every call site; pick the name matching your
+> downstream's real expectation. If you were reading the old output as NED and
+> it "looked right", your data was isotropic and masked the bug — verify.
 
 ## Position
 
 - **`lat_deg`, `lon_deg`**: WGS84 geodetic latitude/longitude, degrees. Range: lat ∈ [−90, 90], lon ∈ (−180, 180].
-- **`position_covariance_m2`**: 2×2 symmetric positive-semidefinite matrix, units m². Expressed in the **target's local NED frame** (north-east; row/column 0 = north, row/column 1 = east). The covariance is rotated from the fusion datum's ENU frame into the target's local NED via the convergence angle γ = Δlon·sin(mean_lat). For tracks within the 30 km auto-datum recenter horizon, this rotation is < 0.5°; magnitudes of σ_north and σ_east match the datum-ENU values within numerical precision.
-- Extract uncertainties as σ_north = √(position_covariance_m2[0,0]) and σ_east = √(position_covariance_m2[1,1]). These are physical meters at the target's geodetic location.
+- **`position_covariance_m2`**: 2×2 symmetric positive-semidefinite matrix, units m², in the target's local frame with axis ordering per the drain used (see above) and recorded in `covariance_frame`. The covariance is rotated from the fusion datum's ENU frame into the target's local frame via the convergence angle γ = Δlon·sin(mean_lat) (a rotation between two ENU frames, **not** an axis relabel); the NED drain additionally permutes the axes to north-first. For tracks within the 30 km auto-datum recenter horizon the rotation is < 0.5°; the σ magnitudes match the datum-ENU values within numerical precision.
+- Extract uncertainties per the frame: for **ENU**, σ_east = √(cov[0,0]), σ_north = √(cov[1,1]); for **NED**, σ_north = √(cov[0,0]), σ_east = √(cov[1,1]). These are physical meters at the target's geodetic location.
 
 ## Velocity
 
 - **`sog_m_per_s`**: Speed over ground, m/s, ≥ 0.
 - **`cog_deg`**: Course over ground, degrees true (clockwise from true north), ∈ [0, 360). Undefined when sog < 0.01 m/s (see stationary singularity below).
 - **`sigma_sog_m_per_s`, `sigma_cog_deg`**: 1σ uncertainties derived from the velocity covariance via the standard polar Jacobian. σ_cog is in degrees.
-- **`is_valid`**: true only when velocity has actually been observed **and** its covariance is usable. Concretely, `toTrackOutput` requires all of: the track has ≥ 4D state (position + velocity); `track.velocity_observed` is true (≥ 1 update past initiation, so a pure init-prior velocity never reports valid); and the 2×2 velocity covariance is finite and positive-definite (`v_cov(0,0) > 0` **and** `det > 0`). If any of these fails → `is_valid = false` — i.e. a 2D-only state, a velocity that has not yet been observed, or a zero/degenerate velocity covariance.
+- **`is_valid`**: true only when velocity has actually been observed **and** its covariance is usable. Concretely, both drains require all of: the track has ≥ 4D state (position + velocity); `track.velocity_observed` is true (≥ 1 update past initiation, so a pure init-prior velocity never reports valid); and the 2×2 velocity covariance is finite and positive-definite (`v_cov(0,0) > 0` **and** `det > 0`). If any of these fails → `is_valid = false` — i.e. a 2D-only state, a velocity that has not yet been observed, or a zero/degenerate velocity covariance.
 
 ### Stationary tracks
 
@@ -44,8 +71,9 @@ last_update             = 123456789 (epoch nanoseconds since fusion start)
 position.lat_deg        = 53.600000
 position.lon_deg        = 8.200000
 position.position_covariance_m2 =
-  [ 25.00  0.00 ]   (north, east; 5m sigma each)
+  [ 25.00  0.00 ]   (5 m sigma each — isotropic, so both drains agree here)
   [  0.00 25.00 ]
+covariance_frame        = Ned   (this dump used toTrackOutputNED)
 velocity.sog_m_per_s    = 5.0
 velocity.cog_deg        = 90.0  (due east)
 velocity.sigma_sog_m_per_s = 0.5
@@ -89,12 +117,13 @@ hazard (rock, wreck, pile, platform, buoy, etc.) rather than a kinematic vessel 
 - **`position.lat_deg`, `position.lon_deg`**: WGS84 geodetic latitude/longitude,
   degrees. The position is taken directly from the `StaticObstacle` chart record
   and is not adjusted for the ENU datum.
-- **No NED covariance rotation.** `TrackOutput` rotates the position covariance
-  from the fusion datum's ENU frame into the target's local NED frame (a
-  kinematic necessity because the ENU frame shifts as own-ship moves). For a
-  charted obstacle, the position is a fixed geographic coordinate — it does not
-  move with the datum. No rotation is applied or needed; the positional accuracy
-  is encoded in `position_uncertainty_m` (see below).
+- **No covariance rotation.** `TrackOutput` rotates the position covariance
+  from the fusion datum's ENU frame into the target's local frame (a
+  kinematic necessity because the ENU frame shifts as own-ship moves; the axis
+  ordering is then ENU or NED per the drain chosen). For a charted obstacle,
+  the position is a fixed geographic coordinate — it does not move with the
+  datum. No rotation is applied or needed; the positional accuracy is encoded
+  in `position_uncertainty_m` (see below).
 
 ### Geometry fields
 

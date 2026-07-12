@@ -368,7 +368,7 @@ TEST(PmbmRemoteTrackFusion, SurfacesAisMmsiAndCooperativePlatformId) {
 
   // Identity + target-reported attributes on the operator-facing TrackOutput
   // (verbatim passthrough).
-  const auto out = navtracker::toTrackOutput(*tr, d);
+  const auto out = navtracker::toTrackOutputENU(*tr, d);
   ASSERT_TRUE(out.attributes.mmsi.has_value());
   EXPECT_EQ(*out.attributes.mmsi, kMmsi);
   ASSERT_TRUE(out.attributes.platform_id.has_value());
