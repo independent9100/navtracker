@@ -218,6 +218,7 @@ struct ArmPerturb {
   Eigen::Vector2d pos_bias = Eigen::Vector2d::Zero();  // scenario 5: add to positions
   double cov_override_m2 = 0.0;                        // scenario 5: >0 overwrites pos cov (overconfidence)
   bool mmsi_from_truth = false;                        // scenario 6: tag mmsi = nearest-truth id
+  std::optional<std::uint32_t> force_mmsi;             // b24-2: overwrite ALL reports' mmsi (spoof/conflict)
 };
 
 // Fuse two arms with per-arm perturbations, feeding a MERGED, timestamp-ordered
@@ -267,6 +268,7 @@ inline benchmark::BenchResult fuseTwoViewsPerturbed(
         // a source that drifts onto the other target carries that target's MMSI,
         // which is exactly what the conflict penalty must catch.
         if (p.mmsi_from_truth) e.attributes.mmsi = nearestTruthMmsi(step.truth, tr.position);
+        if (p.force_mmsi) e.attributes.mmsi = *p.force_mmsi;  // b24-2: spoof/conflict override
         evs.push_back({t, arm.tracker_id, std::move(e)});
       }
     }
@@ -299,6 +301,16 @@ inline benchmark::BenchResult fuseTwoViewsPerturbed(
     fs.time = t;
     auto it = truth_by_t.find(t_ns);
     if (it != truth_by_t.end()) fs.truth = *it->second;
+    // b24-2: capture per-fused-track FUSER arm ids (which source-tracker arms the
+    // fuser combined this scan) so a scenario gate can distinguish genuine
+    // 2-arm fusion from a single-arm split. Matched to the ENU state by fused id.
+    // Fuser-side bookkeeping — NOT upstream sensor pedigree.
+    std::map<std::uint64_t, std::vector<std::string>> arms_by_fused_id;
+    for (const auto& fo : fuser.fusedTracks()) {
+      std::set<std::string> arms;
+      for (const auto& c : fo.contributing_trackers) arms.insert(c.source_tracker_id);
+      arms_by_fused_id[fo.track.id.value] = {arms.begin(), arms.end()};
+    }
     for (const auto& e : fuser.fusedTracksEnu()) {
       if (e.status != TrackStatus::Confirmed) continue;
       TrackStateSnapshot s;
@@ -306,6 +318,8 @@ inline benchmark::BenchResult fuseTwoViewsPerturbed(
       s.position = e.position;
       s.velocity = e.velocity;
       s.pos_covariance = e.position_cov;
+      auto ai = arms_by_fused_id.find(e.id.value);
+      if (ai != arms_by_fused_id.end()) s.contributing_fuser_arm_ids = ai->second;
       fs.tracks.push_back(s);
     }
     fused.steps.push_back(std::move(fs));

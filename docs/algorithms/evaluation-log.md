@@ -8,6 +8,31 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-12 — b24 gaps CLOSED: T2T invariant-5 end-to-end gate + PMBM k-best behavioral coverage [suite health]
+
+Branch `b24-gaps` off `13a78a3`. Closes the two #24 stop-and-report gaps. Full
+suite green at 0 skips; production diff = one additive bench-result field. Details
++ before/after tables: `docs/baselines/2026-07-12_b24_gaps.md`.
+
+- **b24-2 (T2T invariant 5, end-to-end):** added `TrackStateSnapshot::
+  contributing_fuser_arm_ids` (additive; fuser arm-bookkeeping, NOT upstream
+  pedigree; empty off the T2T path → bench metrics byte-identical, t2t suite
+  31/31 green before test additions). New gate
+  `CrossSpoofedMmsiStillFusesBothTargetsEndToEnd`: two crossing targets, radar
+  per-vessel MMSI + AIS one spoofed constant MMSI → both targets stay GENUINELY
+  fused (each fed by radar+ais) — measured 261/598 steps with ≥2 two-arm-fused,
+  max 3. The old `max_tracks>=2` was split-blind. **Teeth:** force MMSI as a hard
+  key (associator returns kInf on conflict) → 261→0, max 3→1 → red. Reverted.
+- **b24-1 (PMBM k-best machinery):** the KBest-dominance and alt-birth-strip tests
+  ran on a scan that collapsed to ONE hypothesis (n_off==1, gated_alts==0; PPP
+  births don't compete). Replaced with an ambiguous two-established-Bernoulli /
+  two-straddling-measurement scan → identity+swap tie at top plus lower-weight
+  siblings. KBest: n_off **5**, n_on **2** (`ASSERT_GE(n_off,2)` + `EXPECT_LT`).
+  AltBirth (λ_birth 1e-2 so siblings birth): gated_alts **3**, strip ON → 0 fresh
+  births, strip OFF → **3** (self-proving A/B). **Teeth:** config-disable each →
+  n_on 2→5 (red); fresh_on 0→3 (red). Reverted. Reachable → gaps closed, not
+  re-parked.
+
 ## 2026-07-12 — #24 assertion sweep: 214 triaged, 46 upgraded with teeth proofs, 2 design gaps exposed [suite health]
 
 Ticket `2026-07-11-backlog24-assertion-sweep-ticket.md`; merged 164749f;
