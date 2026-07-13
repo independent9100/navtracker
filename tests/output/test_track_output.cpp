@@ -119,10 +119,13 @@ TEST(TrackOutputTest, CovarianceRotatedAtHighLatitude) {
 
   // Compute the exact expected R using the actual lat/lon the helper
   // returned (which differs from a perfect 1° lon by a few mm due to the
-  // ENU-vs-ellipsoid mapping).
+  // ENU-vs-ellipsoid mapping). W2.3 convention: datumAxisRotation returns a
+  // rotation by −γ (the E,N block of R_target · R_datumᵀ), so the exact R here
+  // is built with −γ. (Before the W2.3 fix this test built R with +γ and the
+  // off-diagonal below carried the opposite sign — the suite encoded the bug.)
   const double delta_lon_rad = (out.lon_deg - 0.0) * kDeg2Rad;
   const double mean_lat_rad = 0.5 * (60.0 + out.lat_deg) * kDeg2Rad;
-  const double gamma = delta_lon_rad * std::sin(mean_lat_rad);
+  const double gamma = -delta_lon_rad * std::sin(mean_lat_rad);  // −γ
   const double s = std::sin(gamma);
   const double c = std::cos(gamma);
   Eigen::Matrix2d R;
@@ -137,7 +140,8 @@ TEST(TrackOutputTest, CovarianceRotatedAtHighLatitude) {
 
   // Off-diagonal in the input was zero; after rotation it must differ by
   // (σ_east² − σ_north²) * sin·cos. With σ_east²=100, σ_north²=1, the
-  // off-diagonal is well above any numerical-noise floor.
+  // off-diagonal is well above any numerical-noise floor. Sign follows −γ:
+  // with s = sin(−γ) < 0, the emitted (0,1) entry is negative.
   const double expected_off = (100.0 - 1.0) * s * c;
   EXPECT_NEAR(out.position_covariance_m2(0, 1), expected_off, 1e-9);
   EXPECT_GT(std::abs(out.position_covariance_m2(0, 1)), 1e-3);
