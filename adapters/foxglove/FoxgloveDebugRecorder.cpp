@@ -114,8 +114,12 @@ void FoxgloveDebugRecorder::onTracks(const std::vector<Track>& tracks, Timestamp
           {p.x()+v.x(), p.y()+v.y(), 0}, col));
     }
     (is_output ? confirmed : tentative)++;
-    // Map: lat/lon via the canonical helper.
-    const auto geo = toGeodeticWithCov(p, pos2(t.covariance), datum_);
+    // Map: lat/lon + covariance via the operator-facing NED entry point, so the
+    // rendered error ellipse is correctly oriented. geo.position_covariance_m2
+    // is genuinely NED here (0=north,1=east); before the F3 dual-API fix this
+    // read toGeodeticWithCov (which emits ENU) with a NED-assuming map, rotating
+    // every anisotropic ellipse 90°.
+    const auto geo = toTrackOutputNED(t, datum_).position;
     // NED (0=north,1=east) -> row-major ENU LocationFix (0=EE,1=EN,3=NE,4=NN).
     std::array<double,9> cov{};
     cov[0] = geo.position_covariance_m2(1,1); cov[1] = geo.position_covariance_m2(1,0);
@@ -253,10 +257,12 @@ void FoxgloveDebugRecorder::recordMeasurement(const Measurement& m) {
       }
     }
     const auto geo = toGeodeticWithCov(p, m.covariance.topLeftCorner<2,2>(), datum_);
-    // position_covariance_m2 is local NED (0=north,1=east); LocationFix expects
-    // row-major ENU (0=EE, 4=NN), so map east<-NED(1,1), north<-NED(0,0).
+    // toGeodeticWithCov emits ENU (0=east,1=north); LocationFix expects
+    // row-major ENU (0=EE, 4=NN), so map east<-ENU(0,0), north<-ENU(1,1).
+    // (Measurements have no Track, so the toTrackOutput{ENU,NED} API does not
+    // apply; this consumes the ENU helper directly with the correct mapping.)
     std::array<double,9> cov{};
-    cov[0]=geo.position_covariance_m2(1,1); cov[4]=geo.position_covariance_m2(0,0);
+    cov[0]=geo.position_covariance_m2(0,0); cov[4]=geo.position_covariance_m2(1,1);
     const std::string map_topic = "/map/detections/" + m.source_id;
     w_->ensureChannel(map_topic, kLocationFixSchema, "");
     w_->write(map_topic, m.time, locationFix(m.time, geo.lat_deg, geo.lon_deg, cov).dump());

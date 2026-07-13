@@ -332,3 +332,120 @@ TEST(OwnShipNmeaAdapterTest, AdaptiveFallsBackOnManeuver) {
   ASSERT_TRUE(pose.has_value());
   EXPECT_NEAR(pose->position_std_m, 10.0, 1e-9);
 }
+
+// ---------------------------------------------------------------------------
+// F1 (pre-release CRITICAL): a GGA that carries no valid fix must produce NO
+// pose. Without this the adapter validated nothing: fix-quality (field 5) was
+// never read and empty lat/lon fields parse to (0,0), so a standard no-fix
+// GGA published a (0,0) pose. That teleports the datum to Null Island (and,
+// as the first fix after cold start, mis-scales the equirectangular
+// reference), silently corrupting every downstream ENU conversion. Adapters
+// validate at the edge (architecture invariant #6); the RMC branch already
+// checks its A/V status flag — these tests pin the GGA counterpart.
+// ---------------------------------------------------------------------------
+namespace {
+
+// Counts datum-recenter events. Zero recenters across a fix→no-fix→fix
+// sequence is the direct proof that a no-fix GGA never moves the datum.
+struct RecenterCountingSink : navtracker::IDatumChangeSink {
+  int count = 0;
+  void onDatumRecentered(const navtracker::geo::Datum&,
+                         const navtracker::geo::Datum&) override {
+    ++count;
+  }
+};
+
+}  // namespace
+
+TEST(OwnShipNmeaAdapterTest, NoFixQualityGgaProducesNoPoseAndNoDatum) {
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+  // Industry-standard no-fix sentence: empty lat/lon fields, fix-quality 0.
+  EXPECT_FALSE(adapter.ingest(
+      makeNmea("GPGGA,120000.00,,,,,0,00,99.99,,M,,M,,"),
+      Timestamp::fromSeconds(1000.0)));
+  EXPECT_FALSE(provider.latest().has_value());
+  // The datum must NOT initialize — otherwise it anchors at Null Island.
+  EXPECT_FALSE(provider.hasDatum());
+}
+
+TEST(OwnShipNmeaAdapterTest, FixQualityZeroWithPositionStillRejected) {
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+  // Quality 0 = invalid fix, even though lat/lon look valid: the receiver is
+  // telling us not to trust the position.
+  EXPECT_FALSE(adapter.ingest(
+      makeNmea("GPGGA,123519,4807.038,N,01131.000,E,0,08,0.9,545.4,M,46.9,M,,"),
+      Timestamp::fromSeconds(1000.0)));
+  EXPECT_FALSE(provider.latest().has_value());
+  EXPECT_FALSE(provider.hasDatum());
+}
+
+TEST(OwnShipNmeaAdapterTest, EmptyLatLonRejectedEvenWhenQualityClaimsFix) {
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+  // Contradictory but seen in the wild: quality 1 but empty lat/lon. parseDdmm
+  // yields (0,0); the position-presence check must still reject it.
+  EXPECT_FALSE(adapter.ingest(
+      makeNmea("GPGGA,120000.00,,,,,1,08,0.9,,M,,M,,"),
+      Timestamp::fromSeconds(1000.0)));
+  EXPECT_FALSE(provider.latest().has_value());
+  EXPECT_FALSE(provider.hasDatum());
+}
+
+TEST(OwnShipNmeaAdapterTest, ImplausibleLatLonRejected) {
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+  // 9999.000 -> 99 deg + 99/60 min = 100.65 deg latitude — out of [-90, 90].
+  EXPECT_FALSE(adapter.ingest(
+      makeNmea("GPGGA,123519,9999.000,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,"),
+      Timestamp::fromSeconds(1000.0)));
+  EXPECT_FALSE(provider.latest().has_value());
+}
+
+TEST(OwnShipNmeaAdapterTest, NoFixBetweenValidFixesDoesNotMoveDatum) {
+  OwnShipProvider provider;  // auto-recenter ON, 30 km threshold (defaults)
+  RecenterCountingSink sink;
+  provider.registerDatumSink(&sink);
+  OwnShipNmeaAdapter adapter(provider);
+
+  // Valid fix near Hamburg (53.55 N, 9.983 E) establishes the datum.
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("GPGGA,120000,5333.000,N,00959.000,E,1,08,0.9,10.0,M,46.9,M,,"),
+      Timestamp::fromSeconds(1.0)));
+  ASSERT_TRUE(provider.hasDatum());
+  const double datum_lat0 = provider.datum().origin().lat_deg;
+  const double pose_lat0 = provider.latest()->lat_deg;
+  EXPECT_GT(pose_lat0, 53.0);
+
+  // GPS antenna shadowed mid-run: a no-fix GGA arrives. A (0,0) pose here is
+  // ~6000 km away (> 30 km) and would fire an auto-recenter to Null Island.
+  EXPECT_FALSE(adapter.ingest(
+      makeNmea("GPGGA,120001.00,,,,,0,00,99.99,,M,,M,,"),
+      Timestamp::fromSeconds(2.0)));
+
+  // No recenter fired; datum origin and latest pose are untouched.
+  EXPECT_EQ(sink.count, 0);
+  EXPECT_DOUBLE_EQ(provider.datum().origin().lat_deg, datum_lat0);
+  EXPECT_DOUBLE_EQ(provider.latest()->lat_deg, pose_lat0);
+
+  // A subsequent valid fix nearby resumes normally (still no recenter).
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("GPGGA,120002,5333.100,N,00959.100,E,1,08,0.9,10.0,M,46.9,M,,"),
+      Timestamp::fromSeconds(3.0)));
+  EXPECT_EQ(sink.count, 0);
+  EXPECT_NEAR(provider.latest()->lat_deg, 53.0 + 33.1 / 60.0, 1e-4);
+}
+
+TEST(OwnShipNmeaAdapter, ValidFixStillProducesPose) {
+  // Guard the happy path: a normal quality-1 GGA is unchanged by the new
+  // validation (first-fix-initializes-datum path).
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+  EXPECT_TRUE(adapter.ingest(
+      makeNmea("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,"),
+      Timestamp::fromSeconds(1000.0)));
+  ASSERT_TRUE(provider.latest().has_value());
+  EXPECT_TRUE(provider.hasDatum());
+  EXPECT_NEAR(provider.latest()->lat_deg, 48.1173, 1e-4);
+}

@@ -50,10 +50,11 @@ new datum frame. The codebase wires this up via
 
 ### 1.3 Per-target local NED (North–East–Down)
 
-For *output* we report covariance in a NED frame *aligned to the
-target's velocity direction*. This is a maritime convention: it
-makes "along-track" and "cross-track" uncertainty easy to
-inspect on a chart. The conversion happens in `toTrackOutput`. See
+For *output* we can report covariance north-first (NED), a maritime
+convention that makes "north" and "east" uncertainty easy to inspect
+on a chart. The output offers both orderings: `toTrackOutputNED`
+gives north-first, `toTrackOutputENU` gives east-first (the same
+ordering the core uses internally). The caller picks one — see
 `docs/output-contract.md`.
 
 You should not see NED inside the core tracking code. Only at the

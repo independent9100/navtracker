@@ -10,10 +10,12 @@
 #include "core/types/Timestamp.hpp"
 #include "core/types/Track.hpp"
 
+using navtracker::CovarianceFrame;
 using navtracker::PositionGeodeticWithCov;
 using navtracker::Timestamp;
 using navtracker::toGeodeticWithCov;
-using navtracker::toTrackOutput;
+using navtracker::toTrackOutputENU;
+using navtracker::toTrackOutputNED;
 using navtracker::toVelocityOutput;
 using navtracker::Track;
 using navtracker::TrackId;
@@ -227,7 +229,7 @@ TEST(TrackOutputTest, TrackOutputFor4DTrack) {
   t.contributing_sources = {"ais", "arpa"};
   t.velocity_observed = true;  // confirmed, updated track → velocity observed
 
-  const TrackOutput out = toTrackOutput(t, datum);
+  const TrackOutput out = toTrackOutputENU(t, datum);
 
   // Metadata propagates verbatim.
   EXPECT_EQ(out.id.value, 42u);
@@ -272,12 +274,12 @@ TEST(TrackOutputTest, VelocityInvalidWhenNotObserved) {
                       /*sigma_vel=*/0.5);
   ASSERT_FALSE(t.velocity_observed);  // default for a just-built track
 
-  const TrackOutput out = toTrackOutput(t, datum);
+  const TrackOutput out = toTrackOutputENU(t, datum);
   EXPECT_FALSE(out.velocity.is_valid);
 
   // Flip the flag → valid (same kinematics).
   t.velocity_observed = true;
-  const TrackOutput out2 = toTrackOutput(t, datum);
+  const TrackOutput out2 = toTrackOutputENU(t, datum);
   EXPECT_TRUE(out2.velocity.is_valid);
   EXPECT_NEAR(out2.velocity.sog_m_per_s, 5.0, 1e-12);
 }
@@ -293,7 +295,7 @@ TEST(TrackOutputTest, CovarianceIsDefaultForwardedFromRecentContributions) {
   t.recent_contributions.push_back(clean);
   t.recent_contributions.push_back(dirty);
 
-  const TrackOutput out = toTrackOutput(t, datum);
+  const TrackOutput out = toTrackOutputENU(t, datum);
   EXPECT_TRUE(out.covariance_is_default);
 }
 
@@ -306,7 +308,7 @@ TEST(TrackOutputTest, CovarianceIsDefaultFalseWhenAllContributionsAreReal) {
   t.recent_contributions.push_back(a);
   t.recent_contributions.push_back(b);
 
-  const TrackOutput out = toTrackOutput(t, datum);
+  const TrackOutput out = toTrackOutputENU(t, datum);
   EXPECT_FALSE(out.covariance_is_default);
 }
 
@@ -317,7 +319,7 @@ TEST(TrackOutputTest, TrackOutputFor2DTrackHasInvalidVelocity) {
                       /*sigma_pos=*/5.0, /*sigma_vel=*/0.0,
                       /*build_4d=*/false);
 
-  const TrackOutput out = toTrackOutput(t, datum);
+  const TrackOutput out = toTrackOutputENU(t, datum);
 
   EXPECT_FALSE(out.velocity.is_valid);
   EXPECT_EQ(out.velocity.sog_m_per_s, 0.0);
@@ -343,11 +345,58 @@ TEST(TrackOutputTest, TrackOutputForZeroVelocityCovarianceHasInvalidVelocity) {
   const Eigen::Matrix2d vcov_block = t.covariance.block<2, 2>(2, 2);
   ASSERT_EQ(vcov_block.trace(), 0.0);
 
-  const TrackOutput out = toTrackOutput(t, datum);
+  const TrackOutput out = toTrackOutputENU(t, datum);
 
   EXPECT_FALSE(out.velocity.is_valid);
   EXPECT_EQ(out.velocity.sog_m_per_s, 0.0);
   EXPECT_EQ(out.velocity.cog_deg, 0.0);
   EXPECT_EQ(out.velocity.sigma_sog_m_per_s, 0.0);
   EXPECT_EQ(out.velocity.sigma_cog_deg, 0.0);
+}
+
+// -----------------------------------------------------------------------------
+// F3 (2026-07-12): dual-API covariance-ordering pin. Target AT the datum origin
+// so R = I exactly (no meridian-convergence rotation) — any axis reordering is
+// then a pure relabel, which an elongated (east != north) covariance makes
+// visible. Permanent contract pin for BOTH conventions (#24 teeth standard):
+// which output slot holds NORTH.
+// -----------------------------------------------------------------------------
+namespace {
+Track makeElongatedTrackAtOrigin() {
+  Track t;
+  t.id = TrackId{7};
+  t.status = TrackStatus::Confirmed;
+  t.last_update = Timestamp::fromSeconds(1.0);
+  t.state = Eigen::VectorXd(2);
+  t.state << 0.0, 0.0;                 // datum origin -> R = I
+  t.covariance = Eigen::MatrixXd::Zero(2, 2);
+  t.covariance(0, 0) = 1.0;            // ENU east variance
+  t.covariance(1, 1) = 100.0;          // ENU north variance (elongated N/S)
+  return t;
+}
+}  // namespace
+
+TEST(TrackOutputCovarianceAxis, EnuEntryPointEmitsEastFirstAndStampsEnu) {
+  const Datum datum(Geodetic{59.0, 10.0, 0.0});
+  const TrackOutput out = toTrackOutputENU(makeElongatedTrackAtOrigin(), datum);
+  const Eigen::Matrix2d& P = out.position.position_covariance_m2;
+  EXPECT_EQ(out.covariance_frame, CovarianceFrame::Enu);
+  EXPECT_NEAR(P(0, 0), 1.0, 1e-6)   << "ENU slot (0,0) must carry the EAST variance";
+  EXPECT_NEAR(P(1, 1), 100.0, 1e-6) << "ENU slot (1,1) must carry the NORTH variance";
+}
+
+TEST(TrackOutputCovarianceAxis, NedEntryPointEmitsNorthFirstAndStampsNed) {
+  const Datum datum(Geodetic{59.0, 10.0, 0.0});
+  const TrackOutput ned = toTrackOutputNED(makeElongatedTrackAtOrigin(), datum);
+  const TrackOutput enu = toTrackOutputENU(makeElongatedTrackAtOrigin(), datum);
+  const Eigen::Matrix2d& P = ned.position.position_covariance_m2;
+  EXPECT_EQ(ned.covariance_frame, CovarianceFrame::Ned);
+  EXPECT_NEAR(P(0, 0), 100.0, 1e-6) << "NED slot (0,0) must carry the NORTH variance";
+  EXPECT_NEAR(P(1, 1), 1.0, 1e-6)   << "NED slot (1,1) must carry the EAST variance";
+  // The two entry points differ ONLY in covariance ordering + frame tag:
+  // lat/lon and the diagonal are an exact swap of each other.
+  EXPECT_DOUBLE_EQ(ned.position.lat_deg, enu.position.lat_deg);
+  EXPECT_DOUBLE_EQ(ned.position.lon_deg, enu.position.lon_deg);
+  EXPECT_DOUBLE_EQ(P(0, 0), enu.position.position_covariance_m2(1, 1));
+  EXPECT_DOUBLE_EQ(P(1, 1), enu.position.position_covariance_m2(0, 0));
 }

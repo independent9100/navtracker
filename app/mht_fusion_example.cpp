@@ -161,7 +161,9 @@ class MhtFusion {
     std::vector<TrackOutput> out;
     for (const Track& t : mht_.tracks()) {
       if (t.status != TrackStatus::Confirmed) continue;
-      out.push_back(toTrackOutput(t, provider_.datum()));
+      // Operator-facing NED (north-first) covariance ordering; see F3 dual-API
+      // note. toTrackOutputENU is the east-first alternative.
+      out.push_back(toTrackOutputNED(t, provider_.datum()));
     }
     return out;
   }

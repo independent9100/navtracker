@@ -271,7 +271,7 @@ TEST(FullStackIntegration, NmeaTargetTrackingBiasAndCpaAllCompose) {
   // 5. Pull-side TrackOutput is consistent with push-side state.
   ASSERT_EQ(manager.tracks().size(), 1u);
   const Track& tr = manager.tracks().front();
-  const TrackOutput out = toTrackOutput(tr, provider.datum());
+  const TrackOutput out = toTrackOutputENU(tr, provider.datum());
   EXPECT_EQ(out.id, lifecycle.initiated.front().id);
   EXPECT_EQ(out.status, tr.status);
 }

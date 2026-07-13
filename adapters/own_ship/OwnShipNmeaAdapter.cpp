@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <limits>
 
+#include "adapters/util/EdgeValidation.hpp"
 #include "adapters/util/Nmea.hpp"
 #include "core/bias/HeadingBiasEstimator.hpp"
 #include "core/bias/HeadingBiasObservations.hpp"
@@ -116,11 +117,30 @@ bool OwnShipNmeaAdapter::ingest(std::string_view line, Timestamp t) {
     // the most recent GGA established, so an adaptive estimate is not
     // clobbered by an interleaved HDT.
     pose.position_std_m = position_std_m_;
-    if (parsed->fields.size() < 5) return false;
+    // Validate at the edge (invariant #6): a GGA must carry a valid fix and a
+    // plausible position, or it produces NO pose. Fix quality is field[5]
+    // (0 = invalid / no-fix). Without this, a standard no-fix GGA (empty
+    // lat/lon fields, quality 0) parses to (0,0) and publishes a null-island
+    // pose that initializes — or auto-recenters — the datum there, silently
+    // corrupting every downstream ENU conversion. The RMC branch already
+    // rejects its "V" navigation-warning status; this is the GGA counterpart.
+    // Rejections are counted (skippedNoFixGga) so the drop is observable, not
+    // silent — and we return BEFORE any datum/estimator/provider side effect.
+    if (parsed->fields.size() < 6                                    // no quality
+        || parsed->fields[5].empty()
+        || std::strtol(parsed->fields[5].c_str(), nullptr, 10) <= 0  // 0 = no fix
+        || parsed->fields[1].empty() || parsed->fields[3].empty()) { // no position
+      ++skip_no_fix_gga_;
+      return false;
+    }
     double lat = parseDdmm(parsed->fields[1]);
     if (parsed->fields[2] == "S") lat = -lat;
     double lon = parseDdmm(parsed->fields[3]);
     if (parsed->fields[4] == "W") lon = -lon;
+    if (!edge::isPlausibleLatLon(lat, lon)) {  // out of range / NaN
+      ++skip_no_fix_gga_;
+      return false;
+    }
     pose.lat_deg = lat;
     pose.lon_deg = lon;
 

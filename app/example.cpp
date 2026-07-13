@@ -139,9 +139,13 @@ int main() {
 
   for (const Track& t : mgr.tracks()) {
     if (t.status != TrackStatus::Confirmed) continue;
-    const TrackOutput out = toTrackOutput(t, provider.datum());
+    // NED entry point: operator-facing north-first covariance ordering, so the
+    // (north, east) comment below holds. Use toTrackOutputENU instead if your
+    // downstream expects east-first (the internal ENU ordering). A caller MUST
+    // pick one — there is no ambiguous toTrackOutput (F3, 2026-07-12).
+    const TrackOutput out = toTrackOutputNED(t, provider.datum());
     // out.position.lat_deg / lon_deg in WGS84 degrees
-    // out.position.position_covariance_m2 in m^2 (north, east)
+    // out.position.position_covariance_m2 in m^2 (north, east); out.covariance_frame == Ned
     // out.velocity.sog_m_per_s, .cog_deg, .sigma_*, .is_valid
     // out.id, out.status, out.attributes, out.contributing_sources
     std::cout << "Track id=" << out.id.value

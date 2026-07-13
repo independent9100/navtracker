@@ -118,17 +118,20 @@ Drain the results (`app/example.cpp`):
 ```cpp
 for (const Track& t : mgr.tracks()) {
   if (t.status != TrackStatus::Confirmed) continue;
-  const TrackOutput out = toTrackOutput(t, provider.datum());
+  const TrackOutput out = toTrackOutputNED(t, provider.datum());  // or ...ENU
   // out.position.lat_deg / lon_deg (WGS84 deg)
-  // out.position.position_covariance_m2 (m^2, target-local NED)
+  // out.position.position_covariance_m2 (m^2); NED = (0,0) north, (1,1) east.
+  //   Use toTrackOutputENU for east-first. out.covariance_frame records which.
   // out.velocity.sog_m_per_s / .cog_deg / .sigma_* / .is_valid
   // out.id, out.status, out.attributes, out.contributing_sources
 }
 ```
 
 That is the whole loop: `provider.update(pose)` as fixes arrive,
-`tracker.process(m)` as measurements arrive, `toTrackOutput` whenever you want the
-current picture. Everything below is optional refinement on top of this.
+`tracker.process(m)` as measurements arrive, and `toTrackOutputENU` /
+`toTrackOutputNED` whenever you want the current picture (pick the covariance
+ordering your downstream expects — see §6). Everything below is optional
+refinement on top of this.
 
 **Feed measurements in non-decreasing timestamp order.** The engine advances on
 message timestamps (invariant 4), not the wall clock. A measurement stamped
@@ -602,15 +605,16 @@ staleness you tolerate with `max_report_age_s` (a source silent longer than this
 stops contributing) and `fused_delete_age_s` (the track is deleted once no source
 has *reported* within this window). Measured behavior: results doc scenario 4.
 
-**Covariance axis convention (verified, read this).** The fused output's
-`TrackOutput::position.position_covariance_m2` is in **ENU `(east, north)`** order
-— slot (0,0) = east variance, (1,1) = north — **verified empirically**, *not*
-the "local NED" the `TrackOutput` header comment currently claims (a confirmed
-upstream contract bug awaiting a fix wave). The T2T path itself works entirely in
-ENU and is unaffected. This convention is pinned by
-`TrackOutputCovarianceAxis.EmittedOrderingIsEnuEastNorthNotHeaderNed`; when the
-upstream fix lands that test goes red **by design** and the self-adapter + test
-are updated together. Until then: trust this convention, not the header.
+**Covariance axis convention (F3 resolution, 2026-07-12).** The covariance
+ordering is now an explicit choice at the drain: `toTrackOutputENU` emits
+`(east, north)` (slot (0,0) = east), `toTrackOutputNED` emits `(north, east)`
+(slot (0,0) = north), and `TrackOutput::covariance_frame` records which. The
+ambiguous `toTrackOutput` was removed — a compile-time break at every call site
+forces the choice. The T2T fused drain (`toFusedTrackOutput`) uses **ENU**,
+because the fuser works entirely in the shared datum-ENU frame; re-drain via
+`toTrackOutputNED` if you need north-first. Pinned by
+`TrackOutputCovarianceAxis.ToTrackOutputEnuEmitsEastNorthByContract` (ENU side)
+and the NED-side pin in `tests/output/test_track_output.cpp`.
 
 **Output fields.** `FusedTrackOutput` embeds a full `TrackOutput` (id, status,
 lat/lon + covariance, SOG/COG, attributes) and adds `contributing_trackers` (who
@@ -681,6 +685,21 @@ default): list the NMEA talker IDs whose `$--HDT` sentences are true-heading fro
 multi-antenna GPS. Any HDT talker *not* in that set is treated as gyro heading
 (the backward-compatible `$GPHDT`-as-gyro path). See §5 for what the adapter does
 with those.
+
+> **GGA fix validation (rejection is silent-safe, not silent).** The adapter
+> validates every GGA at the edge (architecture invariant #6) before it ever
+> touches your `OwnShipProvider`. A GGA is **rejected — no pose is produced** —
+> when its fix-quality field is `0` (no fix) or empty, when the lat/lon fields
+> are empty, or when the parsed position is implausible (`|lat| > 90` / `|lon| >
+> 180` / non-finite). `ingest(...)` returns `false` for a rejected sentence, and
+> the adapter increments a counter you can read with **`skippedNoFixGga()`** —
+> watch it to detect a nav feed that is dropping fixes rather than silently
+> coasting on the last good pose. This matters because a standard no-fix GGA
+> (`$GPGGA,hhmmss,,,,,0,...`) parses its empty lat/lon to `(0, 0)`: without this
+> guard that null-island pose would initialize — or, mid-run, auto-recenter —
+> the working datum to (0, 0), silently corrupting every ENU conversion
+> afterwards. (The RMC branch already rejects the `V` navigation-warning
+> status; this is its GGA counterpart.) Valid fixes are unaffected.
 
 ---
 
@@ -773,16 +792,18 @@ Two ways, usable together.
 
 ### Pull
 
-Walk the tracks and convert each with `toTrackOutput(track, datum)`
-(`core/output/TrackOutput.hpp`). The `TrackOutput` (`core/output/TrackOutput.hpp`)
-carries:
+Walk the tracks and convert each with `toTrackOutputENU(track, datum)` **or**
+`toTrackOutputNED(track, datum)` (`core/output/TrackOutput.hpp`) — you MUST pick
+the covariance ordering your downstream expects; there is no ambiguous
+`toTrackOutput` (removed 2026-07-12, so the choice is a compile-time decision,
+not a silent default). The `TrackOutput` carries:
 
 - `position` — `lat_deg`/`lon_deg` (WGS84 deg) and a 2×2 covariance in **m²**.
-  ⚠️ **Axis order caveat:** the header comment claims "local NED (north-east)",
-  but the code was verified empirically to emit **ENU `(east, north)`** — slot
-  (0,0) = east variance, (1,1) = north. This is a confirmed upstream contract
-  mismatch awaiting a fix wave; until it lands, trust the ENU order, not the
-  header. Pinned by `TrackOutputCovarianceAxis.EmittedOrderingIsEnuEastNorthNotHeaderNed`.
+  **Axis order (resolved):** `toTrackOutputENU` → `(east, north)` (slot (0,0) =
+  east variance, (1,1) = north); `toTrackOutputNED` → `(north, east)` (slot
+  (0,0) = north). `TrackOutput::covariance_frame` (`CovarianceFrame::Enu`/`Ned`)
+  records which — assert on it if your consumer is axis-sensitive. Both
+  orderings are pinned by end-to-end elongated-covariance tests.
   (The `navtracker_t2t` path never routes through this rotation — see §3.10.)
 - `velocity` — `sog_m_per_s`, `cog_deg` (true, [0,360)), their σ, and `is_valid`.
   Velocity is `is_valid == false` for a 2D-only state or an unobserved/degenerate
