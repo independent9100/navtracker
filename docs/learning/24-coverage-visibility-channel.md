@@ -189,6 +189,25 @@ accumulate misses until a sweep covers it.
 Plain words: *one rotation = one chance. One missed chance = one
 charge.*
 
+**Where is "inside the coverage range and sector" measured from?**
+From **own-ship**, not the datum origin. A surveillance sensor
+(radar / EO) is mounted on own-ship, so its range ring and azimuth
+sector are centred on wherever own-ship is right now — which can be
+tens of kilometres from the datum origin after the ship has steamed
+along (up to the auto-recenter threshold). The check therefore uses
+the vector *(track − own-ship)*, not *(track − origin)*. Earlier code
+measured from the origin; that was correct only while own-ship sat on
+the datum (all the sim scenarios), and silently wrong on real replays
+where the platform moves (W2.4a). Own-ship's position reaches the
+tracker on each measurement (`Measurement::sensor_position_enu`).
+
+A second subtlety on the *cooperative* side: an "overdue" own-identity
+report only counts against a track that **has** a cooperative identity
+(an MMSI). A radar-only track never announces on AIS, so its silence
+there says nothing — charging it as overdue (and eventually retiring
+it) was the identity-blind bug (W2.4b). Silence is evidence only for
+the channel a target actually uses.
+
 ---
 
 ## 6. Snapshot + deferred write (a subtle correctness detail)

@@ -41,6 +41,7 @@ class DeclaredSensorActivity : public ISensorActivity {
    * interval — the "miss opportunity" used to weigh a non-detection.
    */
   MissOpportunity evaluate(const Eigen::Vector2d& track_pos_enu,
+                           const Eigen::Vector2d& own_ship_enu,
                            std::optional<std::uint32_t> mmsi,
                            std::optional<std::uint64_t> platform_id,
                            Timestamp last_checked,
