@@ -3,6 +3,7 @@
 #include <cmath>
 #include <utility>
 
+#include "adapters/util/DatumReproject.hpp"
 #include "adapters/util/EdgeValidation.hpp"
 #include "core/estimation/PolarVelocity.hpp"
 
@@ -88,6 +89,13 @@ std::vector<Measurement> AisAdapter::poll() {
   std::vector<Measurement> out;
   out.swap(buffer_);
   return out;
+}
+
+void AisAdapter::onDatumRecentered(const geo::Datum& old_datum,
+                                   const geo::Datum& new_datum) {
+  for (auto& m : buffer_)
+    adapter_util::reprojectMeasurementEnu(m, old_datum, new_datum);
+  datum_ = new_datum;
 }
 
 }  // namespace navtracker

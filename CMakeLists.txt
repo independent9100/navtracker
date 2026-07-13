@@ -267,6 +267,7 @@ add_executable(navtracker_tests
   tests/adapters/own_ship/test_own_ship_nmea_bias_dispatch.cpp
   tests/adapters/arpa/test_arpa_adapter.cpp
   tests/adapters/eoir/test_eoir_adapter.cpp
+  tests/adapters/test_adapter_datum_recenter.cpp
   tests/adapters/test_end_to_end.cpp
   tests/adapters/static/test_geojson_static_obstacles.cpp
   tests/scenario/test_builders.cpp

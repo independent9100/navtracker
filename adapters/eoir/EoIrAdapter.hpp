@@ -7,6 +7,7 @@
 
 #include "adapters/own_ship/OwnShipProvider.hpp"
 #include "core/geo/Datum.hpp"
+#include "core/own_ship/IDatumChangeSink.hpp"
 #include "core/types/Measurement.hpp"
 #include "ports/IHeadingBiasProvider.hpp"
 #include "ports/ISensorAdapter.hpp"
@@ -46,7 +47,7 @@ struct EoIrAdapterConfig {
  * (invariant #6): non-positive / non-finite ranges and non-finite bearings
  * are rejected before projection.
  */
-class EoIrAdapter : public ISensorAdapter {
+class EoIrAdapter : public ISensorAdapter, public IDatumChangeSink {
  public:
   EoIrAdapter(geo::Datum datum, OwnShipProvider& own_ship,
               EoIrAdapterConfig cfg = {},
@@ -59,6 +60,14 @@ class EoIrAdapter : public ISensorAdapter {
   void ingest(const CameraDetection& d);
   /** Drain and return all measurements buffered since the last poll. */
   std::vector<Measurement> poll() override;
+
+  /**
+   * IDatumChangeSink (W2.1): adopt the new datum on an OwnShipProvider
+   * auto-recenter and re-express buffered measurements. Register with
+   * `provider.registerDatumSink(&adapter)` when auto-recenter is enabled.
+   */
+  void onDatumRecentered(const geo::Datum& old_datum,
+                         const geo::Datum& new_datum) override;
 
  private:
   geo::Datum datum_;

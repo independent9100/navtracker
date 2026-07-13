@@ -120,6 +120,19 @@ provider.registerDatumSink(&occupancy_model);  // re-anchors the occupancy grid
 provider.registerDatumSink(&t2t_fuser);        // re-expresses cached source-track ENU state
 ```
 
+The **sensor adapters** (`AisAdapter`, `ArpaAdapter`, `EoIrAdapter`,
+`RemoteTrackAdapter`) also implement `IDatumChangeSink` (W2.1): each caches the
+working `Datum` at construction and projects measurements in it. If you use
+auto-recenter, register every adapter you wire, or after a recenter it silently
+keeps projecting non-cooperative measurements in the OLD frame:
+
+```cpp
+provider.registerDatumSink(&ais_adapter);      // adopts new datum + reprojects buffered measurements
+provider.registerDatumSink(&arpa_adapter);
+provider.registerDatumSink(&eoir_adapter);
+provider.registerDatumSink(&remote_track_adapter);
+```
+
 (The bench `Sweep` skips this on purpose — it uses a single fixed datum per run, so
 no recenter ever fires.)
 

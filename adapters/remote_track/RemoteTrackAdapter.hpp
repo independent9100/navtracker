@@ -11,6 +11,7 @@
 #include <Eigen/Core>
 
 #include "core/geo/Datum.hpp"
+#include "core/own_ship/IDatumChangeSink.hpp"
 #include "core/types/Measurement.hpp"
 #include "core/types/Timestamp.hpp"
 #include "ports/ISensorAdapter.hpp"
@@ -84,7 +85,7 @@ struct RemoteTrackAdapterConfig {
  * evidence for the suppression veto). Rate-thins per remote track id and inflates
  * R per the config. `sensor_track_id` = remote track id; `mmsi` passed through.
  */
-class RemoteTrackAdapter : public ISensorAdapter {
+class RemoteTrackAdapter : public ISensorAdapter, public IDatumChangeSink {
  public:
   explicit RemoteTrackAdapter(geo::Datum datum,
                               RemoteTrackAdapterConfig config = {});
@@ -93,6 +94,14 @@ class RemoteTrackAdapter : public ISensorAdapter {
   void ingest(const RemoteTrackReport& r);
   /** Drain and return all measurements buffered since the last poll. */
   std::vector<Measurement> poll() override;
+
+  /**
+   * IDatumChangeSink (W2.1): adopt the new datum on an OwnShipProvider
+   * auto-recenter and re-express buffered measurements. Register with
+   * `provider.registerDatumSink(&adapter)` when auto-recenter is enabled.
+   */
+  void onDatumRecentered(const geo::Datum& old_datum,
+                         const geo::Datum& new_datum) override;
 
   // --- Diagnostics (invariant #6 + the circular-AIS deployment guard) ---
 

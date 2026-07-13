@@ -7,6 +7,7 @@
 
 #include "core/estimation/PolarVelocity.hpp"
 #include "core/geo/Datum.hpp"
+#include "core/own_ship/IDatumChangeSink.hpp"
 #include "core/types/Measurement.hpp"
 #include "core/types/Timestamp.hpp"
 #include "ports/ISensorAdapter.hpp"
@@ -87,7 +88,7 @@ struct AisAdapterConfig {
  * High-accuracy fixes get a tighter position σ than standard ones; the MMSI is
  * attached as a non-fusion identity hint; heading/nav-status ride on the hints.
  */
-class AisAdapter : public ISensorAdapter {
+class AisAdapter : public ISensorAdapter, public IDatumChangeSink {
  public:
   explicit AisAdapter(geo::Datum datum, AisAdapterConfig cfg = {});
 
@@ -95,6 +96,16 @@ class AisAdapter : public ISensorAdapter {
   void ingest(const AisDynamicReport& r);
   /** Drain and return all measurements buffered since the last poll. */
   std::vector<Measurement> poll() override;
+
+  /**
+   * IDatumChangeSink (W2.1): on an OwnShipProvider auto-recenter, adopt the new
+   * datum for subsequent projections and re-express any already-buffered
+   * measurements into the new frame. Register with
+   * `provider.registerDatumSink(&adapter)` whenever auto-recenter is enabled,
+   * or the adapter silently keeps projecting in the stale frame.
+   */
+  void onDatumRecentered(const geo::Datum& old_datum,
+                         const geo::Datum& new_datum) override;
 
  private:
   geo::Datum datum_;

@@ -10,6 +10,7 @@
 #include <Eigen/Core>
 
 #include "core/geo/Datum.hpp"
+#include "core/own_ship/IDatumChangeSink.hpp"
 #include "core/own_ship/NavInputGuard.hpp"
 #include "core/types/Timestamp.hpp"
 
@@ -53,18 +54,9 @@ struct OwnShipPose {
   double magnetic_variation_deg{std::nan("")};
 };
 
-/**
- * Notified when OwnShipProvider replaces its working datum (e.g. when
- * the ship has moved far enough that the local tangent plane needs to
- * be re-anchored). Consumers that hold state in ENU coordinates should
- * react to this event to keep their state consistent with the new frame.
- */
-class IDatumChangeSink {
- public:
-  virtual ~IDatumChangeSink() = default;
-  virtual void onDatumRecentered(const geo::Datum& old_datum,
-                                 const geo::Datum& new_datum) = 0;
-};
+// IDatumChangeSink is defined in core/own_ship/IDatumChangeSink.hpp (included
+// above) so sensor adapters can depend on the tiny sink interface without
+// pulling in the whole provider.
 
 /**
  * Policy controlling when OwnShipProvider auto-recenters its working

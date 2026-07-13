@@ -192,12 +192,19 @@ models cache positions in ENU and must be registered if you use auto-recenter:
 - `BearingWedgeModel` (`core/static/BearingWedgeModel.hpp`) — re-anchors its wedge
   apexes (§7). Wire it as a datum sink too if you use auto-recenter, or every
   emitted wedge points the wrong way after a recenter.
+- **The sensor adapters** `AisAdapter`, `ArpaAdapter`, `EoIrAdapter`,
+  `RemoteTrackAdapter` (W2.1) — each caches the working `Datum` at construction.
+  On recenter they adopt the new datum and re-express any buffered measurements
+  into the new frame. **Register every adapter you feed**, or after a recenter it
+  silently keeps projecting non-cooperative measurements in the OLD frame — the
+  positions drift by the full recenter distance (up to the 30 km threshold).
 
 ```cpp
 provider.registerDatumSink(&obstacle_model);
 provider.registerDatumSink(&coastline_model);
 provider.registerDatumSink(&occupancy_model);
 provider.registerDatumSink(&bearing_wedge_model);
+provider.registerDatumSink(&ais_adapter);      // + arpa / eoir / remote_track adapters
 ```
 
 > **Note.** If you use the MHT tracker, its hidden per-node kinematic state is not
