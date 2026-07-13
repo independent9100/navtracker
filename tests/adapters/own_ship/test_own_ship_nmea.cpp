@@ -272,7 +272,10 @@ TEST(OwnShipNmeaAdapterTest, RmcStaleTriggersEstimatorFallback) {
     ASSERT_TRUE(adapter.ingest(makeGga(pos.lat_deg, pos.lon_deg, 1.2),
                                Timestamp::fromSeconds(t_s)));
     ASSERT_TRUE(provider.latest().has_value());
-    const auto& p = *provider.latest();
+    // W2.5 (F-BUILD-1): latest() returns std::optional<OwnShipPose> BY VALUE, so
+    // *latest() is a reference into a temporary that dies at the ';'. Bind a COPY
+    // — `const auto&` here dangled and the assertions below read freed stack.
+    const auto p = *provider.latest();
     if (t_s <= cfg.rmc_stale_seconds) {
       // Within the fresh window the RMC value (~5.144 east, 0 north)
       // should win, even though the estimator may have published.
