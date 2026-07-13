@@ -1256,6 +1256,13 @@ std::vector<Config> defaultConfigs() {
     c.tracker_kind = TrackerKind::Pmbm;
     c.use_sensor_activity_model = true;
     c.use_land_model = true;
+    // Cl-4 adoption (2026-07-12, ADR-0003): narrow the blocked offshore strip
+    // to 25 m (inland plateau unchanged at 50 m) so near-shore births in the
+    // 6–42 m vessel band revive at today's floor. Scoped to THIS deployable
+    // config only — CoastlinePriorParams keeps its 50/50 default for every
+    // other config. See docs/adr/0003-near-shore-birth-policy-25m-strip.md.
+    c.coastline_prior_params = CoastlinePriorParams{/*inland=*/50.0,
+                                                    /*offshore=*/25.0};
     c.pmbm_config = []() {
       auto cfg = makeCoverageLandPmbmConfig();
       cfg.innov_gate_max_m = 400.0;

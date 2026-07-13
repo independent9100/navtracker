@@ -1,6 +1,6 @@
 # ADR 0001 — Land-clutter prior keeps a near-shore no-birth zone
 
-- **Status:** Accepted — **amended 2026-07-02** (A2 adopted, obstacle-scoped; see below)
+- **Status:** Accepted — **amended 2026-07-02** (A2 adopted, obstacle-scoped; see below); **partially superseded by ADR-0003 (2026-07-12)** — the 50 m no-birth zone is narrowed to 25 m on the deployable config `imm_cv_ct_pmbm_coverage_land_ivgate`; the `gate == target` mechanism and the philos shore-clutter rationale below stand.
 - **Date:** 2026-06-30
 - **Deciders:** navtracker maintainers
 - **Related:** `docs/algorithms/synthetic-clutter-bench.md`, `docs/algorithms/pmbm-design.md` §10 (land clutter prior), `docs/algorithms/evaluation-log.md` (2026-06-30, Project E; 2026-07-02, R1), `docs/superpowers/specs/2026-06-30-pmbm-land-clutter-prior-design.md`, `docs/superpowers/plans/2026-07-02-static-branch-review-fixes.md` (R1)

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core/bias/SensorBiasEstimator.hpp"
+#include "core/land/CoastlineGeometry.hpp"  // CoastlinePriorParams
 #include "core/pipeline/MhtTracker.hpp"
 #include "core/pmbm/PmbmTracker.hpp"
 #include "core/static/LiveOccupancyModel.hpp"
@@ -134,6 +135,14 @@ struct Config {
   // the clutter-adaptive persistence bar (uniform clutter rejected relative to
   // its own density). Requires use_live_occupancy_model.
   bool occupancy_adaptive_clutter_bar{false};
+  // Optional per-config shoreline clutter-ramp half-widths for the GeoJSON
+  // CoastlineModel Sweep wires (Task 6). Unset ⇒ the shipped 50/50 default
+  // (byte-identical to master). Cl-4 adoption (2026-07-12, ADR-0003): the
+  // deployable config imm_cv_ct_pmbm_coverage_land_ivgate sets
+  // offshore_halfwidth_m = 25 to revive near-shore births (6–42 m band) while
+  // keeping the inland plateau at 50 m. The PMBM_OFFSHORE/INLAND_HALFWIDTH_M
+  // env vars still override this as research levers. No other config sets it.
+  std::optional<CoastlinePriorParams> coastline_prior_params;
 };
 
 /**

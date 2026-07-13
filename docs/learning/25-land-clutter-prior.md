@@ -128,6 +128,39 @@ The GeoJSON lives in an **adapter** (`GeoJsonCoastline`). The core tracker only
 calls the `ILandModel` interface — it never touches files or GeoJSON directly.
 This keeps the hexagonal architecture clean (see CLAUDE.md invariant 1).
 
+### 2.4 The near-shore no-birth strip, and why we narrowed it to 25 m (ADR-0003)
+
+There is a subtle interaction between the soft ramp and the birth **floor**. The
+one deployable config sets its floor equal to the birth target (both 0.1), and a
+birth only survives if its existence clears that floor. Because the ramp weakens
+a near-shore birth to roughly `0.1 × (1 − c)`, *any* suppression at all (`c > 0`)
+pushes it under the floor — so the soft band turns into a hard **no-birth strip**:
+a vessel inside the offshore half-width never starts a track at all.
+
+With the default `W_off = 50 m` that strip is 50 m wide. On the Trondheim urban
+channel — where the boats hug the shore, riding 6–42 m offshore — that meant the
+tracker saw **nothing**: every vessel was inside the strip.
+
+So the deployable config **narrows the offshore half-width to 25 m** (the inland
+side stays 50 m). Now vessels in the **25–50 m** band start tracks again, which is
+where the channel traffic actually rides. The price, measured honestly: in
+cluttered harbours the extra near-shore births include some phantom tracks — but
+they stay *in the strip* (near the shore, where an operator is watching), and we
+judged an invisible real moving vessel the worse outcome. A vessel that stays
+within **0–25 m** of shore the whole time still will not start — a smaller blind
+strip than before, not none. (The generic ramp figure above still shows the 50 m
+default; 25 m is a per-config setting, not a new default.)
+
+**The idea we kept in reserve — a "waiting room" for near-shore contacts.** Instead
+of a fixed distance line, admit a near-shore contact only *after it has been
+re-detected on several scans* — a short waiting room before it becomes a real
+track. This would cover the whole 0–50 m band (no blind strip) and let transient
+sea-clutter die in the waiting room, at the cost of a few seconds' delay before the
+first track appears. We measured it and it works, but it only *matches* the 25 m
+strip rather than beating it, so it is **parked** — to be built if a deployment
+actually operates boats inside the 0–25 m band (quay/dock work). See
+`docs/adr/0003-near-shore-birth-policy-25m-strip.md`.
+
 ---
 
 ## 3. Why it works

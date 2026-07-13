@@ -101,6 +101,26 @@ TEST(Config, ClutterMapAblationFlagsExactlyTwoConfigs) {
   EXPECT_EQ(flagged_labels.count("imm_cv_ct_pmbm_cmap"), 1u);
 }
 
+// Cl-4 adoption (ADR-0003, 2026-07-12): the narrowed 25 m offshore strip is
+// scoped to the ONE deployable config. This is the config-level byte-identical
+// proof — every other config leaves coastline_prior_params unset, so Sweep
+// builds their CoastlineModel with the 50/50 default exactly as on master.
+TEST(Config, Cl4OffshoreStripScopedToDeployableConfigOnly) {
+  int found = 0;
+  for (const auto& c : defaultConfigs()) {
+    if (c.label == "imm_cv_ct_pmbm_coverage_land_ivgate") {
+      ++found;
+      ASSERT_TRUE(c.coastline_prior_params.has_value()) << c.label;
+      EXPECT_DOUBLE_EQ(c.coastline_prior_params->offshore_halfwidth_m, 25.0);
+      EXPECT_DOUBLE_EQ(c.coastline_prior_params->inland_halfwidth_m, 50.0);
+    } else {
+      EXPECT_FALSE(c.coastline_prior_params.has_value())
+          << "only the deployable config may set the narrowed strip: " << c.label;
+    }
+  }
+  EXPECT_EQ(found, 1);
+}
+
 TEST(Config, FactoriesProduceUsableObjects) {
   for (const auto& c : defaultConfigs()) {
     auto est = c.build_estimator();

@@ -8,6 +8,57 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-12 — Cl-4 CLOSED: W_off=25 m adopted on the deployable config (freeze) [Cl-4]
+
+Ticket `2026-07-12-cl4-adoption-ticket.md`; branch `cl4-adoption` (unmerged).
+ADR-0003. Change: `Config::coastline_prior_params = {inland 50, offshore 25}`
+on `imm_cv_ct_pmbm_coverage_land_ivgate` **only** (per-config; struct default
+stays 50/50; `PMBM_OFFSHORE/INLAND_HALFWIDTH_M` env research levers untouched).
+
+**Gauntlet freeze — three columns, reproduces the measured sweep cells exactly
+(no surprise):**
+
+| workload | mht (champion) | W50 (prior candidate) | W25 (new, shipped) |
+|---|---|---|---|
+| env-2 (autoferry 13/16/17/22) | — | **0/8 COLLAPSE, gospa 20.00** | **8/8, gospa 13.38** |
+| env-1 (autoferry 2–6) | gospa 33.04 | gospa 16.57 | **gospa 16.57 (unchanged)** |
+| philos (ais_ferry_near) | card +8.10 / gospa 69.4 / false 3350 | card +6.90 / 73.1 / 3550 | **card +17.35 / 84.6 / 5640** |
+| harbor_complete_truth (5 seeds) | card 8.51 | card 9.53 | **card 9.53 (unchanged)** |
+
+- **env-2 revival** 0/8 → 8/8, GOSPA 13.38 (= sweep cell). **philos** +6.9 →
+  +17.35 (= sweep cell); phantom map on exported W25 states: 564 samples,
+  **in-strip 228 / near 248 / far 88, max 264 m** (= sweep; open-water field
+  flat, no flyers — strip-confined). **env-1 16.57 and harbor 9.53 unchanged.**
+- **Byte-identical proof (R3 two-class A/B, W25 vs W50 in one binary):** Imazu
+  and sim_ms rows **IDENTICAL**; harbor metric rows **IDENTICAL** (only run-id /
+  timestamp headers differ); env-1 identical. Every non-candidate config carries
+  no `coastline_prior_params` → built at 50/50 exactly as master (guarded by
+  `Config.Cl4OffshoreStripScopedToDeployableConfigOnly`).
+- **Zone tests** (`Cl4NearShoreZone`, teeth-proven — 30 m births at W25, RED at
+  W50): 30 m births, 10 m suppressed, 60 m untouched.
+- **Full suite green at 0 skips** (SIMMS_DIR/RBAD_DIR/HAXR_PLOTS_CSV + root cwd).
+- **Accepted, dated deviations** (ADR-0003): philos in-strip phantoms +10.45
+  tracks/scan (user-repriced acceptable); residual 0–25 m blind band (pending
+  band parked). Cl-4 claim CLOSED as an honest claim, not a clean sweep.
+
+Reproduce:
+
+```
+# gauntlet columns (W25 = env unset; W50 = prior; mht = champion):
+for E in "" "PMBM_OFFSHORE_HALFWIDTH_M=50"; do
+  env $E ./build/bench/navtracker_bench_baseline --config-eq imm_cv_ct_pmbm_coverage_land_ivgate \
+     --scenario-eq philos --seeds 1 --run-id ph --out <dir>
+  env $E ./build/bench/navtracker_bench_baseline --config-eq imm_cv_ct_pmbm_coverage_land_ivgate \
+     --scenario-filter autoferry_scenario --seeds 1 --run-id af --out <dir>
+  env $E ./build/bench/navtracker_bench_baseline --config-eq imm_cv_ct_pmbm_coverage_land_ivgate \
+     --scenario-eq harbor_complete_truth --seeds 5 --run-id hb --out <dir>
+done
+# phantom map (W25 philos):
+./build/bench/navtracker_bench_baseline --config-eq imm_cv_ct_pmbm_coverage_land_ivgate \
+  --scenario-eq philos --seeds 1 --run-id ptc --out <dir> --export-states-dir <dir>
+./build/bench/navtracker_cl4_a3_census --mode phantomtrack --scenario philos --states <dir>/*.states.csv
+```
+
 ## 2026-07-12 — Cl-4 pending-band probe: shapes CAN'T beat the front (collapse confirmed); pending band = a genuine third operating point [Cl-4]
 
 Ticket `2026-07-12-cl4-pending-band-probe-ticket.md`; merged cd26165.

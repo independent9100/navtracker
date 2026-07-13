@@ -923,6 +923,8 @@ requires spatial work on the water side:
 
 1. **Tighter offshore margin / near-shore handling.** Reduce `W_off` or add a graduated near-shore
    zone (e.g. 0 < d < 100 m) with moderate soft suppression to damp waterline-adjacent clutter.
+   *(Done, in the other direction — §9.5: the deployable config narrows `W_off` to 25 m to REVIVE
+   near-shore births, not to damp clutter; the two goals trade off along the sweep surface.)*
 2. **Finer / higher-resolution charts.** Administrative GeoJSON has ~30–100 m waterline error.
    Survey-grade or nautical-chart polygons would push the soft-band needs toward zero.
 3. **Online clutter-field learning.** Couple with the existing `ClutterMapDetectionModel` (Task 3):
@@ -932,6 +934,47 @@ requires spatial work on the water side:
    suppress the surveillance miss penalty for the occluded sector, not just births. A
    land-occlusion query at miss-detection time would further close the near-shore gap and couple
    this module with the coverage/visibility channel.
+
+### 9.5 Cl-4 adoption — narrowed no-birth strip on the deployable config (ADR-0003, 2026-07-12)
+
+**Math.** The interaction that creates a *no-birth strip* is the ramp composed
+with the birth floor. On the deployable config `min_new_bernoulli_existence ==
+birth_existence_target == 0.1`, and the materialised birth existence is
+`r_new = r*(1−c) / (r*(1−c) + (1−r*))` with `r* = 0.1` (§3.2.2 λ_C-cancellation —
+this is why raising λ_C does nothing). Solving `r_new ≥ 0.10` gives `c = 0`
+exactly, i.e. the admit boundary sits at `d ≥ W_off`. So at floor 0.10 the
+offshore half-width *is* the no-birth-strip width. The adoption sets
+`W_off = 25 m` (from 50 m; `W_in` unchanged) on `imm_cv_ct_pmbm_coverage_land_ivgate`
+only, via `Config::coastline_prior_params`; the `CoastlinePriorParams` struct
+default stays 50/50.
+
+**Assumptions.** (i) Near-shore movers ride ≥ 25 m offshore — measured: the Cl-1
+env-2 channel vessels sit 6–42 m out, median 25–31 m, so the 25–50 m band recovers
+the bulk. (ii) In cluttered charted harbours the re-admitted near-shore phantoms
+are tolerable *because they stay in-strip* (operator-supervised) — measured via the
+phantom map (max 264 m from shore, open-water field flat). (iii) Chart-free and
+open-water workloads are unaffected (the ramp is inert without a coastline, and
+`c = 0` beyond `W_off`).
+
+**Rationale.** Every more-principled near-shore fix was measured dead first
+(A1/A2 gate-lowering re-admits water clutter; A3 sensor-typed exemption
+unscoreable; kinematic conditional floor launders a structure-walk into a transit;
+occupancy veto blinds a passing vessel; and ramp/bar SHAPE provably collapses to a
+boundary distance — ADR-0003 lists each with its baseline). What remained was a
+graded distance trade, and 25 m is the point on the measured surface that revives
+the channel (env-2 0/8 → 8/8, GOSPA 13.38) while keeping the phantom cost in-strip
+(the equal-revival floor-lowering alternative instead spills 5 km open-water
+flyers). The cost — philos `card_err` +6.9 → +17.35 — is a user-priced, recorded
+deviation, not a silent regression.
+
+**Ways to improve / what to test next.** (a) The **pending band** (admit in-band
+births only after K re-detection scans) covers the full 0–50 m band with the
+phantom cost of the 25 m strip at K≈5–8, buying ~7–17 s first-track latency — the
+priced escalation if a deployment operates inside 0–25 m (parked; ADR-0003
+reopen-trigger). (b) Re-measure the in-strip phantom price on a second charted-shore
+workload (the +10.45 was measured on Boston/philos only). (c) A charted map-extent
+identity signal (on-shore vs laterally-offset returns) could separate structure
+from movers without the distance trade — needs charts as an input, unmeasured.
 
 ---
 
