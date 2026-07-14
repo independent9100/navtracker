@@ -41,7 +41,11 @@ Measurement makeBiasedBearing(const Eigen::Vector2d& truth,
   std::normal_distribution<double> noise(0.0, std_rad);
   const double beta_true = std::atan2(truth.y() - sensor.y(),
                                       truth.x() - sensor.x());
-  const double beta_obs = beta_true + bias_rad + noise(rng);
+  // `bias_rad` is the COMPASS heading bias (gyro reads high by bias_rad; W3.4
+  // convention). A +bias_rad compass bias rotates the ENU-math bearing the
+  // OTHER way, so the observed ENU-math bearing is beta_true - bias_rad. The
+  // estimator converts the ENU-math innovation back to +bias_rad.
+  const double beta_obs = beta_true - bias_rad + noise(rng);
   Measurement m;
   m.time = Timestamp::fromSeconds(t_s);
   m.sensor = SensorKind::EoIr;

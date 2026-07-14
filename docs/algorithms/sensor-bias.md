@@ -93,6 +93,29 @@ for bearing). The `Tracker` / `MhtTracker` subtract the published
 estimate from incoming measurements *before* predict / associate
 (`applyBiasCorrection` in `Tracker.cpp`).
 
+### Closed-loop feedback: reconstruct the raw observation (fix-wave W3.2)
+
+The residuals above (`r = z_sensor − z_anchor − b̂`; the bearing
+`α_pred = atan2(d) + b̂`) are correct **only when `z_sensor` / `α_obs`
+are the RAW sensor values**. But once the estimate publishes, the tracker
+already subtracted `b̂` from every incoming measurement (`applyBiasCorrection`)
+*before* recording the `SourceTouch` the extractor reads — so the pair shows
+only the **residual** bias `(b_true − b_pub)`, and subtracting `b̂` again makes
+the fixed point `b̂ = b_true/2`. The published estimate then decays to half the
+true offset while its variance keeps shrinking (overconfident); every corrected
+measurement keeps half the bias forever.
+
+Fix: the correction that was applied is carried forward on the measurement and
+copied into the touch — `Measurement`/`Track::SourceTouch::applied_position_bias_enu`
+(set by `applyBiasCorrection`) and `applied_bearing_bias_rad`. The pair
+extractors reconstruct the raw observation by adding it back
+(`z_sensor_raw = touch.value_enu + touch.applied_position_bias_enu`;
+`α_raw = touch.alpha_rad + touch.applied_bearing_bias_rad`) before forming the
+innovation, so the loop measures the full `b_true`. The same reconstruction on
+the cross-sensor anchor (`z_anchor_raw` then minus the partner's published bias)
+removes the twin "anchor debiased twice" defect in `extractCrossSensorPositionPairs`.
+Open-loop callers (nothing published, `applied_* = 0`) are unchanged.
+
 The bias *covariance* is **not** folded into the per-measurement R.
 That is the Schmidt-KF "considered" treatment, deferred to
 `sota-roadmap.md §5`.
@@ -393,3 +416,17 @@ without further code changes.**
 7. **Cross-sensor bearing pairs.** Item 13's MVP is position-only;
    the EO-IR-IR triangle case (two cameras + one positional sensor)
    wants the same fold on the bearing-bias update.
+8. **Re-derive the env-2 EO/IR bearing seed** (`autoferry_r_calibration.py`,
+   7.0° / 4.9° in `ReplayScenarioRun::seedSensorBiasEstimator`). It was
+   calibrated while the closed loop converged to *half* the true bias (W3.2),
+   so it is scaled for the buggy loop. After the fix the anchored-mode autoferry
+   metrics move (some worse — e.g. `scenario16_anchored` gospa 2.67→8.42); the
+   deployment-realistic (non-anchored) metrics are byte-identical. Re-derive the
+   seed against the corrected loop before re-freezing the Cl-4 gauntlet — do not
+   tune the estimator to match the old seed.
+9. **v2 bearing-innovation outlier gate** is centred on zero, not on `b̂`
+   (finding B5): a true bias above ~5·σ can starve the observer before it
+   publishes. Out of scope for this wave; gate on the residual `|wrap(r − b̂)|`.
+10. **Combined heading-bias + per-sensor-bias on the same ARPA touch.** If both
+    estimators are active on one sensor, each reconstructs only its own applied
+    correction; the interaction is untested. No production wiring hits it today.

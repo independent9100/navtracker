@@ -43,7 +43,21 @@ void HeadingBiasEstimator::observe(const AisArpaPairObservation& obs) {
   const double beta_truth = std::atan2(ais_rel.y(), ais_rel.x());
   const double beta_arpa = std::atan2(arpa_rel.y(), arpa_rel.x());
 
-  const double z = wrapToPi(beta_arpa - beta_truth);
+  // Convention (W3.4): b is the COMPASS heading bias the gyro ADDS to truth
+  // (0 = true north, clockwise-positive). The ARPA target is projected with
+  // the biased compass bearing, so in the ENU-math frame (β = atan2(dN,dE),
+  // 0 = east, counter-clockwise) it is rotated the OPPOSITE way — a gyro
+  // reading high by b puts the ARPA return at β_true − b. Hence the compass
+  // measurement of the bias is (β_ais − β_arpa), converting the ENU-math
+  // geometry to the compass convention at this boundary.
+  //
+  // Reconstruct the RAW observation (W3.1): in the documented closed-loop
+  // wiring the adapter already subtracted arpa_applied_heading_bias_rad from
+  // the bearing, so (β_ais − β_arpa) equals only the residual (b_true −
+  // b_applied); add b_applied back so z measures the full b_true. Open-loop
+  // (nothing published, applied = 0) this reduces to the plain (β_ais − β_arpa).
+  const double z = wrapToPi((beta_truth - beta_arpa)
+                            + obs.arpa_applied_heading_bias_rad);
   const double r_ais = ais_rel.norm();
   // Guard tiny ranges; if AIS-reported target is essentially at own-ship
   // the bearing is undefined — skip.
@@ -99,14 +113,20 @@ void HeadingBiasEstimator::observe(const BearingInnovation& obs) {
     return;
   }
 
+  // Convert to the compass convention (W3.4): BearingInnovation.innovation_rad
+  // is the RAW ENU-math innovation (β_obs − β_pred) the Tracker computed. A
+  // gyro reading high by b (compass, CW+) makes β_obs = β_true − b in the
+  // ENU-math frame, so the raw innovation is −b; negate it here so this kind
+  // measures +b like the gyro-vs-reference kinds and the adapter correction.
+  const double meas = -obs.innovation_rad;
   const double s = obs.variance_rad2 + p_b_;
   const double sigma = std::sqrt(s);
-  if (std::abs(obs.innovation_rad) > cfg_.bi_outlier_sigma * sigma) {
+  if (std::abs(meas) > cfg_.bi_outlier_sigma * sigma) {
     ++rej_outlier_;
     return;
   }
 
-  const double y = wrapToPi(obs.innovation_rad - b_hat_);
+  const double y = wrapToPi(meas - b_hat_);
   const double k = p_b_ / s;
   b_hat_ += k * y;
   p_b_ = (1.0 - k) * p_b_;

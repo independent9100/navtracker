@@ -58,6 +58,14 @@ struct AisArpaPairObservation {
   double ais_position_std_m{10.0};
   // 1-sigma own-ship GPS position noise at observation time, m.
   double own_position_std_m{0.0};
+  // Heading-bias correction (compass, rad) the sensor adapter ALREADY
+  // subtracted from this ARPA bearing before projecting it to ENU (i.e. the
+  // published b̂ at measurement time; 0 if nothing was published). Carried so
+  // the estimator can reconstruct the RAW, full-bias observation and avoid
+  // the closed-loop double-subtraction (W3.1): in the documented wiring the
+  // adapter debiases the bearing, so the pair only shows the *residual* bias
+  // (b_true − b_applied); adding this back recovers b_true. See observe().
+  double arpa_applied_heading_bias_rad{0.0};
 };
 
 /**

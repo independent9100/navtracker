@@ -746,13 +746,37 @@ before, bit-identical.
 gyro-bias state `b` with random-walk dynamics. Wire any subset of five observation
 kinds; sources can come and go mid-mission:
 
-| Kind | Source | Math |
+| Kind | Source | Math (frame → converted to compass `b`) |
 |---|---|---|
-| `AisArpaPairObservation` | v1 AIS↔ARPA bearing pair | direct `b` measurement at the pair's range |
-| `BearingInnovation` | v2 Tracker emission via `IBearingInnovationSink` | r = wrap(β_obs − β_pred); R = HᵀPH + R_meas; needs an anchor |
-| `GyroVsGpsHeadingObservation` | v3 multi-antenna GPS | r = gyro − gps_hdg; R = σ_gps² |
-| `GyroVsGpsCogObservation` | v3 GPS COG | r = gyro − cog; R = σ_cog² + σ_crab²; SOG and turn-rate gates |
-| `GyroVsMagneticObservation` | v3 magnetic compass | r = gyro − (mag + variation); R = σ_mag² + σ_deviation² |
+| `AisArpaPairObservation` | v1 AIS↔ARPA bearing pair | ENU-math geometry → `z = wrap(β_ais − β_arpa) + applied_bias`; range-weighted |
+| `BearingInnovation` | v2 Tracker emission via `IBearingInnovationSink` | ENU-math `r = wrap(β_obs − β_pred)`, negated to `b`; R = HᵀPH + R_meas; needs an anchor |
+| `GyroVsGpsHeadingObservation` | v3 multi-antenna GPS | compass `b = gyro − gps_hdg`; R = σ_gps² |
+| `GyroVsGpsCogObservation` | v3 GPS COG | compass `b = gyro − cog`; R = σ_cog² + σ_crab²; SOG and turn-rate gates |
+| `GyroVsMagneticObservation` | v3 magnetic compass | compass `b = gyro − (mag + variation)`; R = σ_mag² + σ_deviation² |
+
+> **Angle convention (must-read before wiring a new source).** The stored bias
+> `b` is a **compass** heading error: radians, 0 = true north, clockwise-positive,
+> `gyro_reported = true + b`, and the adapters remove it with
+> `corrected = measured − b`. All `OwnShipPose` heading/variation fields use this
+> compass convention. **Bearing components of `Measurement.value` (Bearing2D
+> `value(0)`, RangeBearing2D `value(1)`) use the OPPOSITE, ENU-math convention**
+> (0 = east, counter-clockwise, `β = atan2(dN, dE)`), matching the tracker state.
+> The two map-math observation kinds (v1, v2) are converted to the compass
+> convention at the estimator's `observe()` boundary; if you add a new source,
+> convert it there too, or it will fight the others and the correction will
+> *amplify* the bias instead of removing it.
+>
+> **Closed-loop feedback (do not double-subtract).** Because the adapter removes
+> the published `b` from ARPA/EO-IR bearings *before* the tracker records the
+> pair, a naive loop only sees the residual and converges to *half* the true
+> bias. navtracker avoids this by carrying the applied correction on each
+> measurement — `Measurement::applied_heading_bias_rad` (compass, set by
+> `ArpaAdapter`/`EoIrAdapter`), and `applied_position_bias_enu` /
+> `applied_bearing_bias_rad` (set by `applyBiasCorrection` for the per-sensor
+> `SensorBiasEstimator`) — and reconstructing the raw observation before the
+> update. These fields are populated automatically by the shipped adapters/
+> pipeline; if you build `Measurement`s yourself and also feed the bias
+> estimators from corrected data, set them so the loop measures the full bias.
 
 How each source is fed:
 

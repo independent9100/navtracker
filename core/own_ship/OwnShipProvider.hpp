@@ -24,13 +24,19 @@ class INavHealthSink;  // ports/INavHealthSink.hpp
  * per-GPS-fix input a consumer pushes via `OwnShipProvider::update`; it also
  * carries the multi-heading-source fields (v3 NMEA wiring) that feed the
  * heading-bias estimator. NaN in a heading field means "not present".
+ *
+ * ANGLE CONVENTION: every *_heading_* and *_variation_* field below is a
+ * MARINE COMPASS angle — degrees, 0 = true north, clockwise-positive, range
+ * [0,360). This is the opposite turn direction from the ENU-math frame
+ * (β = atan2(dN,dE); 0 = east, counter-clockwise) used inside the tracker;
+ * the boundary conversion is φ_enu = π/2 − θ_compass.
  */
 struct OwnShipPose {
   Timestamp time;
-  double lat_deg{0.0};
-  double lon_deg{0.0};
+  double lat_deg{0.0};              // WGS84 latitude, degrees
+  double lon_deg{0.0};              // WGS84 longitude, degrees
   double alt_m{0.0};
-  double heading_true_deg{0.0};
+  double heading_true_deg{0.0};     // true heading, compass deg (0=N, CW+)
   double position_std_m{0.0};
   Eigen::Vector2d velocity_enu{Eigen::Vector2d::Zero()};
   double velocity_std_m_per_s{0.0};
@@ -46,7 +52,10 @@ struct OwnShipPose {
   // only from the consumer's static config), bit-identical.
   std::optional<double> heading_std_deg;
 
-  // Multi-heading-source fields (v3 NMEA wiring). NaN = not present.
+  // Multi-heading-source fields (v3 NMEA wiring). NaN = not present. All are
+  // marine compass angles (deg, 0 = true north, clockwise-positive), same
+  // convention as heading_true_deg. `magnetic_variation_deg` is added to the
+  // magnetic heading to obtain true (east variation positive).
   double gps_true_heading_deg{std::nan("")};
   double gps_true_heading_std_deg{0.0};
   double magnetic_heading_deg{std::nan("")};

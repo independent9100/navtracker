@@ -88,6 +88,14 @@ struct Track {
     Eigen::Vector2d sensor_position_enu{Eigen::Vector2d::Zero()};
     double own_position_std_m{0.0};
     bool covariance_is_default{false};
+    // Bias corrections already applied to the measurement that produced this
+    // touch (copied from Measurement by fillSourceTouchEnu). The bias pair
+    // extractors add these back to reconstruct the RAW observation, so a
+    // published bias does not get subtracted a second time in the closed loop
+    // (W3.1 heading / W3.2 per-sensor). All default to "nothing applied".
+    double applied_heading_bias_rad{0.0};              // compass rad (0=N, CW+)
+    Eigen::Vector2d applied_position_bias_enu{Eigen::Vector2d::Zero()};  // ENU m
+    double applied_bearing_bias_rad{0.0};              // ENU-math rad (0=E, CCW+)
     // Bearing-only payload (populated only when the contributing
     // measurement is Bearing2D). NaN sentinel means "this touch did
     // not contribute a bearing"; consumers must check before reading.

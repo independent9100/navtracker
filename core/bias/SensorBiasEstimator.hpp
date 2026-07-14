@@ -86,6 +86,10 @@ struct BearingBiasPairObservation {
   SensorBiasKey key;
   Eigen::Vector2d sensor_position_enu{Eigen::Vector2d::Zero()};
   Eigen::Vector2d anchor_target_position_enu{Eigen::Vector2d::Zero()};
+  // Camera-reported bearing, ENU-math (rad, 0 = east, CCW-positive) — same
+  // frame as α_predicted = atan2(anchor − sensor). This b is a per-sensor
+  // bearing offset in the ENU-math frame (observed = true + b), independent of
+  // the compass gyro bias the HeadingBiasEstimator tracks.
   double alpha_observed_rad{0.0};
   double alpha_meas_var_rad2{0.0};   // σ²_α from the sensor
   // 1-sigma isotropic position noise on the anchor report (m).

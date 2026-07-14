@@ -52,6 +52,10 @@ std::vector<AisArpaPairObservation> extractPairs(
         sigmaFromCov2D(ais->covariance, cfg.ais_position_std_fallback_m);
     obs.arpa_bearing_std_rad = cfg.arpa_bearing_std_fallback_rad;
     obs.own_position_std_m = arpa->own_position_std_m;
+    // W3.1: carry the heading-bias correction the adapter already applied to
+    // the ARPA bearing so the estimator reconstructs the raw, full-bias
+    // observation (see HeadingBiasEstimator::observe).
+    obs.arpa_applied_heading_bias_rad = arpa->applied_heading_bias_rad;
     out.push_back(std::move(obs));
   }
   return out;

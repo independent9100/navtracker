@@ -7,6 +7,17 @@
 namespace navtracker {
 
 /**
+ * ANGLE CONVENTION (W3.4) for every field in this file: all headings/courses
+ * are MARINE COMPASS angles — radians, 0 = true north, clockwise-positive.
+ * The bias b these kinds measure is the compass offset the gyro ADDS to truth
+ * (gyro_reported = true + b); r = wrap(gyro − reference) = +b. This is the ONE
+ * internal convention the HeadingBiasEstimator stores and the ARPA/EO-IR
+ * adapters subtract. The AIS/ARPA (v1) and bearing-innovation (v2) kinds live
+ * in the ENU-math frame and are converted to this convention at their observe()
+ * boundary — see HeadingBiasEstimator.cpp.
+ */
+
+/**
  * === GpsHeadingObservation (gold-standard, no offset) ===
  * r = wrap(gyro_rad - gps_true_heading_rad)
  * R = gps_true_heading_std_rad^2

@@ -62,6 +62,9 @@ inline Measurement applyBiasCorrection(const Measurement& z,
     if (pb.is_published) {
       out.value(0) -= pb.bias_enu_m.x();
       out.value(1) -= pb.bias_enu_m.y();
+      // Record what was subtracted so the bias pair extractor can reconstruct
+      // the raw position and not subtract b̂ a second time (W3.2).
+      out.applied_position_bias_enu = pb.bias_enu_m;
       if (out.covariance.rows() >= 2 && out.covariance.cols() >= 2) {
         out.covariance.block<2, 2>(0, 0) += pb.covariance_m2;
       }
@@ -70,6 +73,7 @@ inline Measurement applyBiasCorrection(const Measurement& z,
     const auto bb = provider->bearingBias(key);
     if (bb.is_published) {
       out.value(0) -= bb.bias_rad;
+      out.applied_bearing_bias_rad = bb.bias_rad;
       if (out.covariance.rows() >= 1 && out.covariance.cols() >= 1) {
         out.covariance(0, 0) += bb.variance_rad2;
       }
@@ -79,6 +83,7 @@ inline Measurement applyBiasCorrection(const Measurement& z,
     const auto bb = provider->bearingBias(key);
     if (bb.is_published) {
       out.value(1) -= bb.bias_rad;
+      out.applied_bearing_bias_rad = bb.bias_rad;
       if (out.covariance.rows() >= 2 && out.covariance.cols() >= 2) {
         out.covariance(1, 1) += bb.variance_rad2;
       }

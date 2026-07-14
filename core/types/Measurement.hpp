@@ -54,6 +54,13 @@ struct AssociationHints {
  * Normalized sensor output consumed by the tracker. `value` and `covariance`
  * (R) are laid out according to `model`; e.g. Position2D -> [east, north] in
  * the working ENU frame with a 2x2 R.
+ *
+ * ANGLE CONVENTION: any bearing component of `value` (Bearing2D value(0),
+ * RangeBearing2D value(1)) is an ENU-MATH bearing — radians, β = atan2(dN,dE),
+ * 0 = east, counter-clockwise-positive — NOT a marine compass bearing. This
+ * matches predictMeasurement / the ENU state. (Adapters that ingest compass
+ * range/bearing project to a Position2D [east, north] instead; the compass↔
+ * ENU-math conversion happens there.)
  */
 struct Measurement {
   Timestamp time;
@@ -79,6 +86,21 @@ struct Measurement {
   // than from a real sensor uncertainty. Diagnostic only — the tracker
   // behaves identically regardless of this flag.
   bool covariance_is_default{false};
+
+  // Bias corrections ALREADY applied to this measurement, carried so bias
+  // re-estimation can reconstruct the RAW observation and avoid the
+  // closed-loop double-subtraction (W3.1/W3.2). All default to "nothing
+  // applied"; tracking behaviour is unaffected by these fields.
+  //
+  // Heading-bias correction (compass, rad) the sensor adapter subtracted from
+  // the bearing before projecting it to ENU (0 = north, clockwise-positive).
+  double applied_heading_bias_rad{0.0};
+  // Per-sensor registration position bias (ENU m) subtracted by
+  // applyBiasCorrection from a Position2D/PositionVelocity2D value.
+  Eigen::Vector2d applied_position_bias_enu{Eigen::Vector2d::Zero()};
+  // Per-sensor bearing bias (rad, ENU-math: 0 = east, CCW-positive) subtracted
+  // by applyBiasCorrection from a Bearing2D/RangeBearing2D bearing component.
+  double applied_bearing_bias_rad{0.0};
 
   /** Dimensionality of `value` (the measurement vector length). */
   int dim() const { return static_cast<int>(value.size()); }

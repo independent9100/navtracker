@@ -25,6 +25,12 @@ namespace navtracker {
  */
 inline void fillSourceTouchEnu(Track::SourceTouch& touch,
                                const Measurement& z) {
+  // Carry any bias corrections the adapter / pipeline already applied so the
+  // bias pair extractors can reconstruct the raw observation (W3.1/W3.2).
+  // Model-independent — set once regardless of the value/covariance layout.
+  touch.applied_heading_bias_rad = z.applied_heading_bias_rad;
+  touch.applied_position_bias_enu = z.applied_position_bias_enu;
+  touch.applied_bearing_bias_rad = z.applied_bearing_bias_rad;
   switch (z.model) {
     case MeasurementModel::Position2D:
       if (z.value.size() >= 2) {
