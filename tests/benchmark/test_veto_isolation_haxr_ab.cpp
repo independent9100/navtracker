@@ -19,6 +19,8 @@
 // metric set) — banded, no cross-config pin on the marginal occupancy metrics.
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -96,8 +98,9 @@ TEST(VetoIsolationHaxrAB, VetoIsolatedOnAisArmThreeSites) {
       {"seemannshoeft",
        srcAbs("tests/fixtures/haxr_cfar/out/seemannshoeft_08_dec50_w285.csv")}};
   const std::string stations = srcAbs("data/dlr/stations.csv");
-  if (!fileExists(stations) || !fileExists(sites[0].plots))
-    GTEST_SKIP() << "HAXR fixtures (local-only) absent";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !fileExists(stations) || !fileExists(sites[0].plots),
+      "HAXR fixtures (local-only) absent");
 
   const auto all = defaultConfigs();
   const Config* cov =
@@ -120,6 +123,12 @@ TEST(VetoIsolationHaxrAB, VetoIsolatedOnAisArmThreeSites) {
     const std::string ais =
         srcAbs(std::string("data/dlr/") + s.station + "_08-UTC.csv");
     if (!fileExists(s.plots) || !fileExists(ais)) {
+      // W2.7: per-site gate. Strict mode must not green on a partially-wired
+      // fixture set — fail if this site's plots/AIS are absent; otherwise skip
+      // just this site (bit-identical default).
+      if (navtracker_test::fixturesRequired())
+        FAIL() << "NAVTRACKER_REQUIRE_FIXTURES=1 but [" << s.station
+               << "] HAXR fixtures absent";
       std::cout << "  [" << s.station << "] fixtures absent — skipped\n";
       continue;
     }
@@ -138,6 +147,9 @@ TEST(VetoIsolationHaxrAB, VetoIsolatedOnAisArmThreeSites) {
           !sc->generate(0).measurements.empty())
         scen.push_back(std::move(sc));
     if (scen.empty()) {
+      if (navtracker_test::fixturesRequired())
+        FAIL() << "NAVTRACKER_REQUIRE_FIXTURES=1 but [" << s.station
+               << "] haxr scenario did not generate";
       std::cout << "  [" << s.station << "] haxr scenario did not generate — skipped\n";
       continue;
     }

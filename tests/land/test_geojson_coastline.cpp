@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <fstream>
+#include "tests/support/FixtureGuard.hpp"
 #include "adapters/land/GeoJsonCoastline.hpp"
 
 using navtracker::CoastlinePriorParams;
@@ -35,7 +36,8 @@ TEST(GeoJsonCoastline, BostonFixtureSmoke) {
   const std::string path =
       std::string(NAVTRACKER_SOURCE_DIR) + "/tests/fixtures/philos/boston.geojson";
   std::ifstream f(path);
-  if (!f.good()) GTEST_SKIP() << "boston.geojson fixture not present";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!f.good(),
+                                     "boston.geojson fixture not present");
   auto g = loadCoastlineGeoJson(path, CoastlinePriorParams{});
   EXPECT_FALSE(g.empty());
   // Charlestown Navy Yard area = land; mid-harbour = water.

@@ -6,6 +6,7 @@
 
 #include "adapters/own_ship/OwnShipProvider.hpp"
 #include "core/geo/Datum.hpp"
+#include "core/own_ship/IDatumChangeSink.hpp"
 #include "core/types/Measurement.hpp"
 #include "ports/IHeadingBiasProvider.hpp"
 #include "ports/ISensorAdapter.hpp"
@@ -57,7 +58,7 @@ struct ArpaAdapterConfig {
  * Validates at the edge (invariant #6): implausible ranges/bearings and
  * out-of-range TLL fixes are rejected at parse time before reaching the core.
  */
-class ArpaAdapter : public ISensorAdapter {
+class ArpaAdapter : public ISensorAdapter, public IDatumChangeSink {
  public:
   ArpaAdapter(geo::Datum datum, OwnShipProvider& own_ship,
               ArpaAdapterConfig cfg = {},
@@ -71,6 +72,14 @@ class ArpaAdapter : public ISensorAdapter {
   bool ingest(std::string_view line, Timestamp t);
   /** Drain and return all measurements buffered since the last poll. */
   std::vector<Measurement> poll() override;
+
+  /**
+   * IDatumChangeSink (W2.1): adopt the new datum on an OwnShipProvider
+   * auto-recenter and re-express buffered measurements. Register with
+   * `provider.registerDatumSink(&adapter)` when auto-recenter is enabled.
+   */
+  void onDatumRecentered(const geo::Datum& old_datum,
+                         const geo::Datum& new_datum) override;
 
  private:
   geo::Datum datum_;

@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include <set>
 
 #include "adapters/benchmark/ReplayScenarioRun.hpp"
@@ -47,7 +49,8 @@ TEST(ReplayScenarioRun, GenerateReturnsNonEmpty) {
         << "replay " << s->descriptor().label << " loaded only "
         << data.measurements.size() << " measurements — partial/truncated load";
   }
-  if (!any_real) GTEST_SKIP() << "replay fixtures not reachable from cwd";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !any_real, "replay fixtures not reachable from cwd");
 }
 
 // The Stage-1b occupancy / land / static-obstacle models wire in the bench
@@ -63,8 +66,8 @@ TEST(ReplayScenarioRun, HaxrScenarioCarriesDatumSoOccupancyWires) {
     if (s->descriptor().label == "haxr") haxr = std::move(s);
   ASSERT_TRUE(haxr);
   const auto scen = haxr->generate(0);
-  if (scen.measurements.empty())
-    GTEST_SKIP() << "HAXR fixtures not reachable from cwd";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(scen.measurements.empty(),
+                                     "HAXR fixtures not reachable from cwd");
   EXPECT_TRUE(scen.datum.has_value())
       << "HAXR scenario has no datum — the Stage-1b occupancy layer will not "
          "wire, making the occupancy A/B a silent no-op";
@@ -83,8 +86,8 @@ TEST(ReplayScenarioRun, AutoferryScenario2GnnMetricsAreSane) {
   }
   ASSERT_TRUE(run);
   const auto scen = run->generate(0);
-  if (scen.measurements.empty())
-    GTEST_SKIP() << "AutoFerry scenario2 not reachable from cwd";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      scen.measurements.empty(), "AutoFerry scenario2 not reachable from cwd");
 
   const auto configs = defaultConfigs();
   const Config* gnn = nullptr;
@@ -129,8 +132,8 @@ TEST(ReplayScenarioRun, AutoferryScenario2MhtLifecycleIsSane) {
   }
   ASSERT_TRUE(run);
   const auto scen = run->generate(0);
-  if (scen.measurements.empty())
-    GTEST_SKIP() << "AutoFerry scenario2 not reachable from cwd";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      scen.measurements.empty(), "AutoFerry scenario2 not reachable from cwd");
 
   const auto configs = defaultConfigs();
   const Config* mht = nullptr;
@@ -211,8 +214,8 @@ TEST(ReplayScenarioRun, PhilosResampledTruthAndMhtLifecycle) {
   }
   ASSERT_TRUE(run);
   const auto scen = run->generate(0);
-  if (scen.measurements.empty())
-    GTEST_SKIP() << "philos fixtures not reachable from cwd";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(scen.measurements.empty(),
+                                     "philos fixtures not reachable from cwd");
 
   // Resampled truth: shared-clock steps with real multi-vessel
   // cardinality (the fixture carries ~23 AIS vessels over ~20 s).

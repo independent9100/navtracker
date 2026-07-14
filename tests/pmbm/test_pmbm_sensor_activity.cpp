@@ -413,6 +413,53 @@ TEST(PmbmSensorActivity, OutOfCoverageNoPenalty) {
 }
 
 // ---------------------------------------------------------------------------
+// W2.4a integration: coverage is measured from OWN-SHIP, not the datum origin.
+// The tracker captures own-ship ENU from a surveillance measurement's
+// sensor_position_enu and passes it to evaluate(). A track 12 km from the datum
+// but only 4 km from own-ship (which sits 8 km east) is IN coverage → a
+// completed sweep with no return charges one miss. With the old origin-based
+// coverage the same track reads 12 km (out of the 10 km range) → no miss.
+// ---------------------------------------------------------------------------
+TEST(PmbmSensorActivity, CoverageMeasuredFromOwnShipPosition) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  auto activity = gRadarActivity();  // range 10 km, duty 60 s, pD 0.7
+
+  PmbmTracker tracker(ekf, gActivityCfg());
+  tracker.setSensorActivity(&activity);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Track 12 km east of the datum: 12 km from origin (out of 10 km range) but
+  // 4 km from own-ship at (8000, 0) (in range).
+  gSeedBernoulli(tracker, 12000.0, 0.0, 0.8);
+
+  // One scan at t=60: a surveillance return of a DIFFERENT contact near
+  // own-ship (won't gate to the 12 km track), carrying own-ship's ENU position
+  // in sensor_position_enu. This is what the tracker captures as own-ship.
+  Measurement z;
+  z.time = Timestamp::fromSeconds(60.0);
+  z.sensor = navtracker::SensorKind::ArpaTtm;
+  z.source_id = "radar";
+  z.model = navtracker::MeasurementModel::Position2D;
+  z.value = Eigen::Vector2d(8000.0, 50.0);       // near own-ship, 4 km from track
+  z.covariance = Eigen::Matrix2d::Identity() * 25.0;
+  z.sensor_position_enu = Eigen::Vector2d(8000.0, 0.0);  // own-ship ENU
+  tracker.processBatch({z});
+
+  // Find the seeded 12 km track (id 99) and confirm it took exactly one miss —
+  // proving coverage was evaluated from own-ship, not the origin.
+  const auto& mbm = tracker.density().mbm;
+  const navtracker::pmbm::Bernoulli* seeded = nullptr;
+  for (const auto& h : mbm)
+    for (const auto& b : h.bernoullis)
+      if (b.id == navtracker::pmbm::BernoulliId{99}) seeded = &b;
+  ASSERT_NE(seeded, nullptr);
+  EXPECT_NEAR(seeded->existence_probability, 0.24 / 0.44, 1e-9)
+      << "Coverage from own-ship (4 km) → one miss at pD=0.7. Origin-based "
+         "coverage (12 km > 10 km) would leave r unchanged at 0.8.";
+}
+
+// ---------------------------------------------------------------------------
 // dt=30s < duty_cycle=60s: radar has NOT completed a sweep since last check.
 // DeclaredSensorActivity returns surveillance_miss=false → r unchanged.
 // ---------------------------------------------------------------------------
@@ -611,9 +658,16 @@ struct RecordingStaleSink : navtracker::IStaleSignalSink {
 
 // Seed one Bernoulli with a chosen BernoulliId and existence into a fresh
 // hypothesis. The Bernoulli birth_time defaults to Timestamp{} = 0.0.
+//
+// with_identity (W2.4b): by default the seeded Bernoulli carries a cooperative
+// identity (mmsi = bid), because a cooperative-only track is one that ANNOUNCES
+// itself — only such a track can be "overdue" on a cooperative channel. Pass
+// false to seed a radar-only track (no identity) whose silence on AIS must NOT
+// trigger cooperative retirement.
 void gSeedBernoulliId(PmbmTracker& tracker,
                       navtracker::pmbm::BernoulliId bid,
-                      double px, double py, double r0) {
+                      double px, double py, double r0,
+                      bool with_identity = true) {
   GlobalHypothesis h;
   h.weight = 1.0;
   h.log_weight = 0.0;
@@ -623,6 +677,7 @@ void gSeedBernoulliId(PmbmTracker& tracker,
   b.mean = gCvState(px, py, 0.0, 0.0);
   b.covariance = gPosCov(2.0, 0.5);
   b.last_update = Timestamp::fromSeconds(0.0);
+  if (with_identity) b.mmsi = static_cast<std::uint32_t>(bid);
   // birth_time defaults to Timestamp{} ≡ 0.0 s — used as fallback for the
   // cooperative retirement timer when no detection has ever occurred.
   h.bernoullis.push_back(b);
@@ -838,6 +893,47 @@ TEST(PmbmStaleSignal, CooperativeOnlyRetiredOnlyByTimeout) {
   });
   EXPECT_EQ(it42, ts.end())
       << "After timeout retirement, track 42 must not appear in tracks() output";
+}
+
+// ---------------------------------------------------------------------------
+// W2.4b: a RADAR-ONLY track (no cooperative identity) must NOT be flagged stale
+// or hard-deleted by cooperative-overdue retirement. It never announces on AIS,
+// so AIS silence is not evidence about it. Before the fix, cooperative_overdue
+// was identity-blind and fired for ANY track, hard-deleting radar-only tracks
+// once past cooperative_stale_timeout_sec. This is the regression guard.
+// ---------------------------------------------------------------------------
+TEST(PmbmStaleSignal, RadarOnlyTrackNotRetiredByCooperativeTimeout) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  auto activity = gCooperativeActivity();  // cooperative-only, interval 10 s
+  RecordingStaleSink stale_sink;
+
+  auto cfg = gCoopCfg();
+  cfg.cooperative_stale_timeout_sec = 600.0;
+
+  PmbmTracker tracker(ekf, cfg);
+  tracker.setSensorActivity(&activity);
+  tracker.setStaleSignalSink(&stale_sink);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+
+  // Seed a radar-only Bernoulli (NO mmsi / platform id) at r=0.8.
+  gSeedBernoulliId(tracker, navtracker::pmbm::BernoulliId{55}, 0.0, 0.0, 0.8,
+                   /*with_identity=*/false);
+
+  // Advance well past BOTH the report interval (10 s) and the retirement
+  // timeout (600 s). A radar-only track is not "overdue" on a cooperative
+  // channel, so nothing should happen to it.
+  tracker.predict(Timestamp::fromSeconds(700.0));
+  tracker.processBatch({});
+
+  ASSERT_EQ(tracker.density().mbm.size(), 1u);
+  ASSERT_EQ(tracker.density().mbm[0].bernoullis.size(), 1u)
+      << "Radar-only track must NOT be retired by cooperative timeout";
+  EXPECT_NEAR(tracker.density().mbm[0].bernoullis[0].existence_probability, 0.8,
+              1e-9)
+      << "Radar-only track existence must be unchanged (no cooperative signal)";
+  EXPECT_TRUE(stale_sink.stale.empty())
+      << "Radar-only track must NOT raise a cooperative stale signal";
 }
 
 // ---------------------------------------------------------------------------

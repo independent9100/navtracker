@@ -18,6 +18,7 @@
 #include <Eigen/Core>
 
 #include "tests/replay/PhilosLabelReplay.hpp"
+#include "tests/support/FixtureGuard.hpp"
 
 using namespace navtracker;
 using namespace navtracker::replay_test;
@@ -31,12 +32,15 @@ double compassBearingDeg(const Eigen::Vector2d& enu) {
   return b;
 }
 
-void dumpRun(const std::string& clip, const std::string& config) {
+// Returns true if the clip's fixtures were present and the run analysed.
+// (GTEST_SKIP in a helper does NOT skip the enclosing TEST, so the fixture
+// gate is applied at the TEST body via the returned validity — W2.7.)
+bool dumpRun(const std::string& clip, const std::string& config) {
   const ClipRun run = runClip(clip, config, false, false, false);
   std::cout << "\n===== " << clip << " / " << config << " =====\n";
   if (!run.valid) {
     std::cout << "  (fixtures absent — skipped)\n";
-    return;
+    return false;
   }
 
   // Track stats (per-scan Confirmed track snapshots).
@@ -90,13 +94,20 @@ void dumpRun(const std::string& clip, const std::string& config) {
   std::cout << "  [pred3] far-bank 42.357,-71.0837 → ENU(" << fb2.x() << ","
             << fb2.y() << ") range=" << fb2.norm() << " m bearing="
             << compassBearingDeg(fb2) << "°\n";
+  return true;
 }
 
 }  // namespace
 
 TEST(HeldoutSailboats, Probe) {
   // Scored clip — frozen detector (structure preds) + land baseline (pred 6).
-  dumpRun("sailboats_busy", "imm_cv_ct_pmbm_occupancy_detector");
+  // W2.7: gate the whole probe on the scored clip's fixtures. Before, a silent
+  // return inside dumpRun (with no assertions here) made this PASS with fixtures
+  // absent — invisible to both the skip diff AND strict mode. Now strict mode
+  // FAILs if the scored clip is unreachable; otherwise it skips.
+  const bool ran = dumpRun("sailboats_busy", "imm_cv_ct_pmbm_occupancy_detector");
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !ran, "held-out sailboats_busy fixtures absent");
   dumpRun("sailboats_busy", "imm_cv_ct_pmbm_land");
   // Measured (no predictions), for context / tuning.
   dumpRun("almost_cross", "imm_cv_ct_pmbm_occupancy_detector");

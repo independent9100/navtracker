@@ -30,14 +30,26 @@ McapWriter::~McapWriter() { close(); delete impl_; }
 void McapWriter::ensureChannel(const std::string& topic, const std::string& schema_name,
                                const std::string& schema_text) {
   if (impl_->channels.count(topic)) return;
-  auto sit = impl_->schemas.find(schema_name);
-  if (sit == impl_->schemas.end()) {
-    mcap::Schema schema(schema_name, "jsonschema",
-                        std::string_view(schema_text));   // empty ok: name-only
-    impl_->writer.addSchema(schema);
-    sit = impl_->schemas.emplace(schema_name, schema.id).first;
+  // W2.6 (F-BUILD-2): an EMPTY schema_text (our "name-only" channels) built an
+  // mcap::Schema whose data ByteArray is empty → schema.data.data() == nullptr.
+  // On the first message mcap writes that schema record via
+  // output.write(nullptr, 0), and the vendored ZStdWriter/BufferWriter feed
+  // (nullptr, nullptr+0) into a range copy → UBSan null-pointer memcpy (14
+  // tests). mcap treats schemaId 0 as "no schema" and skips the schema-record
+  // write entirely, so register empty-schema channels with id 0 rather than
+  // handing the writer an empty-data schema.
+  mcap::SchemaId schema_id = 0;
+  if (!schema_text.empty()) {
+    auto sit = impl_->schemas.find(schema_name);
+    if (sit == impl_->schemas.end()) {
+      mcap::Schema schema(schema_name, "jsonschema",
+                          std::string_view(schema_text));
+      impl_->writer.addSchema(schema);
+      sit = impl_->schemas.emplace(schema_name, schema.id).first;
+    }
+    schema_id = sit->second;
   }
-  mcap::Channel channel(topic, "json", sit->second);
+  mcap::Channel channel(topic, "json", schema_id);
   impl_->writer.addChannel(channel);
   impl_->channels.emplace(topic, channel.id);
 }

@@ -45,6 +45,18 @@ TEST(DatumShiftTest, PreservesGeodeticPositionUnderShift) {
 }
 
 TEST(DatumShiftTest, RotatesVelocityByConvergenceAngle) {
+  // Convention (W2.3): datumAxisRotation(old, new) returns the 2×2 rotation R
+  // with  v_new = R · v_old  — it re-expresses a vector given in the OLD datum's
+  // ENU axes into the NEW datum's ENU axes. R is the E,N block of the exact
+  // linearised position map R_new · R_oldᵀ, which is a rotation by −γ, where
+  //   γ = Δλ · sin(φ_mean)   (meridian convergence angle, Δλ = lon_new − lon_old).
+  //
+  // Worked example (this test): at 60°N, moving the datum 1° EAST gives
+  // γ = +0.015115 rad. An east-pointing velocity (1, 0) in the old frame becomes
+  //   R·(1,0) = (cos γ, −sin γ) = (0.999886, −0.015114)
+  // i.e. it tips slightly SOUTH: sliding the origin east rotates the local
+  // east/north axes so what was "due east" now has a small negative-north part.
+  // The OLD code applied +γ (this test used to pin that sign — the bug).
   geo::Datum old_d(geo::Geodetic{60.0, 0.0, 0.0});
   geo::Datum new_d(geo::Geodetic{60.0, 1.0, 0.0});   // ~55 km east at 60N
   TrackManager mgr(2, 3);
@@ -54,14 +66,37 @@ TEST(DatumShiftTest, RotatesVelocityByConvergenceAngle) {
   const Eigen::Matrix2d R = datumAxisRotation(old_d, new_d);
   const double gamma_expected = 1.0 * 3.14159265358979 / 180.0
                                 * std::sin(60.0 * 3.14159265358979 / 180.0);
-  EXPECT_NEAR(std::atan2(R(1,0), R(0,0)), gamma_expected, 1e-9);
+  // R rotates by −γ, so atan2(R(1,0), R(0,0)) == −γ.
+  EXPECT_NEAR(std::atan2(R(1,0), R(0,0)), -gamma_expected, 1e-9);
 
   shiftTracksOnDatumChange(mgr, old_d, new_d);
 
-  // Velocity rotated by gamma: (1, 0) becomes (cos(gamma), sin(gamma)).
+  // Velocity rotated by −γ: (1, 0) becomes (cos(γ), −sin(γ)).
   const auto& shifted = mgr.tracks()[0];
   EXPECT_NEAR(shifted.state(2), std::cos(gamma_expected), 1e-6);
-  EXPECT_NEAR(shifted.state(3), std::sin(gamma_expected), 1e-6);
+  EXPECT_NEAR(shifted.state(3), -std::sin(gamma_expected), 1e-6);
+}
+
+TEST(DatumShiftTest, WrapsDeltaLongitudeAcrossAntimeridian) {
+  // W2.2: a recenter that crosses the ±180° antimeridian has a SMALL true
+  // Δlongitude, but the unwrapped (lon_new − lon_old) is ~±360°. The rotation
+  // must be computed from the wrapped Δλ, so crossing the seam is identical to
+  // an equivalent step that does not cross it.
+  geo::Datum old_d(geo::Geodetic{60.0, 179.5, 0.0});
+  geo::Datum new_d(geo::Geodetic{60.0, -179.5, 0.0});  // +1° east, across seam
+  // Equivalent non-crossing +1° step at the same latitude.
+  geo::Datum ref_old(geo::Geodetic{60.0, 0.0, 0.0});
+  geo::Datum ref_new(geo::Geodetic{60.0, 1.0, 0.0});
+
+  const Eigen::Matrix2d R = datumAxisRotation(old_d, new_d);
+  const Eigen::Matrix2d R_ref = datumAxisRotation(ref_old, ref_new);
+
+  // Without wrapping, R would encode a ~−359° rotation instead of ~+1°.
+  const double gamma = 1.0 * 3.14159265358979 / 180.0
+                       * std::sin(60.0 * 3.14159265358979 / 180.0);
+  EXPECT_NEAR(std::atan2(R(1, 0), R(0, 0)), -gamma, 1e-6);
+  EXPECT_NEAR(R(0, 0), R_ref(0, 0), 1e-9);
+  EXPECT_NEAR(R(1, 0), R_ref(1, 0), 1e-9);
 }
 
 TEST(DatumShiftTest, RotatesCovarianceBlocks) {

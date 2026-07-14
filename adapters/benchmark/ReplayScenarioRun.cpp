@@ -59,6 +59,20 @@ std::string envOr(const char* var, const char* def) {
   return (v != nullptr && *v != '\0') ? std::string(v) : std::string(def);
 }
 
+// Resolve a repo-relative fixture path against NAVTRACKER_FIXTURE_ROOT (W2.7).
+// The test binary points that env var at the source tree so fixture paths
+// resolve under ctest (cwd = build/) from any directory; an already-absolute
+// path or an unset root is returned unchanged — bit-identical for the bench
+// launched from the project root.
+std::string fixturePath(const std::string& rel) {
+  if (!rel.empty() && rel.front() == '/') return rel;  // already absolute
+  const char* root = std::getenv("NAVTRACKER_FIXTURE_ROOT");
+  if (root == nullptr || *root == '\0') return rel;
+  std::string r(root);
+  if (!r.empty() && r.back() == '/') r.pop_back();
+  return r + "/" + rel;
+}
+
 // AIS Measurement → TruthSample. The AIS adapter emits Position2D in the
 // working ENU frame; we reuse those positions as ground truth, mirroring
 // the Philos OSPA test that scores tracks against AIS-as-truth.
@@ -109,7 +123,8 @@ class PhilosScenarioRun : public ScenarioRun {
     };
     // Philos: Boston Harbor coastline GeoJSON for land-prior wiring.
     // Sweep checks existence before loading; missing file → no land model.
-    d.coastline_geojson_path = "tests/fixtures/philos/boston.geojson";
+    d.coastline_geojson_path =
+        fixturePath("tests/fixtures/philos/boston.geojson");
     return d;
   }
 
@@ -117,8 +132,8 @@ class PhilosScenarioRun : public ScenarioRun {
     // Clip selectable at runtime (PHILOS_CLIP); unset/empty ⇒ ais_ferry_near,
     // bit-identical to the historical hardcoded paths.
     const std::string dir =
-        std::string("tests/fixtures/philos/out/") +
-        envOr("PHILOS_CLIP", kPhilosDefaultClip) + "/";
+        fixturePath(std::string("tests/fixtures/philos/out/") +
+                    envOr("PHILOS_CLIP", kPhilosDefaultClip) + "/");
     const std::string ownship_csv = dir + "ownship.csv";
     const std::string ais_csv = dir + "ais.csv";
     const std::string plots_csv = dir + "radar_plots.csv";
@@ -243,9 +258,10 @@ class HaxrScenarioRun : public ScenarioRun {
   }
 
   Scenario generate(std::uint64_t /*seed*/) override {
-    const std::string plots_csv = haxrEnv("HAXR_PLOTS_CSV", kHaxrPlotsCsv);
-    const std::string ais_csv = haxrEnv("HAXR_AIS_CSV", kHaxrAisCsv);
-    const std::string stations_csv = haxrEnv("HAXR_STATIONS_CSV", kHaxrStationsCsv);
+    const std::string plots_csv = fixturePath(haxrEnv("HAXR_PLOTS_CSV", kHaxrPlotsCsv));
+    const std::string ais_csv = fixturePath(haxrEnv("HAXR_AIS_CSV", kHaxrAisCsv));
+    const std::string stations_csv =
+        fixturePath(haxrEnv("HAXR_STATIONS_CSV", kHaxrStationsCsv));
     const std::string station = haxrEnv("HAXR_STATION", "kattwyk");
     if (!fileExists(plots_csv.c_str()) || !fileExists(ais_csv.c_str()) ||
         !fileExists(stations_csv.c_str())) {
@@ -372,7 +388,8 @@ class AutoferryScenarioRun : public ScenarioRun {
     // use_land_model configs — the real-geometry reality check for the land
     // clutter prior and the land-aware PDA pool. Inert for non-land configs
     // (loaded only when config.use_land_model && scen.datum is set).
-    d.coastline_geojson_path = "tests/fixtures/autoferry/trondheim_harbor.geojson";
+    d.coastline_geojson_path =
+        fixturePath("tests/fixtures/autoferry/trondheim_harbor.geojson");
     return d;
   }
 
@@ -404,7 +421,7 @@ class AutoferryScenarioRun : public ScenarioRun {
       // tight R can be. See eval-log entry "Cl-2 #4 close-out".
     }
     Scenario s = navtracker::replay::loadAutoferryScenario(
-        std::string("data/autoferry/") + label_, label_, opts);
+        fixturePath(std::string("data/autoferry/") + label_), label_, opts);
     // The AutoFerry loader frames everything in the Piren local tangent plane
     // (NED origin LLA [63.4389029083, 10.39908278, 39.923]) but leaves
     // Scenario::datum unset, so Sweep never wires a land model here (the reason

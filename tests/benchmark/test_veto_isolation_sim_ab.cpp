@@ -14,6 +14,8 @@
 // no cross-config pin on a marginal delta whose sign is the verdict itself.
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include <iostream>
 #include <memory>
 #include <string>
@@ -53,9 +55,9 @@ TEST(VetoIsolationSimAB, VetoProtectiveEffectOnAnchoredVesselWithPerfectTruth) {
   for (auto& s : scenarios)
     if (s->descriptor().label == "sim_ms_anchored_camera") anchored = s.get();
   ASSERT_NE(anchored, nullptr);
-  if (anchored->generate(0).measurements.empty())
-    GTEST_SKIP()
-        << "sim_ms_anchored_camera fixtures absent (set SIMMS_DIR + generate)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      anchored->generate(0).measurements.empty(),
+      "sim_ms_anchored_camera fixtures absent (set SIMMS_DIR + generate)");
 
   const auto all = defaultConfigs();
   const Config* occ = byLabel(all, "imm_cv_ct_pmbm_occupancy_detector");

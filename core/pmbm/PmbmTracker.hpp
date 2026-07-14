@@ -924,6 +924,14 @@ class PmbmTracker {
   const ISensorBiasProvider* bias_provider_{nullptr};
   std::shared_ptr<ISensorDetectionModel> detection_model_;
   const ISensorActivity* sensor_activity_{nullptr};
+  // W2.4a: own-ship's ENU position for the sensor-activity coverage check, so
+  // range/azimuth are measured from own-ship (where the declared surveillance
+  // sensors are mounted), not the datum origin. Captured each scan from the
+  // last surveillance measurement's `sensor_position_enu` and persisted across
+  // scans (so the empty-scan misdetection branch still has own-ship's last-
+  // known position). Stays (0,0) — bit-identical to the pre-fix behaviour —
+  // whenever own-ship sits at the datum (all sims; own-ship-at-origin).
+  Eigen::Vector2d own_ship_enu_{Eigen::Vector2d::Zero()};
   const ILandModel* land_model_{nullptr};
   const IStaticObstacleModel* obstacle_model_{nullptr};
   ILiveOccupancyFeed* occupancy_feed_{nullptr};

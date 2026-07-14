@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <utility>
 
+#include "adapters/util/DatumReproject.hpp"
 #include "adapters/util/EdgeValidation.hpp"
 #include "adapters/util/Nmea.hpp"
 #include "core/projection/Projection.hpp"
@@ -196,6 +197,13 @@ std::vector<Measurement> ArpaAdapter::poll() {
   std::vector<Measurement> out;
   out.swap(buffer_);
   return out;
+}
+
+void ArpaAdapter::onDatumRecentered(const geo::Datum& old_datum,
+                                    const geo::Datum& new_datum) {
+  for (auto& m : buffer_)
+    adapter_util::reprojectMeasurementEnu(m, old_datum, new_datum);
+  datum_ = new_datum;
 }
 
 }  // namespace navtracker

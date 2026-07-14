@@ -9283,3 +9283,65 @@ green at 0 skips (the 13 cwd-gated expected skips run from the worktree root:
   `10-bughunt-findings.md` is untracked (the live review session's uncommitted
   working files, on no commit and not on this branch), so the FIXED marks were NOT
   written into another session's work — the disposition lives in the write-up.
+
+## 2026-07-13 — Pre-release fix wave, WAVE 2 (branch `fixwave-wave2`, off `f9ad004`)
+
+The datum/own-ship edge cluster + two sanitizer fixes + the fixture-skip guard.
+Full write-up: `docs/baselines/2026-07-12_fixwave_wave2.md`. TDD + #24 teeth
+throughout; commits separated per finding. `fixwave-wave1` branch preserved.
+
+- **W2.1 [HIGH, FIXED].** AisAdapter/ArpaAdapter/EoIrAdapter/RemoteTrackAdapter
+  cached a Datum fixed at ctor → after a >30 km auto-recenter every
+  non-cooperative measurement projected in the OLD frame. Each is now an
+  `IDatumChangeSink`: swaps the datum + reprojects buffered measurements. New e2e
+  recenter tests (5). CLAUDE.md + integration-guide datum-sink list updated.
+- **W2.2 [HIGH] + W2.3 [MED], FIXED.** `datumAxisRotation` now wraps Δlon
+  (`std::remainder`, antimeridian) and applies −γ (was +γ; independently
+  re-derived + review-confirmed against the exact ecef→enu map).
+  `test_datum_shift.cpp` pinned the wrong sign — the suite encoded the bug.
+  Corrected + antimeridian test + high-lat TrackOutput off-diagonal flipped (sign
+  flows through toGeodeticWithCov). Teeth: re-flip → 3 red → revert.
+- **W2.4a [HIGH] + W2.4b [HIGH], FIXED.** Sensor-activity coverage now measured
+  from own-ship (captured per-scan from the last surveillance measurement's
+  sensor_position_enu, persisted), not the datum origin; cooperative-overdue
+  retirement now keyed on the Bernoulli's identity so a radar-only track is no
+  longer hard-deleted by AIS silence. New unit + PMBM tests incl. a RadarOnly
+  regression guard; teeth per fix.
+  - **A/B on the deployable `imm_cv_ct_pmbm_coverage_land_ivgate` — FINDING for
+    the arbiter.** fix-ON vs W2.4-neutered, 47 scenarios incl. `--with-haxr`
+    (only W2.4 can move bench metrics — fixed datum, no recenter, ENU scoring).
+    **philos / philos_radartruth / haxr BYTE-IDENTICAL** (the real deployment
+    targets undisturbed). **autoferry moves (W2.4a coverage — no cooperative
+    channel):** `_anchored` variants improve dramatically+correctly (OSPA
+    ~100-170→~1.3), non-anchored MIXED (OSPA mostly ↓, track_breaks/id_switches ↑
+    on several). **dense_clutter moves (W2.4b identity — AIS-only channel,
+    sim-at-origin):** phantoms the identity-blind timeout used to (wrongly) cull
+    now persist → GOSPA +3…+6. Both are *correct* behaviour the prior bugs were
+    masking. **The autoferry numbers overlap the just-frozen Cl-4 gauntlet
+    (ADR-0003) — flagged for reconciliation; nothing re-frozen here.**
+- **W2.5 [ASan] + W2.6 [UBSan], FIXED.** Dangling `const auto&` to a by-value
+  optional → copy; mcap null `memcpy` from an empty-schema channel → register
+  with schemaId 0. Both verified sanitizer-clean under `-fsanitize=address,
+  undefined` (33 targeted tests, exit 0, no errors).
+- **W2.7 [process, FIXED].** The fixture-skip guard: srcAbs anchoring + a global
+  env pointing SIMMS_DIR/RBAD_DIR/NAVTRACKER_FIXTURE_ROOT at the source tree +
+  the `NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP` strict-mode macro (env
+  NAVTRACKER_REQUIRE_FIXTURES=1 turns a fixture skip into a FAILURE) across the
+  fixture-gated tests (zero bare GTEST_SKIP remain) + per-test TIMEOUT. The ~36
+  previously-silently-skipped real-data replays now RUN under ctest from the
+  build dir.
+
+**Verification.** Full ctest from the build dir: 1181/1181 pass. Strict-mode
+(`NAVTRACKER_REQUIRE_FIXTURES=1 ctest`): 1181/1181 pass ⇒ **0 fixture-skips**
+(a skip would have FAILed). Fixture-guard teeth: bogus/absent fixture + strict →
+FAIL, without strict → SKIP (SimMultisensor + HeldoutSailboats). ASan+UBSan:
+W2.5/W2.6 (+ the new W2.1/W2.4 code) clean. Adversarial review (4-lens, 19
+agents): geo-sign + adapter-reproject CLEAN; 6 findings — 2 MEDIUM
+fixture-guard evasions + 2 minor FIXED (`b7d54f0`), 2 accepted-as-documented
+(own-ship-from-surveillance staleness; TIMEOUT sanitizer-awareness).
+
+- **Handoff:** all findings merge-ready; **W2.4's A/B delta on the deployable
+  config is the one item the arbiter must reconcile with the frozen Cl-4
+  gauntlet** (philos/HAXR safe, autoferry+dense_clutter move — correct behaviour
+  the bugs masked). Findings-file marks deferred to the arbiter (same as wave 1;
+  `10-bughunt-findings.md` is untracked). Commits on the branch; not merged.

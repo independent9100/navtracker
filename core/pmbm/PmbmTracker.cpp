@@ -686,8 +686,8 @@ void PmbmTracker::enumerateChildren(
         const Timestamp last_check =
             (ait != last_activity_check_.end()) ? ait->second : b.birth_time;
         const MissOpportunity opp = sensor_activity_->evaluate(
-            b.mean.head<2>(), /*mmsi*/std::nullopt, /*platform_id*/std::nullopt,
-            last_check, current_time_);
+            b.mean.head<2>(), own_ship_enu_, b.mmsi, b.platform_id, last_check,
+            current_time_);
         if (!opp.surveillance_miss) {
           // No surveillance opportunity (sensor mid-sweep, out of coverage,
           // or cooperative-only channel). Existence UNCHANGED by miss math.
@@ -1044,8 +1044,8 @@ void PmbmTracker::enumerateChildren(
           const Timestamp last_check =
               (ait != last_activity_check_.end()) ? ait->second : b.birth_time;
           const MissOpportunity opp = sensor_activity_->evaluate(
-              b.mean.head<2>(), /*mmsi*/std::nullopt,
-              /*platform_id*/std::nullopt, last_check, current_time_);
+              b.mean.head<2>(), own_ship_enu_, b.mmsi, b.platform_id,
+              last_check, current_time_);
           if (!opp.surveillance_miss) {
             // No surveillance opportunity (mid-sweep, out of coverage,
             // or cooperative-only channel). Existence UNCHANGED by miss math.
@@ -1359,6 +1359,29 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
   // Backlog #25 diagnostic: record this scan's return count (post sort).
   if (diag_sink_ != nullptr)
     diag_last_scan_meas_count_ = static_cast<int>(scan.size());
+
+  // W2.4a: capture own-ship's ENU position for the sensor-activity coverage
+  // check. The declared surveillance profiles are own-ship-mounted, so their
+  // sensor_position_enu is own-ship's ENU at scan time. Take the last
+  // surveillance measurement (deterministic in the time-sorted scan) and
+  // persist it across scans so the empty-scan misdetection branch retains
+  // own-ship's last-known position. Gate matches the two evaluate() READ sites
+  // (use_sensor_activity && sensor_activity_): a config that wires a provider
+  // for channelKindFor alone (use_sensor_activity=false) does no dead work.
+  //
+  // Known limitation (improve-next): own-ship is inferred from surveillance
+  // returns, not the authoritative OwnShipProvider pose. During a surveillance
+  // dropout longer than the duty cycle on a moving platform it goes stale (and
+  // is (0,0) before the first return); bounded, and inert on the deployable
+  // replays (continuous radar), but a track near the coverage boundary can be
+  // mis-charged. Threading OwnShipPose into the tracker would close it.
+  if (cfg_.use_sensor_activity && sensor_activity_ != nullptr) {
+    for (const auto& z : scan) {
+      const auto kind = sensor_activity_->channelKindFor(z.sensor);
+      if (kind == ChannelKind::Surveillance)
+        own_ship_enu_ = z.sensor_position_enu;
+    }
+  }
 
   // Predict to the latest measurement time in the scan (matches the
   // MhtTracker convention). Empty scan still advances the filter if a

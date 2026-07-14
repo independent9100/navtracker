@@ -47,12 +47,20 @@ class ISensorActivity {
 
   /**
    * Aggregate over every channel this provider knows. `track_pos_enu` is
-   * the track's predicted position; `mmsi`/`platform_id` are its identity
-   * hints (either may be empty); `now` and `last_checked` bound the
-   * interval being evaluated. Implementations MUST be a pure function of
-   * declared profiles + the arguments (no wall-clock, no RNG).
+   * the track's predicted position and `own_ship_enu` is the sensor
+   * platform's ENU position at the query time — surveillance coverage
+   * (range gate + azimuth sector) is measured RELATIVE to `own_ship_enu`,
+   * not the datum origin (W2.4a): a declared own-ship radar/EO profile is
+   * mounted on own-ship, so its coverage moves with the platform. Pass the
+   * ENU origin (0,0) for a sensor fixed at the datum. `mmsi`/`platform_id`
+   * are the track's cooperative identity hints (either may be empty) — a
+   * cooperative channel is only "overdue" for a track that actually carries
+   * such an identity (W2.4b). `now` and `last_checked` bound the interval.
+   * Implementations MUST be a pure function of declared profiles + the
+   * arguments (no wall-clock, no RNG).
    */
   virtual MissOpportunity evaluate(const Eigen::Vector2d& track_pos_enu,
+                                   const Eigen::Vector2d& own_ship_enu,
                                    std::optional<std::uint32_t> mmsi,
                                    std::optional<std::uint64_t> platform_id,
                                    Timestamp last_checked,

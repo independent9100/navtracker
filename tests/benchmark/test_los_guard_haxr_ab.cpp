@@ -9,6 +9,8 @@
 // material regression. Skip-guarded on the local-only HAXR fixtures.
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -78,8 +80,9 @@ TEST(LosGuardHaxrAB, GuardIsNearInertOnFixedShoreStation) {
       srcAbs("tests/fixtures/haxr_cfar/out/kattwyk_08_dec50_w285.csv");
   const std::string ais = srcAbs("data/dlr/kattwyk_08-UTC.csv");
   const std::string stations = srcAbs("data/dlr/stations.csv");
-  if (!fileExists(plots) || !fileExists(ais) || !fileExists(stations))
-    GTEST_SKIP() << "HAXR fixtures (local-only) absent";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !fileExists(plots) || !fileExists(ais) || !fileExists(stations),
+      "HAXR fixtures (local-only) absent");
 
   // Point HaxrScenarioRun at absolute decimated paths (ctest cwd is build/, where
   // the compiled-in relative defaults do not resolve). Restored on scope exit.
@@ -108,7 +111,8 @@ TEST(LosGuardHaxrAB, GuardIsNearInertOnFixedShoreStation) {
     if (s->descriptor().label == "haxr" &&
         !s->generate(0).measurements.empty())
       scen.push_back(std::move(s));
-  if (scen.empty()) GTEST_SKIP() << "haxr scenario did not generate";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(scen.empty(),
+                                     "haxr scenario did not generate");
 
   SweepParams params;
   params.run_id = "los_guard_haxr_ab";

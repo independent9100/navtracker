@@ -10,6 +10,8 @@
 
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include "adapters/replay/AutoferryJsonReplay.hpp"
 
 namespace navtracker::replay {
@@ -165,10 +167,10 @@ TEST(AutoferryJsonReplay, MissingFilesReturnEmpty) {
 }
 
 TEST(AutoferryJsonReplay, LoadsRealScenario2FixtureIfPresent) {
-  const std::string dir = "data/autoferry/scenario2";
-  if (!fileExists(dir + "/scenario2_detections.json")) {
-    GTEST_SKIP() << "AutoFerry scenario2 fixture not reachable from cwd";
-  }
+  const std::string dir = navtracker_test::srcAbs("data/autoferry/scenario2");
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !fileExists(dir + "/scenario2_detections.json"),
+      "AutoFerry scenario2 fixture not reachable from cwd");
   const Scenario s = loadAutoferryScenario(dir, "scenario2");
   EXPECT_GT(s.measurements.size(), 100u);
   EXPECT_GT(s.truth.size(), 100u);

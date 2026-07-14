@@ -21,6 +21,8 @@
 // Skips gracefully without the git-ignored fixtures (set SIMMS_DIR + generate them).
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include <cstdio>
 #include <map>
 #include <memory>
@@ -61,8 +63,9 @@ TEST(ClutterBurstBirthConfirmProbe, Race) {
   ASSERT_NE(cb, nullptr);
   const ScenarioDescriptor desc = cb->descriptor();
   Scenario scen = cb->generate(0);
-  if (scen.measurements.empty())
-    GTEST_SKIP() << "sim_ms_clutter_burst fixtures absent (set SIMMS_DIR + generate)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      scen.measurements.empty(),
+      "sim_ms_clutter_burst fixtures absent (set SIMMS_DIR + generate)");
 
   const auto all = defaultConfigs();
   const Config* c = nullptr;
