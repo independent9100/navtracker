@@ -2,6 +2,8 @@
 
 #include <Eigen/Core>
 
+#include "core/types/Measurement.hpp"
+
 namespace navtracker {
 
 /** A 2D ENU point with its 2×2 position covariance (m²). */
@@ -26,5 +28,40 @@ PointAndCov2D projectRangeBearingToEnu(double range_m,
                                        double sigma_heading_rad,
                                        double sigma_gps_pos_m,
                                        const Eigen::Vector2d& own_ship_pos_enu);
+
+/**
+ * Convert a `MeasurementModel::RangeBearing2D` measurement (range + bearing +
+ * full 2×2 polar covariance) to an absolute ENU point with its ENU covariance,
+ * for track INITIATION (W4.1). Uses the MATH bearing convention of
+ * `core/estimation/MeasurementModels.cpp` — β is measured from the sensor as
+ * `atan2(north_offset, east_offset)`: zero reference is due EAST of the sensor,
+ * increasing counter-clockwise (+π/2 = due North), relative to the sensor's ENU
+ * position. This is the SAME convention the RangeBearing2D update /
+ * `predictMeasurement` path uses, so a track born here moves consistently under
+ * subsequent range/bearing updates. (This deliberately differs from
+ * `projectRangeBearingToEnu` above, which uses the marine north=0 / clockwise
+ * convention and separate scalar σ's — that one serves the Position2D adapters.)
+ *
+ *   east  = sensor.x + range·cos β
+ *   north = sensor.y + range·sin β
+ *   J = ∂(e,n)/∂(range,β) = [[cos β, −range·sin β], [sin β, range·cos β]]
+ *   cov_enu = J · polar_cov · Jᵀ           (polar_cov in (range, bearing) order)
+ */
+PointAndCov2D enuFromRangeBearing(double range_m, double bearing_rad,
+                                  const Eigen::Vector2d& sensor_pos_enu,
+                                  const Eigen::Matrix2d& polar_cov);
+
+/**
+ * The ENU birth position + 2×2 covariance for INITIATING a track from
+ * measurement `z` (W4.1). ONE shared dispatch called by every estimator's
+ * initiate():
+ *   - RangeBearing2D → enuFromRangeBearing (polar → ENU + Jacobian covariance),
+ *     centred on z.sensor_position_enu;
+ *   - all other models already carry an ENU point in value[0..1] with an ENU
+ *     position covariance in the top-left 2×2 → passed through unchanged.
+ * Assumes z.value has ≥2 entries and z.covariance is ≥2×2 (guaranteed by the
+ * caller's PSD/plausibility checks).
+ */
+PointAndCov2D initiationPosCov(const Measurement& z);
 
 }  // namespace navtracker

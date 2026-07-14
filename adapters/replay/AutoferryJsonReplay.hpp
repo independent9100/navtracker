@@ -46,10 +46,13 @@ namespace navtracker::replay {
  */
 struct AutoferryLoadOptions {
   // Lidar/Radar (active, range-bearing → position) measurements are always
-  // emitted as Position2D. IR/EO bearings are off by default: a lone
-  // bearing that fails to gate would reach EkfEstimator::initiate, which
-  // seeds position from value(0..1) and is undefined for a 1-D bearing.
-  // Enabling bearings requires a bearing-safe initiation path (TODO).
+  // emitted as Position2D. IR/EO bearings are off by default as a SCENARIO
+  // choice (bearing-only refinement isn't part of the autoferry baseline), not
+  // a safety gap: initiation is now bearing-safe. Bearing2D is not birth-eligible
+  // (canInitiateTrack blocks it), so a lone bearing never reaches initiate() as a
+  // birth; and RangeBearing2D births now convert polar→ENU about the sensor via
+  // the shared initiationPosCov helper (W4.1) instead of planting value(0..1) as
+  // ENU. Flip this flag to feed EO/IR bearings as refinement measurements.
   bool include_bearings = false;
 
   // Per-sensor measurement-noise std used to synthesize covariance (the

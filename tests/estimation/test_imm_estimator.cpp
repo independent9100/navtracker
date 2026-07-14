@@ -59,6 +59,44 @@ TEST(ImmEstimator, InitiateSeedsModesUniformly) {
   EXPECT_NEAR(t.covariance(4, 4), 0.01, 1e-9);
 }
 
+// W4.1 anti-proliferation teeth (see EkfEstimator counterpart): a RangeBearing2D
+// birth converts polar→ENU (about the sensor) into every mode; next scan gates.
+TEST(ImmEstimator, InitiateFromRangeBearingConvertsToEnuAndNextScanGates) {
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {
+      std::make_shared<ConstantVelocity5State>(0.1, 0.01),
+      std::make_shared<CoordinatedTurn>(0.1, 0.05)};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05, 0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 0.5, 0.5;
+  ImmEstimator imm(motions, pi, mu0, 10.0, 0.1);
+
+  const Eigen::Vector2d sensor(500.0, -300.0);
+  const double range = 800.0, bearing = 0.6;
+  const Eigen::Vector2d truth(sensor.x() + range * std::cos(bearing),
+                              sensor.y() + range * std::sin(bearing));
+  Measurement z;
+  z.time = Timestamp::fromSeconds(0.0);
+  z.model = MeasurementModel::RangeBearing2D;
+  z.source_id = "radar";
+  z.value = Eigen::Vector2d(range, bearing);
+  z.sensor_position_enu = sensor;
+  Eigen::Matrix2d polar = Eigen::Matrix2d::Zero();
+  polar(0, 0) = 25.0;
+  polar(1, 1) = 0.02 * 0.02;
+  z.covariance = polar;
+
+  const navtracker::Track t = imm.initiate(z);
+  // Every mode seeded at the true ENU position (moment-matched projection too).
+  EXPECT_NEAR(t.state(0), truth.x(), 1.0);
+  EXPECT_NEAR(t.state(1), truth.y(), 1.0);
+  EXPECT_NEAR(t.imm_means(0, 0), truth.x(), 1.0);
+  EXPECT_NEAR(t.imm_means(0, 1), truth.x(), 1.0);
+  Measurement z2 = z;
+  z2.time = Timestamp::fromSeconds(1.0);
+  EXPECT_TRUE(imm.gate(t, z2, 30.0));
+}
+
 TEST(ImmEstimator, PredictAdvancesModesByTheirOwnDynamics) {
   auto cv  = std::make_shared<ConstantVelocity5State>(0.0, 0.0);
   auto ct  = std::make_shared<CoordinatedTurn>(0.0, 0.0);

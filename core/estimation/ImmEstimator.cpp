@@ -11,6 +11,7 @@
 #include "core/estimation/CoordinatedTurn.hpp"
 #include "core/estimation/GaussianScore.hpp"
 #include "core/estimation/MeasurementModels.hpp"
+#include "core/projection/Projection.hpp"
 #include "core/estimation/SigmaPoints.hpp"
 
 namespace navtracker {
@@ -445,9 +446,12 @@ Track ImmEstimator::initiate(const Measurement& z) const {
   t.last_update = z.time;
   t.status = TrackStatus::Tentative;
 
+  // W4.1: convert RangeBearing2D polar → ENU at birth (shared helper), seeded
+  // into every mode below; other models already carry an ENU point.
+  const auto birth = initiationPosCov(z);
   Eigen::VectorXd x = Eigen::VectorXd::Zero(5);
-  x(0) = z.value(0);
-  x(1) = z.value(1);
+  x(0) = birth.pos_enu(0);
+  x(1) = birth.pos_enu(1);
   // #20: one-shot velocity prior at birth (ARPA TTM speed/course), used once.
   if (z.hints.birth_velocity_enu.has_value()) {
     x(2) = z.hints.birth_velocity_enu->x();
@@ -455,10 +459,10 @@ Track ImmEstimator::initiate(const Measurement& z) const {
   }
 
   Eigen::MatrixXd P = Eigen::MatrixXd::Zero(5, 5);
-  P(0, 0) = z.covariance(0, 0);
-  P(0, 1) = z.covariance(0, 1);
-  P(1, 0) = z.covariance(1, 0);
-  P(1, 1) = z.covariance(1, 1);
+  P(0, 0) = birth.cov(0, 0);
+  P(0, 1) = birth.cov(0, 1);
+  P(1, 0) = birth.cov(1, 0);
+  P(1, 1) = birth.cov(1, 1);
   const double vv = init_speed_std_ * init_speed_std_;
   P(2, 2) = vv;
   P(3, 3) = vv;

@@ -3,10 +3,44 @@
 #include <gtest/gtest.h>
 #include "core/projection/Projection.hpp"
 
+using navtracker::enuFromRangeBearing;
 using navtracker::projectRangeBearingToEnu;
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
+}
+
+// W4.1: the math-convention initiation helper (β = atan2(north, east), zero =
+// East, CCW), used to birth a RangeBearing2D track at the correct ENU point.
+TEST(EnuFromRangeBearing, EastBearingIsAlongEast) {
+  const auto out = enuFromRangeBearing(1000.0, 0.0, Eigen::Vector2d(100.0, 200.0),
+                                       Eigen::Matrix2d::Identity());
+  EXPECT_NEAR(out.pos_enu.x(), 1100.0, 1e-9);  // due East of the sensor
+  EXPECT_NEAR(out.pos_enu.y(), 200.0, 1e-9);
+}
+
+TEST(EnuFromRangeBearing, NorthBearingIsAlongNorth) {
+  const auto out = enuFromRangeBearing(1000.0, kPi / 2.0,
+                                       Eigen::Vector2d(100.0, 200.0),
+                                       Eigen::Matrix2d::Identity());
+  EXPECT_NEAR(out.pos_enu.x(), 100.0, 1e-6);   // β=+π/2 ⇒ due North
+  EXPECT_NEAR(out.pos_enu.y(), 1200.0, 1e-9);
+}
+
+TEST(EnuFromRangeBearing, CovarianceViaPolarJacobian) {
+  // 1 km due East, σ_range=5 m (var 25), σ_bearing=0.01 rad. Along-range (east)
+  // variance = 25; cross-range (north) = (range·σ_β)² = (1000·0.01)² = 100.
+  Eigen::Matrix2d polar = Eigen::Matrix2d::Zero();
+  polar(0, 0) = 25.0;
+  polar(1, 1) = 0.01 * 0.01;
+  const auto out = enuFromRangeBearing(1000.0, 0.0, Eigen::Vector2d::Zero(), polar);
+  EXPECT_NEAR(out.cov(0, 0), 25.0, 1e-6);
+  EXPECT_NEAR(out.cov(1, 1), 100.0, 1e-6);
+  EXPECT_NEAR(out.cov(0, 1), 0.0, 1e-9);
+  EXPECT_NEAR(out.cov(1, 0), 0.0, 1e-9);
+  // PSD (a valid birth covariance).
+  EXPECT_GT(out.cov(0, 0), 0.0);
+  EXPECT_GT(out.cov(0, 0) * out.cov(1, 1) - out.cov(0, 1) * out.cov(1, 0), 0.0);
 }
 
 TEST(Projection, EastBearingPutsTargetEastOfOwnShip) {

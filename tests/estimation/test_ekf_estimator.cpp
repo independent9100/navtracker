@@ -109,6 +109,48 @@ TEST(EkfEstimator, InitiateSeedsBirthVelocityFromPriorHint) {
   EXPECT_DOUBLE_EQ(t.covariance(2, 2), 64.0);  // variance still 8^2 (not tightened)
 }
 
+// W4.1 anti-proliferation teeth: a RangeBearing2D birth must land at the TRUE
+// ENU position (converted from polar about the sensor), and the next scan of the
+// same target must GATE to it. Pre-fix, initiate() planted (range_m, bearing_rad)
+// as (east, north) with mixed m²/rad² covariance, so the born track sat far from
+// the target and nothing gated → per-scan phantom proliferation.
+TEST(EkfEstimator, InitiateFromRangeBearingConvertsToEnuAndNextScanGates) {
+  auto model = std::make_shared<ConstantVelocity2D>(1.0);
+  const EkfEstimator ekf(model, 8.0);
+  // Sensor away from the ENU origin so the polar-as-ENU bug is unmistakable.
+  const Eigen::Vector2d sensor(500.0, -300.0);
+  const double range = 800.0;
+  const double bearing = 0.6;  // rad, math convention (CCW from East)
+  const Eigen::Vector2d truth(sensor.x() + range * std::cos(bearing),
+                              sensor.y() + range * std::sin(bearing));
+  Measurement z;
+  z.time = Timestamp::fromSeconds(0.0);
+  z.model = MeasurementModel::RangeBearing2D;
+  z.source_id = "radar";
+  z.value = Eigen::Vector2d(range, bearing);
+  z.sensor_position_enu = sensor;
+  Eigen::Matrix2d polar = Eigen::Matrix2d::Zero();
+  polar(0, 0) = 25.0;          // range σ = 5 m
+  polar(1, 1) = 0.02 * 0.02;   // bearing σ = 0.02 rad
+  z.covariance = polar;
+
+  const Track t = ekf.initiate(z);
+  ASSERT_EQ(t.state.size(), 4);
+  // (1) Born at the true ENU position, NOT at (range_m, bearing_rad).
+  EXPECT_NEAR(t.state(0), truth.x(), 1.0);
+  EXPECT_NEAR(t.state(1), truth.y(), 1.0);
+  // ENU birth covariance is finite, positive, and reasonably sized (not rad²).
+  EXPECT_GT(t.covariance(0, 0), 0.0);
+  EXPECT_LT(t.covariance(0, 0), 1e4);
+  EXPECT_LT(t.covariance(1, 1), 1e4);
+  // (2) The next scan's range/bearing of the same target GATES to the track.
+  Measurement z2 = z;
+  z2.time = Timestamp::fromSeconds(1.0);
+  EXPECT_TRUE(ekf.gate(t, z2, 30.0))
+      << "a RangeBearing2D-born track must gate to the next scan of the same "
+         "target (pre-fix it sat at (range,bearing) and never gated)";
+}
+
 TEST(EkfEstimator, InitiateWithEmptyCovarianceDoesNotCreateTrack) {
   // The documented "no uncertainty" sentinel is a 0x0 covariance. initiate()
   // must not read it out of bounds nor birth a track from it — it returns the

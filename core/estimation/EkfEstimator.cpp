@@ -8,6 +8,7 @@
 
 #include "core/estimation/BearingRangeGuard.hpp"
 #include "core/estimation/MeasurementModels.hpp"
+#include "core/projection/Projection.hpp"
 
 namespace navtracker {
 
@@ -78,9 +79,16 @@ Track EkfEstimator::initiate(const Measurement& z) const {
   t.last_update = z.time;
   t.status = TrackStatus::Tentative;
 
+  // W4.1: a RangeBearing2D measurement carries (range, bearing) + a polar 2×2
+  // covariance, NOT an ENU point. CONVERT to ENU here (shared math-convention
+  // helper) so the birth lands at the true position with a sane ENU covariance
+  // and the next scan gates to it — instead of planting (range_m, bearing_rad)
+  // as (east, north) with mixed m²/rad² covariance (nothing gates → phantom
+  // proliferation). Other models already carry ENU (east, north) in value[0..1].
+  const auto birth = initiationPosCov(z);
   Eigen::Vector4d x = Eigen::Vector4d::Zero();
-  x(0) = z.value(0);
-  x(1) = z.value(1);
+  x(0) = birth.pos_enu(0);
+  x(1) = birth.pos_enu(1);
   // #20: one-shot velocity prior at birth (ARPA TTM speed/course). Used ONCE
   // here to seed the birth velocity, then discarded — a prior cannot
   // double-count (guide §3). The birth covariance keeps the wide init_speed_std
@@ -92,10 +100,10 @@ Track EkfEstimator::initiate(const Measurement& z) const {
   t.state = x;
 
   Eigen::Matrix4d p = Eigen::Matrix4d::Zero();
-  p(0, 0) = z.covariance(0, 0);
-  p(0, 1) = z.covariance(0, 1);
-  p(1, 0) = z.covariance(1, 0);
-  p(1, 1) = z.covariance(1, 1);
+  p(0, 0) = birth.cov(0, 0);
+  p(0, 1) = birth.cov(0, 1);
+  p(1, 0) = birth.cov(1, 0);
+  p(1, 1) = birth.cov(1, 1);
   const double vv = init_speed_std_ * init_speed_std_;
   p(2, 2) = vv;
   p(3, 3) = vv;
