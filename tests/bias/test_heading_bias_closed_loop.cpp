@@ -35,6 +35,11 @@ Timestamp tAt(double s) {
   return Timestamp{static_cast<std::int64_t>(s * 1e9)};
 }
 
+// own-ship sits off the datum origin: realistic, and required now that the
+// extractor skips a pair whose ARPA touch carries the (0,0) "own-ship unset"
+// sentinel (see AisArpaPairExtractor / SkipsWhenArpaOwnShipOriginUnset).
+const Eigen::Vector2d kOwn = Eigen::Vector2d(300.0, -150.0);
+
 Track::SourceTouch touchAt(SensorKind k, Timestamp t, Eigen::Vector2d v,
                            double applied_heading_bias_rad = 0.0) {
   Track::SourceTouch s;
@@ -42,7 +47,7 @@ Track::SourceTouch touchAt(SensorKind k, Timestamp t, Eigen::Vector2d v,
   s.source_id = "arpa";
   s.time = t;
   s.value_enu = v;
-  s.sensor_position_enu = Eigen::Vector2d::Zero();
+  s.sensor_position_enu = kOwn;
   s.covariance = Eigen::Matrix2d::Identity() * 25.0;
   s.applied_heading_bias_rad = applied_heading_bias_rad;
   return s;
@@ -55,7 +60,7 @@ Track::SourceTouch touchAt(SensorKind k, Timestamp t, Eigen::Vector2d v,
 // disabled); extract + observe; re-read the published estimate.
 double runClosedLoop(double b_true, bool carry_reconstruction) {
   HeadingBiasEstimator est{};
-  const Eigen::Vector2d own = Eigen::Vector2d::Zero();
+  const Eigen::Vector2d own = kOwn;
   const double R = 1500.0;
   double b_pub = 0.0;
   for (int i = 0; i < 400; ++i) {

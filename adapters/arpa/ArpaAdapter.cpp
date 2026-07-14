@@ -86,8 +86,11 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
     m.hints.sensor_track_id = target_num;
     // W3.3: carry own-ship ENU (when a pose is available) so the bias pair
     // extractor forms bearings about own-ship, not the datum origin. TLL is an
-    // absolute lat/lon fix, so unlike TTM it does not otherwise need own-ship;
-    // absent a pose the field stays at the origin default (best effort).
+    // absolute lat/lon fix, so unlike TTM (which drops on no pose) it keeps its
+    // position even before the first own-ship pose; in that case
+    // sensor_position_enu stays at the (0,0) "unset" sentinel and the pair
+    // extractor SKIPS it (see AisArpaPairExtractor) rather than measuring a
+    // bearing about the datum origin.
     if (const auto own_opt = own_ship_.poseAtOrBefore(t)) {
       const Eigen::Vector3d own_enu =
           datum_.toEnu({own_opt->lat_deg, own_opt->lon_deg, 0.0});

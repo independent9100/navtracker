@@ -43,6 +43,15 @@ std::vector<AisArpaPairObservation> extractPairs(
       if (ais && arpa) break;
     }
     if (!ais || !arpa) continue;
+    // W3.3: skip the pair when the ARPA touch carries no known own-ship origin.
+    // sensor_position_enu defaults to (0,0) — the same "sensor at datum / unset"
+    // sentinel DatumReproject uses — which is what an ARPA-TLL fix arriving
+    // before the first own-ship pose leaves behind (TTM drops on no pose; TLL
+    // keeps its absolute position but cannot establish own-ship). Forming a pair
+    // about the origin would measure the bearing subtended at the datum, not at
+    // own-ship — the exact geometry W3.3 fixes — and cold-start observations are
+    // outlier-gate-exempt, so it would corrupt the shared bias unconditionally.
+    if (arpa->sensor_position_enu.isZero()) continue;
     AisArpaPairObservation obs;
     obs.time = cycle_time;
     obs.own_position_enu = arpa->sensor_position_enu;

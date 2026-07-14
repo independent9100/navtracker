@@ -133,12 +133,101 @@ gauntlet.
 measured on a correct bias chain (its garbage-bias × broken-chain
 attribution question). That chain is now correct and available.
 
+## 2026-07-14 — Rebase onto master 34367f6 + adversarial-review cycle (arbiter acceptance)
+
+The arbiter accepted the wave pending two items; both done here. Branch head
+after this cycle sits on top of `34367f6` (wave-2 merged).
+
+### Rebase onto 34367f6 (wave-2 collision)
+Wave-2 (W2.1) made the four sensor adapters `IDatumChangeSink`s that swap the
+datum and reproject buffered measurements on an auto-recenter — touching
+`ArpaAdapter`, the same file as W3.3. The rebase was clean: all code files
+auto-merged (disjoint regions), only `evaluation-log.md` needed a trivial
+two-entry resolve. Both behaviours survive and were verified to compose *by
+design*: wave-2's `reprojectMeasurementEnu` already reprojects
+`sensor_position_enu` (the W3.3 field) on a recenter, and the wave-3 `applied_*`
+fields are correctly left un-reprojected — `applied_heading_bias_rad` /
+`applied_bearing_bias_rad` are angular *offsets* (frame-invariant under the ENU
+rotation), and `applied_position_bias_enu` is only ever written downstream of
+the adapter `buffer_` that a recenter reprojects (provably (0,0) there).
+
+### Adversarial review (3 independent fresh-agent lenses: sign/frame,
+reconstruction, geometry/KF)
+Two lenses returned the runtime math CONFIRMED correct (sign/frame of all five
+kinds; reconstruction sign/units/frame; plumbing uniform across
+Tracker/MHT/PMBM; open-loop byte-identity). Findings and disposition:
+
+- **B5 — v2 BearingInnovation outlier gate [FIXED].** The gate keyed on the
+  absolute measurement `|meas|` (≈ `|b_true|`), so once b̂ converged to a large
+  true bias it rejected every state-consistent observation and froze. Now gates
+  on the innovation `|y| = |meas − b̂|` (a consistent obs → y≈0 always accepted;
+  a genuine outlier still rejected, including a huge first innovation because the
+  wide init prior keeps the cold-start threshold generous). Teeth:
+  `BiasObsBearingInnovation.GateOnInnovationNotAbsoluteBiasDoesNotFreeze`.
+- **TLL origin-unset fallback [FIXED].** An ARPA-TLL fix arriving before the
+  first own-ship pose left `sensor_position_enu` at the (0,0) sentinel; the pair
+  extractor would then measure the bearing about the datum origin (the W3.3 bug)
+  and those cold-start obs are outlier-gate-exempt. `extractPairs` now SKIPS a
+  pair whose ARPA touch carries the (0,0) "own-ship unset" sentinel — the same
+  convention `DatumReproject` uses. (Cost: also skips the rare legitimate
+  own-ship-exactly-at-datum pair, e.g. the instant after a recenter — harmless,
+  since the origin bearing is *correct* there anyway.) Teeth:
+  `AisArpaPairExtractorTest.SkipsWhenArpaOwnShipOriginUnset`.
+- **Anchor add-back guard [FIXED].** `SensorBiasPairExtractor` reconstructed the
+  anchor's RAW (biased) position by adding its applied bias back. The anchor is
+  the TRUTH reference, so its CORRECTED position is what the estimator wants;
+  the add-back would drive the sensor estimate to `b_sensor − b_anchor` if an
+  anchor were ever position-calibrated. Now uses `anchor->value_enu` directly
+  (byte-identical today — anchors never publish a position bias — and closes the
+  latent hole). Teeth:
+  `SensorBiasClosedLoop.InvariantToAnchorAppliedPositionBias`.
+- **v2 emit-sign "not load-bearing" — VERIFIED FALSE POSITIVE.** The reviewer
+  inspected only the `bias/` unit tests. The emit-side sign (`Tracker.cpp`
+  `r = wrap(beta_obs − beta_pred)`) IS load-bearing: `TrackerBearingInnovation
+  Emit.Bearing2DEmitsCorrectFields` pins it (a flip → −offset → fails), and
+  `BearingBiasConvergence.AnchoredBearingStreamReconstructsTrueBias` pins the
+  full composite v2 sign end-to-end through the real Tracker into a
+  HeadingBiasEstimator (a flip converges to −b and fails). No new test needed.
+
+### env-2 EO/IR seed — re-derivation delivered, adoption PARKED for the arbiter
+Root cause is deeper than "calibrated against the half-loop":
+`tools/autoferry_r_calibration.py` computes the mean **absolute** bearing
+residual (line ~178 `copysign(1.0,1.0)` ⇒ always +1, on an already-`abs()`ed
+value) and associates each detection to the **min-|residual|** truth — so the
+`7.0°/4.9°` are the mean magnitude of the ~7–9° noise (≈0.8·σ), not a signed
+bias. A corrected signed re-derivation (scratchpad, min-|residual| association
+retained so magnitudes are conservative lower bounds) over sc13/16/17/22:
+**EO mean +1.66° (median +0.97°), IR mean −1.92° (median −0.41°)**, both dwarfed
+by σ≈8.9°/6.9° with frac>0 ≈ 0.58/0.44 — i.e. the true signed bias is small and
+noise-dominated, and IR's sign is *opposite* the seeded `+4.9°`. This is exactly
+why the fixed loop applying the full seed degraded the anchored metrics.
+
+**Effort estimate:** re-deriving the *value* is < half a day (largely done
+above; a production version needs a proper bearing-only truth association +
+signed stats). But the right move may be to seed a small signed value or **not
+seed at all**, and *adopting* any change perturbs the env-2 urban autoferry rows
+that feed the frozen Cl-4 gauntlet (ADR-0003). Per the arbiter's rule, the
+value is delivered and **adoption is parked as a named Cl-4 reconciliation
+addendum item** (fix the script → decide seed value/none → re-run the anchored
+autoferry gauntlet → reconcile the frozen env-2 rows). The frozen rows stay
+safe meanwhile: the deployment-realistic path is byte-identical.
+
+### Verification (strict, post-rebase + fixes)
+`NAVTRACKER_REQUIRE_FIXTURES=1 ctest`: **1195/1195 passed, 0 failed, 0 skips**
+(1192 + 3 new teeth). One earlier run showed a lone 300 s TIMEOUT on the wave-2
+`VetoIsolationHaxrAB.VetoIsolatedOnAisArmThreeSites` (280 s standalone, starved
+under `-j8` while other sessions' ctest/build competed); it passes standalone
+and in the clean run — a wave-2 TIMEOUT knife-edge (280 s test / 300 s cap), not
+a wave-3 regression. Flagged for wave-2/infra.
+
 ## Residual / out of scope (see `docs/algorithms/sensor-bias.md`)
-- Re-derive the env-2 EO/IR seed (above).
-- v2 zero-centred outlier gate (finding B5) — gate on the residual.
+- **Env-2 EO/IR seed adoption** — parked as the Cl-4 reconciliation addendum
+  item above (re-derivation delivered; adoption is a frozen-row re-freeze).
+- ~~v2 zero-centred outlier gate (finding B5)~~ — FIXED 2026-07-14 (above).
+- **Cross-sensor position-pair closed-loop test** — the `extractCrossSensor
+  PositionPairs` "twin anchor-debiased-twice" path is correct by two independent
+  inspections but lacks its own closed-loop regression test (the path was not
+  modified this wave). Hardening item.
 - Combined heading-bias + per-sensor-bias on the same ARPA touch — untested,
   no production wiring hits it.
-- Adversarial review was done as a focused self-review (sign + reconstruction
-  teeth-proven; touch plumbing confirmed uniform across all three trackers);
-  a fresh-agent adversarial pass on the core estimator math is recommended
-  before merge (could not be run this session — account weekly-limit).
+- VetoIsolationHaxrAB 300 s TIMEOUT knife-edge (wave-2 infra; above).

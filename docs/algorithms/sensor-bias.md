@@ -417,16 +417,25 @@ without further code changes.**
    the EO-IR-IR triangle case (two cameras + one positional sensor)
    wants the same fold on the bearing-bias update.
 8. **Re-derive the env-2 EO/IR bearing seed** (`autoferry_r_calibration.py`,
-   7.0° / 4.9° in `ReplayScenarioRun::seedSensorBiasEstimator`). It was
-   calibrated while the closed loop converged to *half* the true bias (W3.2),
-   so it is scaled for the buggy loop. After the fix the anchored-mode autoferry
-   metrics move (some worse — e.g. `scenario16_anchored` gospa 2.67→8.42); the
-   deployment-realistic (non-anchored) metrics are byte-identical. Re-derive the
-   seed against the corrected loop before re-freezing the Cl-4 gauntlet — do not
-   tune the estimator to match the old seed.
-9. **v2 bearing-innovation outlier gate** is centred on zero, not on `b̂`
-   (finding B5): a true bias above ~5·σ can starve the observer before it
-   publishes. Out of scope for this wave; gate on the residual `|wrap(r − b̂)|`.
+   7.0° / 4.9° in `ReplayScenarioRun::seedSensorBiasEstimator`) — **PARKED as a
+   Cl-4 reconciliation addendum** (2026-07-14). Root cause is deeper than the
+   half-loop: the calibration script reports the mean **absolute** residual
+   (`copysign(1.0,1.0)` on an already-`abs()`ed value) with min-|residual| truth
+   association, so 7.0°/4.9° are the mean magnitude of the ~7–9° noise (≈0.8·σ),
+   not a signed bias. Corrected signed re-derivation over sc13/16/17/22: EO
+   +1.66° (median +0.97°), IR −1.92° (median −0.41°) — small, noise-dominated,
+   IR sign *opposite* the seed. After the loop fix the anchored-mode autoferry
+   metrics move (e.g. `scenario16_anchored` gospa 2.67→8.42) because the seed is
+   wrong; deployment-realistic (non-anchored) metrics are byte-identical.
+   Adoption (fix script → decide seed value/none → re-run anchored gauntlet →
+   reconcile the frozen env-2 Cl-4 rows, ADR-0003) is the arbiter's re-freeze;
+   do not tune the estimator to match the old seed.
+9. ~~**v2 bearing-innovation outlier gate**~~ — **FIXED 2026-07-14** (finding
+   B5). The gate keyed on the absolute measurement, not `b̂`, so a true bias
+   above ~5·σ starved the observer once it tightened. Now gates on the
+   innovation `|wrap(meas − b̂)|`, so a consistent observation is always accepted
+   and only genuine outliers are rejected. Teeth:
+   `BiasObsBearingInnovation.GateOnInnovationNotAbsoluteBiasDoesNotFreeze`.
 10. **Combined heading-bias + per-sensor-bias on the same ARPA touch.** If both
     estimators are active on one sensor, each reconstructs only its own applied
     correction; the interaction is untested. No production wiring hits it today.

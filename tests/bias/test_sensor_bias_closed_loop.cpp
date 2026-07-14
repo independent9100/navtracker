@@ -39,7 +39,9 @@ Track::SourceTouch touch(SensorKind k, Timestamp t, Eigen::Vector2d v,
   return s;
 }
 
-Eigen::Vector2d runClosedLoop(Eigen::Vector2d b_true, bool carry) {
+Eigen::Vector2d runClosedLoop(
+    Eigen::Vector2d b_true, bool carry,
+    Eigen::Vector2d anchor_applied = Eigen::Vector2d::Zero()) {
   SensorBiasEstimator est{};
   const Eigen::Vector2d truth(1200.0, 300.0);
   Eigen::Vector2d b_pub = Eigen::Vector2d::Zero();
@@ -48,9 +50,11 @@ Eigen::Vector2d runClosedLoop(Eigen::Vector2d b_true, bool carry) {
     // Sensor reports truth + b_true; pipeline subtracts b_pub.
     const Eigen::Vector2d sensor_corrected = truth + b_true - b_pub;
     Track tr;
-    // Anchor (AIS) at truth, no bias applied.
+    // Anchor (AIS): its CORRECTED position is truth. anchor_applied models a
+    // (hypothetical) published anchor position bias the pipeline subtracted —
+    // the estimator must ignore it (the anchor is the truth reference).
     tr.recent_contributions.push_back(
-        touch(SensorKind::Ais, tAt(i * 1.0), truth, Eigen::Vector2d::Zero()));
+        touch(SensorKind::Ais, tAt(i * 1.0), truth, anchor_applied));
     tr.recent_contributions.push_back(
         touch(SensorKind::ArpaTtm, tAt(i * 1.0), sensor_corrected,
               carry ? b_pub : Eigen::Vector2d::Zero()));
@@ -77,6 +81,19 @@ TEST(SensorBiasClosedLoop, WithoutReconstructionConvergesToHalf) {
   const Eigen::Vector2d b_hat = runClosedLoop(b_true, /*carry=*/false);
   EXPECT_NEAR(b_hat.x(), 0.5 * b_true.x(), 0.2);
   EXPECT_NEAR(b_hat.y(), 0.5 * b_true.y(), 0.2);
+}
+
+TEST(SensorBiasClosedLoop, InvariantToAnchorAppliedPositionBias) {
+  // The anchor is the truth reference: the estimator uses its CORRECTED
+  // position, so a (hypothetical) published anchor position bias must NOT leak
+  // into the sensor estimate. Adding the anchor's applied bias back (the
+  // pre-guard code) drove the sensor estimate to b_sensor − b_anchor.
+  const Eigen::Vector2d b_true(4.0, -2.0);
+  const Eigen::Vector2d anchor_bias(6.0, 5.0);
+  const Eigen::Vector2d b_hat =
+      runClosedLoop(b_true, /*carry=*/true, anchor_bias);
+  EXPECT_NEAR(b_hat.x(), b_true.x(), 0.2);
+  EXPECT_NEAR(b_hat.y(), b_true.y(), 0.2);
 }
 
 }  // namespace navtracker

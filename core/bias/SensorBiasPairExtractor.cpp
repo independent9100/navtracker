@@ -62,12 +62,20 @@ std::vector<PositionBiasPairObservation> extractPositionPairs(
       obs.time = cycle_time;
       obs.key.sensor = t.sensor;
       obs.key.source_id = t.source_id;
-      // W3.2: reconstruct the RAW measurements by adding back any published
-      // position bias the pipeline already subtracted (applyBiasCorrection),
-      // so the estimator's r = z_sensor − z_anchor − b̂ measures the full bias
-      // and does not subtract b̂ a second time in the closed loop.
+      // W3.2: reconstruct the RAW sensor measurement by adding back any
+      // published position bias the pipeline already subtracted
+      // (applyBiasCorrection), so the estimator's r = z_sensor − z_anchor − b̂
+      // measures the full bias and does not subtract b̂ a second time in the
+      // closed loop.
       obs.z_sensor_enu = t.value_enu + t.applied_position_bias_enu;
-      obs.z_anchor_enu = anchor->value_enu + anchor->applied_position_bias_enu;
+      // The anchor is the TRUTH reference: use its CORRECTED position directly
+      // (do NOT add the anchor's applied bias back — that would restore the raw,
+      // biased position and drive the sensor estimate to b_sensor − b_anchor).
+      // Anchor kinds are never fed to any per-sensor estimator so they never
+      // publish a position bias (applied stays 0), making this byte-identical to
+      // the raw anchor today; using value_enu also closes that latent hole if an
+      // anchor is ever position-calibrated.
+      obs.z_anchor_enu = anchor->value_enu;
       obs.R_sensor =
           covWithFallback(t.covariance, cfg.sensor_position_std_fallback_m);
       obs.R_anchor =
@@ -110,11 +118,11 @@ std::vector<BearingBiasPairObservation> extractBearingPairs(
       obs.key.sensor = t.sensor;
       obs.key.source_id = t.source_id;
       obs.sensor_position_enu = t.sensor_position_enu;
-      // W3.2: reconstruct the RAW anchor position and camera bearing by adding
-      // back any bias the pipeline already applied, so the closed loop does
-      // not double-subtract b̂.
-      obs.anchor_target_position_enu =
-          anchor->value_enu + anchor->applied_position_bias_enu;
+      // W3.2: reconstruct the RAW camera bearing by adding back the bearing
+      // bias the pipeline already applied, so the closed loop does not
+      // double-subtract b̂. The anchor is the TRUTH reference — use its CORRECTED
+      // position directly (no add-back; see the positional path above for why).
+      obs.anchor_target_position_enu = anchor->value_enu;
       obs.alpha_observed_rad = t.alpha_rad + t.applied_bearing_bias_rad;
       obs.alpha_meas_var_rad2 = t.alpha_var_rad2;
       // Project the anchor's position uncertainty onto the

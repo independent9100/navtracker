@@ -9384,3 +9384,16 @@ project. Full suite **1180/1180, 0 skips, 0 disabled**.
   before re-freezing the Cl-4 gauntlet — estimator NOT tuned to match the old seed.
 - **Unblocks the F2 provenance cycle** (correct bias chain now available for its
   garbage-bias × broken-chain attribution question).
+- **2026-07-14 rebase + adversarial-review cycle (arbiter acceptance).** Rebased
+  onto master `34367f6` (wave-2 merged); clean — only evaluation-log conflicted,
+  ArpaAdapter W3.3 composes with wave-2's datum-sink reproject by design. 3-lens
+  fresh-agent adversarial review: runtime math CONFIRMED correct (sign/frame +
+  reconstruction). 3 findings FIXED with teeth — v2 outlier gate now on the
+  innovation not |meas| (finding B5, was freezing on large true bias); ARPA pair
+  extractor skips the (0,0) own-ship-unset sentinel (TLL-before-first-pose origin
+  hole); per-sensor anchor uses its corrected position (no add-back). One finding
+  (v2 emit sign untested) verified a FALSE POSITIVE — already load-bearing via
+  test_tracker_bearing_innovation_emit + test_bearing_bias_convergence. Strict
+  suite **1195/1195, 0 skips**. env-2 EO/IR seed re-derived (7.0/4.9° are mean-
+  ABS noise, not signed bias; true signed ≈ EO +1.7° / IR −1.9°, noise-dominated)
+  → adoption PARKED as the Cl-4 reconciliation addendum (frozen rows safe).

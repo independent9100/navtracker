@@ -120,13 +120,20 @@ void HeadingBiasEstimator::observe(const BearingInnovation& obs) {
   // measures +b like the gyro-vs-reference kinds and the adapter correction.
   const double meas = -obs.innovation_rad;
   const double s = obs.variance_rad2 + p_b_;
-  const double sigma = std::sqrt(s);
-  if (std::abs(meas) > cfg_.bi_outlier_sigma * sigma) {
+  const double y = wrapToPi(meas - b_hat_);
+  // Outlier gate (finding B5): gate on the INNOVATION y = meas − b̂, not on the
+  // absolute measurement |meas|. Keying on |meas| froze this path once b̂
+  // converged to a large true bias — |meas| ≈ |b_true| eventually exceeds the
+  // threshold and every state-consistent observation is rejected. Gating on the
+  // innovation, a consistent observation has y ≈ 0 and is always accepted, while
+  // a genuine outlier (large |y|) is still rejected — including a huge FIRST
+  // innovation, since at cold start the wide init prior keeps the threshold
+  // generous enough to admit a real uncalibrated bias without exemption.
+  if (std::abs(y) > cfg_.bi_outlier_sigma * std::sqrt(s)) {
     ++rej_outlier_;
     return;
   }
 
-  const double y = wrapToPi(meas - b_hat_);
   const double k = p_b_ / s;
   b_hat_ += k * y;
   p_b_ = (1.0 - k) * p_b_;
