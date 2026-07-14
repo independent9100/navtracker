@@ -1365,9 +1365,17 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
   // sensor_position_enu is own-ship's ENU at scan time. Take the last
   // surveillance measurement (deterministic in the time-sorted scan) and
   // persist it across scans so the empty-scan misdetection branch retains
-  // own-ship's last-known position. Only when the coverage model is wired;
-  // otherwise this stays untouched and unused.
-  if (sensor_activity_ != nullptr) {
+  // own-ship's last-known position. Gate matches the two evaluate() READ sites
+  // (use_sensor_activity && sensor_activity_): a config that wires a provider
+  // for channelKindFor alone (use_sensor_activity=false) does no dead work.
+  //
+  // Known limitation (improve-next): own-ship is inferred from surveillance
+  // returns, not the authoritative OwnShipProvider pose. During a surveillance
+  // dropout longer than the duty cycle on a moving platform it goes stale (and
+  // is (0,0) before the first return); bounded, and inert on the deployable
+  // replays (continuous radar), but a track near the coverage boundary can be
+  // mis-charged. Threading OwnShipPose into the tracker would close it.
+  if (cfg_.use_sensor_activity && sensor_activity_ != nullptr) {
     for (const auto& z : scan) {
       const auto kind = sensor_activity_->channelKindFor(z.sensor);
       if (kind == ChannelKind::Surveillance)

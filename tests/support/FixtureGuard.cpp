@@ -19,7 +19,12 @@ namespace {
 void setIfUnset(const char* name, const std::string& value) {
   const char* cur = std::getenv(name);
   if (cur == nullptr || *cur == '\0') {
-    ::setenv(name, value.c_str(), /*overwrite=*/0);
+    // overwrite=1: reached only when the var is unset OR set-but-EMPTY. With
+    // overwrite=0, setenv is a no-op on a set-but-empty var (`export SIMMS_DIR=`),
+    // leaving it empty — the downstream envOr then falls back to its cwd-relative
+    // default, which doesn't resolve under ctest. A genuine non-empty override
+    // never enters this branch, so it is still preserved.
+    ::setenv(name, value.c_str(), /*overwrite=*/1);
   }
 }
 
