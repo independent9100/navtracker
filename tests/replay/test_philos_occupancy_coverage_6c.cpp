@@ -41,6 +41,7 @@
 #include <Eigen/Core>
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
 #include "core/benchmark/ExistenceLabel.hpp"
 #include "tests/replay/PhilosLabelReplay.hpp"
 
@@ -176,7 +177,8 @@ std::pair<long, long> observability(const ClipRun& run,
 TEST(PhilosCoverageDecay6c, SunsetCoverageAwareHoldsStructureAndProtectsUnsweptCells) {
   const ClipRun uni =
       replay_test::runClip("sunset_cruise", "imm_cv_ct_pmbm_occupancy_detector");
-  if (!uni.valid) GTEST_SKIP() << "sunset_cruise fixtures not reachable";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!uni.valid,
+                                     "sunset_cruise fixtures not reachable");
   const ClipRun cov = replay_test::runClip(
       "sunset_cruise", "imm_cv_ct_pmbm_occupancy_detector_coverage");
   ASSERT_TRUE(cov.valid);
@@ -317,7 +319,8 @@ TEST(PhilosCoverageDecay6c, SunsetCoverageAwareHoldsStructureAndProtectsUnsweptC
 TEST(PhilosCoverageDecay6c, CloseApproachKeepMixedPresenceHeldUnderSuppressor) {
   const ClipRun land =
       replay_test::runClip("close_approach", "imm_cv_ct_pmbm_land");
-  if (!land.valid) GTEST_SKIP() << "close_approach fixtures not reachable";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!land.valid,
+                                     "close_approach fixtures not reachable");
   const ClipRun uni = replay_test::runClip(
       "close_approach", "imm_cv_ct_pmbm_occupancy_detector");
   ASSERT_TRUE(uni.valid);
@@ -391,7 +394,8 @@ TEST(PhilosCoverageDecay6c, SunsetChartCorroborationLabelsStructureNotDepartedVe
   const ClipRun run = replay_test::runClip(
       "sunset_cruise", "imm_cv_ct_pmbm_occupancy_detector_coverage",
       /*load_chart_structure=*/true);
-  if (!run.valid) GTEST_SKIP() << "sunset_cruise fixtures not reachable";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!run.valid,
+                                     "sunset_cruise fixtures not reachable");
   const auto labels = replay_test::loadLabels("sunset_cruise_labels.csv");
   ASSERT_FALSE(labels.empty());
 
@@ -459,7 +463,8 @@ TEST(PhilosCoverageDecay6c, SunsetCameraObservedEmptyFlagsVacatedCells) {
   const ClipRun run = replay_test::runClip(
       "sunset_cruise", "imm_cv_ct_pmbm_occupancy_detector_coverage",
       /*load_chart_structure=*/true, /*load_camera=*/true);
-  if (!run.valid) GTEST_SKIP() << "sunset_cruise fixtures not reachable";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!run.valid,
+                                     "sunset_cruise fixtures not reachable");
   const auto labels = replay_test::loadLabels("sunset_cruise_labels.csv");
   ASSERT_FALSE(labels.empty());
 
@@ -601,7 +606,8 @@ TEST(PhilosCoverageDecay6c, SunsetCameraEvictionRemovesDepartedPinsHoldsChartStr
   const ClipRun off = replay_test::runClip(
       "sunset_cruise", "imm_cv_ct_pmbm_occupancy_detector_coverage",
       /*load_chart_structure=*/true, /*load_camera=*/true, /*evict_camera=*/false);
-  if (!off.valid) GTEST_SKIP() << "sunset_cruise fixtures not reachable";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!off.valid,
+                                     "sunset_cruise fixtures not reachable");
   const ClipRun on = replay_test::runClip(
       "sunset_cruise", "imm_cv_ct_pmbm_occupancy_detector_coverage",
       /*load_chart_structure=*/true, /*load_camera=*/true, /*evict_camera=*/true);

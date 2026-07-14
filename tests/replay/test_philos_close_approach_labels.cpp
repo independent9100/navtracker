@@ -22,6 +22,7 @@
 #include <Eigen/Core>
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
 #include "core/benchmark/ExistenceLabel.hpp"
 #include "tests/replay/PhilosLabelReplay.hpp"
 
@@ -47,7 +48,8 @@ std::vector<ExistenceLabel> loadCloseApproachLabels() {
 // tracks_on_keep must NOT fall when a suppressor is later scored on this clip.
 TEST(PhilosCloseApproachLabels, LabelAwareDecompositionKeepStressBaseline) {
   const ClipRun run = runCloseApproach();
-  if (!run.valid) GTEST_SKIP() << "close_approach fixtures not reachable";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!run.valid,
+                                     "close_approach fixtures not reachable");
   const auto labels = loadCloseApproachLabels();
   ASSERT_FALSE(labels.empty());
 
@@ -90,7 +92,8 @@ TEST(PhilosCloseApproachLabels, LabelAwareDecompositionKeepStressBaseline) {
 // current-behaviour KEEP safety in the densest scene.
 TEST(PhilosCloseApproachLabels, KeepMixedRegionsTrackedOnMajorityOfScans) {
   const ClipRun run = runCloseApproach();
-  if (!run.valid) GTEST_SKIP() << "close_approach fixtures not reachable";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!run.valid,
+                                     "close_approach fixtures not reachable");
   const auto labels = loadCloseApproachLabels();
   ASSERT_FALSE(labels.empty());
 

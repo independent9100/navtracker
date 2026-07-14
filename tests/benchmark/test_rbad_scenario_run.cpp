@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include <cstdio>
 #include <memory>
 #include <set>
@@ -87,7 +89,8 @@ TEST(RbadScenarioRun, GenerateCarriesDatumAndReferenceTracks) {
     for (const auto& m : scen.measurements)
       EXPECT_LT(m.value.norm(), 200.0) << s->descriptor().label;
   }
-  if (!any) GTEST_SKIP() << "rbad fixtures unreachable (set RBAD_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !any, "rbad fixtures unreachable (set RBAD_DIR)");
 }
 
 // CROSS-TRACKER CONSISTENCY report — NOT an accuracy gate. The "truth" here is
@@ -118,7 +121,8 @@ TEST(RbadScenarioRun, MhtConsistencyReportVsReferenceTracker) {
                 s->descriptor().label.c_str(), distinctReferenceIds(scen), our,
                 m.lifetime_ratio, m.id_switches, m.track_breaks, m.card_err_mean);
   }
-  if (!any) GTEST_SKIP() << "rbad fixtures unreachable (set RBAD_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !any, "rbad fixtures unreachable (set RBAD_DIR)");
   EXPECT_GT(total_our_tracks, 0)
       << "tracker produced no confirmed tracks on any R-BAD approach";
 }
@@ -130,8 +134,8 @@ TEST(RbadScenarioRun, DeterministicReplay) {
   auto run = findRbad("rbad_kos_5");
   ASSERT_TRUE(run);
   const auto a = run->generate(0);
-  if (a.measurements.empty())
-    GTEST_SKIP() << "rbad fixtures unreachable (set RBAD_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      a.measurements.empty(), "rbad fixtures unreachable (set RBAD_DIR)");
   auto run2 = findRbad("rbad_kos_5");
   const auto b = run2->generate(0);
   ASSERT_EQ(a.measurements.size(), b.measurements.size());

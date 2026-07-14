@@ -22,6 +22,8 @@
 
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include "adapters/own_ship/OwnShipProvider.hpp"
 #include "adapters/replay/AisCsvReplayAdapter.hpp"
 #include "adapters/replay/OwnshipCsvReader.hpp"
@@ -37,7 +39,7 @@ namespace navtracker::replay {
 namespace {
 
 std::string clipDir(const char* clip) {
-  return std::string("tests/fixtures/philos/out/") + clip + "/";
+  return navtracker_test::srcAbs("tests/fixtures/philos/out/") + clip + "/";
 }
 bool fileExists(const std::string& path) {
   std::ifstream f(path);
@@ -72,9 +74,9 @@ TEST(PhilosFarCross, AisFerryFarLoadsIsDeterministicAndTrackable) {
   const std::string dir = clipDir("ais_ferry_far");
   const std::string own = dir + "ownship.csv", ais_p = dir + "ais.csv",
                     plots = dir + "radar_plots.csv";
-  if (!fileExists(own) || !fileExists(ais_p) || !fileExists(plots)) {
-    GTEST_SKIP() << "ais_ferry_far fixture absent — run the philos batch first.";
-  }
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !fileExists(own) || !fileExists(ais_p) || !fileExists(plots),
+      "ais_ferry_far fixture absent — run the philos batch first.");
 
   const auto poses = loadOwnshipCsv(own);
   ASSERT_FALSE(poses.empty());
@@ -114,9 +116,9 @@ TEST(PhilosFarCross, AlmostCrossHasNoAisAndPersistsRadarTracks) {
   const std::string dir = clipDir("almost_cross");
   const std::string own = dir + "ownship.csv", ais_p = dir + "ais.csv",
                     plots = dir + "radar_plots.csv";
-  if (!fileExists(own) || !fileExists(plots)) {
-    GTEST_SKIP() << "almost_cross fixture absent — run the philos batch first.";
-  }
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !fileExists(own) || !fileExists(plots),
+      "almost_cross fixture absent — run the philos batch first.");
 
   const auto poses = loadOwnshipCsv(own);
   ASSERT_FALSE(poses.empty());

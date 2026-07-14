@@ -390,6 +390,7 @@ add_executable(navtracker_tests
   tests/t2t/test_fuser.cpp
   tests/t2t/test_navtracker_source.cpp
   tests/benchmark/test_t2t_scenario_run.cpp
+  tests/support/FixtureGuard.cpp
 )
 target_include_directories(navtracker_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(navtracker_tests PRIVATE
@@ -410,7 +411,13 @@ if(NAVTRACKER_BUILD_FOXGLOVE)
 endif()
 
 include(GoogleTest)
-gtest_discover_tests(navtracker_tests)
+# W2.7: per-test TIMEOUT watchdog — a hung fixture-gated test otherwise stalls
+# ctest with no bound. 300 s is far above the slowest real-data replay case
+# while still catching a true hang. DISCOVERY_TIMEOUT guards the build-time
+# --gtest_list_tests step (which loads the fixture env global) the same way.
+gtest_discover_tests(navtracker_tests
+    PROPERTIES TIMEOUT 300
+    DISCOVERY_TIMEOUT 120)
 
 add_executable(navtracker_core_only_smoke
     tests/types/test_link_core_only.cpp)

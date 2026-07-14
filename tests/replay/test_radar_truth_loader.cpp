@@ -1,19 +1,23 @@
 #include <fstream>
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include "adapters/own_ship/OwnShipProvider.hpp"
 #include "adapters/replay/OwnshipCsvReader.hpp"
 #include "adapters/replay/RadarTruthCsvReader.hpp"
 
-// Fixture paths are relative to project root (the bench/test runner cwd).
-static constexpr const char* kOwnship =
-    "tests/fixtures/philos/out/ais_ferry_near/ownship.csv";
-static constexpr const char* kRadarTruth =
-    "tests/fixtures/philos/out/ais_ferry_near/radar_truth.csv";
+// Fixture paths anchored to the source tree so the test runs from any cwd.
+static const std::string kOwnship =
+    navtracker_test::srcAbs("tests/fixtures/philos/out/ais_ferry_near/ownship.csv");
+static const std::string kRadarTruth = navtracker_test::srcAbs(
+    "tests/fixtures/philos/out/ais_ferry_near/radar_truth.csv");
 
 TEST(RadarTruthLoader, ProjectsBodyFrameToEnuWithinRange) {
-  if (!std::ifstream(kRadarTruth)) GTEST_SKIP() << "fixture absent";
-  if (!std::ifstream(kOwnship)) GTEST_SKIP() << "ownship fixture absent";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!std::ifstream(kRadarTruth),
+                                     "fixture absent");
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!std::ifstream(kOwnship),
+                                     "ownship fixture absent");
 
   const auto poses = navtracker::replay::loadOwnshipCsv(kOwnship);
   ASSERT_FALSE(poses.empty());
@@ -38,8 +42,10 @@ TEST(RadarTruthLoader, ProjectsBodyFrameToEnuWithinRange) {
 }
 
 TEST(RadarTruthLoader, TimeStampsAreMonotonicAndNonZero) {
-  if (!std::ifstream(kRadarTruth)) GTEST_SKIP() << "fixture absent";
-  if (!std::ifstream(kOwnship)) GTEST_SKIP() << "ownship fixture absent";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!std::ifstream(kRadarTruth),
+                                     "fixture absent");
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!std::ifstream(kOwnship),
+                                     "ownship fixture absent");
 
   const auto poses = navtracker::replay::loadOwnshipCsv(kOwnship);
   ASSERT_FALSE(poses.empty());

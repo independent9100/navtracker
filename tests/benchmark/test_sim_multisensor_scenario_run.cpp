@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include <map>
 #include <memory>
 #include <set>
@@ -81,7 +83,8 @@ TEST(SimMultisensorScenarioRun, GenerateCarriesDatumAndSharedClockTruth) {
     EXPECT_FALSE(scen.truth.empty()) << s->descriptor().label;
     EXPECT_GE(maxTruthCardinality(scen), 2) << s->descriptor().label;
   }
-  if (!any) GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !any, "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
 }
 
 // R11 identity data-path: AIS fixes must carry the MMSI hint that lets fusion
@@ -92,8 +95,9 @@ TEST(SimMultisensorScenarioRun, AisMeasurementsCarryMmsiHint) {
   auto run = findSim("sim_ms_headon");
   ASSERT_TRUE(run);
   const auto scen = run->generate(0);
-  if (scen.measurements.empty())
-    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      scen.measurements.empty(),
+      "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
   int ais = 0, ais_with_mmsi = 0;
   for (const auto& m : scen.measurements) {
     if (m.sensor != navtracker::SensorKind::Ais) continue;
@@ -114,8 +118,9 @@ TEST(SimMultisensorScenarioRun, HeadonFusionAccuracyGate) {
   auto run = findSim("sim_ms_headon");
   ASSERT_TRUE(run);
   const auto scen = run->generate(0);
-  if (scen.measurements.empty())
-    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      scen.measurements.empty(),
+      "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
   ASSERT_EQ(maxTruthCardinality(scen), 2);
 
   const auto result = runMht(*run, scen);
@@ -146,8 +151,9 @@ TEST(SimMultisensorScenarioRun, AnchoredAndCameraOnlyNeverInvisible) {
   auto run = findSim("sim_ms_anchored_camera");
   ASSERT_TRUE(run);
   const auto scen = run->generate(0);
-  if (scen.measurements.empty())
-    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      scen.measurements.empty(),
+      "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
 
   constexpr std::uint64_t kAnchored = 257000601;
   constexpr std::uint64_t kCamOnly = 257000602;
@@ -175,8 +181,9 @@ TEST(SimMultisensorScenarioRun, DeterministicReplay) {
   auto run = findSim("sim_ms_crossing");
   ASSERT_TRUE(run);
   const auto a = run->generate(0);
-  if (a.measurements.empty())
-    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      a.measurements.empty(),
+      "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
   auto run2 = findSim("sim_ms_crossing");
   const auto b = run2->generate(0);
   ASSERT_EQ(a.measurements.size(), b.measurements.size());

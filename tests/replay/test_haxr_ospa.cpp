@@ -20,6 +20,8 @@
 
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include "adapters/replay/HaxrTruthLoader.hpp"
 #include "adapters/replay/PlotCsvReplayAdapter.hpp"
 #include "core/association/GnnAssociator.hpp"
@@ -35,10 +37,12 @@ namespace {
 // Default to the smaller threshold=40 / 2000-cycle CSV. Override either
 // path via env vars for the first-cut iteration; once we trust the
 // pipeline we point at kattwyk_08_full.csv for the full hour.
-constexpr const char* kDefaultPlotsCsv =
-    "tests/fixtures/haxr_cfar/out/kattwyk_08_t40.csv";
-constexpr const char* kAisCsv = "data/dlr/kattwyk_08-UTC.csv";
-constexpr const char* kStationsCsv = "data/dlr/stations.csv";
+const std::string kDefaultPlotsCsv =
+    navtracker_test::srcAbs("tests/fixtures/haxr_cfar/out/kattwyk_08_t40.csv");
+const std::string kAisCsv =
+    navtracker_test::srcAbs("data/dlr/kattwyk_08-UTC.csv");
+const std::string kStationsCsv =
+    navtracker_test::srcAbs("data/dlr/stations.csv");
 
 const char* envOrDefault(const char* var, const char* def) {
   const char* v = std::getenv(var);
@@ -64,13 +68,15 @@ std::vector<Eigen::Vector2d> trackPositions(const TrackManager& mgr) {
 }  // namespace
 
 TEST(HaxrOspa, KattwykHourEkfGnnBaseline) {
-  const char* plots_csv = envOrDefault("HAXR_PLOTS_CSV", kDefaultPlotsCsv);
-  if (!fileExists(plots_csv) || !fileExists(kAisCsv) ||
-      !fileExists(kStationsCsv)) {
-    GTEST_SKIP() << "HAXR data not present at "
-                 << plots_csv << " / " << kAisCsv << " / " << kStationsCsv
-                 << " — run the haxr_cfar Python fixture first.";
-  }
+  const char* plots_csv =
+      envOrDefault("HAXR_PLOTS_CSV", kDefaultPlotsCsv.c_str());
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !fileExists(plots_csv) || !fileExists(kAisCsv.c_str()) ||
+          !fileExists(kStationsCsv.c_str()),
+      "HAXR data not present at " << plots_csv << " / " << kAisCsv << " / "
+                                  << kStationsCsv
+                                  << " — run the haxr_cfar Python fixture "
+                                     "first.");
 
   const auto t_start = std::chrono::steady_clock::now();
   const auto stations = loadStations(kStationsCsv);

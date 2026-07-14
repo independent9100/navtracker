@@ -13,6 +13,8 @@
 // philos replay tests do); the bench driver runs from the project root.
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -59,8 +61,9 @@ struct RiskRecorder : ICollisionRiskSink {
 TEST(PhilosCloseApproachCpa, CollisionAlarmFiresBeforeContact) {
   const std::string own = clipDir() + "/ownship.csv";
   const std::string plots = clipDir() + "/radar_plots.csv";
-  if (!exists(own) || !exists(plots))
-    GTEST_SKIP() << "close_approach fixture not reachable from cwd";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !exists(own) || !exists(plots),
+      "close_approach fixture not reachable from cwd");
 
   const auto poses = navtracker::replay::loadOwnshipCsv(own);
   ASSERT_FALSE(poses.empty());

@@ -19,6 +19,8 @@
 // metric set) — banded, no cross-config pin on the marginal occupancy metrics.
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -96,8 +98,9 @@ TEST(VetoIsolationHaxrAB, VetoIsolatedOnAisArmThreeSites) {
       {"seemannshoeft",
        srcAbs("tests/fixtures/haxr_cfar/out/seemannshoeft_08_dec50_w285.csv")}};
   const std::string stations = srcAbs("data/dlr/stations.csv");
-  if (!fileExists(stations) || !fileExists(sites[0].plots))
-    GTEST_SKIP() << "HAXR fixtures (local-only) absent";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !fileExists(stations) || !fileExists(sites[0].plots),
+      "HAXR fixtures (local-only) absent");
 
   const auto all = defaultConfigs();
   const Config* cov =

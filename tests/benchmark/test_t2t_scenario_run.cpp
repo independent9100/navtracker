@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
@@ -45,8 +47,9 @@ TEST(T2tScenarioRun, DisjointSourcesFuseConsistentlyAndNoWorseThanBest) {
   auto run = findSim("sim_ms_headon");
   ASSERT_TRUE(run);
   const auto full = run->generate(0);
-  if (full.measurements.empty())
-    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      full.measurements.empty(),
+      "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
 
   ArmSpec a{"radar_tracker", {SensorKind::ArpaTtm}, usedStreams({"radar"})};
   ArmSpec b{"ais_tracker", {SensorKind::Ais}, usedStreams({"ais"})};
@@ -85,8 +88,9 @@ TEST(T2tScenarioRun, SharedAisDoubleCountingNeesGate) {
   auto run = findSim("sim_ms_headon");
   ASSERT_TRUE(run);
   const auto full = run->generate(0);
-  if (full.measurements.empty())
-    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      full.measurements.empty(),
+      "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
 
   CovarianceIntersectionRule ci;
   NaiveFusionRule naive;
@@ -139,8 +143,9 @@ TEST(T2tScenarioRun, PerArmNeesCalibrationAndBandViolationGate) {
   auto run = findSim("sim_ms_headon");
   ASSERT_TRUE(run);
   const auto full = run->generate(0);
-  if (full.measurements.empty())
-    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      full.measurements.empty(),
+      "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
 
   CovarianceIntersectionRule ci;
   NaiveFusionRule naive;
@@ -207,8 +212,9 @@ TEST(T2tScenarioRun, UnknownAndAbsentPedigreeMatchExplicitUnknown) {
   auto run = findSim("sim_ms_headon");
   ASSERT_TRUE(run);
   const auto full = run->generate(0);
-  if (full.measurements.empty())
-    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      full.measurements.empty(),
+      "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
 
   const std::set<SensorKind> a_sensors{SensorKind::Ais};
   const std::set<SensorKind> b_sensors{SensorKind::Ais};
@@ -250,8 +256,9 @@ TEST(T2tScenarioRun, FusedOutputIsDeterministic) {
   auto run = findSim("sim_ms_crossing");
   ASSERT_TRUE(run);
   const auto full = run->generate(0);
-  if (full.measurements.empty())
-    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      full.measurements.empty(),
+      "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
 
   ArmSpec a{"radar", {SensorKind::ArpaTtm}, usedStreams({"radar"})};
   ArmSpec b{"ais", {SensorKind::Ais}, usedStreams({"ais"})};
@@ -277,8 +284,9 @@ TEST(T2tScenarioRun, DropoutContinuityAndLatencySkew) {
   auto run = findSim("sim_ms_headon");
   ASSERT_TRUE(run);
   const auto full = run->generate(0);
-  if (full.measurements.empty())
-    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      full.measurements.empty(),
+      "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
 
   double tmin = 1e18, tmax = -1e18;
   for (const auto& s : full.truth) {
@@ -387,8 +395,9 @@ TEST(T2tScenarioRun, ConflictBiasedOverconfidentSourceCharacterization) {
   auto run = findSim("sim_ms_headon");
   ASSERT_TRUE(run);
   const auto full = run->generate(0);
-  if (full.measurements.empty())
-    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      full.measurements.empty(),
+      "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
 
   CovarianceIntersectionRule ci;
   NaiveFusionRule naive;
@@ -431,8 +440,9 @@ TEST(T2tScenarioRun, CrossMmsiConflictReducesWrongPairings) {
   auto run = findSim("sim_ms_crossing");
   ASSERT_TRUE(run);
   const auto full = run->generate(0);
-  if (full.measurements.empty())
-    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      full.measurements.empty(),
+      "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
 
   CovarianceIntersectionRule ci;
   ArmSpec a{"radar", {SensorKind::ArpaTtm}, usedStreams({"radar"})};
@@ -486,8 +496,9 @@ TEST(T2tScenarioRun, CrossSpoofedMmsiStillFusesBothTargetsEndToEnd) {
   auto run = findSim("sim_ms_crossing");
   ASSERT_TRUE(run);
   const auto full = run->generate(0);
-  if (full.measurements.empty())
-    GTEST_SKIP() << "sim_multisensor fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      full.measurements.empty(),
+      "sim_multisensor fixtures unreachable (set SIMMS_DIR)");
 
   CovarianceIntersectionRule ci;
   ArmSpec a{"radar", {SensorKind::ArpaTtm}, usedStreams({"radar"})};

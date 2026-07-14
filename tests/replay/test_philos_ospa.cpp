@@ -28,6 +28,8 @@
 
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include "adapters/own_ship/OwnShipProvider.hpp"
 #include "adapters/replay/AisCsvReplayAdapter.hpp"
 #include "adapters/replay/OwnshipCsvReader.hpp"
@@ -43,12 +45,12 @@
 namespace navtracker::replay {
 namespace {
 
-constexpr const char* kOwnshipCsv =
-    "tests/fixtures/philos/out/ais_ferry_near/ownship.csv";
-constexpr const char* kAisCsv =
-    "tests/fixtures/philos/out/ais_ferry_near/ais.csv";
-constexpr const char* kPlotsCsv =
-    "tests/fixtures/philos/out/ais_ferry_near/radar_plots.csv";
+const std::string kOwnshipCsv =
+    navtracker_test::srcAbs("tests/fixtures/philos/out/ais_ferry_near/ownship.csv");
+const std::string kAisCsv =
+    navtracker_test::srcAbs("tests/fixtures/philos/out/ais_ferry_near/ais.csv");
+const std::string kPlotsCsv = navtracker_test::srcAbs(
+    "tests/fixtures/philos/out/ais_ferry_near/radar_plots.csv");
 
 bool fileExists(const char* path) {
   std::ifstream f(path);
@@ -134,9 +136,10 @@ RunStats runConfig(const std::vector<Measurement>& measurements,
 }  // namespace
 
 TEST(PhilosOspa, AisFerryNearMultiSensorBaseline) {
-  if (!fileExists(kOwnshipCsv) || !fileExists(kAisCsv) || !fileExists(kPlotsCsv)) {
-    GTEST_SKIP() << "Philos fixture data missing — run the philos batch first.";
-  }
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !fileExists(kOwnshipCsv.c_str()) || !fileExists(kAisCsv.c_str()) ||
+          !fileExists(kPlotsCsv.c_str()),
+      "Philos fixture data missing — run the philos batch first.");
 
   // 1. Build an OwnShipProvider primed with the entire ownship history
   //    so plot/AIS adapters can look up pose at-or-before any time.

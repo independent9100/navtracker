@@ -19,6 +19,8 @@
 
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include "adapters/replay/CameraBearingCsvReader.hpp"
 #include "adapters/replay/OwnshipCsvReader.hpp"
 #include "adapters/replay/PlotCsvReplayAdapter.hpp"
@@ -194,10 +196,10 @@ class CountingBearingSink : public IBearingInnovationSink {
 TEST(CameraBearingSmoke, CameraOnlyInitiatesNoTracks) {
   const std::string cam = ferryDir() + "/camera_bearings.csv";
   const std::string own = ferryDir() + "/ownship.csv";
-  if (!fileExists(cam) || !fileExists(own)) {
-    GTEST_SKIP() << "camera_bearings.csv fixture absent (regenerate with "
-                    "extract_camera_bearings.py)";
-  }
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !fileExists(cam) || !fileExists(own),
+      "camera_bearings.csv fixture absent (regenerate with "
+      "extract_camera_bearings.py)");
   const auto poses = navtracker::replay::loadOwnshipCsv(own);
   ASSERT_FALSE(poses.empty());
   OwnShipProvider provider(poses.size() + 1);
@@ -222,9 +224,9 @@ TEST(CameraBearingSmoke, RadarBornTrackReceivesBearingUpdate) {
   const std::string cam = ferryDir() + "/camera_bearings.csv";
   const std::string own = ferryDir() + "/ownship.csv";
   const std::string plots = ferryDir() + "/radar_plots.csv";
-  if (!fileExists(cam) || !fileExists(own) || !fileExists(plots)) {
-    GTEST_SKIP() << "ais_ferry_near fixtures absent (regenerate)";
-  }
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !fileExists(cam) || !fileExists(own) || !fileExists(plots),
+      "ais_ferry_near fixtures absent (regenerate)");
   const auto poses = navtracker::replay::loadOwnshipCsv(own);
   ASSERT_FALSE(poses.empty());
   OwnShipProvider provider(poses.size() + 1);

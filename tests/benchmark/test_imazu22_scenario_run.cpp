@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include <cstdio>
 #include <map>
 #include <memory>
@@ -96,7 +98,8 @@ TEST(Imazu22ScenarioRun, GenerateCarriesDatumAndTruth) {
     EXPECT_FALSE(scen.truth.empty()) << s->descriptor().label;
     EXPECT_GE(maxTruthCardinality(scen), 1) << s->descriptor().label;
   }
-  if (!any) GTEST_SKIP() << "imazu fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !any, "imazu fixtures unreachable (set SIMMS_DIR)");
 }
 
 // R11 identity data-path: AIS fixes must carry the MMSI hint (a 3-target case).
@@ -104,8 +107,8 @@ TEST(Imazu22ScenarioRun, AisMeasurementsCarryMmsiHint) {
   auto run = findImazu("imazu_12");
   ASSERT_TRUE(run);
   const auto scen = run->generate(0);
-  if (scen.measurements.empty())
-    GTEST_SKIP() << "imazu fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      scen.measurements.empty(), "imazu fixtures unreachable (set SIMMS_DIR)");
   int ais = 0, ais_with_mmsi = 0;
   for (const auto& m : scen.measurements) {
     if (m.sensor != navtracker::SensorKind::Ais) continue;
@@ -141,7 +144,8 @@ TEST(Imazu22ScenarioRun, DeterministicReplaySampled) {
       EXPECT_EQ(a.truth[i].velocity, b.truth[i].velocity) << label;
     }
   }
-  if (!any) GTEST_SKIP() << "imazu fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !any, "imazu fixtures unreachable (set SIMMS_DIR)");
 }
 
 // The headline: identity stability through the crossing geometry, as a COARSE
@@ -163,5 +167,6 @@ TEST(Imazu22ScenarioRun, IdSwitchesCoarseBand) {
         << " id-switches blew past the tripwire band — re-measure vs "
            "docs/baselines/2026-07-08_imazu22.md before moving the band";
   }
-  if (!any) GTEST_SKIP() << "imazu fixtures unreachable (set SIMMS_DIR)";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(
+      !any, "imazu fixtures unreachable (set SIMMS_DIR)");
 }

@@ -24,6 +24,8 @@
 // occ-params override; the config default is guard ON.
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -245,7 +247,8 @@ TEST(LosShadowGuard, CarCarrierNearYachtCellGuardOnVsOff) {
   ClipRun run_off =
       runClip("car_carrier_near", kCovConfig, false, false, false,
               /*capture_persistence=*/true, &off);
-  if (!run_off.valid) GTEST_SKIP() << "car_carrier_near fixture absent";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!run_off.valid,
+                                     "car_carrier_near fixture absent");
   ClipRun run_on =
       runClip("car_carrier_near", kCovConfig, false, false, false,
               /*capture_persistence=*/true, &on);
@@ -371,7 +374,8 @@ TEST(LosShadowGuard, SimAnchoredControlGuardInert) {
   in.radar_max_range_m = 2500.0;
 
   ClipRun run_off = runClipInputs(in, kCovConfig, false, false, false, true, &off);
-  if (!run_off.valid) GTEST_SKIP() << "sim_ms_anchored_camera fixture absent";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!run_off.valid,
+                                     "sim_ms_anchored_camera fixture absent");
   ClipRun run_on = runClipInputs(in, kCovConfig, false, false, false, true, &on);
   ASSERT_TRUE(run_on.valid);
 

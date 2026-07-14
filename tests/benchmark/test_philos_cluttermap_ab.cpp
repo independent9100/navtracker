@@ -5,6 +5,8 @@
 // Prints every metric for both configs. Not a pass/fail gate — a measurement.
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
+
 #include <iostream>
 #include <memory>
 #include <set>
@@ -110,8 +112,8 @@ TEST(PmbmClutterFeedR2, TrueAssignmentIsOrthogonalToDenseClutterSpiral) {
 TEST(PhilosClutterMapAB, ClutterFeedVsBaseline) {
   auto probe = philosOnly();
   ASSERT_EQ(probe.size(), 1u);
-  if (probe[0]->generate(0).measurements.empty())
-    GTEST_SKIP() << "philos fixtures not reachable from cwd";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(probe[0]->generate(0).measurements.empty(),
+                                     "philos fixtures not reachable from cwd");
 
   const Config* land = nullptr;
   const auto all = defaultConfigs();

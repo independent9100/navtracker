@@ -28,6 +28,7 @@
 #include <Eigen/Core>
 #include <gtest/gtest.h>
 
+#include "tests/support/FixtureGuard.hpp"
 #include "core/benchmark/ExistenceLabel.hpp"
 #include "tests/replay/PhilosLabelReplay.hpp"
 
@@ -53,9 +54,8 @@ std::vector<ExistenceLabel> loadLabels() {
 // sanity bounds keep the instrument honest.
 TEST(PhilosSunsetLabels, LabelAwareDecomposition) {
   const ClipRun run = runSunset();
-  if (!run.valid) {
-    GTEST_SKIP() << "sunset_cruise fixtures not reachable";
-  }
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!run.valid,
+                                     "sunset_cruise fixtures not reachable");
   const auto labels = loadLabels();
   ASSERT_FALSE(labels.empty());
 
@@ -83,7 +83,8 @@ TEST(PhilosSunsetLabels, LabelAwareDecomposition) {
 // within its radius during its window. Must pass TODAY under land.
 TEST(PhilosSunsetLabels, KeepCanariesHaveTracks) {
   const ClipRun run = runSunset();
-  if (!run.valid) GTEST_SKIP() << "sunset_cruise fixtures not reachable";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!run.valid,
+                                     "sunset_cruise fixtures not reachable");
   const auto labels = loadLabels();
   ASSERT_FALSE(labels.empty());
 
@@ -117,7 +118,8 @@ TEST(PhilosSunsetLabels, KeepCanariesHaveTracks) {
 // 0002 rule-3 recovery.
 TEST(PhilosSunsetLabels, FerryStopGoKeepsStableIdAndReportsMotion) {
   const ClipRun run = runSunset();
-  if (!run.valid) GTEST_SKIP() << "sunset_cruise fixtures not reachable";
+  NAVTRACKER_REQUIRE_FIXTURE_OR_SKIP(!run.valid,
+                                     "sunset_cruise fixtures not reachable");
   const auto labels = loadLabels();
   const ExistenceLabel* a = nullptr;
   const ExistenceLabel* b = nullptr;
