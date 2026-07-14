@@ -209,6 +209,21 @@ void ImmEstimator::update(Track& track, const Measurement& z) const {
       }
       Eigen::VectorXd z_pred = Eigen::VectorXd::Zero(nz);
       for (int i = 0; i < Zsp.cols(); ++i) z_pred += sp.Wm(i) * Zsp.col(i);
+      // W4.2: circular mean for the bearing component (see UkfEstimator::update).
+      // The IMM inner-UKF branch is the DEPLOYED estimator path (canonical
+      // imm_cv_ct configs set use_ukf=true), so the ±π linear-mean collapse must
+      // be fixed here too — not just in the standalone UkfEstimator.
+      int bearing_idx = -1;
+      if (z.model == MeasurementModel::RangeBearing2D) bearing_idx = 1;
+      else if (z.model == MeasurementModel::Bearing2D) bearing_idx = 0;
+      if (bearing_idx >= 0) {
+        double sum_sin = 0.0, sum_cos = 0.0;
+        for (int i = 0; i < Zsp.cols(); ++i) {
+          sum_sin += sp.Wm(i) * std::sin(Zsp(bearing_idx, i));
+          sum_cos += sp.Wm(i) * std::cos(Zsp(bearing_idx, i));
+        }
+        z_pred(bearing_idx) = std::atan2(sum_sin, sum_cos);
+      }
       Eigen::MatrixXd Sxx = Eigen::MatrixXd::Zero(nz, nz);
       Eigen::MatrixXd Pxz = Eigen::MatrixXd::Zero(n, nz);
       for (int i = 0; i < Zsp.cols(); ++i) {

@@ -59,8 +59,11 @@ PointAndCov2D enuFromRangeBearing(double range_m, double bearing_rad,
  *     centred on z.sensor_position_enu;
  *   - all other models already carry an ENU point in value[0..1] with an ENU
  *     position covariance in the top-left 2×2 → passed through unchanged.
- * Assumes z.value has ≥2 entries and z.covariance is ≥2×2 (guaranteed by the
- * caller's PSD/plausibility checks).
+ * Assumes z.value has ≥2 entries and z.covariance is ≥2×2. This is guaranteed
+ * at every birth site by `canInitiateTrack(z.model)` — the ONLY <2-dim model,
+ * Bearing2D, is not birth-eligible and is rejected there (the PSD check alone
+ * does NOT enforce the dimension: a positive 1×1 covariance passes it). Callers
+ * must keep the `canInitiateTrack` gate; do not call this for a Bearing2D `z`.
  */
 PointAndCov2D initiationPosCov(const Measurement& z);
 
