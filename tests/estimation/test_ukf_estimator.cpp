@@ -92,6 +92,80 @@ TEST(UkfEstimator, InitiateSeedsStateFromPositionMeasurement) {
   EXPECT_EQ(*t.attributes.mmsi, 211000000u);
 }
 
+// W4.1 anti-proliferation teeth (see EkfEstimator counterpart): a RangeBearing2D
+// birth must convert polar→ENU (about the sensor) and the next scan must gate.
+TEST(UkfEstimator, InitiateFromRangeBearingConvertsToEnuAndNextScanGates) {
+  auto model = std::make_shared<ConstantVelocity2D>(1.0);
+  const UkfEstimator ukf(model);
+  const Eigen::Vector2d sensor(500.0, -300.0);
+  const double range = 800.0, bearing = 0.6;
+  const Eigen::Vector2d truth(sensor.x() + range * std::cos(bearing),
+                              sensor.y() + range * std::sin(bearing));
+  Measurement z;
+  z.time = Timestamp::fromSeconds(0.0);
+  z.model = MeasurementModel::RangeBearing2D;
+  z.source_id = "radar";
+  z.value = Eigen::Vector2d(range, bearing);
+  z.sensor_position_enu = sensor;
+  Eigen::Matrix2d polar = Eigen::Matrix2d::Zero();
+  polar(0, 0) = 25.0;
+  polar(1, 1) = 0.02 * 0.02;
+  z.covariance = polar;
+
+  const Track t = ukf.initiate(z);
+  EXPECT_NEAR(t.state(0), truth.x(), 1.0);
+  EXPECT_NEAR(t.state(1), truth.y(), 1.0);
+  Measurement z2 = z;
+  z2.time = Timestamp::fromSeconds(1.0);
+  EXPECT_TRUE(ukf.gate(t, z2, 30.0));
+}
+
+// W4.2: a target ~due WEST of the sensor has a well-determined bearing (≈π),
+// but its sigma-point bearings straddle the ±π branch cut. With the buggy linear
+// mean the predicted bearing collapses to ≈0 and the innovation covariance
+// FALSELY inflates → the (consistent) measurement is treated as uninformative →
+// the cross-range (north) variance does NOT shrink. The circular mean fixes the
+// predicted bearing to ≈π so the measurement constrains cross-range as it should.
+TEST(UkfEstimator, DueWestBearingCircularMeanKeepsUpdateConsistent) {
+  auto model = std::make_shared<ConstantVelocity2D>(1.0);
+  // Wide sigma spread (alpha=1) so the sigma points genuinely straddle ±π for a
+  // due-west target; the production-default tiny alpha keeps points hugging the
+  // mean, where the bug is dormant. beta=2, kappa=0.
+  const UkfEstimator ukf(model, /*init_speed_std=*/8.0, /*init_omega_std=*/0.1,
+                         /*alpha=*/1.0, /*beta=*/2.0, /*kappa=*/0.0);
+  // Track AT the true target, due west of the sensor, with a wide cross-range
+  // (north) prior so the sigma-point bearings straddle the ±π branch cut.
+  Track t;
+  t.last_update = Timestamp::fromSeconds(0.0);
+  t.state = Eigen::Vector4d(-1000.0, 0.0, 0.0, 0.0);
+  t.covariance = Eigen::Matrix4d::Zero();
+  t.covariance(0, 0) = 100.0;
+  t.covariance(1, 1) = 640000.0;  // σ=800 m → strong straddle across ±π
+  t.covariance(2, 2) = 25.0;
+  t.covariance(3, 3) = 25.0;
+
+  // A CONSISTENT measurement of the true target: range 1000, bearing = π.
+  Measurement z;
+  z.time = Timestamp::fromSeconds(0.0);
+  z.model = MeasurementModel::RangeBearing2D;
+  z.value = Eigen::Vector2d(1000.0, 3.14159265358979323846);
+  z.covariance = Eigen::Matrix2d::Zero();
+  z.covariance(0, 0) = 25.0;
+  z.covariance(1, 1) = 0.02 * 0.02;
+  ukf.update(t, z);
+
+  // With the circular mean the predicted bearing is ≈π, so a consistent
+  // measurement produces a ≈0 innovation: the state stays put and the
+  // cross-range variance collapses. The linear-mean bug drags the predicted
+  // bearing off π, injecting a spurious cross-range innovation that shoves the
+  // north estimate far from the (correct) 0 and corrupts the covariance.
+  EXPECT_NEAR(t.state(1), 0.0, 30.0)
+      << "consistent westward measurement must not shove the cross-range "
+         "estimate; the ±π linear-mean bug injects a spurious innovation";
+  EXPECT_NEAR(t.state(0), -1000.0, 30.0);
+  EXPECT_LT(t.covariance(1, 1), 0.05 * 640000.0);  // cross-range gets constrained
+}
+
 TEST(UkfEstimator, AgreesWithEkfOnLinearPositionUpdate) {
   auto model = std::make_shared<ConstantVelocity2D>(1.0);
   const navtracker::EkfEstimator ekf(model, 5.0);

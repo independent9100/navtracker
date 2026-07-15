@@ -11,6 +11,7 @@
 #include "core/estimation/CoordinatedTurn.hpp"
 #include "core/estimation/GaussianScore.hpp"
 #include "core/estimation/MeasurementModels.hpp"
+#include "core/projection/Projection.hpp"
 #include "core/estimation/SigmaPoints.hpp"
 
 namespace navtracker {
@@ -208,6 +209,21 @@ void ImmEstimator::update(Track& track, const Measurement& z) const {
       }
       Eigen::VectorXd z_pred = Eigen::VectorXd::Zero(nz);
       for (int i = 0; i < Zsp.cols(); ++i) z_pred += sp.Wm(i) * Zsp.col(i);
+      // W4.2: circular mean for the bearing component (see UkfEstimator::update).
+      // The IMM inner-UKF branch is the DEPLOYED estimator path (canonical
+      // imm_cv_ct configs set use_ukf=true), so the ±π linear-mean collapse must
+      // be fixed here too — not just in the standalone UkfEstimator.
+      int bearing_idx = -1;
+      if (z.model == MeasurementModel::RangeBearing2D) bearing_idx = 1;
+      else if (z.model == MeasurementModel::Bearing2D) bearing_idx = 0;
+      if (bearing_idx >= 0) {
+        double sum_sin = 0.0, sum_cos = 0.0;
+        for (int i = 0; i < Zsp.cols(); ++i) {
+          sum_sin += sp.Wm(i) * std::sin(Zsp(bearing_idx, i));
+          sum_cos += sp.Wm(i) * std::cos(Zsp(bearing_idx, i));
+        }
+        z_pred(bearing_idx) = std::atan2(sum_sin, sum_cos);
+      }
       Eigen::MatrixXd Sxx = Eigen::MatrixXd::Zero(nz, nz);
       Eigen::MatrixXd Pxz = Eigen::MatrixXd::Zero(n, nz);
       for (int i = 0; i < Zsp.cols(); ++i) {
@@ -445,9 +461,12 @@ Track ImmEstimator::initiate(const Measurement& z) const {
   t.last_update = z.time;
   t.status = TrackStatus::Tentative;
 
+  // W4.1: convert RangeBearing2D polar → ENU at birth (shared helper), seeded
+  // into every mode below; other models already carry an ENU point.
+  const auto birth = initiationPosCov(z);
   Eigen::VectorXd x = Eigen::VectorXd::Zero(5);
-  x(0) = z.value(0);
-  x(1) = z.value(1);
+  x(0) = birth.pos_enu(0);
+  x(1) = birth.pos_enu(1);
   // #20: one-shot velocity prior at birth (ARPA TTM speed/course), used once.
   if (z.hints.birth_velocity_enu.has_value()) {
     x(2) = z.hints.birth_velocity_enu->x();
@@ -455,10 +474,10 @@ Track ImmEstimator::initiate(const Measurement& z) const {
   }
 
   Eigen::MatrixXd P = Eigen::MatrixXd::Zero(5, 5);
-  P(0, 0) = z.covariance(0, 0);
-  P(0, 1) = z.covariance(0, 1);
-  P(1, 0) = z.covariance(1, 0);
-  P(1, 1) = z.covariance(1, 1);
+  P(0, 0) = birth.cov(0, 0);
+  P(0, 1) = birth.cov(0, 1);
+  P(1, 0) = birth.cov(1, 0);
+  P(1, 1) = birth.cov(1, 1);
   const double vv = init_speed_std_ * init_speed_std_;
   P(2, 2) = vv;
   P(3, 3) = vv;

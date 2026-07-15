@@ -7,6 +7,7 @@
 #include <Eigen/Dense>
 
 #include "core/estimation/MeasurementModels.hpp"
+#include "core/projection/Projection.hpp"
 #include "core/estimation/Resampling.hpp"
 
 namespace navtracker {
@@ -124,9 +125,12 @@ Track ParticleFilterEstimator::initiate(const Measurement& z) const {
   // so a PF can be dropped into any IMM-eligible model slot without a
   // dimension-mismatch crash.
   const int n = motion_->stateDim();
+  // W4.1: convert RangeBearing2D polar → ENU at birth (shared helper) before
+  // seeding the mean and sampling the ensemble; other models carry an ENU point.
+  const auto birth = initiationPosCov(z);
   Eigen::VectorXd x = Eigen::VectorXd::Zero(n);
-  x(0) = z.value(0);
-  x(1) = z.value(1);
+  x(0) = birth.pos_enu(0);
+  x(1) = birth.pos_enu(1);
   // #20: one-shot velocity prior at birth (ARPA TTM speed/course), used once.
   if (z.hints.birth_velocity_enu.has_value() && n >= 4) {
     x(2) = z.hints.birth_velocity_enu->x();
@@ -134,10 +138,10 @@ Track ParticleFilterEstimator::initiate(const Measurement& z) const {
   }
 
   Eigen::MatrixXd P = Eigen::MatrixXd::Zero(n, n);
-  P(0, 0) = z.covariance(0, 0);
-  P(0, 1) = z.covariance(0, 1);
-  P(1, 0) = z.covariance(1, 0);
-  P(1, 1) = z.covariance(1, 1);
+  P(0, 0) = birth.cov(0, 0);
+  P(0, 1) = birth.cov(0, 1);
+  P(1, 0) = birth.cov(1, 0);
+  P(1, 1) = birth.cov(1, 1);
   const double vv = init_speed_std_ * init_speed_std_;
   if (n >= 4) {
     P(2, 2) = vv;

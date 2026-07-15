@@ -94,6 +94,51 @@ TEST(CpaUncertainty, PerpendicularPassSigmaScalesLinearlyWithTargetSigmaPos) {
   }
 }
 
+// W4.3 (non-cancelling direction): a CONVERGING pair with NONZERO VELOCITY
+// covariance. The tcpa-Jacobian chain term lives only in the velocity columns,
+// so every prior test (all zero velocity σ) was blind to its sign. Here we
+// verify the reported σ_tcpa against a finite-difference Jacobian of the true
+// t_cpa (computed through the public interface with zero cov). The pre-fix
+// code added the chain term instead of subtracting it → σ_tcpa is ~3× off in
+// the velocity columns and this fails; post-fix it matches.
+TEST(CpaUncertainty, SigmaTcpaMatchesFiniteDifferenceWithVelocityUncertainty) {
+  const Timestamp t0 = Timestamp::fromSeconds(0.0);
+  const double thr = 50.0;
+  // Converging geometry: dp=(200,30), dv=(-20,0) → t_cpa = 10 s, cpa = 30 m.
+  const Eigen::Vector4d a0(0.0, 0.0, 10.0, 0.0);
+  const Eigen::Vector4d b0(200.0, 30.0, -10.0, 0.0);
+
+  auto tcpa_of = [&](Eigen::Vector4d sa, Eigen::Vector4d sb) {
+    const Track ta = makeTrack(sa(0), sa(1), sa(2), sa(3));
+    const Track tb = makeTrack(sb(0), sb(1), sb(2), sb(3));
+    return computeCpaWithUncertainty(ta, tb, t0, thr).tcpa_seconds;
+  };
+
+  // Central finite-difference ∂t_cpa/∂x over the 8-state [a.pos,a.vel,b.pos,b.vel].
+  const double eps[8] = {1e-2, 1e-2, 1e-3, 1e-3, 1e-2, 1e-2, 1e-3, 1e-3};
+  double J[8];
+  for (int i = 0; i < 8; ++i) {
+    Eigen::Vector4d ap = a0, am = a0, bp = b0, bm = b0;
+    if (i < 4) { ap(i) += eps[i]; am(i) -= eps[i]; }
+    else { bp(i - 4) += eps[i]; bm(i - 4) -= eps[i]; }
+    J[i] = (tcpa_of(ap, bp) - tcpa_of(am, bm)) / (2.0 * eps[i]);
+  }
+  // Σ: own-ship σ_vel=0.5 (var 0.25), target σ_vel=1.0 (var 1.0); positions exact.
+  const double sig[8] = {0, 0, 0.25, 0.25, 0, 0, 1.0, 1.0};
+  double var_num = 0.0;
+  for (int i = 0; i < 8; ++i) var_num += J[i] * J[i] * sig[i];
+  const double sigma_tcpa_num = std::sqrt(var_num);
+
+  const Track a = makeTrack(0.0, 0.0, 10.0, 0.0, /*sigma_pos=*/0.0, /*sigma_vel=*/0.5);
+  const Track b = makeTrack(200.0, 30.0, -10.0, 0.0, 0.0, 1.0);
+  const auto r = computeCpaWithUncertainty(a, b, t0, thr);
+  EXPECT_NEAR(r.tcpa_seconds, 10.0, 1e-6);
+  ASSERT_GT(sigma_tcpa_num, 0.0);  // velocity uncertainty must actually matter
+  EXPECT_NEAR(r.sigma_tcpa_seconds, sigma_tcpa_num, 0.02 * sigma_tcpa_num + 1e-3)
+      << "reported σ_tcpa must match the finite-difference Jacobian; the +chain "
+         "sign bug makes it ~3× off in the velocity columns";
+}
+
 TEST(CpaUncertainty, ParallelVelocitiesSigmaTcpaInfinite) {
   // Both moving +x at 10 m/s, 20 m apart on y. dv = 0 → parallel branch.
   // tcpa = 0, cpa = current distance = 20 m, σ_tcpa = +infinity.

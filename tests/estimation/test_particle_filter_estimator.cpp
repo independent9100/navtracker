@@ -82,6 +82,34 @@ TEST(ParticleFilterEstimator, InitiateSeedsEnsembleAndCarrier) {
   EXPECT_GT(t.covariance(3, 3), 1.0);
 }
 
+// W4.1 anti-proliferation teeth (see EkfEstimator counterpart): a RangeBearing2D
+// birth must convert polar→ENU (about the sensor) and the next scan must gate.
+TEST(ParticleFilterEstimator, InitiateFromRangeBearingConvertsToEnuAndNextScanGates) {
+  auto motion = std::make_shared<ConstantVelocity2D>(1.0);
+  ParticleFilterEstimator pf(motion, 2000, 5.0, 0.5, 7);
+  const Eigen::Vector2d sensor(500.0, -300.0);
+  const double range = 800.0, bearing = 0.6;
+  const Eigen::Vector2d truth(sensor.x() + range * std::cos(bearing),
+                              sensor.y() + range * std::sin(bearing));
+  Measurement z;
+  z.time = Timestamp::fromSeconds(0.0);
+  z.model = MeasurementModel::RangeBearing2D;
+  z.source_id = "radar";
+  z.value = Eigen::Vector2d(range, bearing);
+  z.sensor_position_enu = sensor;
+  Eigen::Matrix2d polar = Eigen::Matrix2d::Zero();
+  polar(0, 0) = 25.0;
+  polar(1, 1) = 0.02 * 0.02;
+  z.covariance = polar;
+
+  const navtracker::Track t = pf.initiate(z);
+  EXPECT_NEAR(t.state(0), truth.x(), 2.0);
+  EXPECT_NEAR(t.state(1), truth.y(), 2.0);
+  Measurement z2 = z;
+  z2.time = Timestamp::fromSeconds(1.0);
+  EXPECT_TRUE(pf.gate(t, z2, 30.0));
+}
+
 TEST(ParticleFilterEstimator, PredictOnEmptyEnsembleIsNoOp) {
   auto motion = std::make_shared<ConstantVelocity2D>(0.1);
   ParticleFilterEstimator pf(motion, 500, 5.0, 0.5, 0);

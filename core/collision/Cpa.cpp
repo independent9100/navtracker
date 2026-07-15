@@ -128,13 +128,20 @@ CpaPrediction computeCpaWithUncertainty(const Track& a, const Track& b,
   const Eigen::Vector2d p_cpa = dp + dv * t_cpa;
   const double cpa = p_cpa.norm();
 
-  // ∂t_cpa/∂x = (1x8)
-  // numerator: -[dvᵀ · ∂dp/∂x + dpᵀ · ∂dv/∂x]
+  // ∂t_cpa/∂x = (1x8). With t_cpa = −N/D, N = dp·dv, D = dv·dv:
+  //   ∂t_cpa/∂x = −N'/D + N·D'/D²
+  // and substituting N = −t_cpa·D gives  ∂t_cpa/∂x = (num − chain)/D, where
+  //   num  = −N' = −[dvᵀ·∂dp/∂x + dpᵀ·∂dv/∂x]
+  //   chain = t_cpa·D' = 2·t_cpa·(dvᵀ·∂dv/∂x).
+  // W4.3: the chain term must be SUBTRACTED. The prior code added it, which made
+  // σ_tcpa ~3× wrong for converging pairs (and corrupted σ_cpa via J_p_cpa).
+  // The error was invisible to the suite because every existing test used zero
+  // velocity covariance, and the chain term lives ONLY in the velocity columns.
   Eigen::Matrix<double, 1, 8> num = -(dv.transpose() * dDp_dx
                                        + dp.transpose() * dDv_dx);
   Eigen::Matrix<double, 1, 8> chain = 2.0 * t_cpa
                                         * (dv.transpose() * dDv_dx);
-  Eigen::Matrix<double, 1, 8> J_tcpa = (num + chain) / dv2;
+  Eigen::Matrix<double, 1, 8> J_tcpa = (num - chain) / dv2;
 
   // ∂p_cpa/∂x = ∂dp/∂x + t_cpa · ∂dv/∂x + dv · J_tcpa   (2x8)
   Eigen::Matrix<double, 2, 8> J_p_cpa = dDp_dx + t_cpa * dDv_dx

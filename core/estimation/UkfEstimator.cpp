@@ -6,6 +6,7 @@
 
 #include "core/estimation/MeasurementModels.hpp"
 #include "core/estimation/SigmaPoints.hpp"
+#include "core/projection/Projection.hpp"
 
 namespace navtracker {
 
@@ -79,6 +80,25 @@ void UkfEstimator::update(Track& track, const Measurement& z) const {
   Eigen::VectorXd z_pred = Eigen::VectorXd::Zero(nz);
   for (int i = 0; i < Zsp.cols(); ++i) z_pred += sp.Wm(i) * Zsp.col(i);
 
+  // W4.2: the BEARING component must use a CIRCULAR mean, not the linear mean
+  // above. Sigma-point bearings straddling the ±π branch cut (target ~due west
+  // of the sensor: some points at ~+π, some at ~−π) average linearly to ~0,
+  // corrupting the innovation and diverging the update. Replace it with the
+  // weighted vector-sum mean atan2(Σwᵢ·sin βᵢ, Σwᵢ·cos βᵢ). Bearing is index 1
+  // for RangeBearing2D, index 0 for Bearing2D; other components keep the
+  // linear mean (range is linear-safe).
+  int bearing_idx = -1;
+  if (z.model == MeasurementModel::RangeBearing2D) bearing_idx = 1;
+  else if (z.model == MeasurementModel::Bearing2D) bearing_idx = 0;
+  if (bearing_idx >= 0) {
+    double sum_sin = 0.0, sum_cos = 0.0;
+    for (int i = 0; i < Zsp.cols(); ++i) {
+      sum_sin += sp.Wm(i) * std::sin(Zsp(bearing_idx, i));
+      sum_cos += sp.Wm(i) * std::cos(Zsp(bearing_idx, i));
+    }
+    z_pred(bearing_idx) = std::atan2(sum_sin, sum_cos);
+  }
+
   Eigen::MatrixXd S = Eigen::MatrixXd::Zero(nz, nz);
   Eigen::MatrixXd Pxz = Eigen::MatrixXd::Zero(track.state.size(), nz);
   for (int i = 0; i < Zsp.cols(); ++i) {
@@ -119,9 +139,12 @@ Track UkfEstimator::initiate(const Measurement& z) const {
   t.last_update = z.time;
   t.status = TrackStatus::Tentative;
 
+  // W4.1: convert RangeBearing2D polar → ENU at birth (shared helper); other
+  // models already carry an ENU point. See EkfEstimator::initiate for rationale.
+  const auto birth = initiationPosCov(z);
   Eigen::VectorXd x = Eigen::VectorXd::Zero(n);
-  x(0) = z.value(0);
-  x(1) = z.value(1);
+  x(0) = birth.pos_enu(0);
+  x(1) = birth.pos_enu(1);
   // #20: one-shot velocity prior at birth (ARPA TTM speed/course), used once.
   if (z.hints.birth_velocity_enu.has_value() && n >= 4) {
     x(2) = z.hints.birth_velocity_enu->x();
@@ -130,10 +153,10 @@ Track UkfEstimator::initiate(const Measurement& z) const {
   t.state = x;
 
   Eigen::MatrixXd p = Eigen::MatrixXd::Zero(n, n);
-  p(0, 0) = z.covariance(0, 0);
-  p(0, 1) = z.covariance(0, 1);
-  p(1, 0) = z.covariance(1, 0);
-  p(1, 1) = z.covariance(1, 1);
+  p(0, 0) = birth.cov(0, 0);
+  p(0, 1) = birth.cov(0, 1);
+  p(1, 0) = birth.cov(1, 0);
+  p(1, 1) = birth.cov(1, 1);
   const double vv = init_speed_std_ * init_speed_std_;
   if (n >= 4) {
     p(2, 2) = vv;

@@ -88,14 +88,22 @@ Define the partials of `dp` and `dv` w.r.t. `x`:
 
 `dt_a = t_ref − last_update_a`, `dt_b = t_ref − last_update_b`.
 
-**`∂t_cpa/∂x` (1×8).** From `t_cpa = −(dp · dv) / (dv · dv)`:
+**`∂t_cpa/∂x` (1×8).** From `t_cpa = −(dp · dv) / (dv · dv) = −N/D`. The quotient
+rule gives `∂t_cpa/∂x = −N'/D + N·D'/D²` with `N' = (∂dp/∂x)ᵀ·dv + (∂dv/∂x)ᵀ·dp`
+and `D' = 2·(∂dv/∂x)ᵀ·dv`. Substituting `N = −t_cpa·D` into the second term
+(`N·D'/D² = −t_cpa·D'/D`) yields:
 
 ```
 ∂t_cpa/∂x = −[(∂dp/∂x)ᵀ · dv + (∂dv/∂x)ᵀ · dp] / |dv|²
-            + 2 t_cpa · [(∂dv/∂x)ᵀ · dv] / |dv|²
+            − 2 t_cpa · [(∂dv/∂x)ᵀ · dv] / |dv|²
 ```
 
-This is a row vector built by stacking the eight partial-derivative contributions per component.
+This is a row vector built by stacking the eight partial-derivative contributions
+per component. (W4.3 correction: the chain term is **subtracted**, not added —
+the earlier `+ 2 t_cpa · […]` was a sign error that inflated `σ_tcpa` ~3× for
+converging pairs and corrupted the head-on `σ_cpa`/probability fallback. The
+error only surfaces where the target/own-ship velocity covariance is non-zero,
+since the chain term lives entirely in the velocity columns.)
 
 **`∂cpa/∂x` (1×8).** From `cpa = ||p_cpa|| = √(p_cpa · p_cpa)`:
 

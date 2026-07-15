@@ -229,12 +229,24 @@ four kinds (`core/types/Ids.hpp`):
 |---|---|---|---|
 | `Position2D` | `[east, north]` (m, ENU) | 2×2 (m²) | yes |
 | `PositionVelocity2D` | `[px, py, vx, vy]` | 4×4 | yes |
-| `RangeBearing2D` | `[range_m, bearing_rad]` (relative to `sensor_position_enu`) | 2×2 diag | yes |
+| `RangeBearing2D` | `[range_m, bearing_rad]` from `sensor_position_enu`; bearing = `atan2(north, east)` (zero = due EAST, CCW, +π/2 = North) | 2×2 (m², rad²) | yes |
 | `Bearing2D` | `[bearing_rad]` (absolute ENU azimuth) | 1×1 | **no** |
 
 Whether a kind can start a track is decided by the free function
 `canInitiateTrack(model)` (`core/estimation/MeasurementModels.hpp`) — it is
 *not* a field on `Measurement`. Only `Bearing2D` returns false.
+
+**`RangeBearing2D` genuinely births a track (the conversion is inside the
+estimator).** When a `RangeBearing2D` measurement starts a track, the estimator
+converts `(range, bearing)` about `sensor_position_enu` into an absolute ENU
+position and maps its 2×2 polar covariance through the polar→Cartesian Jacobian
+(shared helper `initiationPosCov`, W4.1) — you feed range/bearing, the born track
+is at the correct ENU point with an ENU covariance, and the next scan gates to
+it. The bearing convention is the **math** one above (`atan2(north, east)`),
+which is the same convention the range/bearing *update* uses — do not pass a
+marine (north=0/clockwise) bearing here. (The NMEA/replay adapters that take
+marine bearings project to `Position2D` before emitting, so they never hit this
+path.)
 
 **`R` is per measurement.** The covariance travels with each `Measurement`, so a
 sensor whose accuracy grows with range just sets a larger `R` on the far reading.

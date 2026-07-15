@@ -41,4 +41,38 @@ PointAndCov2D projectRangeBearingToEnu(double range_m,
   return out;
 }
 
+PointAndCov2D enuFromRangeBearing(double range_m, double bearing_rad,
+                                  const Eigen::Vector2d& sensor_pos_enu,
+                                  const Eigen::Matrix2d& polar_cov) {
+  // Math convention (matches MeasurementModels.cpp): β = atan2(north, east),
+  // zero = East, CCW. So east = r·cos β, north = r·sin β.
+  const double cb = std::cos(bearing_rad);
+  const double sb = std::sin(bearing_rad);
+
+  PointAndCov2D out;
+  out.pos_enu.x() = sensor_pos_enu.x() + range_m * cb;
+  out.pos_enu.y() = sensor_pos_enu.y() + range_m * sb;
+
+  // J = ∂(east, north)/∂(range, bearing).
+  Eigen::Matrix2d J;
+  J << cb, -range_m * sb,
+       sb,  range_m * cb;
+  out.cov = J * polar_cov * J.transpose();
+  return out;
+}
+
+PointAndCov2D initiationPosCov(const Measurement& z) {
+  const Eigen::Matrix2d cov2 = z.covariance.topLeftCorner<2, 2>();
+  if (z.model == MeasurementModel::RangeBearing2D) {
+    return enuFromRangeBearing(z.value(0), z.value(1), z.sensor_position_enu,
+                               cov2);
+  }
+  // Position2D / PositionVelocity2D: value[0..1] is already the ENU point and
+  // the top-left 2×2 is its ENU position covariance.
+  PointAndCov2D out;
+  out.pos_enu = Eigen::Vector2d(z.value(0), z.value(1));
+  out.cov = cov2;
+  return out;
+}
+
 }  // namespace navtracker

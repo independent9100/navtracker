@@ -59,6 +59,94 @@ TEST(ImmEstimator, InitiateSeedsModesUniformly) {
   EXPECT_NEAR(t.covariance(4, 4), 0.01, 1e-9);
 }
 
+// W4.1 anti-proliferation teeth (see EkfEstimator counterpart): a RangeBearing2D
+// birth converts polar→ENU (about the sensor) into every mode; next scan gates.
+TEST(ImmEstimator, InitiateFromRangeBearingConvertsToEnuAndNextScanGates) {
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {
+      std::make_shared<ConstantVelocity5State>(0.1, 0.01),
+      std::make_shared<CoordinatedTurn>(0.1, 0.05)};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05, 0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 0.5, 0.5;
+  ImmEstimator imm(motions, pi, mu0, 10.0, 0.1);
+
+  const Eigen::Vector2d sensor(500.0, -300.0);
+  const double range = 800.0, bearing = 0.6;
+  const Eigen::Vector2d truth(sensor.x() + range * std::cos(bearing),
+                              sensor.y() + range * std::sin(bearing));
+  Measurement z;
+  z.time = Timestamp::fromSeconds(0.0);
+  z.model = MeasurementModel::RangeBearing2D;
+  z.source_id = "radar";
+  z.value = Eigen::Vector2d(range, bearing);
+  z.sensor_position_enu = sensor;
+  Eigen::Matrix2d polar = Eigen::Matrix2d::Zero();
+  polar(0, 0) = 25.0;
+  polar(1, 1) = 0.02 * 0.02;
+  z.covariance = polar;
+
+  const navtracker::Track t = imm.initiate(z);
+  // Every mode seeded at the true ENU position (moment-matched projection too).
+  EXPECT_NEAR(t.state(0), truth.x(), 1.0);
+  EXPECT_NEAR(t.state(1), truth.y(), 1.0);
+  EXPECT_NEAR(t.imm_means(0, 0), truth.x(), 1.0);
+  EXPECT_NEAR(t.imm_means(0, 1), truth.x(), 1.0);
+  Measurement z2 = z;
+  z2.time = Timestamp::fromSeconds(1.0);
+  EXPECT_TRUE(imm.gate(t, z2, 30.0));
+}
+
+// W4.2 on the DEPLOYED path: the canonical IMM configs run use_ukf=true, so the
+// circular-mean fix must hold in ImmEstimator::update's inner-UKF branch, not
+// just standalone UkfEstimator. Same due-west straddle scenario as the UKF test.
+TEST(ImmEstimator, DueWestBearingCircularMeanInUkfInnerFilter) {
+  std::vector<std::shared_ptr<navtracker::IMotionModel>> motions = {
+      std::make_shared<ConstantVelocity5State>(0.1, 0.01),
+      std::make_shared<CoordinatedTurn>(0.1, 0.05)};
+  Eigen::MatrixXd pi(2, 2);
+  pi << 0.95, 0.05, 0.10, 0.90;
+  Eigen::VectorXd mu0(2);
+  mu0 << 0.5, 0.5;
+  // use_ukf=true, wide ukf_alpha=1 so sigma points genuinely straddle ±π.
+  ImmEstimator imm(motions, pi, mu0, 10.0, 0.1, nullptr, false,
+                   /*use_ukf=*/true, /*ukf_alpha=*/1.0, /*ukf_beta=*/2.0,
+                   /*ukf_kappa=*/0.0);
+
+  // Build an IMM track at the true due-west target with a wide cross-range prior.
+  navtracker::Track t;
+  t.last_update = Timestamp::fromSeconds(0.0);
+  const int K = 2;
+  t.imm_means = Eigen::MatrixXd::Zero(5, K);
+  t.imm_covariances.clear();
+  for (int j = 0; j < K; ++j) {
+    t.imm_means.col(j) << -1000.0, 0.0, 0.0, 0.0, 0.0;
+    Eigen::MatrixXd P = Eigen::MatrixXd::Zero(5, 5);
+    P(0, 0) = 100.0;
+    P(1, 1) = 640000.0;  // σ=800 m cross-range → strong ±π straddle
+    P(2, 2) = 25.0; P(3, 3) = 25.0; P(4, 4) = 0.01;
+    t.imm_covariances.push_back(P);
+  }
+  t.imm_mode_probabilities = mu0;
+  t.state = t.imm_means.col(0);
+  t.covariance = t.imm_covariances[0];
+
+  Measurement z;
+  z.time = Timestamp::fromSeconds(0.0);
+  z.model = MeasurementModel::RangeBearing2D;
+  z.value = Eigen::Vector2d(1000.0, 3.14159265358979323846);  // due west
+  z.covariance = Eigen::Matrix2d::Zero();
+  z.covariance(0, 0) = 25.0;
+  z.covariance(1, 1) = 0.02 * 0.02;
+  imm.update(t, z);
+
+  // Consistent westward measurement ⇒ ≈0 innovation with the circular mean; the
+  // linear-mean bug injects a spurious cross-range innovation into every mode.
+  EXPECT_NEAR(t.state(1), 0.0, 30.0)
+      << "IMM inner-UKF must use the circular bearing mean on the deployed path";
+  EXPECT_NEAR(t.state(0), -1000.0, 30.0);
+}
+
 TEST(ImmEstimator, PredictAdvancesModesByTheirOwnDynamics) {
   auto cv  = std::make_shared<ConstantVelocity5State>(0.0, 0.0);
   auto ct  = std::make_shared<CoordinatedTurn>(0.0, 0.0);

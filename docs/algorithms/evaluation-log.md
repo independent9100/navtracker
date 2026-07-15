@@ -9397,3 +9397,43 @@ project. Full suite **1180/1180, 0 skips, 0 disabled**.
   suite **1195/1195, 0 skips**. env-2 EO/IR seed re-derived (7.0/4.9° are mean-
   ABS noise, not signed bias; true signed ≈ EO +1.7° / IR −1.9°, noise-dominated)
   → adoption PARKED as the Cl-4 reconciliation addendum (frozen rows safe).
+## 2026-07-14 — Pre-release fix wave, WAVE 4 (branch `fixwave-wave4`, off post-merge `34367f6`)
+
+Estimator initiation + UKF bearing + CPA tcpa, plus a Stage-0 re-measure of the
+frozen Cl-4 rows post-W2.4. Full write-up: `docs/baselines/2026-07-13_fixwave_wave4.md`.
+Suite run under `NAVTRACKER_REQUIRE_FIXTURES=1` (wave-2 strict guard = ceremony
+standard). `fixwave-wave1` untouched.
+
+- **Stage 0 [delivered FIRST + separately, `3f19f0d`].** Re-ran the adoption-freeze
+  reproduce commands on post-merge master. **env-2 revival HELD 8/8** (GOSPA
+  13.38→13.75), env-1 16.57→15.49 (improved), harbor 9.53 (flat) — the W2.4
+  own-ship-coverage effect on the frozen ADR-0003 rows (arbiter's reconciliation
+  input). Neither stop-trigger fired. philos byte-identical under W2.4.
+- **W4.1 [HIGH, FIXED].** All 4 estimators' initiate() planted RangeBearing2D
+  (range,bearing) as ENU (east,north) with mixed m²/rad² cov → phantom
+  proliferation. CONVERT (arbiter decision): one shared `initiationPosCov` helper
+  (polar→ENU + Jacobian, math bearing convention matching the update path), four
+  call sites. Per-estimator anti-proliferation teeth. Bench-inert (no bench path
+  births RangeBearing2D). Paired AutoferryJsonReplay TODO resolved; guide updated.
+- **W4.2 [MED, FIXED — both UKF paths].** Sigma-point bearings averaged linearly
+  collapse across ±π (target due-west). Circular mean (atan2 of weighted sin/cos)
+  in `UkfEstimator::update` AND — **caught by adversarial review** — the identical
+  bug in `ImmEstimator::update`'s inner-UKF branch, which is the DEPLOYED path
+  (canonical imm_cv_ct configs run use_ukf=true). Teeth for both (wide-alpha
+  due-west straddle → cross-range shoved ~120-140 m when neutered). The IMM fix
+  shifts 108 autoferry per-target rows but **leaves every Cl-4 HEADLINE row
+  unchanged** (env-1/env-2 GOSPA, 8/8, harbor bit-identical to Stage-0) — a
+  per-target-accuracy correction on near-due-west bearings, not a gauntlet move.
+- **W4.3 [HIGH, FIXED].** CPA tcpa-Jacobian chain term was ADDED; the quotient
+  rule gives (num − chain)/|dv|². σ_tcpa was ~3× wrong for converging pairs;
+  spec §4.3 carried the same error (fixed same commit). Invisible to the suite
+  because the chain term lives only in the velocity columns and every prior test
+  used zero velocity covariance. New FD-verified test in the non-cancelling
+  direction. Not a bench tracking metric.
+- **Verification.** Strict-mode ctest **1191/1191, 0 skips** (re-run after the
+  IMM fix). Teeth proven for all (4 initiation + 2 UKF-mean paths + CPA). A/B:
+  no Cl-4 headline move (above). Adversarial review (7 agents) caught the IMM
+  miss (fixed) + a doc nit; one unreachable guard-asymmetry documented.
+- **Handoff.** All merge-ready; **no Cl-4 finding beyond Stage 0's W2.4 delta**
+  (wave-4 leaves the gauntlet headline rows unchanged). Commits on the branch;
+  not merged/pushed. Findings-file marks deferred to the arbiter.
