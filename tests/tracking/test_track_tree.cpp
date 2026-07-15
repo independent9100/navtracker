@@ -314,6 +314,62 @@ TEST(TrackTree, MergeBranchesSpotsProtectedLeaf) {
   EXPECT_TRUE(tt.nodes()[b].is_leaf);
 }
 
+// W5.5: deferred-commitment leaf protection must survive branch().
+//
+// Real pipeline order (MhtTracker::processBatch): the PREVIOUS scan's global
+// solve sets is_protected on the top-K alternative leaves; the NEXT scan calls
+// branch() FIRST (MhtTracker.cpp:283), which demotes every leaf to internal and
+// creates fresh children. If branch() does not propagate is_protected to those
+// children, the very next pruneKLocal/mergeBranches/pruneNScan sees no protected
+// leaf and drops the alternative — the protection is always one branch() behind
+// and therefore inert. The three protection tests above set is_protected on
+// pre-existing leaves and never branch() first, so they cannot catch this.
+TEST(TrackTree, ProtectedAlternativeSurvivesPruneAcrossBranch) {
+  TrackTree tt(TrackId{50}, rootNode(0.0, 0.0));
+  tt.mutableNodes()[0].is_leaf = false;
+  auto add_leaf = [&](double score, bool prot) -> std::size_t {
+    TrackTreeNode n;
+    n.parent = 0; n.scan_idx = 1; n.score = score;
+    n.state = Eigen::Vector4d::Zero();
+    n.covariance = Eigen::Matrix4d::Identity();
+    n.time = navtracker::Timestamp::fromSeconds(1.0);
+    n.is_leaf = true;
+    n.is_protected = prot;
+    tt.mutableNodes().push_back(n);
+    return tt.nodes().size() - 1;
+  };
+  const std::size_t a = add_leaf(10.0, /*prot=*/false);  // K=1 best
+  const std::size_t b = add_leaf(1.0, /*prot=*/true);    // protected alternative
+  (void)a;
+
+  auto motion = std::make_shared<navtracker::ConstantVelocity2D>(0.1);
+  const navtracker::EkfEstimator ekf(motion, 5.0);
+  navtracker::FixedSensorDetectionModel det(
+      navtracker::DetectionParams{0.9, 1e-4});
+
+  // Scan 2: branch() FIRST (empty scan → one miss child per leaf, score
+  // carried through), THEN pruneKLocal(1). a's child (score 10) outranks b's
+  // child (score 1); without inherited protection b's child is demoted and b's
+  // subtree is left leafless.
+  TrackTree::BranchParams p{&det, 9.0};
+  tt.branch(ekf, {}, navtracker::Timestamp::fromSeconds(2.0), p);
+  tt.pruneKLocal(1);
+
+  // TEETH: the protected alternative b must still carry a live leaf.
+  bool b_has_live_leaf = false;
+  for (std::size_t li : tt.leafIndices()) {
+    std::size_t cur = li;
+    while (cur != TrackTreeNode::kNoParent) {
+      if (cur == b) { b_has_live_leaf = true; break; }
+      cur = tt.nodes()[cur].parent;
+    }
+    if (b_has_live_leaf) break;
+  }
+  EXPECT_TRUE(b_has_live_leaf)
+      << "protected alternative pruned across branch() — protection is one "
+         "branch() behind";
+}
+
 TEST(TrackTree, MergeBranchesDisabledWhenThresholdZero) {
   TrackTree tt(TrackId{10}, rootNode(0.0, 0.0));
   tt.mutableNodes()[0].is_leaf = false;
