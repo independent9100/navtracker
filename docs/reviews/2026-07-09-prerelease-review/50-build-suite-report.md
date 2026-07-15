@@ -101,3 +101,12 @@ Test code (worth a cleanup pass, some hint at test-logic problems):
   HAXR, Philos, Autoferry, R-BAD, SimMultisensor). So the cwd-gating is a
   coverage/process problem, not hiding failures today — but nothing in CI
   guards these 36 from regressing silently.
+
+---
+
+# Reconciliation disposition — 2026-07-15
+
+- **F-BUILD-1** (test UB — `const auto&` bound to a dereferenced temporary `optional`, `test_own_ship_nmea.cpp`) — FIXED, W2 `34367f6`.
+- **F-BUILD-2** (UBSan null-pointer `memcpy` in the mcap writer on the foxglove path) — FIXED, W2 `34367f6`.
+- **F-BUILD-3** (coverage blindness — ~36 real-data tests skipping silently; fixture-symlink recipe; CWD-relative fixture resolution) — fixture-skip guard added W2 `34367f6`; the **0-skip strict ceremony** (`NAVTRACKER_REQUIRE_FIXTURES=1`, skip-list diffed by name) is now the merge standard and has caught this class since.
+- **Determinism** — clean bill confirmed; the one gap (plain `Tracker::processBatch` never got the backlog-#15 batch sort) — FIXED, W5.3 `e8d99af` (fixwave-wave5, pending merge).

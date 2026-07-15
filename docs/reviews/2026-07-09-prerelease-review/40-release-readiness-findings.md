@@ -99,3 +99,16 @@ build itself is correct (README uses `cmake --preset conan-release`).
 - Not done inline (would benefit from a later verifier pass): exhaustive
   integration-guide field-by-field default diff (only sampled); readme code-
   snippet compile check; adr decision-table row-by-row.
+
+---
+
+# Reconciliation disposition — 2026-07-15
+
+Section-F items are the last non-licensing gap between the repo and the review's
+ship bar; most **ride fix-wave 6** (hygiene ticket, ready post-wave-5-merge):
+
+- No install/export/package story — **wave 6** (document the `add_subdirectory` consumption path; add export targets / `find_package` config).
+- ADR-0002 "promote static→moving within bounded latency" has no implementing test — **wave 6 W6.1** (build the scenario test; **STOP-AND-REPORT** if the promotion PATH itself is missing, not just the test).
+- Elsevier copyrighted PDF + `todo.md` (personal KF/IMM scratch, should not ship) — **wave 6 hygiene**.
+- Doc drift (CLAUDE.md/README name only Eigen+GoogleTest; conanfile also needs mcap + nlohmann_json) — **wave 6 hygiene**.
+- Verified-clean (no action): core layering (`navtracker_core` links only Eigen), all 20 ports have virtual dtors, learning docs complete, one TODO in shipping code, MHT/PMBM hot-path determinism, GOSPA kernel externally validated, autoferry data validated.

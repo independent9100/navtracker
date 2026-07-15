@@ -1045,3 +1045,61 @@ Coverage notes (lens-time-dt): LENS: time/dt handling across ALL of core/, adapt
 Coverage notes (lens-angles-units): Scope: all of core/, adapters/, app/, sim/ read with focus on units/frames/angles; every atan2/M_PI/deg/knots/fmod/wrap site enumerated by grep was visited. Checked clean: geo (Wgs84 Bowring closed-form, Datum ECEF-ENU matrix, round-trips), Projection.cpp compass-convention Jacobian (correct), MeasurementModels (math-angle convention, atan2 argument order, residual wrap incl. wrapAngle boundary at exactly +-pi, Jacobians for RB/Bearing), Gating/EKF/PF (all use wrapped measurementResidual), CoordinatedTurn F/Q, ConstantVelocity models, ManeuveringTrajectory turn integrals, Cpa/CpaOwnShip/CpaEvaluator math and Jacobians, TrackOutput velocity polar Jacobian + COG [0,360) normalization + low-SOG singularity handling, benchmark Metrics COG error (wrapped), scenario Metrics, ArpaAdapter (TTM/TLL, K/N/S unit codes incl. TTM speed via shared field 9, ddmm parse, relative+heading composition, TTM course->ENU birth velocity via compass sin/cos, course-jump wrap), EoIrAdapter, AisAdapter (knots 0.514444, sentinels 1023 SOG / 360 COG / 511 heading / nav-status 15, PolarVelocity shared helper Jacobian), OwnShipNmeaAdapter (ddmm, RMC COG->ENU, magnetic deviation/variation E/W signs, gyro-rate wrap, HDG true=mag+var convention), NavInputGuard (heading delta wrap), OwnShipProvider (no angle interpolation; sorted-insert history), Own-ship velocity/UERE estimators (linear LS, no angles), replay loaders (AisCsv m/s COG gate + nav-status suppression, CameraBearingCsv marine->math with wrap, AutoferryJson NED->ENU for positions and bearings, PlotCsv/RadarTruth/HAXR marine-convention projections, OwnshipCsv), sim emitters (ArpaEmitter compass atan2(E,N), EoIrEmitter FOV wrapSignedDeg, OwnShipEmitter HDT/RMC encoding incl. 360.000 wire artefact guard, AisEmitter knots constant), NmeaEncode ddmm, ShadowMask/BearingWedgeModel/ClutterMapDetectionModel circular grids and gap-cut unwrapping (all wrap-aware), LiveOccupancyModel bearing usage, DeclaredSensorActivity (sensor-at-origin is documented assumption), foxglove yaw conversions (90-hdg correct; its covariance consumption is folded into finding 2), RemoteTrackAdapter (ENU velocity passthrough), DatumShift position path (exact re-projection; rotation direction is finding 4), GeoJSON loaders lat/lon range validation, JPDA/IMM Gaussian normalizations ((2pi)^d, unit-ball c_d fallback documented), ImmEstimator state mixing (no angular states in [px,py,vx,vy,omega], so linear mixing is fine), IMM TPM non-dt-scaling already a known backlog item (not reported). Bias sign chain (finding 1) verified end-to-end: extractor -> estimator -> both adapters -> sim loop -> all bias tests + integration guide + eval-log sweeps (all sweeps run bias_deg=0). Finding 4 verified numerically against exact ECEF/ENU math in Python (scratchpad). Overflow one-liners not promoted to findings: ArpaAdapter passes cfg_.position_std_m as the TTM range sigma (documented in ArpaAdapterConfig comment, so treated as intended); projectRangeBearingToEnu uses compass convention while the internal RangeBearing2D model uses math convention - each path is self-consistent but the dual convention is a consumer trap worth a doc note; UkfEstimator::initiate would read z.value(1)/z.covariance(0,1) out of bounds for a 1-D Bearing2D measurement but every birth path guards via canInitiateTrack (latent only); AIS SOG sentinel is compared as 1023.0 knots which assumes the decoder passes the raw sentinel through unscaled (documented contract in AisAdapter.hpp). Not reviewed per instructions: tests/ internals except to check pinning, gitignored fixtures/data, and the known/by-design list (lambda_C cancellation, no-birth zone, PMBM CPA loss, extraction boundary, bench fixed datum, RTS anchored regression).
 
 NOTE: B6v supersedes B6-lenses-PARTIAL
+
+---
+
+# Reconciliation disposition — 2026-07-15
+
+Appended per the house correction style (all finding text above is unchanged).
+The 2026-07-09→11 review's confirmed code defects were fixed across pre-release
+fix waves 1–5 + the F2 provenance cycle; each carries its merge sha. **Waves 1–4
+and F2 are merged to master; wave 5 is on branch `fixwave-wave5`, pending the
+arbiter merge** — its per-commit shas are given with "(fixwave-wave5, pending
+merge)"; stamp the wave-5 merge sha here when it lands. The wave-5 cross-lane
+T2T-gate recalibration was sanity-checked **CONFIRM 2026-07-15** by the gate
+author (both directions preserved).
+
+## Confirmed critical / high / medium code defects — disposition
+
+| Finding (review theme) | file (review anchor) | Disposition | sha |
+|---|---|---|---|
+| **A1 [CRITICAL]** GGA no-fix (0,0) datum poisoning | `OwnShipNmeaAdapter.cpp` | FIXED — reject quality==0 / implausible lat-lon; no pose until a valid fix | W1 `fa4db84` |
+| T1 adapters cache stale datum across recenter (AIS/ARPA/EO-IR/RemoteTrack) | `AisAdapter.cpp` +3 | FIXED — registered as datum sinks (`onDatumRecentered` reproject) | W2 `34367f6` |
+| T1 `datumAxisRotation` no Δlon antimeridian wrap | `AxisRotation.cpp` | FIXED | W2 `34367f6` |
+| T1 `datumAxisRotation` wrong sign (+γ vs −γ) — test pinned the bug | `AxisRotation.cpp` | FIXED — −γ; the wrong-sign test pin corrected | W2 `34367f6` |
+| T1 `DeclaredSensorActivity` coverage from origin not own-ship; identity-blind retirement | `DeclaredSensorActivity.cpp` | FIXED (×2) | W2 `34367f6` |
+| T2 RangeBearing2D planted as ENU Cartesian (4 estimators) | Ekf/Ukf/Imm/PF | FIXED — CONVERT polar→ENU in `initiate()` (shared helper) | W4 `738e542` |
+| T2 UKF predicted bearing linear mean across ±π **[MED]** | `UkfEstimator.cpp` | FIXED — circular mean (UKF + IMM inner-UKF deployed path) | W4 `738e542` |
+| T3 heading-bias double-subtraction (converges to ½ bias) | `HeadingBiasEstimator.cpp` | FIXED | W3 `b284f8f` |
+| T3 per-sensor bias loop, same feedback defect | `SensorBiasEstimator.cpp` | FIXED | W3 `b284f8f` |
+| T3 AIS/ARPA pair extractor bearings about datum origin | `AisArpaPairExtractor.cpp` | FIXED — own-ship-relative pair bearings | W3 `b284f8f` |
+| T3 sign convention inconsistent across 5 observation kinds | `HeadingBiasEstimator.cpp` | FIXED — unified compass convention | W3 `b284f8f` |
+| T4 output covariance axis (east,north) vs NED contract | `TrackOutput.cpp` | RESOLVED — dual API `toTrackOutputENU/NED` | W1 `fa4db84` (F3) |
+| T4 CPA tcpa-Jacobian sign error | `Cpa.cpp` | FIXED — code + CPA-uncertainty spec §4.3 | W4 `738e542` |
+| T5 `Tracker::process()` drops soft (JPDA) results | `Tracker.cpp` | FIXED — delegates to `processBatch` | W5.1 `9cf83d0` (pending merge) |
+| T5 spurious SourceTouch on misdetected Bernoullis | `PmbmTracker.cpp` | FIXED — keyed on `last_claimed_meas_index` (measured disposition) | F2 `6fcd44e` |
+| T5 mixed-timestamp scans double-propagate | `PmbmTracker.cpp` | FIXED — detected-Bernoulli stamped at physical time | W5.2 `86b03ab` (pending merge) |
+| T5 MHT deferred-commitment leaf protection inert **[MED]** | `MhtTracker.cpp` | FIXED — `branch()` propagates `is_protected` | W5.5 `fb21eb6` (pending merge) |
+| T6 Tentative→Coasting promotion on miss **[MED]** | `TrackManager.cpp` | FIXED — a missed Tentative stays Tentative | W5.4 `684ae8a` (pending merge) |
+
+## F2 Rider-B channel-conflation correction (2026-07-15)
+
+The T5 "spurious SourceTouch" finding (and the T2T review's Rider B that quoted
+it) said the bug made **`contributing_sources` lie**. That wording **conflated
+two sibling channels**. F2 fixed `Track::recent_contributions` (the `SourceTouch`
+vector consumed by the source-aware-misdetection gate / idle-halflife / AIS-ARPA
+bias loop). `Track::contributing_sources` — the string list the T2T self-adapter
+reads for pedigree — is a **separate** channel that PMBM leaves **empty** (flat/MHT
+populate it genuinely). The finding's real target was `recent_contributions`; the
+`contributing_sources` framing was imprecise. The T2T live-pedigree caveat (gates
+doc §10 Rider B) was lifted on this corrected rationale, resting on an E2E pin, and
+pedigree remains diagnostics-only in fusion math. See
+`docs/baselines/2026-07-15_f2_provenance_cycle.md` and design-spec §14.11 (a
+backlog item to populate PMBM `contributing_sources` from the now-truthful channel).
+
+## Unverified medium/low findings
+
+The 31 unverified MEDIUM findings are triaged in the next section (dated
+2026-07-15); the 41 LOW findings are swept there for duplicates/obsolete with the
+remainder kept as a grouped backlog note. Neither set was adversarially verified
+by the original review.
