@@ -1,0 +1,155 @@
+{
+ "units": [
+  {
+   "unit": "geo-misc",
+   "findings": [
+    {
+     "dataset": "tests/fixtures/smd_eo (+ data/smd)",
+     "title": "Singapore Maritime Dataset has no recorded license/provenance and is absent from the source-of-truth manifest",
+     "severity": "high",
+     "category": "licensing-provenance",
+     "description": "The smd_eo fixture (in-tree, my scope) is built from the Singapore Maritime Dataset on-shore annotations, fetched by its README via a Google Drive gdown ID (1HnHyQzhzzDlYh15y9_K1mNZX3grlSDMM) plus a rarlab unrar binary. data/README.md is explicitly the 'source-of-truth manifest' and lists 8 sources with per-source license (dlr CC-BY-4.0, marinecadastre US-public, dma DMA-open, kystverket NLOD, philos CC-BY-NC-SA-4.0, etc.) — but SMD/Singapore appears NOWHERE in it, and tests/fixtures/smd_eo/README.md has no license section at all. SMD (Prasad et al., NUS) is a research dataset whose commercial-use terms are not established anywhere in this tree. navtracker is a commercial product (tkmsgroup) and the team has explicitly rejected other datasets on non-commercial grounds (pohang CC-BY-NC, philos CC-BY-NC-SA, D7 MOANA, D10 GFW). The commercial-use permission for SMD is therefore an unresolved release-gating question. Mitigations that lower the ACTIVE risk (but not the provenance gap): data/smd is empty, the derived out/*.csv are gitignored (not distributed with the repo), and no test/bench/adapter currently consumes the fixture (grep of adapters/tests/core/app for smd_eo/data/smd/ObjectGT = NONE).",
+     "evidence": "`grep -niE 'smd|singapore' data/README.md` => NONE (manifest omits it while claiming to cover every source). `grep -niE 'licen|copyright|terms' tests/fixtures/smd_eo/README.md` => NONE. README fetch step: `.venv/bin/gdown 1HnHyQzhzzDlYh15y9_K1mNZX3grlSDMM`. No cpp/hpp under adapters|tests|core|app references smd_eo/data/smd/ObjectGT.",
+     "suggested_action": "Add SMD to data/README.md with its actual license, citation (Prasad et al.), and retrieval date, and confirm the terms permit commercial use before any reliance; if non-commercial, treat it like pohang/philos (mark form-gated / do not wire into release baselines).",
+     "unit": "geo-misc",
+     "verdict": {
+      "verdict": "CONFIRMED",
+      "reasoning": "Every load-bearing observation reproduces verbatim:\n\n1. Manifest omits SMD: `grep -niE 'smd|singapore' data/README.md` => exit 1 (no matches). data/README.md line 6 self-describes as \"this README is the source-of-truth manifest,\" and its table lists 8 sources each with a License column (dlr CC-BY-4.0, pohang CC-BY-NC-4.0, marinecadastre US-public, dma DMA-open, stonesoup MIT, kystverket NLOD, philos CC-BY-NC-SA-4.0, autoferry CC-BY-4.0). Singapore/SMD is absent.\n\n2. Fixture README has no license: `grep -niE 'licen|copyright|terms' tests/fixtures/smd_eo/README.md` => exit 1 (no matches). The README (\"Singapore Maritime Dataset annotation-replay fixture\") documents inputs, emitted columns, and fetch steps but records no license/provenance/commercial-use terms for SMD (Prasad et al., NUS).\n\n3. Fetch mechanism confirmed: README line ~72 uses `.venv/bin/gdown 1HnHyQzhzzDlYh15y9_K1mNZX3grlSDMM -O $SMD/SMD_onshore.zip` plus a rarlab unrar binary — exactly as claimed.\n\n4. No consumer: grep for `smd_eo|data/smd|ObjectGT|SMD_onshore` across adapters/tests/core/app --include=*.cpp/*.hpp/*.h => exit 1 (none). All references are inside the fixture's own Python scripts/README. data/smd/ is empty (ls shows no files).\n\nAdditional finding that STRENGTHENS the \"not actively distributed\" mitigation but does NOT close the provenance gap: `git check-ignore` shows the entire fixture is gitignored via `.gitignore:29 /tests/fixtures/*`, and `git ls-files | grep -i smd` => none. So no SMD artifact (not even README/scripts/out CSVs) is committed to the repo. Active distribution risk is therefore low.\n\nHowever the claim's core assertion — a research dataset with no recorded license/provenance, omitted from a doc that explicitly claims to be the source-of-truth manifest, in a commercial product (tkmsgroup) whose team has rejected other datasets on non-commercial grounds — is factually accurate and reproduced. This falls squarely in the accepted quality-bar category \"missing provenance/license.\" The observations are correct; the auditor did not misread the data or loader."
+     }
+    },
+    {
+     "dataset": "data/dma, data/kystverket, data/marinecadastre",
+     "title": "~558 MB of fetched AIS data is unused by any test, tool, or bench (release hygiene)",
+     "severity": "low",
+     "category": "unused-data",
+     "description": "Of the data/ sources in my scope, only data/dlr is actually consumed (HAXR kattwyk_08 is read by tests/replay/test_haxr_ospa.cpp, test_los_guard_haxr_ab.cpp, test_veto_isolation_haxr_ab.cpp, and adapters/benchmark/ReplayScenarioRun.cpp via loadHaxrTruth/loadStations). data/dma (266 MB, two .7z), data/kystverket (15 MB, 5 GeoJSON snapshots), and data/marinecadastre (277 MB zip) are fetched and documented but not referenced by any C++/Python loader, test, or bench. data/stonesoup/Stone-Soup is a full 56 MB framework clone (incl. a build/ artifact dir) that the crosscheck tool does not import from (it uses the pip-installed stonesoup package). This matches docs/algorithms/comparison-baselines.md ('~2.3 GB of fetched data unused'; D3 MarineCadastre/DMA and D6 Kystverket are 'open/unscheduled'). Documented as intentional data-expansion staging, so this is hygiene, not a defect — but a reviewer should know these sets carry no coverage today.",
+     "evidence": "`grep -rln 'marinecadastre|kystverket|data/dma|dk_csv|AIS_2024|realtime_geojson' --include=*.cpp --include=*.hpp --include=*.py adapters tests core app tools` (excluding docs) => NONE. Only data/dlr paths appear (test_haxr_ospa.cpp:40-41, ReplayScenarioRun.cpp:40-41). data/stonesoup only referenced in docs.",
+     "suggested_action": "Either wire the staged sources into the scheduled D3/D6 tickets or note in data/README.md that they are staging-only with no current test coverage, so the ~2.3 GB is not mistaken for validated coverage.",
+     "unit": "geo-misc"
+    },
+    {
+     "dataset": "data/dlr",
+     "title": "Documented AIS/stations column schema does not match the actual checked-in file headers",
+     "severity": "low",
+     "category": "schema-doc-mismatch",
+     "description": "data/README.md documents the DLR AIS columns as `tod, uid, range_m, azimuth_deg` (lines 108-110) and stations as `station, x_m, y_m` (line 111-112), and adapters/replay/PlotCsvReplayAdapter.hpp doc (lines 18,23) states `station,x_m,y_m`. The actual files use different header text: data/dlr/kattwyk_08-UTC.csv header is `tod,uid,range (meters),azimuth (degrees)` and data/dlr/stations.csv header is `station,x (meters),y (meters)`. No functional break — both loaders (HaxrTruthLoader.cpp:61-64, PlotCsvReplayAdapter.cpp:56-57) parse strictly by column POSITION and skip the header line — but the documented schema would mislead anyone writing a new consumer that keys by column name. Data values themselves are sane (see coverage_notes).",
+     "evidence": "`head -1 data/dlr/kattwyk_08-UTC.csv` => `tod,uid,range (meters),azimuth (degrees)`; `head -1 data/dlr/stations.csv` => `station,x (meters),y (meters)`. data/README.md:108-112 and PlotCsvReplayAdapter.hpp:18,23 say `range_m/azimuth_deg` and `x_m/y_m`. Loaders index fields[0..3]/fields[0..2], no name lookup.",
+     "suggested_action": "Update the column names in data/README.md and PlotCsvReplayAdapter.hpp doc to match the actual `(meters)/(degrees)` headers, or note explicitly that parsing is positional.",
+     "unit": "geo-misc"
+    }
+   ],
+   "coverage_notes": "LOADERS (all read, cross-checked against data): (1) adapters/static/GeoJsonStaticObstacles.cpp — correct GeoJSON [lon,lat] order (coords[0]=lon, coords[1]=lat), WGS84 range guards, negative-radius clamp, malformed-JSON→runtime_error, per-feature skip; well covered by tests/adapters/static/test_geojson_static_obstacles.cpp (18 cases). tests/fixtures/static/harbor_obstacles.geojson: 2 valid Point features, Boston harbor coords (-71.05,42.35) in correct [lon,lat] order, sane depth/radii; LoadsFixtureFromDisk asserts size==2 (matches). CLEAN. (2) adapters/land/GeoJsonCoastline.cpp — correct [lon,lat] ring parse; no in-scope coastline fixture to cross-check (it loads autoferry/trondheim_harbor.geojson, out of scope). (3) tools/stonesoup_gospa_crosscheck.py — assumptions verified against the checked-in data/stonesoup/Stone-Soup clone: alpha hardcoded=2 (ospametric.py:87), switching_penalty default 0.0 (line 71), compute_gospa_metric returns dict with distance/localisation/missed/false keys, dummy_cost=c^p/alpha (line 350) matches the tool's dummy=c^p/2.0. Tool imports pip stonesoup (not the clone) but the clone confirms API consistency; MIT LICENSE present. CLEAN. DATA CROSS-CHECKS: data/dlr/kattwyk_08-UTC.csv — 14794 rows, tod strictly monotonic (0 non-monotonic), tod=28800..32396 (=08:00 UTC seconds-of-day, consistent with hour-08 chunk), range 110-3309 m, az 0.08-359.85 deg — all plausible; HaxrTruthLoader treats az as compass bearing (east=r*sin, north=r*cos), correct. data/dlr/stations.csv 13 stations parse cleanly. data/dlr/manifest.json lists 13 stations x 3 hours with sha256 per file; only 3 stations (kattwyk/parkhafen/seemannshoeft) x 3 hours downloaded — a documented partial sample, not an error. data/dlr license CC-BY-4.0 (commercial-OK), marinecadastre US-public, dma DMA-open, kystverket NLOD, stonesoup MIT — all commercial-compatible per data/README.md. NOTES NOT ELEVATED: smd_eo out/ (gitignored, not checked in) contains MVI_1452.bearings.csv byte-identical (same md5) to MVI_1452_VIS_Haze_ObjectGT.csv — generator wrote duplicate content to two names, but it's gitignored generated output, no test consumes it; extract_bearings.py needs the 3GB SMD archive (absent, data/smd empty) to regenerate, but out/ is not a checked-in fixture so nothing to reproduce. parseCoastlineGeoJson calls nlohmann::json::parse without the try/catch that the static loader has (malformed JSON leaks a raw nlohmann exception rather than runtime_error) — code robustness, not a data issue, and no in-scope fixture exercises it."
+  },
+  {
+   "unit": "sim-emitters",
+   "findings": [
+    {
+     "dataset": "sim-emitters (AIS)",
+     "title": "AIS emitter injects one pos_std_m for all targets, decoupled from the per-target high_accuracy covariance the adapter stamps",
+     "severity": "medium",
+     "category": "noise-covariance-mismatch",
+     "description": "AisEmitter draws isotropic position noise with a single std cfg_.pos_std_m for every target (sim/AisEmitter.cpp:15 constructs noise_(0, pos_std_m); lines 60-61 draw nx/ny from it regardless of te.high_accuracy). The consuming AisAdapter, however, stamps the Measurement covariance from the per-target high_accuracy flag: sigma = high_accuracy ? position_std_high_accuracy_m(10m) : position_std_standard_m(30m) (adapters/ais/AisAdapter.cpp:25-26, cov = I*sigma^2 line 68). So a target with high_accuracy=false receives 10 m of injected noise but a 30 m (9x-too-large) stamped covariance. The high-accuracy case matches only because two independent default knobs coincide (pos_std_m=10 == position_std_high_accuracy_m=10); changing pos_std_m without touching the adapter, or emitting any standard-accuracy target, silently breaks the noise/covariance identity. Any future NEES/consistency test built on the AIS bus channel would be biased with no visible failure.",
+     "evidence": "sim/AisEmitter.cpp:15,60-61 (single pos_std_m noise, no high_accuracy branch); adapters/ais/AisAdapter.cpp:25-26,68 and AisAdapter.hpp position_std_high_accuracy_m=10.0 / position_std_standard_m=30.0",
+     "file": "sim/AisEmitter.cpp",
+     "suggested_action": "Key the emitter's injected noise off the same high_accuracy flag (and the same sigma values) the adapter uses, or document/assert that pos_std_m must equal the adapter's active position std.",
+     "unit": "sim-emitters"
+    },
+    {
+     "dataset": "sim-emitters (own-ship RMC velocity)",
+     "title": "OwnShip RMC emit-side velocity-noise defaults differ from the adapter's assumed RMC noise, so stamped velocity covariance does not match injected noise",
+     "severity": "medium",
+     "category": "noise-covariance-mismatch",
+     "description": "When emit_rmc is enabled, OwnShipEmitter perturbs truth SOG/COG with sigma_sog_emit_m_per_s and sigma_cog_emit_deg (defaults 0.1 m/s, 0.5 deg — OwnShipEmitter.hpp:45-46) and encodes them into $GPRMC. The OwnShipNmeaAdapter builds the pose velocity covariance from its OWN assumed floors sigma_sog_m_per_s / sigma_cog_deg (defaults 0.5 m/s, 1.0 deg — OwnShipNmeaAdapter.hpp:46-47). By default the injected velocity noise is ~5x (SOG) and ~2x (COG) SMALLER than the covariance the adapter stamps, so any velocity-consistency (NEES) evaluation on the own-ship channel is conservatively biased. The two knob sets are documented as intentionally independent, but nothing keeps them equal and the defaults are already inconsistent.",
+     "evidence": "sim/OwnShipEmitter.cpp:53-74 (SOG/COG perturbed by sigma_*_emit); sim/OwnShipEmitter.hpp:45-46 (emit defaults 0.1/0.5); adapters/own_ship/OwnShipNmeaAdapter.hpp:46-47 (assumed defaults 0.5/1.0)",
+     "file": "sim/OwnShipEmitter.hpp",
+     "suggested_action": "Make the emit-side sigma defaults equal the adapter's assumed sigma defaults, or add a note/assert at wiring time that they must agree for consistency tests.",
+     "unit": "sim-emitters"
+    },
+    {
+     "dataset": "sim-emitters (own-ship GPS)",
+     "title": "Default report_gps_std=false injects GPS position noise the adapter reports as zero, so target reconstructions inherit unmodeled own-ship error",
+     "severity": "low",
+     "category": "noise-covariance-mismatch",
+     "description": "OwnShipEmitter adds GPS position noise to own-ship lat/lon whenever gps_pos_std_m>0 (default 5 m; OwnShipEmitter.cpp:37-42), but with report_gps_std=false (the default) it calls adapter_.setPositionStd(0.0) (line 34). ARPA/EO-IR emitters compute range/bearing from the TRUE own-ship position (ArpaEmitter.cpp:87 uses ctx.ownship_truth), while the ArpaAdapter re-projects those detections using the OwnShipProvider's GPS-noisy pose with position_std_m=0 (adapters/arpa/ArpaAdapter.cpp:131). The result is a target-ENU error driven by the injected own-ship GPS noise that no covariance budgets. This is a documented backward-compat default (and the adaptive-UERE test uses it deliberately), but on the default sim path it is an emit-vs-covariance inconsistency.",
+     "evidence": "sim/OwnShipEmitter.cpp:34,37-42; sim/OwnShipEmitter.hpp:20 (report_gps_std default false); adapters/arpa/ArpaAdapter.cpp:131 (sigma_gps_pos = own_opt->position_std_m)",
+     "file": "sim/OwnShipEmitter.cpp",
+     "suggested_action": "Default report_gps_std to true when gps_pos_std_m>0, or document prominently that closed-loop consistency requires opting in.",
+     "unit": "sim-emitters"
+    },
+    {
+     "dataset": "sim-emitters (ARPA clutter)",
+     "title": "All ARPA clutter false alarms emitted under fixed TTM target number 00 (identical sensor_track_id=0)",
+     "severity": "low",
+     "category": "unrealistic-model",
+     "description": "The ARPA clutter path hard-codes RATTM target number 00 for every false alarm (sim/ArpaEmitter.cpp:70), so all clutter across all rotations arrives with sensor_track_id=0 and collides with any real target left at the default arpa_track_num=0. Real ARPA clutter presents as distinct/unstable target numbers, not one persistent jumping track. This is currently harmless because no associator honors the hint (only core/static/BearingWedgeModel reads sensor_track_id; the GNN/JPDA/MHT comparison tests gate purely on kinematics), but it mismodels the clutter the MHT-vs-JPDA comparison relies on and would collapse all clutter into one track if the ARPA-as-pretracked path were exercised.",
+     "evidence": "sim/ArpaEmitter.cpp:63-77 (clutter body 'RATTM,00,'); adapters/arpa/ArpaAdapter.cpp m.hints.sensor_track_id = target_num; grep shows sensor_track_id consumed only in core/static/BearingWedgeModel",
+     "file": "sim/ArpaEmitter.cpp",
+     "suggested_action": "Assign clutter a rolling/unique or explicitly-invalid TTM target number distinct from configured real targets.",
+     "unit": "sim-emitters"
+    },
+    {
+     "dataset": "sim-emitters (ARPA clutter)",
+     "title": "ARPA clutter bearing lacks the 360.000 wire-artifact guard the real-target path has",
+     "severity": "low",
+     "category": "edge-case",
+     "description": "The real-target ARPA path clamps a bearing rounding up to 360 back to 0 (sim/ArpaEmitter.cpp:109-110, b_obs_emit>=359.9995 -> 0.0), but the clutter path formats clutter_bearing_dist_ (uniform [0,360)) with no such guard (lines 68-73). A draw >=359.9995 rounds to the string '360.000', which the ArpaAdapter accepts (it only checks finiteness, not [0,360) range). Cosmetic and self-correcting after wrap, but inconsistent with the guarded real-target path.",
+     "evidence": "sim/ArpaEmitter.cpp:107-110 (guard on real targets) vs 63-73 (clutter, no guard); ArpaAdapter.cpp isFiniteValue(bearing) only",
+     "file": "sim/ArpaEmitter.cpp",
+     "suggested_action": "Apply the same >=359.9995 -> 0.0 clamp on the clutter bearing before formatMilli3.",
+     "unit": "sim-emitters"
+    }
+   ],
+   "coverage_notes": "Read all sim/ sources and cross-checked each emitter's injected noise against the covariance its consuming adapter stamps. CLEAN: (1) NMEA encoding — wrapWithChecksum XOR-over-body, formatDdmm minute-carry, hemisphere letters, 2-vs-3 degree-digit width all standard-compliant; hand-verified two full GGA sentences in python3 (positive N/E and negative S/W) and confirmed test_nmea_encode round-trips through the real parseNmea and covers minute->degree carry. (2) TruthTrajectory physics — ConstantVelocity integrates p0+v*dt; ManeuveringTrajectory 3-leg (straight/constant-turn/straight) has correct closed-form turn integral and is continuous in BOTH position and velocity at both leg boundaries (verified v_turn(tau2=0)=v0, p continuous, math-convention theta consistent, left-turn sign matches doc). (3) SkewInjector — provably reorders only, never mutates Measurement.time (out.push_back(input[idx]) with original time); deterministic integer 2049-tick jitter ladder (portable, not uniform_real); stable_sort with ingestion-index tie-break; SkewProfile array size 9 exactly matches SensorKind's 9 enumerators (core/types/Ids.hpp:20-22), and at() is bounds-checked. (4) SimulatedSensorBus — per-emitter seeds derived deterministically from cfg.seed via seed_seq; integer step counting avoids dropping the final tick; run() applies a final stable_sort by time; fixed dispatch order (ownship->ais->arpa->eoir). (5) EoIr channel — covariance is consistent by construction because the emitter writes bearing_std_deg/range_std_m directly into the CameraDetection the adapter uses; BearingOnly mode feeds truth range with a wide bearing_only_range_std_m (conservative, not a mismatch); zero-std singularity guards preserve truth-on-wire. (6) ARPA range/bearing std defaults (50 m / 1.0 deg) match between ArpaEmitter and ArpaAdapter. (7) Seeds are fixed in every test (seed=201+k pattern, explicit /*seed=*/N); no time()/random_device nondeterminism found. NOTE on stepOnce: its 'no per-step sort needed' comment is slightly overstated (AIS dropout catch-up could interleave times across emitters within one step) but its only consumers (bias-estimator sweeps in BusComparisonHelpers) do not configure dropout, so it is not currently violated — not reported as a finding."
+  },
+  {
+   "unit": "baselines",
+   "findings": [
+    {
+     "dataset": "docs/baselines/ (all *.csv)",
+     "title": "No baseline CSV records toolchain/commit provenance — every run emits git_sha/compiler/host = unknown",
+     "severity": "medium",
+     "category": "provenance",
+     "description": "All 102 standard baseline CSVs in docs/baselines/ carry `# git_sha: unknown`, `# compiler: unknown`, `# host: unknown` — including the frozen paper-comparison run gospa20m_20260613T174620Z.csv (the source of the Helgesen 43.4/20.37 comparison) and the 2026-07-10 promotion dossier. Backlog #24 documents a harbor config that flips green on g++13 vs red on other compilers, so a frozen benchmark number that cannot be attributed to a compiler version is not reproducible or adjudicable. README caveat #6 acknowledges the field is emitted as `unknown` but it remains unfixed at release. Newer .md write-ups partially compensate in prose (cl1 records commit 7f5cd17 + CSV sha256), but the machine-diffable CSVs themselves — which the comparator joins on — carry none, and even the prose does not pin the compiler version.",
+     "evidence": "`for f in *.csv; do grep '^# compiler:' $f; done` -> 102 files, all `# compiler: unknown`; 0 with a real compiler. Confirmed on 2026-06-07_baseline.csv, 2026-07-10_dossier_harbor_imm_cv_ct_pmbm.csv, gospa20m_20260613T174620Z.csv, cl1_rescore_pmbm_20260708.csv.",
+     "suggested_action": "Wire the CMake-generated header (README caveat #6 says the schema is ready) so git_sha/compiler/host are populated, and re-emit or at minimum annotate the frozen comparison CSVs (gospa20m, dossier) with the toolchain they were produced on.",
+     "file": "docs/baselines/2026-06-07_baseline.csv",
+     "unit": "baselines"
+    },
+    {
+     "dataset": "docs/baselines/2026-07-06_perf_round2_latency.csv",
+     "title": "Perf/latency baseline has no provenance header and no hardware context — unusable as an off-machine regression reference",
+     "severity": "medium",
+     "category": "provenance",
+     "description": "2026-07-06_perf_round2_latency.csv is the only baseline CSV with no `#` provenance header at all: bespoke schema (wall_full_s, scan_proc_max_ms, max_fits_interval, peak_rss_mb) and zero record of CPU/host/compiler/build flags. Its numbers (raw_density mean 73.6 ms, max 101.7 ms, `yes_1.45x` fits-interval) are the regression reference the perf-round-3 arc (154->92.9s, worst-scan 137.9->76.7ms in project memory) is measured against, but wall-clock/latency figures with no hardware provenance cannot be reproduced or used as a tripwire on any other machine. The companion frontier CSV notes only `steady-state, warm machine`, still without CPU/host. No committed gtest pins these latency numbers (checked), so it is a doc/baseline quality issue, not a fragile test.",
+     "evidence": "`head 2026-07-06_perf_round2_latency.csv` shows a data header line (workload,wall_full_s,...) with no `#` lines; loop `for f in *.csv; do grep -q '^#' $f || echo $f; done` returns only this file. `grep '^#' 2026-07-05_pmbm_runtime_frontier.csv` has a workload md5 but no host/compiler.",
+     "suggested_action": "Add a provenance header (CPU model, core count, governor, compiler, build type) to perf latency CSVs, and state the reference hardware in 2026-07-06_perf_round2.md / perf_round3.md.",
+     "file": "docs/baselines/2026-07-06_perf_round2_latency.csv",
+     "unit": "baselines"
+    },
+    {
+     "dataset": "docs/baselines/README.md",
+     "title": "Baselines README is materially stale — documents 5 configs / 8 metrics; harness actually emits 16+ configs (incl. PMBM canonical) and 30+ metrics",
+     "severity": "medium",
+     "category": "doc-drift",
+     "description": "README.md is the index/spec for docs/baselines/, but its §Configurations lists exactly five configs (ekf_cv_gnn, ekf_cv_jpda, ukf_cv_gnn, ukf_ct_gnn, imm_cv_ct_jpda) and §Metrics states 'Eight columns'. The actual harness emits 16 configs in a single run (incl. imm_cv_ct_mht family and the now-canonical imm_cv_ct_pmbm* configs, none of which appear in the config table) and 30+ metric names (gospa_mean/rms/p95/false/missed/localization, card_err_mean, nees_* family, tgospa_raw/smooth, scan_proc_ms_*, wall_seconds). The README is even internally inconsistent: its own AutoFerry headline table cites ekf_cv_mht / imm_cv_ct_mht, configs its Configurations table omits. A new evaluator using README.md as the map is misled about which configs/metrics exist and where PMBM (the current canonical, and the subject of every 2026-07 dossier) fits.",
+     "evidence": "README.md §Configurations table = 5 rows, no MHT/PMBM; §Metrics = 'Eight columns'. `awk -F, '{print $2}' gospa20m_20260613T174620Z.csv | sort -u | wc -l` = 16 configs; distinct non-per-truth metrics in 2026-07-10_dossier_imazu_imm_cv_ct_mht.csv = 31 (card_err_mean, nees_mean, tgospa_raw, scan_proc_ms_max, wall_seconds, ...).",
+     "suggested_action": "Update README.md Configurations and Metrics sections to reflect the current config roster (esp. the PMBM/MHT canonicals) and full metric set, or point to core/benchmark/Config.cpp + Metrics.cpp as the live source of truth.",
+     "file": "docs/baselines/README.md",
+     "unit": "baselines"
+    },
+    {
+     "dataset": "tests/benchmark/test_harbor_complete_truth_baseline.cpp",
+     "title": "Harbor 'baseline' test is a print-only harness — no guard on the canonical PMBM harbor over-count it claims to baseline",
+     "severity": "low",
+     "category": "weak-guard",
+     "description": "The test is titled TodaysPmbmMetrics and its header calls itself 'the before number the honest static-occupancy layer must improve', but it only prints card_err/gospa/lifetime and asserts EXPECT_GT(lifetime_ratio, 0.3). The reconcile doc establishes card_err_mean=11.64 as the real canonical harbor over-count baseline, yet nothing pins or bands it: a regression that inflated harbor card_err/gospa_false would pass this test unnoticed. Only the non-KEEP adapt_k3 config gets a band guard (test_adapt_k3_harbor_knife_guard.cpp, which is well-designed). The comment is honest that it is 'light sanity asserts only', so this is hygiene, not a false claim — but the file name/comment overstate it as a baseline guard.",
+     "evidence": "test_harbor_complete_truth_baseline.cpp lines 39-62: prints 5 metrics, only assertion is line 61 EXPECT_GT(meanMetric(rows,'lifetime_ratio'),0.3). Reconcile doc 2026-07-10_harbor_truthsort_reconcile.md pins card_err=11.64 as the real number with no corresponding test band.",
+     "suggested_action": "Either add a wide band guard on canonical harbor card_err/gospa_false (mirroring the adapt_k3 knife guard) or rename/reword so it is clearly a diagnostic print, not a baseline guard.",
+     "file": "tests/benchmark/test_harbor_complete_truth_baseline.cpp",
+     "unit": "baselines"
+    }
+   ],
+   "coverage_notes": "Scope covered: docs/baselines/ (all), tests/benchmark/test_harbor_complete_truth_baseline.cpp, tests/benchmark/test_adapt_k3_harbor_knife_guard.cpp, plus a grep of tests/ for pinned absolute numbers (excluding .venv/site-packages under tests/fixtures/sim_multisensor).\\n\\nVERIFIED CLEAN:\\n- The two target tests use robust bands, not fragile pinned points. adapt_k3 knife guard uses card_err band [8,14] and gospa_false band [1600,2900] that explicitly bracket the lambda_birth-cliff fp-tie (the #24 class of toolchain-fragile flip) with wide margin; both tests ASSERT_NE on the config/scenario so a rename would fail loudly rather than silently skip. This is the correct pattern for the #24 hazard — no fragile pinned assertion found in scope.\\n- No committed gtest pins wall-clock/latency/RSS thresholds (grep of tests/ for ms/wall/elapsed/seconds/rss assertions returned only Timestamp/birth_time equality checks and covariance/velocity edge-unit checks, all legitimate).\\n- cl1 rescore CSVs (mht/pmbm/ekf) reproduce their frozen sha256 hashes byte-for-byte (all 3 match helgesen2022_reference.md). Per-scenario gospa_rms in cl1_rescore_pmbm match the doc table (18.42/20.83/14.38/20.43/18.35) and the RMS-of-per-scenario proxy recomputes to the headline 18.62 (env-1) and 17.74 (env-2), and 3.43 for the anchored calibration row.\\n- Harbor truth-sort reconcile numbers (card_err mht 8.83 / pmbm 11.1 / coverage_land 8.0) match the 2026-07-10 dossier CSVs exactly; the promotion-dossier stale-caveat correction note is present (dated [correction 2026-07-10]).\\n- imazu22 doc (2026-07-08) MHT and PMBM per-case numbers reproduce the 2026-07-10 dossier CSVs exactly (imazu_05 mht gospa 24.0/ospa 63.5/card_err 0.10; pmbm 26.3/162.9/0.87; imazu_15 pmbm 30.6/246.8/-0.01/lifetime 0.691) — runs are deterministic/stable across the two dates.\\n- Frozen Helgesen table matches gospa20m_20260613 CSV (sc2 40.86->40.9, sc3 46.40->46.4); the stale 43.4 env-1 row is explicitly flagged stale by the doc's own re-score section. Local paper PDF exists at docs/references/S0029801822005753-...pdf.\\n- Replay fixtures referenced by the baselines exist: tests/fixtures/philos/out/ais_ferry_near/ (ais/ownship/radar_plots/radar_truth.csv), tests/fixtures/haxr_cfar/out/kattwyk_08_t40.csv, data/dlr/ (kattwyk/parkhafen *-UTC.csv). The many 'missing csv' hits from a path-naive grep were all fixture basenames (ais.csv, ownship.csv, kattwyk_08-UTC.csv) or throwaway debug artifacts (.states.csv/.pmbmbern.csv) not intended to be committed — not real gaps.\\n\\nNOT DEEPLY VERIFIED: veto_isolation and b25 phase2a/2b docs (reference uncommitted debug artifacts, out of the pinned-baseline scope); exact live value of the adapt_k3 knife-guard band center (~10.74) could not be recomputed without building the bench, but the band is wide and the design is sound."
+  }
+ ]
+}

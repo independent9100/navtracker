@@ -1,0 +1,196 @@
+{
+ "units": [
+  {
+   "unit": "autoferry",
+   "findings": [
+    {
+     "dataset": "autoferry",
+     "title": "Loader comment claims detections are time-ordered in file; false for 5/9 scenarios, making the stable_sort load-bearing not 'defensive'",
+     "severity": "low",
+     "category": "timestamp-monotonicity",
+     "file": "/home/andreas/workspace/navtracker/adapters/replay/AutoferryJsonReplay.cpp",
+     "description": "AutoferryJsonReplay.cpp lines 302-308 comment: 'Detections arrive time-ordered in the file, but a defensive stable sort...'. In reality scenario6, scenario13, scenario16, scenario17, scenario22 are NOT time-ordered in the detections JSON (interleaved sensor streams produce hundreds of backward steps). The std::stable_sort by time is therefore REQUIRED for correctness on those files, not merely defensive. No current runtime bug (the sort corrects it and replay stays deterministic on a fixed file), but a maintainer trusting the comment could remove the sort as redundant and feed non-monotonic timestamps to the time-driven engine for 5 of the 9 benchmark scenarios.",
+     "evidence": "python3 over data/autoferry/*: det backward-jump counts scenario6=831 (max backstep 0.208s), scenario16=683 (max 0.711s), scenario13=670 (0.172s), scenario17=466 (0.171s), scenario22=452 (0.204s); scenario2/3/4/5 monotonic (0 backjumps).",
+     "suggested_action": "Fix the comment to state the sort is required (several env-2 scenarios ship interleaved, non-monotonic detection streams), so it is not removed in future refactors.",
+     "unit": "autoferry"
+    },
+    {
+     "dataset": "autoferry",
+     "title": "Truth dedup keys only on (time,id); scenario5 has one such key carrying two distinct positions, so std::unique silently drops a genuine truth sample",
+     "severity": "low",
+     "category": "truth-dedup",
+     "file": "/home/andreas/workspace/navtracker/adapters/replay/AutoferryJsonReplay.cpp",
+     "description": "After unifying each ground-truth scan to its max target time (lines 320-337) the loader sorts by (time,id) and removes exact (time,id) duplicates (lines 345-356), comparing ONLY time and truth_id, not position. In scenario5 the key (time=1620116323.2, targetID=1) is produced by two different physical samples whose positions differ (189.98,-437.88) vs (189.87,-438.03), ~0.18 m apart; std::unique keeps the first and discards the second real sample. Impact is negligible at 0.18 m, but the dedup mechanism can silently lose distinct truth if scan-max unification ever collides two genuinely different fixes onto one (time,id).",
+     "evidence": "python3 simulation of the loader's unify+dedup over all scenarios: only scenario5 shows a (time,id) key with conflicting positions (1 occurrence, 0.18 m apart); all other scenarios show 0 conflicts.",
+     "suggested_action": "Either dedup on full (time,id,position) or document that near-simultaneous same-id truth fixes are intentionally collapsed; harmless today but worth pinning.",
+     "unit": "autoferry"
+    },
+    {
+     "dataset": "autoferry",
+     "title": "Loader comment understates max intra-scan truth-time labelling skew (~0.1s claimed vs 0.4s actual in env-2)",
+     "severity": "low",
+     "category": "truth-time-skew",
+     "file": "/home/andreas/workspace/navtracker/adapters/replay/AutoferryJsonReplay.cpp",
+     "description": "The comment at AutoferryJsonReplay.cpp lines 310-319 justifies stamping every target in a scan with the scan's max target time by asserting '<=0.1 s labelling skew ~ <1 m at harbour speeds'. The measured maximum intra-scan target-time spread is 0.40 s in the env-2 scenarios (13/16/17), about 4x the stated bound (median spread 0.08-0.12 s). At env-2 harbour speeds the worst-case mis-stamp is ~2 m, still below the env-2 lidar sigma of 3 m, so the conclusion (skew < sensor noise) holds, but the documented numeric bound is wrong.",
+     "evidence": "python3 over data/autoferry/*: intra-scan target time spread max=0.400s (scenario13/16/17), p99=0.200-0.240s, median 0.08-0.12s; env-1 max=0.160s.",
+     "suggested_action": "Update the comment's skew bound to ~0.4 s max / ~2 m worst case (env-2), keeping the sub-sensor-noise justification.",
+     "unit": "autoferry"
+    }
+   ],
+   "coverage_notes": "Cross-checked loader adapters/replay/AutoferryJsonReplay.{hpp,cpp}, test tests/replay/test_autoferry_json_replay.cpp, and the bench wrapper AutoferryScenarioRun in adapters/benchmark/ReplayScenarioRun.cpp against all 9 data dirs (data/autoferry/scenario{2,3,4,5,6,13,16,17,22}). CLEAN: (1) Schema — every detection object across all 9 files has exactly {sensorID, ownshipPosition(len2), time, measurement, measurements}; every truth object has {targetID, position(len3), time}; field names match loader's find() keys exactly, no renamed/defaulting fields. The extra 'measurements' (plural) field is always [] in all scenarios and is correctly ignored by the loader (loader reads singular 'measurement'). (2) No NaN/Inf in any detection measurement, ownship position, or truth position; no bad values. (3) det count == gt count in every scenario; every gt scan has exactly 2 targets (IDs 1,2), matching the test's Havfruen/Gunnerus (env-1) and Jetboat/Havfruen (env-2) comment. (4) Frame/units VALIDATED against truth: lidar/radar 'measurement' is ownship-relative NED metres — ownship+(n,e) lands 4.1 m median from truth (lidar sc2), radar p10=4.2 m (rest is expected harbor clutter); raw (no ownship add) is ~400 m off, confirming the relative interpretation. IR/EO bearings are NED atan2(e,n): gated residual vs truth = 2.2 deg median (sc2 IR), and both IR and EO gate to true target with small residuals in env-1 and env-2, confirming the documented convention and the pi/2-NED->ENU swap. GT NED->ENU (E,N)=(arr[1],arr[0]) matches loader. (5) Coordinates plausible: positions within ~1 km of Piren datum (63.4389, 10.399); coastline fixture tests/fixtures/autoferry/trondheim_harbor.geojson spans lon 10.382-10.416/lat 63.431-63.446, correctly bracketing the datum. (6) Epoch is unix seconds 2021-05-04/05, plausible. (7) Truth velocities (loader central-difference) well-behaved: only 2 spikes>15 m/s in ~30k samples (both fine-dt jitter, 3.4 m/0.12 s); max sustained target speed 13-16 kn (env) to ~26-31 kn for the fast craft, plausible for the named vessels. (8) After loader unify+dedup, per-target truth is time-monotonic with no surviving duplicate (time,id) except the one 0.18 m scenario5 conflict noted. (9) LICENSING: data/README.md documents autoferry as CC-BY-4.0 (commercial use OK with attribution), with source URL (github Autoferry/sensor_fusion_dataset), paper citation (Helgesen 2022), and a working curl reproduction command matching the checked-in filenames — no licensing blocker, provenance documented. (10) Bench correctly applies env-2 sigma overrides (lidar 3.0, radar 5.0, bearing 0.0925) and Piren datum that the header warns about; all 9 scenarios present, none missing; test's real-scenario2 assertions (measurements>100 all Position2D, truth>100, max_id>=2) hold. NOT independently verifiable here: exact byte-match of checked-in files vs GitHub source (no network), and the precise EO/IR bias-seed magnitudes/signs in the bench (crude nearest-time gating gave IR/EO env-2 bias of -3.8/-1.6 deg vs bench-seeded +4.9/+7.0 deg — likely a convention/tool difference in autoferry_r_calibration.py rather than a data defect; bearing geometry itself validates)."
+  },
+  {
+   "unit": "pohang",
+   "findings": [
+    {
+     "dataset": "pohang",
+     "title": "Pohang Canal Dataset is CC-BY-NC-4.0 (non-commercial) — 683 MB staged on disk in a commercially-intended library, fixture READMEs omit the restriction",
+     "severity": "high",
+     "category": "licensing",
+     "description": "data/pohang/ holds the Pohang Canal Dataset (pohang00 + pohang02, each radar.zip / navigation.zip / calibration.zip, plus unzipped pohang00). data/README.md licenses it CC-BY-NC-4.0, 'Non-commercial only.' This is the identical constraint that got MOANA and GFW rejected as commercially incompatible (memory: D7/D10). The data is untracked (data/ gitignored, `git ls-files | grep pohang` = 0), so it is not a git-history blocker, but it is live on disk and can be inadvertently committed/leaked, and the consumer-facing fixture READMEs (tests/fixtures/pohang_radar/README.md, tests/fixtures/pohang_lidar/README.md) never restate the NC restriction, so anyone extracting/using these fixtures has no in-place warning.",
+     "evidence": "data/README.md:13 '| pohang/ | ... | CC-BY-NC-4.0 |' and data/README.md:195 'License: CC-BY-NC-4.0. Non-commercial only.'; `du -sh data/pohang`=683M; `git ls-files data/pohang tests/fixtures/pohang_radar tests/fixtures/pohang_lidar` returns 0 files; neither fixture README mentions NC.",
+     "file": "data/README.md",
+     "suggested_action": "Decide GO/NO-GO on commercial grounds as was done for MOANA/GFW; if kept for research-only use, restate the NC restriction in both fixture READMEs and ensure the raw zips and extracted out/ CSVs stay out of any commercial deliverable.",
+     "unit": "pohang",
+     "verdict": {
+      "reasoning": "Reproduced every load-bearing observation.\n\n1. License, data/README.md line 13: `| pohang/ | Marine radar (PNG) + GPS + AHRS | CC-BY-NC-4.0 | 395 MB | Fetched |`; line 195: `License: **CC-BY-NC-4.0**. Non-commercial only.`; and the provenance summary (lines 374-375) repeats CC-BY-NC-4.0 for both pohang00 and pohang02. So the non-commercial restriction is unambiguous and stated three times.\n\n2. On-disk size: `du -sh data/pohang` = 683M (larger than the README's stated 395 MB sample, because pohang00 is also unzipped on disk — dir listing shows pohang00/ and pohang02/). Still live on disk.\n\n3. Untracked: `git ls-files data/pohang tests/fixtures/pohang_radar tests/fixtures/pohang_lidar` returns 0 files, so it is gitignored/not in history — not a committed blocker, but present and inadvertently-committable.\n\n4. Fixture READMEs: both tests/fixtures/pohang_radar/README.md and tests/fixtures/pohang_lidar/README.md exist; grep for `licen|CC-BY|non-comm|NC-4|commerc` returns nothing in either — neither restates the NC restriction.\n\nThe license terms (CC-BY-NC-4.0, non-commercial only) are the identical class of restriction that memory records as having gotten D7 (MOANA) and D10 (GFW) rejected as commercially incompatible; the user's org (tkmsgroup.com) is a commercial marine-systems vendor and the library is consumer/commercially-oriented (integration guide, \"library consumers\"). This is an in-scope license/provenance finding: a non-commercial-licensed dataset staged live on disk in a commercially-intended library with no in-place NC warning in the consumer-facing fixture READMEs. This is a documentation/provenance finding, not data corruption, but the task brief explicitly counts \"license terms incompatible with commercial use\" as reportable. Claim confirmed.",
+      "verdict": "CONFIRMED"
+     }
+    },
+    {
+     "dataset": "pohang",
+     "title": "extract_ownship.py reads the AHRS quaternion in the wrong component order (assumes w,x,y,z; data is x,y,z,w) → heading_deg_quat/roll/pitch are physically impossible",
+     "severity": "medium",
+     "category": "units-frame",
+     "description": "quat_to_euler_deg treats ahrs.txt columns 2-5 as (q0=w,q1=x,q2=y,q3=z), but the Pohang ahrs.txt quaternion is stored (x,y,z,w) — the 4th component is the scalar. This makes every derived attitude wrong: the produced pohang00_ownship.csv has roll spanning the full -179.96..179.99 deg and pitch pinned negative (-8.44..-0.96 deg) for a boat transiting a calm canal, both physically impossible. A downstream harness that picks heading_deg_quat (the README explicitly offers it as an alternative to the GPS heading) or the roll/pitch columns would be fed garbage attitude.",
+     "evidence": "tests/fixtures/pohang_radar/extract_ownship.py:32-45 assumes (w,x,y,z). First ahrs row = (-0.00816, 0.02164, -0.61902, 0.78504); norm=1.0. Recomputed yaw with script order (w,x,y,z)=182.27 deg (matches produced heading_deg_quat=-177.66≡182.34), with correct order (x,y,z,w)=283.46 deg which matches gps heading col-7 270.18 within a plausible mount offset. Stats on out/pohang00_ownship.csv: roll min/max -179.96/179.99, pitch min/max -8.44/-0.96.",
+     "file": "tests/fixtures/pohang_radar/extract_ownship.py",
+     "suggested_action": "Swap to (x,y,z,w) so w=comp[3]; regenerate pohang00_ownship.csv and verify quat-yaw tracks gps heading; the README 'three disagreeing headings' unknown is partly an artifact of this bug, not the sensor.",
+     "unit": "pohang"
+    },
+    {
+     "dataset": "pohang",
+     "title": "Generated pohang ownship CSV header (lat_deg/lon_deg/heading_deg_gps) is unrecognized by the only ownship loader — loadOwnshipCsv returns EMPTY silently",
+     "severity": "medium",
+     "category": "loader-mismatch",
+     "description": "OwnshipCsvReader::loadOwnshipCsv matches header names lat/latitude, lon/longitude, heading_deg/heading. The pohang extractor emits lat_deg, lon_deg, heading_deg_gps, heading_deg_quat — none of which match lat/lon/heading_deg. Because c_lat and c_lon stay -1, the loader hits `if (c_time<0||c_lat<0||c_lon<0) return out;` and returns an empty pose vector with no error. Any pipeline that wires the pohang ownship fixture through the documented replay path (loadOwnshipCsv → feedOwnshipHistory → RadarTruthCsvReader/PlotCsvReplayAdapter) would get zero poses, and then RadarTruthCsvReader drops every row (poseAtOrBefore fails) — a silent total loss disguised as 'no data'. The philos fixture works only because it uses the bare names lat/lon/heading_deg.",
+     "evidence": "adapters/replay/OwnshipCsvReader.cpp:51-56 (exact match set) and :56 early return; head of tests/fixtures/pohang_radar/out/pohang00_ownship.csv = 'unix_time,lat_deg,lon_deg,sog_mps,cog_deg,heading_deg_gps,heading_deg_quat,roll_deg,pitch_deg'; contrast philos header 'unix_time,lat,lon,heading_deg'.",
+     "file": "adapters/replay/OwnshipCsvReader.cpp",
+     "suggested_action": "Either add lat_deg/lon_deg/heading_deg_gps aliases to the loader's header matcher, or rename the extractor's output columns to lat/lon/heading_deg; and make loadOwnshipCsv report (not silently swallow) a missing required column.",
+     "unit": "pohang"
+    },
+    {
+     "dataset": "pohang",
+     "title": "LiDAR raw source is absent and deleted-by-design — out/pohang00_lidar_port_plots.csv cannot be regenerated or verified",
+     "severity": "medium",
+     "category": "provenance",
+     "description": "The pohang_lidar fixture's checked-out product (out/pohang00_lidar_port_plots.csv, 5946 plots) has no reproducible source in the tree: data/pohang/pohang00/lidar/ is an empty directory, there is no lidar_port.zip and no .bin/.pcd anywhere under data/pohang, and the README's documented workflow ends with `rm -f $LIDAR` (delete the 12 GB source after extraction). So the generator cannot reproduce the fixture, and there is no way to audit the DBSCAN parameters, clock, or intensity handling against ground input. This is the provenance-broken failure mode: a data artifact whose inputs are gone.",
+     "evidence": "`ls -la data/pohang/pohang00/lidar/` = empty (only . and ..); `find data/pohang -iname '*lidar*' -o -iname '*.bin'` finds only the empty dir; tests/fixtures/pohang_lidar/README.md:59-61 documents `rm -f $LIDAR`; out CSV present with 5946 rows.",
+     "file": "tests/fixtures/pohang_lidar/README.md",
+     "suggested_action": "Record the exact source (S3 object, size, checksum) and the full extraction command in the README so the fixture is reproducible, or treat the lidar out CSV as unverifiable and do not use it as a 'near-perfect detector reference' for any scored comparison.",
+     "unit": "pohang"
+    },
+    {
+     "dataset": "pohang",
+     "title": "Radar extractor emits continuous canal-wall returns as single 'plots' with physically meaningless sigmas (sigma_az up to 94.7 deg, sigma_r up to 658 m)",
+     "severity": "medium",
+     "category": "data-quality",
+     "description": "pohang00_plots.csv treats each connected blob as one point plot, so the long continuous canal-wall returns (README: largest blob 300,950 px) collapse into single rows carrying sigma_az up to 94.7 deg and sigma_r up to 657.7 m. A 95-degree azimuth 1-sigma on a single point measurement is not a plausible sensor uncertainty; it is a whole-arc extended return mislabeled as a point. Any OSPA/tracker evaluation that ingests these as point measurements (the whole purpose of the plots-CSV contract) would be badly misled — the gate/likelihood math assumes point returns with real covariance.",
+     "evidence": "Stats on tests/fixtures/pohang_radar/out/pohang00_plots.csv (273,752 rows): range 1.35..3001.1 m (capped at --max-range-m 3000), sigma_r_m min/max 0.004/657.745, sigma_az_deg min/max 0.0/94.749; README 'Largest single blob 300950 pixels — canal-wall continuous return'.",
+     "file": "tests/fixtures/pohang_radar/out/pohang00_plots.csv",
+     "suggested_action": "Split or discard extended canal-wall blobs (aspect/area cap) before emitting point plots, or route them to a static-obstacle channel per ADR-0002; do not feed 90-degree-sigma point plots into a point-target tracker eval.",
+     "unit": "pohang"
+    },
+    {
+     "dataset": "pohang",
+     "title": "24% of LiDAR plots have amp_max=0 (and one has range 0.0) — degenerate rows in the 'near-perfect detector' reference",
+     "severity": "low",
+     "category": "data-quality",
+     "description": "1412 of 5946 rows in the lidar plots CSV report amp_max=0, which the README says 'carries the cluster's peak intensity'; a zero peak intensity for a real Velodyne cluster is suspect (either an intensity-extraction gap or genuinely-empty returns), and the fixture is specifically pitched as a clean reference detector. One row also has range_m=0.0 (a cluster on/through the sensor origin). These degenerate rows undercut the 'essentially noise-free' claim used to attribute all downstream track defects to the tracker.",
+     "evidence": "`awk -F, 'NR>1&&$7==0'` on tests/fixtures/pohang_lidar/out/pohang00_lidar_port_plots.csv = 1412 of 5946; python stats: range min 0.0 (1 nonpositive), sigma_az up to 72.8 deg; README claims amp_max is peak intensity and the stream is near-noise-free.",
+     "file": "tests/fixtures/pohang_lidar/out/pohang00_lidar_port_plots.csv",
+     "suggested_action": "Confirm whether intensity is actually being read from the point packing (extract_plots.py) or defaulting to 0; drop range=0 clusters; re-characterize the fixture's cleanliness with these rows accounted for.",
+     "unit": "pohang"
+    },
+    {
+     "dataset": "pohang",
+     "title": "pohang00_plots.csv and pohang00_full.csv are byte-identical duplicates (~18 MB each)",
+     "severity": "low",
+     "category": "hygiene",
+     "description": "Two of the four radar out/ files are the exact same content, wasting ~18 MB and creating ambiguity about which is the canonical plots CSV. pohang00_debug.csv is a smaller subset (9648 rows) of the same schema.",
+     "evidence": "md5sum tests/fixtures/pohang_radar/out/pohang00_plots.csv and pohang00_full.csv both = 55b37f5baf6c2fe3f98dec4df48f07b1; both 18,418,597 bytes; pohang00_debug.csv wc -l = 9648.",
+     "file": "tests/fixtures/pohang_radar/out/pohang00_full.csv",
+     "suggested_action": "Keep one canonical plots CSV and delete/regenerate the duplicate; document what _debug vs _full are meant to be.",
+     "unit": "pohang"
+    },
+    {
+     "dataset": "pohang",
+     "title": "21 duplicate timestamps in the ownship CSV from nearest-neighbor merge; not deduped by the loader",
+     "severity": "low",
+     "category": "timestamps",
+     "description": "pohang00_ownship.csv contains 21 rows with timestamps equal to a neighbor (from pd.merge_asof over ~11k GPS rows). loadOwnshipCsv sorts but does not dedupe, so OwnShipProvider receives multiple poses at the same instant; poseAtOrBefore then resolves ties by whatever std::sort leaves last. Low impact (poses at equal t are near-identical) but it is a nondeterminism-adjacent hygiene issue for a system whose replay must be deterministic.",
+     "evidence": "python check on tests/fixtures/pohang_radar/out/pohang00_ownship.csv: 11033 rows, time monotonic True, duplicate-timestamp count 21, span 2217.999 s; OwnshipCsvReader.cpp:69-70 sorts only, no dedupe.",
+     "file": "tests/fixtures/pohang_radar/out/pohang00_ownship.csv",
+     "suggested_action": "Dedupe equal-timestamp poses in the extractor or loader (keep last), so replay ordering is unambiguous.",
+     "unit": "pohang"
+    }
+   ],
+   "coverage_notes": "SCOPE COVERED: adapters/replay/RadarTruthCsvReader.{cpp,hpp}, adapters/replay/OwnshipCsvReader.cpp, adapters/replay/PlotCsvReplayAdapter.hpp (pohang refs), tests/replay/test_radar_truth_loader.cpp; tests/fixtures/pohang_radar/{README.md,extract_ownship.py,out/*}, tests/fixtures/pohang_lidar/{README.md,out/*}; data/pohang/{pohang00,pohang02} raw. grep confirmed NO C++ test/bench/tool consumes pohang — the RadarTruthCsvReader test runs against philos fixtures (lat/lon/heading_deg header, epoch ~2022), not pohang; all pohang fixtures + data are untracked/gitignored, staged only on disk.\n\nCROSS-CHECKS DONE & CLEAN: Coordinates plausible for Pohang — gps.txt lat 36.0236..36.0504, lon 129.3703..129.3888 (matches ~36.0N,129.4E). Radar/LiDAR clocks ARE aligned: radar first tod 1625124349.321661 (from radar/timestamp.txt), lidar first tod 1625124349.220652 — 0.10 s apart, same Unix epoch (2021-07-01), both spanning ~2218 s. tod is Unix epoch seconds as the READMEs state (verified radar plots tod == timestamp.txt values). Timestamps MONOTONIC after loader sort in all out CSVs (radar plots 273752 rows mono; lidar 5946 rows mono; ownship 11033 rows mono). No non-positive ranges in radar (min 1.35 m, capped at 3000 m as designed); RadarTruthCsvReader correctly drops range<=0 and uid==0. Body-frame azimuth 0..360 deg consistent with the marine-convention rotation in RadarTruthCsvReader.cpp:70-71 (world_bearing = heading+az) matching PlotCsvReplayAdapter. gps SOG 4.46..18.52 m/s (~9..36 kn) — high but plausible for a fast transit; extract_ownship maps col-10 as sog_mps. quaternion norm ~1.0 (valid unit quaternions; only the component-order interpretation is wrong). NOT verified (out of read-only scope / absent): actual PNG->range_m pixel scale (README flags --max-range-m 3000 as an unresolved unknown), and lidar raw packing (source data absent)."
+  },
+  {
+   "unit": "rbad",
+   "findings": [
+    {
+     "dataset": "tests/fixtures/rbad",
+     "title": "Substantive R-BAD tests silently skip under default ctest cwd (only label test runs)",
+     "severity": "low",
+     "category": "coverage-visibility",
+     "description": "The default fixture root is RBAD_DIR=\"tests/fixtures/rbad\" resolved from the process cwd (RbadScenarioRun.cpp:119). Under ctest the cwd is the build directory, so the relative path does not resolve, generate() returns an empty Scenario, and the three fixtures-dependent tests (GenerateCarriesDatumAndReferenceTracks, MhtConsistencyReportVsReferenceTracker, DeterministicReplay) all GTEST_SKIP. Only BatteryLabels (which needs no fixtures) actually runs. A 'green' R-BAD suite under plain ctest therefore validates nothing about the data path unless RBAD_DIR is exported to an absolute path. Given this project's documented history of silent fixture-skips masking a red master (feedback_verify_skip_list), the skip should be surfaced, not silent.",
+     "evidence": "RbadScenarioRun.cpp:119 builds dir from envOr(\"RBAD_DIR\",\"tests/fixtures/rbad\") + label; test_rbad_scenario_run.cpp lines 90/121/134 all GTEST_SKIP on empty measurements. Only BatteryLabels has no fixture dependency.",
+     "suggested_action": "Have CI export RBAD_DIR to the absolute fixture path (or note in the handoff which R-BAD tests RAN vs SKIPPED), so the consistency arm is exercised rather than silently skipped.",
+     "unit": "rbad"
+    }
+   ],
+   "coverage_notes": "Read loader (adapters/benchmark/RbadScenarioRun.cpp/.hpp), the plot-CSV parser it delegates to (adapters/replay/PlotCsvReplayAdapter.cpp loadPlotCsv), the test (tests/benchmark/test_rbad_scenario_run.cpp), and all generator/provenance files (generator/extract_rbad.py, README.md, requirements.txt, CHECKSUMS.txt).\\n\\nLOADER vs DATA cross-check (all 6 scenarios kalimnos_16/17/3, kos_11/16/5): loadPlotCsv reads field[0]=tod,1=range_m,2=azimuth_deg(marine N=0 CW),3=sigma_r_m,4=sigma_az_deg,7=station and needs >=8 fields; fixtures have 10 cols with station='rbad' at field[7]. Confirmed via python: all rows 10 cols, single station 'rbad'. tod monotonic non-decreasing in every plot AND reference file; typical dt=1.0s (1 Hz labelled sub-sample). No NaN/inf in any numeric column. Ranges 3.28-55.8 m across the battery (kos_5 max 36.6) - all well under the test's <200 m body-frame bound and consistent with the README's ~56 m short-range claim; range>0 so none are dropped by the loader's range<=0 skip. Azimuth within sensor FOV (-64..+52 deg). sigma_r 0.01-4.0 m, sigma_az 0-21.6 deg (per-plot cloud spread, capped 30 in generator; 0 values fall back to loader defaults 25m/1deg).\\n\\nFrame consistency: generator computes az=atan2(x,y) (marine) and east_m=x/north_m=y; loader re-projects range/az to ENU E=range*sin(az)=x, N=range*cos(az)=y - verified it round-trips (refs first row 1.32/3.52 == projection of plot range 3.7594/az 20.556). Plots and reference_tracks are 1:1 by tod multiset in all 6 scenarios (Counter equal). No datum conversion needed (body-frame, no geo reference) - matches ADR/README statement that anchored-static logic is untestable here.\\n\\nGenerator reproducibility: ran extract_rbad.py --out-root <scratchpad> (read from present _download/labelled logs; all 6 source logs exist) - regenerated all 18 files diff-identical to committed, and sha256sum of committed radar_plots/reference_tracks/meta matches CHECKSUMS.txt exactly for all 18. Determinism contract holds.\\n\\nLabel-misuse check (the key R-BAD hazard): CLEAN. test only asserts total_our_tracks>0; it deliberately does NOT report/assert RMSE or localization, computeMetrics(result,{}) uses default MetricsParams (truth is carried in BenchResult from the loaded reference tracks) and only continuity/cardinality consistency numbers are printed. Comments in loader, header, README, and generator uniformly label the trajectories as authors' reference-tracker output (cross-tracker consistency, not accuracy). Dock_Label is binary {0,1} everywhere and asserted-on nowhere.\\n\\nLicense/provenance: CC-BY-4.0 (Zenodo 16936465, doi:10.5281/zenodo.16936465, MDPI Electronics 14(20):4065) - commercial-use compatible, attribution present in README + every meta.txt. No NC/GPL blocker (unlike prior D7/D10 rejects).\\n\\nAbsent-raw check: no code/test/generator references the undownloaded 31.6 GB raw archive; only README/docstring mention it as a deferred manual-label route. Git hygiene good: only README/extract_rbad.py/requirements.txt tracked; rbad_*/ and _download/ correctly gitignored (git check-ignore confirms). .venv grep hits ignored per instructions."
+  },
+  {
+   "unit": "sim-multisensor",
+   "findings": [
+    {
+     "dataset": "sim_multisensor",
+     "title": "README claims range-dependent Pd and GPS/heading faults are exercised, but no committed fixture enables them",
+     "severity": "medium",
+     "category": "doc-data-mismatch",
+     "description": "tests/fixtures/sim_multisensor/README.md (\"Anti-model-matched-optimism\" section) states: \"Range-dependent Pd, position quantization, M.1371 cadence, GPS/heading faults — all present, none assumed away.\" Only position quantization and M.1371 cadence are actually present (they are always-on in sensors.py). Range-dependent Pd, own-ship heading faults, and own-ship staleness gaps are implemented but disabled in every one of the 6 committed sim_ms scenarios. These features are gated behind spec.radar_range_dependent_pd (sensors.py ~L54), spec.ownship_heading_fault (~L195), and spec.ownship_stale_gap (~L186), and no scenario in scenarios.py sets any of them. An evaluator reading the README will over-trust what the fusion gate stresses.",
+     "evidence": "meta.txt for all 6 sim_ms scenarios show `ownship_stale_gap: None` and `ownship_heading_fault: None`; `grep -c radar_range_dependent_pd=True generator/scenarios.py` = 0; sensors.py L54-55/L186-188/L195-197 gate these effects on those (unset) flags; README.md line ~113-114 asserts they are all present.",
+     "file": "tests/fixtures/sim_multisensor/README.md",
+     "suggested_action": "Either enable at least one scenario with radar_range_dependent_pd / ownship_heading_fault / ownship_stale_gap, or reword the README to say these knobs exist but are not enabled in the current battery.",
+     "unit": "sim-multisensor"
+    },
+    {
+     "dataset": "sim_multisensor",
+     "title": "Detection table advertises an EoIr camera sensor for 5 scenarios that have no camera data",
+     "severity": "low",
+     "category": "config-inconsistency",
+     "description": "SimMultisensorScenarioRun::descriptor() appends an EoIr (Bearing2D, P_D=0.85, 8 km) entry whenever with_camera_ is true, which is the default for all 6 sim_ms scenarios. But only sim_ms_anchored_camera actually emits camera bearings; the other five (crossing, headon, overtaking, ais_dropout, clutter_burst) have header-only camera_bearings.csv (1 line). This contradicts the code's own rationale for the Imazu family (lines 124-127), which omits EoIr precisely so that \"a phantom EoIr sensor would model misdetections for a sensor that isn't there\" cannot happen. I confirmed the entry is currently INERT: the per-scan miss penalty in TrackTree::branch iterates only over sensors present in the scan (TrackTree.cpp L178 `for (const Measurement& z : scan)`), and EoIr never appears in a scan for these five, so no phantom miss/clutter/birth is charged. It is a misleading descriptor, not a metric bug — but it makes test_sim_multisensor_scenario_run.cpp's `detection_table.size() >= 2` pass with a third sensor that contributes nothing.",
+     "evidence": "adapters/benchmark/SimMultisensorScenarioRun.cpp L128-131 add EoIr under with_camera_ (default true); camera line counts: only sim_ms_anchored_camera=284, other five=1 (header only); TrackTree.cpp L166-186 shows miss penalty iterates scan measurements only, so EoIr is never charged when absent.",
+     "file": "adapters/benchmark/SimMultisensorScenarioRun.cpp",
+     "suggested_action": "Declare EoIr only for scenarios whose camera_bearings.csv has data rows (mirror the with_camera=false treatment used for Imazu), or add a comment noting the entry is intentionally inert.",
+     "unit": "sim-multisensor"
+    },
+    {
+     "dataset": "sim_multisensor",
+     "title": "README CSV-schema note that loadAisCsv drops SOG/COG/nav_status is stale",
+     "severity": "low",
+     "category": "stale-doc",
+     "description": "README.md (CSV schemas > Notes) says: \"loadAisCsv currently reads only time/mmsi/lat/lon and drops sog_mps/cog_deg/nav_status (the #20 velocity-path gap).\" This is no longer true: AisCsvReplayAdapter.cpp now has an emit_velocity path (detectColumns picks up sog_mps/cog_deg/nav_status, L69-75) that produces PositionVelocity2D and surfaces nav_status hints, and SimMultisensorScenarioRun.cpp wires it via the SIMMS_AIS_VELOCITY env flag (L164, L174). The default remains Position2D (byte-identical), so the gate still defaults to dropping velocity, but the flat claim that the loader cannot read those columns is incorrect and could mislead someone assessing what the fixtures' extra columns are for.",
+     "evidence": "README.md lines 91-94; AisCsvReplayAdapter.cpp L120-214 (emit_velocity, sog/cog/nav_status parsing); SimMultisensorScenarioRun.cpp L163-164, L174 (ais_velocity from SIMMS_AIS_VELOCITY passed to loadAisCsv).",
+     "file": "tests/fixtures/sim_multisensor/README.md",
+     "suggested_action": "Update the note to reflect that loadAisCsv reads SOG/COG/nav_status under emit_velocity (SIMMS_AIS_VELOCITY), defaulting off for byte-identical Position2D.",
+     "unit": "sim-multisensor"
+    }
+   ],
+   "coverage_notes": "Cross-checked all loader code against the data. LOADERS READ: adapters/benchmark/SimMultisensorScenarioRun.cpp (+.hpp), tests/benchmark/test_sim_multisensor_scenario_run.cpp, and the four replay loaders it calls (OwnshipCsvReader, AisCsvReplayAdapter, PlotCsvReplayAdapter::loadPlotCsvBodyFrame, CameraBearingCsvReader). GENERATOR READ in full: geo.py, truth.py, sensors.py, clutter.py, scenarios.py, writer.py, generate.py. Also read core/tracking/SensorDetectionModels.hpp, core/tracking/TrackTree.cpp (miss branch), core/benchmark/Sweep.cpp (detectionModelFor) to determine detection-table impact.\\n\\nVERIFIED CLEAN: (1) truth.csv for all 6 sim_ms scenarios + all 22 imazu scenarios — exactly 1.0 s dt, strictly monotonic per truth_id, no duplicate (time,truth_id) keys, positions all within Trondheimsfjord bounds (63-64N,10-11E), no speeds >20 m/s, shared integer-second clock across vessels (max cardinality 2-3 as tests expect). (2) Schema/column order + units of every CSV match each loader exactly (unix_time epoch seconds, marine deg N=0 CW, SI m/m·s, AIS sog already m/s). (3) CHECKSUMS.txt — recomputed sha256 of all 140 committed CSVs (30 sim_ms + 110 imazu), zero mismatches, no on-disk CSV missing from the manifest. (4) Frame/projection alignment: reconstructed radar body-frame plots through own-ship heading composition and AIS lat/lon through the shared geo::Datum — at t=0 headon the two real radar detections land 54 m / 146 m from truth (consistent with sigma_r=18 m + 0.7 deg cross-range at 3.5-4.6 km), clutter plots land 2.2-3.3 km away as expected; AIS positions land 0.6-1.6 m from truth (position quantization only). (5) Designed features present: AIS dropout gap for mmsi 257000401 is 197.2->383.2 s (spec 200-380); clutter_burst averages 39 plots/scan in-window vs 14 out (compound-K + burst); crossing give-way shows SOG 5.84-7.3 m/s speed loss during its out-of-model turn; anchored (257000601) and camera-only (257000602) both persist in truth as tests require. (6) Dependency pins present (trafficgen==0.9.0, numpy==2.5.1) with a full lock file. NOT DONE: did not regenerate fixtures from the generator (would require the git-ignored .venv + DNV trafficgen and would write files); regenerability is only checksum-self-consistent, not independently reproduced. Scope note: imazu_* dirs live under tests/fixtures/sim_multisensor and were structurally spot-checked (clean), but the deep audit focused on the 6 trafficgen sim_ms scenarios per the task hints."
+  }
+ ]
+}
