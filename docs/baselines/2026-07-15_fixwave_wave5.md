@@ -1,7 +1,8 @@
 # Pre-release fix wave — wave 5 (2026-07-15)
 
-Branch `fixwave-wave5` off post-merge master `068a30f` (waves 3+4 merged, ADR-0003
-reconciliation addendum in). Origin: the pre-release review synthesis
+Branch `fixwave-wave5`, originally off post-merge master `068a30f` (waves 3+4 merged,
+ADR-0003 reconciliation addendum in), **rebased onto master `3a5fb63`** after the F2
+provenance cycle merged (`6fcd44e`) — see Handoff. Origin: the pre-release review synthesis
 (`docs/reviews/2026-07-09-prerelease-open-points.md` §B Themes 5+6, §C tail, §D),
 ticket `docs/superpowers/plans/2026-07-15-fixwave-wave5-ticket.md`. TDD + #24 teeth
 throughout; suite run under `NAVTRACKER_REQUIRE_FIXTURES=1` (the ceremony standard).
@@ -188,12 +189,17 @@ Two pure test additions (invariants hold today; convert to executing guards).
 
 ## Verification
 
-- **Full suite under `NAVTRACKER_REQUIRE_FIXTURES=1 ctest --test-dir build -j8`:**
-  **1218/1218 pass, 0 failed, 0 timeouts.** Strict mode ⇒ **0 fixture skips**. The
-  +13 over the 1205 untouched-branch baseline are the new wave-5 tests. (W5.6.5
-  validated on this very run: `VetoIsolationHaxrAB` took **398 s** under parallel
-  `-j8` load — it would have TIMED OUT under the old 300 s cap; the 600 s bump was
-  load-bearing, not precautionary.)
+- **Full suite under `NAVTRACKER_REQUIRE_FIXTURES=1 ctest --test-dir build -j8`
+  (post-rebase onto master `3a5fb63`):** **1222/1222 pass, 0 failed, 0 timeouts.**
+  Strict mode ⇒ **0 fixture skips**. That is +15 over master's 1207 — the wave-5
+  backfill plus the new mixed-timestamp provenance composition test. (Pre-rebase this
+  branch measured **1218/1218** off `068a30f`; the rebase onto master picks up the F2
+  cycle's tests and adds the composition pin.) The composition holds across the whole
+  suite: F2's `MisdetectedTrackDoesNotInheritForeignSource` / `T2tLivePedigreeContent`
+  / `Cl4AisDropoutContinuity` are green alongside the wave-5 tests. W5.6.5 validated:
+  `VetoIsolationHaxrAB` took **398 s** under `-j8` load on the pre-rebase run (would
+  have TIMED OUT under the old 300 s cap; the 600 s bump was load-bearing, not
+  precautionary) — this post-rebase run it came in at **323 s**.
 - **Teeth proven for every code fix** (RED-before-green above); the two pure Section-D
   pins carry non-vacuity guards.
 - **A/B** on W5.4 (above): CPA events 2→0, bench byte-identical, no Cl-4 move.
@@ -203,11 +209,15 @@ Two pure test additions (invariants hold today; convert to executing guards).
   claims raised; **3 confirmed, 3 refuted**:
   - CONFIRMED → FIXED IN-WAVE: **W5.2 PPP-birth-path** double-propagate sibling
     (`074928f`, above) — a genuine structural sibling in W5.2's own territory.
-  - CONFIRMED → routed to arbiter (F2 region, per the coordination rule): **W5.2
-    SourceTouch provenance walk** still keys on `z.time == b.last_update`
-    (`PmbmTracker.cpp:1706`), which is wrong on a mixed-timestamp scan post-W5.2
-    (mis-attributes `contributing_sources` on the live multi-sensor path). See
-    Handoff. Suite-invisible (uniform scans unaffected).
+  - CONFIRMED → **RESOLVED BY REBASE** (was routed to the arbiter): the **W5.2
+    SourceTouch provenance walk** coupling. On this branch's original base the walk
+    keyed on `z.time == b.last_update`, wrong on a mixed-timestamp scan post-W5.2.
+    The F2 cycle (merged to master as `6fcd44e`) re-keyed the walk onto
+    `Bernoulli::last_claimed_meas_index` — independent of `last_update` — so after
+    rebasing this branch onto master `3a5fb63` the coupling is gone and the two
+    fixes are orthogonal. Pinned by the new composition test
+    `MixedTimestampMultiSensorAttributesEachClaimedSource` (teeth: reverting to the
+    old key → RED). See Handoff.
   - CONFIRMED → docs updated: algorithm docs for W5.2 (`pmbm-design.md` §2.2, incl.
     the uniform-scan provenance invariant) and W5.4 (`pipeline.md` lifecycle).
   - REFUTED: W5.5 per-track dropout metric "cherry-picks a spurious track"
@@ -217,26 +227,25 @@ Two pure test additions (invariants hold today; convert to executing guards).
 
 ## Handoff
 
-- All merge-ready on `fixwave-wave5`; commits per finding; not merged/pushed.
-  `fixwave-wave1` untouched.
-- **Two items routed to the arbiter:**
-  1. **W5.2 ↔ F2 SourceTouch provenance coupling (CONFIRMED HIGH by the review,
-     DECISION NEEDED).** W5.2's physical-time stamping makes `b.last_update == t_max`;
-     the SourceTouch provenance walk (`PmbmTracker.cpp:1706`) still keys on
-     `z.time == b.last_update`, so on a **mixed-timestamp** scan (real multi-sensor
-     streams — radar and AIS at different instants) it mis-attributes
-     `contributing_sources`/`recent_contributions` to the wrong sensor. It is
-     suite-invisible (all benches feed uniform scans) but live-relevant. The fix is
-     one line — re-key the walk on `det.last_claimed_meas_index` (already set at
-     `:982`, and already used by the clutter-map feed at `:1801`). That walk is the
-     **F2 cycle's region** (`PmbmTracker` ~:1666 SourceTouch), which the ticket
-     fences off ("coordinate through the arbiter rather than resolving
-     unilaterally") — so it is left unfixed here and flagged (in-code at the W5.2
-     change site + `pmbm-design.md` §2.2 invariant). **Arbiter to decide:** fold the
-     re-key into the F2 cycle (recommended — F2 already rewrites that region), or
-     authorize a follow-up commit on this branch.
-  2. **W5.5 cross-lane T2T gate recalibration** (F2-implementer / T2T-gate author to
-     sanity-check the shape fix + 1.25 threshold at merge review).
+- All merge-ready on `fixwave-wave5`; commits per finding; **rebased onto master
+  `3a5fb63`** (after the F2 cycle merged at `6fcd44e`); not merged/pushed.
+  `fixwave-wave1` untouched. The rebase touched three files (`CMakeLists.txt`,
+  `PmbmTracker.cpp`, `evaluation-log.md`); only `evaluation-log.md` conflicted (both
+  sides appended a dated entry — kept both). `PmbmTracker.cpp` auto-merged cleanly
+  (W5.2's stamp at `:986/:1197` is disjoint from F2's walk at `:1719`).
+- **Composition verified.** W5.2's physical-time stamping and F2's re-keyed
+  SourceTouch walk are orthogonal (F2 keys on `last_claimed_meas_index`, not
+  `last_update`). The stale in-code F2-coordination comment was refreshed, and the
+  positive mixed-timestamp attribution case F2's own uniform-scan regression never
+  reached is now pinned by `MixedTimestampMultiSensorAttributesEachClaimedSource`
+  (teeth: old-key revert → RED on both discriminating assertions).
+- **One item remains for the arbiter:**
+  1. **W5.5 cross-lane T2T gate recalibration** — the F2-implementer / T2T-gate
+     author sanity-checks the shape fix (geometry-controlled per-track dropout
+     inflation **2.07×**) + the **1.4→1.25** threshold at merge review, per the
+     recalibrate-vs-defer riders (direction survived; documented inline).
+  - *(The former item 1 — the W5.2↔F2 SourceTouch coupling — is resolved by this
+    rebase; see the review section. No arbiter decision needed.)*
 - **No Cl-4 gauntlet headline row moves** (deployable is PMBM; W5.5/W5.4 touch
   MHT + classic-Tracker paths, W5.2 is uniform-scan byte-identical).
 - Findings-file marks deferred to the arbiter (`10-bughunt-findings.md` untracked).
