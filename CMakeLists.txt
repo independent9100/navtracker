@@ -287,6 +287,7 @@ add_executable(navtracker_tests
   tests/integration/test_full_stack_pipeline.cpp
   tests/integration/test_static_obstacle_pipeline.cpp
   tests/integration/test_t2t_full_stack.cpp
+  tests/integration/test_t2t_live_pedigree_content.cpp
   tests/scenario/test_filter_comparison.cpp
   tests/scenario/test_cpa_scenario.cpp
   tests/scenario/test_jpda_comparison.cpp
