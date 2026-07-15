@@ -132,6 +132,117 @@ TEST(PmbmTrackerUpdate, DetectionLiftsExistenceAndUpdatesState) {
 }
 
 // ---------------------------------------------------------------------------
+// W5.2: in a MIXED-timestamp scan, a detected Bernoulli's last_update must be
+// stamped at the state's PHYSICAL time (t_max, where predict() advanced every
+// component before the update), NOT rewound to the claimed measurement's
+// earlier timestamp. The rewind (PmbmTracker.cpp:964 scan[l].time) makes the
+// NEXT predict apply F/Q over the [claimed_time, t_max] interval a SECOND time,
+// double-counting process noise. No bench feeds mixed-timestamp scans (all
+// HarnessBatched groups are strictly-equal-timestamp), so this bit only on the
+// live mixed-sensor path — the Cl-4-relevant same-scan fusion route.
+TEST(PmbmTrackerUpdate, MixedTimestampScanStampsBernoulliAtPhysicalTime) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.survival_probability = 1.0;
+  cfg.clutter_intensity = 1e-6;
+  PmbmTracker tracker(f.ekf, cfg);
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  GlobalHypothesis h;
+  h.weight = 1.0;
+  h.log_weight = 0.0;
+  h.bernoullis.push_back(mkBernoulli(1, 0.9, 0.0, 0.0));  // target @ origin, last_update=0
+  tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
+
+  // Mixed-timestamp scan: the target's detection arrives at t=0.0, a far decoy
+  // at t=0.9. processBatch sorts by time and predicts every component to
+  // t_max=0.9 before enumerating detection children.
+  tracker.processBatch({pos2d(0.0, 0.0, 0.0, 0.5),        // target detection @ 0.0
+                        pos2d(0.9, 5000.0, 0.0, 0.5)});   // far decoy @ 0.9 (== t_max)
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  const auto& best = tracker.density().mbm.front();
+  const Bernoulli* target = nullptr;
+  double best_d = 1e18;
+  for (const auto& b : best.bernoullis) {
+    const double d = std::hypot(b.mean(0), b.mean(1));
+    if (d < best_d) { best_d = d; target = &b; }
+  }
+  ASSERT_NE(target, nullptr);
+  // TEETH: the state was propagated to t_max=0.9, so its stamp must be 0.9 —
+  // pre-fix it is rewound to the claimed measurement's 0.0.
+  EXPECT_DOUBLE_EQ(target->last_update.seconds(), 0.9);
+}
+
+// ---------------------------------------------------------------------------
+// W5.2 (Section-D — the coverage hole the timestamp bug lived in): same-scan
+// two-sensor fusion of ONE target. Two sensors report the same target at the
+// SAME timestamp. The target is propagated ONCE (predict to the common scan
+// time), so its last_update is stamped at that time and its covariance is NOT
+// inflated by the extra same-time sensor — a repeated F/Q propagation (the
+// mixed-timestamp bug's failure mode) would grow it; a second same-time
+// measurement can only tighten or leave the covariance.
+TEST(PmbmTrackerUpdate, SameScanTwoSensorFusionSingleTargetSinglePropagation) {
+  auto targetTrace = [](bool two_sensor, double& last_update_s, int& n_near) {
+    Fixture f;
+    PmbmTracker::Config cfg;
+    cfg.probability_of_detection = 0.9;
+    cfg.survival_probability = 1.0;
+    cfg.clutter_intensity = 1e-6;
+    PmbmTracker tracker(f.ekf, cfg);
+    tracker.predict(Timestamp::fromSeconds(0.0));
+    GlobalHypothesis h;
+    h.weight = 1.0;
+    h.log_weight = 0.0;
+    h.bernoullis.push_back(mkBernoulli(1, 0.9, 0.0, 0.0));
+    tracker.mutableDensityForTesting().mbm.push_back(std::move(h));
+
+    Measurement radar = pos2d(1.0, 0.1, 0.0, 0.5);
+    radar.sensor = SensorKind::Lidar;
+    radar.source_id = "radar";
+    std::vector<Measurement> scan{radar};
+    if (two_sensor) {
+      Measurement ais = pos2d(1.0, 0.0, 0.1, 0.5);  // SAME timestamp, other sensor
+      ais.sensor = SensorKind::Ais;
+      ais.source_id = "ais";
+      scan.push_back(ais);
+    }
+    tracker.processBatch(scan);
+
+    const auto& best = tracker.density().mbm.front();
+    const Bernoulli* target = nullptr;
+    double bd = 1e18;
+    n_near = 0;
+    for (const auto& b : best.bernoullis) {
+      const double d = std::hypot(b.mean(0), b.mean(1));
+      if (d < 5.0) ++n_near;
+      if (d < bd) { bd = d; target = &b; }
+    }
+    EXPECT_NE(target, nullptr);
+    last_update_s = target ? target->last_update.seconds() : -1.0;
+    return target ? target->covariance.topLeftCorner<2, 2>().trace() : -1.0;
+  };
+
+  double lu_one = 0.0, lu_two = 0.0;
+  int n_one = 0, n_two = 0;
+  const double trace_one = targetTrace(false, lu_one, n_one);
+  const double trace_two = targetTrace(true, lu_two, n_two);
+
+  // Single propagation: the target's state is stamped at the common scan time
+  // (1.0), for both the one-sensor and two-sensor scans.
+  EXPECT_DOUBLE_EQ(lu_one, 1.0);
+  EXPECT_DOUBLE_EQ(lu_two, 1.0);
+  // The target is present (fused, not lost) under both.
+  EXPECT_GE(n_one, 1);
+  EXPECT_GE(n_two, 1);
+  // The extra same-time sensor must not INFLATE the target covariance — a
+  // double propagation would; a second same-time measurement tightens or leaves.
+  EXPECT_LE(trace_two, trace_one * 1.0001)
+      << "same-scan two-sensor fusion inflated the target covariance: two="
+      << trace_two << " one=" << trace_one;
+}
+
+// ---------------------------------------------------------------------------
 // No prior MBM, no PPP, single measurement → seeds one (clutter-only)
 // child, with the new-target Bernoulli existence ≈ 0 (gets pruned by r_min).
 TEST(PmbmTrackerUpdate, NoPriorNoPppMeasurementProducesClutterOnly) {

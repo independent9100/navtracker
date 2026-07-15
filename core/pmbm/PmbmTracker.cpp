@@ -961,7 +961,24 @@ void PmbmTracker::enumerateChildren(
             }
           }
         }
-        det.last_update = scan[l].time;
+        // W5.2: stamp the state's PHYSICAL time, not the claimed measurement's
+        // time. predict() advanced every component to current_time_ (== t_max,
+        // the latest timestamp in this batch) before enumeration, and the EKF
+        // update does NOT re-predict — so the detected child's mean/covariance
+        // live at current_time_. In a mixed-timestamp scan scan[l].time can be
+        // < t_max; stamping it there rewinds last_update below the state's real
+        // time, and the next predict then applies F/Q over [scan[l].time, t_max]
+        // a SECOND time (double-counted process noise). On a uniform scan
+        // scan[l].time == current_time_, so this is byte-identical (every bench
+        // + existing test feeds uniform scans).
+        //
+        // F2-cycle coordination (arbiter): the SourceTouch provenance walk near
+        // line 1666 matches the claimed measurement via `z.time == b.last_update`
+        // — that keying is now wrong on a MIXED-timestamp scan (b.last_update is
+        // t_max, not the claimed time). The robust key is det.last_claimed_meas_index
+        // (set on the next line); the F2 walk should switch to it. Uniform scans
+        // (all benches/tests) are unaffected either way.
+        det.last_update = current_time_;
         det.last_claimed_meas_index = l;  // R2: true assignment for the feed
         // #25 Phase 2b velocity-runaway guard (default OFF, innov_gate_max_m<=0).
         // The association is already decided (this cell won the assignment) —
