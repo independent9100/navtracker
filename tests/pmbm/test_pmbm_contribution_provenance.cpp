@@ -128,3 +128,88 @@ TEST(PmbmContributionProvenance, MisdetectedTrackDoesNotInheritForeignSource) {
         << "the track the AIS return actually created must list AIS";
   }
 }
+
+// ---------------------------------------------------------------------------
+// W5.2 <-> F2 COMPOSITION (this branch rebased onto master after the F2 cycle):
+// the POSITIVE mixed-timestamp case F2's own test does not reach.
+//
+// F2 re-keyed the source-touch walk onto Bernoulli::last_claimed_meas_index,
+// which is independent of last_update. W5.2 (this wave) stamps a detected
+// Bernoulli's last_update at the state's PHYSICAL time (t_max, where predict()
+// advanced every component), NOT the claimed measurement's earlier timestamp.
+// Together, on a MIXED-timestamp two-sensor scan, each target must be attributed
+// exactly the sensor it CLAIMED — including the target whose claimed measurement
+// arrived at t < t_max. F2's own regression exercises only uniform-timestamp
+// scans, so this composition was untested until W5.2 made the divergence
+// reachable.
+//
+// TEETH: reverting the walk to the OLD `z.time == b.last_update` key turns this
+// RED. The radar target's last_update is stamped t_max=5.5 by W5.2, so the old
+// key would match it to the ONLY same-time measurement — the AIS return at 5.5,
+// 4 km away, with no distance bound — falsely crediting the radar track an AIS
+// SourceTouch AND dropping its genuine radar@5.0 touch. The index key is immune.
+// This is exactly the coupling this wave flagged before the rebase; the rebase
+// resolves it and this test pins the resolution.
+// ---------------------------------------------------------------------------
+TEST(PmbmContributionProvenance, MixedTimestampMultiSensorAttributesEachClaimedSource) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  PmbmTracker::Config c;
+  c.probability_of_detection = 0.9;
+  c.clutter_intensity = 1e-6;
+  c.survival_probability = 1.0;
+  c.adaptive_birth = true;
+  c.birth_existence_target = 0.6;
+  c.confirm_threshold = 0.5;
+  c.source_aware_misdetection = true;
+  c.idle_halflife_sec = 10.0;
+  c.r_min = 1e-4;
+  PmbmTracker tracker(ekf, c);
+
+  // Two well-separated targets, each on its own sensor, over uniform scans 0..4:
+  //   A at the origin, fed by radar;  B 4 km east, fed by AIS.
+  for (int k = 0; k <= 4; ++k) {
+    tracker.predict(Timestamp::fromSeconds(k));
+    tracker.processBatch(
+        {mkPos(k, 0.0, 0.0, SensorKind::ArpaTtm, "radar"),
+         mkPos(k, 4000.0, 0.0, SensorKind::Ais, "ais",
+               std::optional<std::uint32_t>{987654321U})});
+  }
+
+  // The MIXED-timestamp scan: A's radar return arrives at t=5.0 (EARLIER), B's
+  // AIS return at t=5.5 (== t_max). processBatch predicts both components to
+  // t_max=5.5, so W5.2 stamps A.last_update = 5.5 though A claimed the 5.0 return.
+  tracker.predict(Timestamp::fromSeconds(5.5));
+  tracker.processBatch(
+      {mkPos(5.0, 0.0, 0.0, SensorKind::ArpaTtm, "radar"),
+       mkPos(5.5, 4000.0, 0.0, SensorKind::Ais, "ais",
+             std::optional<std::uint32_t>{987654321U})});
+
+  const Track* a = nearestTrack(tracker, 0.0, 0.0);
+  const Track* b = nearestTrack(tracker, 4000.0, 0.0);
+  ASSERT_NE(a, nullptr);
+  ASSERT_NE(b, nullptr);
+  ASSERT_NE(a, b) << "the two targets are 4 km apart; they must not fuse";
+
+  // Each target lists only the sensor it actually claimed.
+  EXPECT_TRUE(listsSource(*a, "radar"));
+  EXPECT_FALSE(listsSource(*a, "ais"))
+      << "the radar target claimed the 5.0 radar return, NOT the 5.5 AIS return "
+         "4 km away — the old z.time==last_update key misattributes it because "
+         "W5.2 stamps its last_update at t_max=5.5";
+  EXPECT_TRUE(listsSource(*b, "ais"));
+  EXPECT_FALSE(listsSource(*b, "radar"))
+      << "the AIS target never saw radar";
+
+  // Positive attribution of the earlier-timestamp claim: A must carry a radar
+  // SourceTouch AT the claimed 5.0 time (this mixed scan), not just historical
+  // ones — the old key drops it (5.0 != last_update 5.5).
+  const bool a_has_radar_at_5 = std::any_of(
+      a->recent_contributions.begin(), a->recent_contributions.end(),
+      [](const Track::SourceTouch& s) {
+        return s.source_id == "radar" && s.time == Timestamp::fromSeconds(5.0);
+      });
+  EXPECT_TRUE(a_has_radar_at_5)
+      << "the radar target's claimed 5.0 return must be recorded as a SourceTouch "
+         "at t=5.0";
+}

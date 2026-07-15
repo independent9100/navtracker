@@ -977,12 +977,15 @@ void PmbmTracker::enumerateChildren(
         // scan[l].time == current_time_, so this is byte-identical (every bench
         // + existing test feeds uniform scans).
         //
-        // F2-cycle coordination (arbiter): the SourceTouch provenance walk near
-        // line 1666 matches the claimed measurement via `z.time == b.last_update`
-        // — that keying is now wrong on a MIXED-timestamp scan (b.last_update is
-        // t_max, not the claimed time). The robust key is det.last_claimed_meas_index
-        // (set on the next line); the F2 walk should switch to it. Uniform scans
-        // (all benches/tests) are unaffected either way.
+        // W5.2<->F2 composition (this branch rebased onto master after the F2
+        // cycle): the SourceTouch provenance walk near line 1693 was re-keyed by
+        // F2 onto det.last_claimed_meas_index (set on the next line), which is
+        // independent of last_update. So stamping last_update at t_max here no
+        // longer affects attribution — the earlier concern (that a MIXED-timestamp
+        // scan would break the old `z.time == b.last_update` key) is moot; the two
+        // fixes are orthogonal. Uniform scans (all benches/tests) are unaffected by
+        // either. The mixed-ts positive-attribution case is pinned by
+        // test_pmbm_contribution_provenance's MixedTimestampMultiSensor... test.
         det.last_update = current_time_;
         det.last_claimed_meas_index = l;  // R2: true assignment for the feed
         // #25 Phase 2b velocity-runaway guard (default OFF, innov_gate_max_m<=0).
