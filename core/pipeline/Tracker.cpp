@@ -192,8 +192,27 @@ void Tracker::process(const Measurement& z_in) {
   for (const TrackId id : stale) manager_.recordMiss(id);
 }
 
-void Tracker::processBatch(const std::vector<Measurement>& scan_in) {
-  if (scan_in.empty()) return;
+void Tracker::processBatch(const std::vector<Measurement>& scan_arg) {
+  if (scan_arg.empty()) return;
+  // W5.3 (backlog #15): MHT and PMBM sort an incoming batch by time; the plain
+  // single-hypothesis Tracker never got that fix. The canonical fixed-rate
+  // consumer (collect everything since the last tick, hand it over) produces an
+  // unsorted batch, so scan.front().time is the wrong scan instant and — with
+  // the stale guard on — a front older than the high-water mark drops the whole
+  // batch. Order it here (stable_sort = deterministic; is_sorted fast-path =
+  // bit-identical no-op for already-sorted input, the common case and every
+  // existing test/bench).
+  std::vector<Measurement> scan_ordered;
+  const auto by_time = [](const Measurement& a, const Measurement& b) {
+    return a.time < b.time;
+  };
+  const bool need_sort =
+      !std::is_sorted(scan_arg.begin(), scan_arg.end(), by_time);
+  if (need_sort) {
+    scan_ordered = scan_arg;
+    std::stable_sort(scan_ordered.begin(), scan_ordered.end(), by_time);
+  }
+  const std::vector<Measurement>& scan_in = need_sort ? scan_ordered : scan_arg;
   const Timestamp t = scan_in.front().time;
   if (has_high_water_ && t < high_water_) {
     if (reject_stale_) {

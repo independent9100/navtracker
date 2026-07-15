@@ -13,10 +13,13 @@
 
 #include <Eigen/Core>
 
+#include "core/association/GnnAssociator.hpp"
 #include "core/estimation/ConstantVelocity2D.hpp"
 #include "core/estimation/EkfEstimator.hpp"
 #include "core/pipeline/MhtTracker.hpp"
+#include "core/pipeline/Tracker.hpp"
 #include "core/pmbm/PmbmTracker.hpp"
+#include "core/tracking/TrackManager.hpp"
 #include "core/types/Measurement.hpp"
 #include "core/types/Timestamp.hpp"
 
@@ -99,6 +102,39 @@ TEST(BatchOrdering, PmbmUnsortedBatchMatchesSorted) {
   auto [a, b] = runBothOrders(sorted, reversed);
   EXPECT_FALSE(a.empty());
   EXPECT_EQ(a, b);
+}
+
+// W5.3: the plain single-hypothesis Tracker::processBatch never got the
+// backlog-#15 sort that MHT/PMBM got. It takes the scan instant from the raw
+// arrival-order front() and processes the whole batch at that instant, so an
+// unsorted (canonical fixed-rate collection) batch is processed at the WRONG
+// time and diverges from the sorted result. Feeding sorted vs reversed must end
+// identical, with no fresh tail silently stale-dropped.
+TEST(BatchOrdering, PlainTrackerUnsortedBatchMatchesSortedNoStaleDrop) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator est(motion, 5.0);
+  const GnnAssociator gnn(80.0);
+  auto run = [&](bool reversed) {
+    TrackManager mgr(1, 5);
+    Tracker trk(est, gnn, mgr, 100.0);  // reject_stale defaults ON
+    for (int k = 1; k <= 10; ++k) {
+      const double x = 5.0 * k;
+      Measurement t1 = pos(x, 0.0, k);          // earlier sub-time (k.0)
+      Measurement t2 = pos(x, 120.0, k + 0.3);  // later sub-time  (k.3)
+      if (reversed)
+        trk.processBatch({t2, t1});  // descending by time (unsorted)
+      else
+        trk.processBatch({t1, t2});  // ascending by time
+    }
+    return std::make_pair(summarize(mgr), trk.staleDropped());
+  };
+  const auto [sorted_v, sorted_drop] = run(false);
+  const auto [reversed_v, reversed_drop] = run(true);
+  EXPECT_FALSE(sorted_v.empty());
+  EXPECT_EQ(sorted_v, reversed_v)  // TEETH: pre-fix reversed processes at k.3, diverges
+      << "plain Tracker gave order-dependent results on an unsorted batch";
+  EXPECT_EQ(sorted_drop, 0u);
+  EXPECT_EQ(reversed_drop, 0u);  // no fresh tail silently dropped
 }
 
 // Determinism / no-op guard: an already-sorted batch is unaffected by the
