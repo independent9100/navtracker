@@ -257,6 +257,8 @@ PmbmTracker::buildNewTargetCandidates(
 
   for (const auto& z : scan) {
     NewTargetCandidate cand;
+    // W5.2: the PPP posterior is moment-matched at current_time_ (== t_max).
+    cand.state_time = current_time_;
 
     // Per-sensor (P_D, λ_C) when a detection model is wired; Config
     // fallback otherwise. Matches MhtTracker's per-measurement
@@ -433,6 +435,9 @@ PmbmTracker::buildAdaptiveBirthCandidates(
 
   for (const auto& z : scan) {
     NewTargetCandidate cand;
+    // W5.2: the adaptive-birth state comes from initiate(z) — un-propagated, so
+    // it lives at the measurement's own time, not t_max.
+    cand.state_time = z.time;
 
     const double lambda_z = detection_model_
         ? detection_model_->paramsFor(z).clutter_intensity
@@ -1189,7 +1194,8 @@ void PmbmTracker::enumerateChildren(
       nb.imm_means = nt.imm_means;
       nb.imm_covariances = nt.imm_covariances;
       nb.imm_mode_probabilities = nt.imm_mode_probabilities;
-      nb.last_update = scan[l].time;
+      nb.last_update = nt.state_time;  // W5.2: physical state time (path-specific:
+                                       // t_max for PPP, z.time for adaptive birth)
       nb.last_claimed_meas_index = l;  // R2: this measurement birthed it
       // #25 P2b: a birth has no predicted position to innovate against → sentinel.
       if (diag_sink_ != nullptr) {

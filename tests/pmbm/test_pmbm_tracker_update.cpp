@@ -174,6 +174,40 @@ TEST(PmbmTrackerUpdate, MixedTimestampScanStampsBernoulliAtPhysicalTime) {
   EXPECT_DOUBLE_EQ(target->last_update.seconds(), 0.9);
 }
 
+// W5.2 (birth-path sibling, found by adversarial review): the PPP-birth path
+// (buildNewTargetCandidates) moment-matches the newborn's state at current_time_
+// (t_max, post-predict) but historically stamped last_update = scan[l].time — so
+// a mixed-timestamp scan double-propagated [scan_time, t_max] on the next
+// predict, the identical failure the detected-Bernoulli fix corrects. The fix is
+// PATH-SPECIFIC (the adaptive-birth path via initiate(z) is genuinely at z.time),
+// carried on NewTargetCandidate::state_time.
+TEST(PmbmTrackerUpdate, MixedTimestampPppBirthStampsBernoulliAtPhysicalTime) {
+  Fixture f;
+  PmbmTracker::Config cfg;
+  cfg.probability_of_detection = 0.9;
+  cfg.clutter_intensity = 1e-6;
+  cfg.survival_probability = 1.0;
+  PmbmTracker tracker(f.ekf, cfg);  // adaptive_birth defaults false -> PPP birth
+  tracker.predict(Timestamp::fromSeconds(0.0));
+  tracker.mutableDensityForTesting().ppp.push_back(mkPoisson(1.0, 0.0, 0.0));
+
+  // Mixed-timestamp scan: new-target detection @ t=0.0 on the PPP; far decoy @ 0.9.
+  tracker.processBatch({pos2d(0.0, 0.0, 0.0, 0.5),
+                        pos2d(0.9, 5000.0, 0.0, 0.5)});
+
+  ASSERT_FALSE(tracker.density().mbm.empty());
+  const auto& best = tracker.density().mbm.front();
+  const Bernoulli* born = nullptr;
+  double bd = 1e18;
+  for (const auto& b : best.bernoullis) {
+    const double d = std::hypot(b.mean(0), b.mean(1));
+    if (d < bd) { bd = d; born = &b; }
+  }
+  ASSERT_NE(born, nullptr);
+  // TEETH: the PPP posterior lives at t_max=0.9 → stamp must be 0.9 (pre-fix 0.0).
+  EXPECT_DOUBLE_EQ(born->last_update.seconds(), 0.9);
+}
+
 // ---------------------------------------------------------------------------
 // W5.2 (Section-D — the coverage hole the timestamp bug lived in): same-scan
 // two-sensor fusion of ONE target. Two sensors report the same target at the
