@@ -100,7 +100,15 @@ int main(int argc, char** argv) {
            "entries whose label contains the given substring. Both filters\n"
            "compose. Use for focused re-measurement against an existing\n"
            "pinned baseline (e.g. --config-filter imm_cv_ct_mht\n"
-           "--scenario-filter autoferry_scenario2).\n";
+           "--scenario-filter autoferry_scenario2).\n"
+           "\n"
+           "--no-bias-feed / --force-no-idle / --force-no-source-aware are\n"
+           "F2-provenance-cycle path-isolation knobs (research tooling): they\n"
+           "disable, respectively, the AIS-ARPA bias-feed loop (clears\n"
+           "build_sensor_bias_estimator), idle_halflife existence decay, and the\n"
+           "source_aware_misdetection miss gate on ALL configs. Applied to both\n"
+           "A/B arms they attribute an ON-vs-OFF delta to a single tracking\n"
+           "path; all three together must make the F2 fix byte-identical.\n";
     return 0;
   }
   const std::string config_filter = argv_str(argc, argv, "--config-filter");
@@ -228,6 +236,40 @@ int main(int argc, char** argv) {
                        }),
         all.end());
   }
+  // F2 provenance cycle — path-isolation knobs (research tooling, no effect
+  // unless a flag is passed). The F2 source-touch fix changes ONLY
+  // Track::recent_contributions, consumed by exactly three tracking paths:
+  //   (a) source_aware_misdetection miss gate,
+  //   (b) idle_halflife existence decay,
+  //   (c) the AIS-ARPA bias-feed loop
+  //       (build_sensor_bias_estimator -> extractPairs -> applyBiasCorrection).
+  // Disabling a path on BOTH A/B arms removes it from the ON-vs-OFF delta, so
+  // the delta is attributed per path. Disabling ALL THREE must make ON == OFF
+  // byte-identical (the fix has no other reach) — the attribution sanity check.
+  // See docs/superpowers/plans/2026-07-12-f2-provenance-cycle-ticket.md Q(a).
+  const bool no_bias_feed = has_flag(argc, argv, "--no-bias-feed");
+  const bool force_no_idle = has_flag(argc, argv, "--force-no-idle");
+  const bool force_no_source_aware =
+      has_flag(argc, argv, "--force-no-source-aware");
+  if (no_bias_feed || force_no_idle || force_no_source_aware) {
+    for (auto& c : configs) {
+      if (no_bias_feed) c.build_sensor_bias_estimator = {};  // path (c) off
+      if ((force_no_idle || force_no_source_aware) && c.pmbm_config) {
+        auto orig = c.pmbm_config;
+        c.pmbm_config = [orig, force_no_idle, force_no_source_aware]() {
+          auto cfg = orig();
+          if (force_no_idle) cfg.idle_halflife_sec = 0.0;           // path (b)
+          if (force_no_source_aware)
+            cfg.source_aware_misdetection = false;                  // path (a)
+          return cfg;
+        };
+      }
+    }
+    std::cout << "[path-isolation] no_bias_feed=" << no_bias_feed
+              << " force_no_idle=" << force_no_idle
+              << " force_no_source_aware=" << force_no_source_aware << "\n";
+  }
+
   std::cout << "Running " << configs.size() << " configs x " << all.size()
             << " scenarios\n";
 
