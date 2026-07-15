@@ -226,6 +226,18 @@ independently-mergeable package.
   not-merge-ready. It becomes its own ticket because it shifts tracking on 18
   configs with an untested continuity risk on the KEEP config — a measured
   decision, not a fix-wave passenger.
+  - **UPDATE 2026-07-15 (F2 provenance cycle measured — see
+    `docs/baselines/2026-07-15_f2_provenance_cycle.md`).** On the corrected
+    (wave-3) chain: (a) the autoferry regression is REAL and path-(a)
+    (source_aware_misdetection) driven — an overcount/phantom-persistence effect,
+    NOT bias-loop garbage×broken-chain cancellation — and CONFINED to source-aware-
+    gate configs; the DEPLOYED KEEP config carries none of it (byte-identical, and
+    +improving on anchored diagnostic, −15.37). (b) KEEP AIS-dropout continuity is
+    excellent (lifetime 0.993, 0 id-switches) and byte-identical fix ON vs OFF; the
+    idle_halflife risk is doubly moot (idle=0, and radar keeps the track non-idle);
+    permanent guard landed. (c) philos improves on source-aware-gate configs but is
+    byte-identical on KEEP. Disposition (SHIP recommended) PENDING arbiter
+    checkpoint; no baseline re-pinning / no T2T caveat lift yet.
   - **Acceptance criterion #2 was DISCOVERED UNACHIEVABLE, not waived.** The A/B
     input-path evidence is the paper trail: `recent_contributions` feeds three
     tracking paths (source-aware gate, idle-decay, and the emitted-provenance →

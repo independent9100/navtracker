@@ -9437,3 +9437,35 @@ standard). `fixwave-wave1` untouched.
 - **Handoff.** All merge-ready; **no Cl-4 finding beyond Stage 0's W2.4 delta**
   (wave-4 leaves the gauntlet headline rows unchanged). Commits on the branch;
   not merged/pushed. Findings-file marks deferred to the arbiter.
+
+## 2026-07-15 — F2 provenance cycle: source-touch fix re-priced on the corrected chain [CHECKPOINT — no re-pin]
+
+Branch `f2-provenance-cycle` off `068a30f` (wave-3+4 merged). Full write-up:
+`docs/baselines/2026-07-15_f2_provenance_cycle.md`. Cherry-picked `faaea83` (F2
+fix, clean auto-merge, semantic check vs W2.4b PASS) + bench path-isolation flags
++ a permanent AIS-dropout continuity guard. A/B: ON = branch, OFF = master; both
+share the wave-3 chain so its seed mis-scaling is common-mode and cancels.
+- **Q(a) — regression is REAL, path-(a) driven, NOT garbage×broken-chain.** Path-
+  isolation ladder (all-three-off = byte-identical everywhere, method validated):
+  removing the bias loop does NOT remove the autoferry regression; removing idle
+  GROWS it. Driver = `source_aware_misdetection` (overcount/phantom persistence:
+  gospa_false +1600…+2900, gospa_missed down, lifetime up). Persists on the
+  corrected chain → not cancellation. CONFINED to source-aware-gate configs.
+- **Deployed KEEP config `imm_cv_ct_pmbm_coverage_land_ivgate`:** byte-identical on
+  autoferry/simms/philos/sim; anchored diagnostic IMPROVES −15.37 (via the bias
+  loop; `scenario16_anchored` 8.42→1.52, recovering wave-3 seed damage).
+- **Q(b) — KEEP AIS-dropout continuity.** Fix byte-identical ON vs OFF (per-scan
+  diag md5-identical). Survival lifetime 0.993/0.992, 0 id-switches, ADR-0002
+  presence satisfied. idle_halflife risk DOUBLY moot (idle=0; radar keeps the
+  track non-idle — forcing idle=3 leaves lifetime 0.993). Guard teeth-proven:
+  `source_aware_misdetection=true` → RED. `test_cl4_ais_dropout_continuity.cpp`.
+- **Q(c) — philos.** Improves on source-aware-gate configs (−0.6…−1.9 gospa) but
+  byte-identical on the deployed KEEP config. Deployment value of the fix =
+  correctness + byte-identity + anchored improvement + T2T-caveat unblock, not the
+  philos number.
+- **Recommendation SHIP** (deployed surface all-upside; regression confined to
+  non-deployed source-aware configs, understood). **PENDING arbiter checkpoint —
+  no baseline re-pinning, no T2T caveat lift yet.** Suite strict 0-skip; sole
+  `-j`-starvation flake is the inherited wave-2 `VetoIsolationHaxrAB` 300 s
+  timeout knife-edge (passes clean standalone, 265 s). Commits on branch; not
+  merged/pushed.
