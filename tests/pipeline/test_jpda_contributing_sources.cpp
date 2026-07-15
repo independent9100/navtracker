@@ -66,3 +66,32 @@ TEST(JpdaContributingSources, SoftUpdateRecordsEachFusingSource) {
                                       t2.contributing_sources.end(), "radar");
   EXPECT_EQ(radar_count, 1);
 }
+
+// W5.1 (HIGH): the single-measurement Tracker::process() consumed ONLY
+// AssociationResult::matches, which a soft (JPDA) associator never populates
+// (it fills betas/beta_0). So with JPDA wired and measurements fed one at a time
+// through process(), every fix that gated to an existing track left it
+// un-updated and instead initiated a duplicate track at the new position —
+// unbounded churn, zero fusion, silently. (processBatch already handled the soft
+// path; process() did not.) Fix: process() delegates to processBatch.
+TEST(TrackerProcessJpda, SingleMeasurementSoftUpdatesInsteadOfDuplicating) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  const EkfEstimator ekf(motion, 5.0);
+  JpdaAssociator jpda(20.0, /*P_D*/ 0.9, /*lambda_C*/ 1e-4);
+  TrackManager mgr(/*confirm*/ 1, /*delete*/ 5);
+  Tracker tracker(ekf, jpda, mgr, /*miss_timeout*/ 30.0);
+
+  // T=0: no tracks yet → betas is M×0, matches empty either way → initiate.
+  tracker.process(posMeas(0.0, 0.0, 0.0, "ais"));
+  ASSERT_EQ(mgr.size(), 1u);
+  const TrackId id1 = mgr.tracks()[0].id;
+  const double x_seed = mgr.tracks()[0].state(0);
+
+  // A fix that JPDA gates to track 1. Pre-fix: matches empty → track 1 frozen,
+  // a DUPLICATE track 2 initiated (size 2). Post-fix: soft update, size stays 1.
+  tracker.process(posMeas(1.0, 0.5, 1.0, "ais"));
+  EXPECT_EQ(mgr.size(), 1u);                    // TEETH: no duplicate birth
+  EXPECT_EQ(mgr.tracks()[0].id, id1);           // same track, not re-born
+  EXPECT_GT(mgr.tracks()[0].state(0), x_seed + 0.05)  // actually soft-updated
+      << "track was not updated by the single-measurement soft path";
+}

@@ -123,73 +123,18 @@ Tracker::Tracker(const IEstimator& estimator,
       miss_timeout_seconds_(miss_timeout_seconds) {}
 
 void Tracker::process(const Measurement& z_in) {
-  if (has_high_water_ && z_in.time < high_water_) {
-    if (reject_stale_) {
-      ++stale_dropped_;
-      return;
-    }
-  } else {
-    high_water_ = z_in.time;
-    has_high_water_ = true;
-  }
-
-  const Measurement z = applyBiasCorrection(z_in, bias_provider_);
-
-  manager_.predictAll(estimator_, z.time);
-
-  const std::vector<Measurement> batch{z};
-  const AssociationResult result =
-      associator_.associate(manager_.tracks(), batch, &estimator_);
-
-  if (!result.matches.empty()) {
-    const std::size_t ti = result.matches.front().first;
-    Track& tr = manager_.mutableTracks()[ti];
-    emitBearingInnovationIfApplicable(bearing_innov_sink_, tr, z);
-    emitInnovation(innov_sink_, tr, z);
-    estimator_.update(tr, z);
-    tr.velocity_observed = true;  // ≥1 update past init → velocity observed
-    {
-      Track::SourceTouch touch;
-      touch.sensor = z.sensor;
-      touch.source_id = z.source_id;
-      touch.time = z.time;
-      fillSourceTouchEnu(touch, z);
-      touch.sensor_position_enu = z.sensor_position_enu;
-      touch.own_position_std_m = z.sensor_position_std_m;
-      touch.covariance_is_default = z.covariance_is_default;
-      tr.recent_contributions.push_back(std::move(touch));
-      pruneContributions(tr.recent_contributions, z.time);
-    }
-    bool has_src = false;
-    for (const auto& s : tr.contributing_sources) {
-      if (s == z.source_id) {
-        has_src = true;
-        break;
-      }
-    }
-    if (!has_src) tr.contributing_sources.push_back(z.source_id);
-    const TrackId id = tr.id;
-    manager_.recordHit(id);
-    manager_.noteObservation(id, z.time);
-    manager_.recordUpdated(id, z.time);
-  } else if (canInitiateTrack(z.model) &&
-             isMeasurementCovariancePsd(z.covariance)) {
-    Track seed = estimator_.initiate(z);
-    manager_.add(seed, z.time);
-  }
-  // else: a bearing-only measurement that gated to no track has no
-  // observable range — drop it rather than seed a garbage position
-  // (passive sensors don't initiate; see canInitiateTrack).
-
-  const std::int64_t timeout_ns =
-      static_cast<std::int64_t>(miss_timeout_seconds_ * 1e9);
-  std::vector<TrackId> stale;
-  for (const auto& tr : manager_.tracks()) {
-    const std::int64_t age =
-        z.time.nanos() - manager_.lastObservation(tr.id).nanos();
-    if (age > timeout_ns) stale.push_back(tr.id);
-  }
-  for (const TrackId id : stale) manager_.recordMiss(id);
+  // W5.1: delegate to processBatch. The single-measurement path historically
+  // consumed only AssociationResult::matches (the hard/GNN path); a soft (JPDA)
+  // associator populates betas/beta_0 instead, so with JPDA wired process()
+  // silently updated NO track and initiated a duplicate every scan (unbounded
+  // churn, zero fusion). processBatch dispatches on BOTH the hard and soft
+  // branch, and for a one-element batch it is behaviour-identical to the old
+  // hard path: the internal sort is a no-op, t == z_in.time, the stale-guard
+  // increments identically (+= 1), and both paths run the same
+  // predictAll/associate/initiate/stale-timeout with the same innovation and
+  // SourceTouch/contributing_sources emission — so hard-associator results are
+  // byte-identical while the soft path now works.
+  processBatch({z_in});
 }
 
 void Tracker::processBatch(const std::vector<Measurement>& scan_arg) {
