@@ -149,7 +149,10 @@ every bench and unit/scenario test), `last_update == claimed measurement time`,
 making the stamping byte-identical to the pre-fix behaviour. Any downstream reader
 that recovers a Bernoulli's *claimed measurement* must key on
 `last_claimed_meas_index`, not on `z.time == b.last_update` — the latter holds
-only under the uniform-timestamp invariant.
+only under the uniform-timestamp invariant. The `SourceTouch` provenance walk
+keys on `last_claimed_meas_index` accordingly (F2 cycle); the mixed-timestamp
+attribution case is pinned by `test_pmbm_contribution_provenance`'s
+`MixedTimestampMultiSensorAttributesEachClaimedSource`.
 
 ---
 
