@@ -43,6 +43,15 @@ std::vector<AisArpaPairObservation> extractPairs(
       if (ais && arpa) break;
     }
     if (!ais || !arpa) continue;
+    // W3.3: skip the pair when the ARPA touch carries no known own-ship origin.
+    // sensor_position_enu defaults to (0,0) — the same "sensor at datum / unset"
+    // sentinel DatumReproject uses — which is what an ARPA-TLL fix arriving
+    // before the first own-ship pose leaves behind (TTM drops on no pose; TLL
+    // keeps its absolute position but cannot establish own-ship). Forming a pair
+    // about the origin would measure the bearing subtended at the datum, not at
+    // own-ship — the exact geometry W3.3 fixes — and cold-start observations are
+    // outlier-gate-exempt, so it would corrupt the shared bias unconditionally.
+    if (arpa->sensor_position_enu.isZero()) continue;
     AisArpaPairObservation obs;
     obs.time = cycle_time;
     obs.own_position_enu = arpa->sensor_position_enu;
@@ -52,6 +61,10 @@ std::vector<AisArpaPairObservation> extractPairs(
         sigmaFromCov2D(ais->covariance, cfg.ais_position_std_fallback_m);
     obs.arpa_bearing_std_rad = cfg.arpa_bearing_std_fallback_rad;
     obs.own_position_std_m = arpa->own_position_std_m;
+    // W3.1: carry the heading-bias correction the adapter already applied to
+    // the ARPA bearing so the estimator reconstructs the raw, full-bias
+    // observation (see HeadingBiasEstimator::observe).
+    obs.arpa_applied_heading_bias_rad = arpa->applied_heading_bias_rad;
     out.push_back(std::move(obs));
   }
   return out;

@@ -319,11 +319,15 @@ add_executable(navtracker_tests
   tests/sim/test_bus_anchor_loss.cpp
   tests/sim/test_bus_cpa_uncertainty.cpp
   tests/bias/test_heading_bias_estimator.cpp
+  tests/bias/test_heading_bias_sign_convention.cpp
+  tests/bias/test_heading_bias_closed_loop.cpp
   tests/bias/test_heading_bias_bearing_innovation.cpp
   tests/bias/test_heading_bias_multi_source.cpp
   tests/bias/test_heading_bias_permutations.cpp
   tests/bias/test_ais_arpa_pair_extractor.cpp
   tests/bias/test_sensor_bias_estimator.cpp
+  tests/bias/test_sensor_bias_closed_loop.cpp
+  tests/bias/test_bias_off_datum.cpp
   tests/bias/test_bias_correction.cpp
   tests/own_ship/test_uere_estimator.cpp
   tests/own_ship/test_own_ship_velocity_estimator.cpp

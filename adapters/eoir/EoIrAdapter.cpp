@@ -70,6 +70,8 @@ void EoIrAdapter::ingest(const CameraDetection& d) {
   m.covariance = out.cov;
   if (d.sensor_track_id) m.hints.sensor_track_id = d.sensor_track_id;
   m.sensor_position_std_m = own_opt->position_std_m;
+  // W3.1: carry the heading-bias correction just applied (see ArpaAdapter).
+  m.applied_heading_bias_rad = b_hat;
   buffer_.push_back(std::move(m));
 }
 

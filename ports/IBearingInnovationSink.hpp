@@ -11,8 +11,17 @@ namespace navtracker {
  * values are computed from the PRE-update predicted track state so the
  * innovation r is a measurement of the heading bias b (see spec §3).
  *
+ * ANGLE CONVENTION (W3.4): innovation_rad is the RAW innovation in the
+ * ENU-math bearing frame (β = atan2(dN, dE); 0 = east, counter-clockwise-
+ * positive) — the same frame predictMeasurement uses. This is NOT the
+ * compass heading-bias convention the HeadingBiasEstimator stores (0 = north,
+ * clockwise-positive): a gyro reading high by +b (compass) yields β_obs =
+ * β_true − b here, so this raw innovation is −b. The estimator negates it at
+ * its observe(BearingInnovation) boundary; consumers must not assume the sign
+ * already matches the compass bias.
+ *
  * === Math ===
- * r = wrap(β_observed - β_predicted)
+ * r = wrap(β_observed - β_predicted)    (ENU-math frame; = −b for a +b gyro)
  * variance_rad2 = H · P · Hᵀ + R         (predicted innovation variance)
  * predicted_state_var_rad2 = H · P · Hᵀ   (used for the state-dominance gate)
  * where H is the bearing-component row of the measurement Jacobian and

@@ -62,7 +62,19 @@ std::vector<PositionBiasPairObservation> extractPositionPairs(
       obs.time = cycle_time;
       obs.key.sensor = t.sensor;
       obs.key.source_id = t.source_id;
-      obs.z_sensor_enu = t.value_enu;
+      // W3.2: reconstruct the RAW sensor measurement by adding back any
+      // published position bias the pipeline already subtracted
+      // (applyBiasCorrection), so the estimator's r = z_sensor − z_anchor − b̂
+      // measures the full bias and does not subtract b̂ a second time in the
+      // closed loop.
+      obs.z_sensor_enu = t.value_enu + t.applied_position_bias_enu;
+      // The anchor is the TRUTH reference: use its CORRECTED position directly
+      // (do NOT add the anchor's applied bias back — that would restore the raw,
+      // biased position and drive the sensor estimate to b_sensor − b_anchor).
+      // Anchor kinds are never fed to any per-sensor estimator so they never
+      // publish a position bias (applied stays 0), making this byte-identical to
+      // the raw anchor today; using value_enu also closes that latent hole if an
+      // anchor is ever position-calibrated.
       obs.z_anchor_enu = anchor->value_enu;
       obs.R_sensor =
           covWithFallback(t.covariance, cfg.sensor_position_std_fallback_m);
@@ -106,8 +118,12 @@ std::vector<BearingBiasPairObservation> extractBearingPairs(
       obs.key.sensor = t.sensor;
       obs.key.source_id = t.source_id;
       obs.sensor_position_enu = t.sensor_position_enu;
+      // W3.2: reconstruct the RAW camera bearing by adding back the bearing
+      // bias the pipeline already applied, so the closed loop does not
+      // double-subtract b̂. The anchor is the TRUTH reference — use its CORRECTED
+      // position directly (no add-back; see the positional path above for why).
       obs.anchor_target_position_enu = anchor->value_enu;
-      obs.alpha_observed_rad = t.alpha_rad;
+      obs.alpha_observed_rad = t.alpha_rad + t.applied_bearing_bias_rad;
       obs.alpha_meas_var_rad2 = t.alpha_var_rad2;
       // Project the anchor's position uncertainty onto the
       // bearing axis at the camera-to-anchor range; this drives
@@ -255,8 +271,13 @@ std::vector<PositionBiasPairObservation> extractCrossSensorPositionPairs(
       PositionBiasPairObservation obs;
       obs.time = cycle_time;
       obs.key = key_x;
-      obs.z_sensor_enu = x.value_enu;
-      obs.z_anchor_enu = best_y->value_enu - best_b_anchor;
+      // W3.2 / cross-sensor Schmidt fold: reconstruct the RAW touches (add
+      // back any bias applyBiasCorrection already removed) BEFORE subtracting
+      // the partner's published bias. Otherwise the anchor is debiased twice —
+      // once by the pipeline, once by best_b_anchor here.
+      obs.z_sensor_enu = x.value_enu + x.applied_position_bias_enu;
+      obs.z_anchor_enu =
+          best_y->value_enu + best_y->applied_position_bias_enu - best_b_anchor;
       obs.R_sensor =
           covWithFallback(x.covariance, cfg.sensor_position_std_fallback_m);
       obs.R_anchor = best_R_anchor;

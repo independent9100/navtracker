@@ -9345,3 +9345,55 @@ fixture-guard evasions + 2 minor FIXED (`b7d54f0`), 2 accepted-as-documented
   gauntlet** (philos/HAXR safe, autoferry+dense_clutter move — correct behaviour
   the bugs masked). Findings-file marks deferred to the arbiter (same as wave 1;
   `10-bughunt-findings.md` is untracked). Commits on the branch; not merged.
+
+## 2026-07-13 — Pre-release fix wave 3: heading/sensor-bias chain (W3.1–W3.5) fixed + teeth-proven; deployable path byte-identical, anchored diagnostic mode moves (arbiter finding)
+
+Branch `fixwave-wave3` (from master `f9ad004`). Full write-up:
+`docs/baselines/2026-07-13_fixwave_wave3.md`. Four HIGH correctness bugs in
+the bias chain + the input angle-convention audit, fixed as one repair
+project. Full suite **1180/1180, 0 skips, 0 disabled**.
+
+- **W3.4 [sign convention, load-bearing].** `HeadingBiasEstimator`'s five
+  observation kinds mixed marine-compass (v3 gyro-vs-reference + the adapter
+  correction) with ENU-math (v1 AIS↔ARPA, v2 bearing-innovation). A `+2°` gyro
+  bias drove v1/v2 to `−2°` while v3 reached `+2°`; when v1/v2 dominated the
+  adapter *doubled* the error. Chose compass `b` as canonical; v1/v2 converted at
+  the `observe()` boundary. Teeth: `test_heading_bias_sign_convention.cpp`.
+- **W3.1 / W3.2 [closed-loop double-subtraction].** Adapter/pipeline subtracts
+  published `b̂` before the touch is recorded → pair shows only the residual →
+  fixed point `b̂ = b_true/2`. Fixed by carrying the applied correction on
+  `Measurement`/`SourceTouch` (`applied_heading_bias_rad`,
+  `applied_position_bias_enu`, `applied_bearing_bias_rad`) and reconstructing the
+  raw observation in the extractors/estimator. Also removes the twin cross-sensor
+  "anchor debiased twice" defect. Teeth: `test_heading_bias_closed_loop.cpp`,
+  `test_sensor_bias_closed_loop.cpp` (full `b` with reconstruction, `b/2` without).
+- **W3.3 [datum-origin bearings].** `ArpaAdapter` now sets
+  `Measurement::sensor_position_enu` (TTM+TLL) so pairs form bearings about
+  own-ship, not the datum origin. Teeth: `test_bias_off_datum.cpp`.
+- **W3.5 [angle-convention audit].** Zero-reference + turn-direction doc comments
+  on every angle field the chain consumes (OwnShipPose, the five obs kinds,
+  Measurement.value, BearingInnovation). Audit list in the write-up; typed-angle
+  wrapper flagged as a follow-up.
+- **A/B [FINDING, do not re-freeze].** Heading chain is wired in NO deployable
+  config (sim-only). Cl-4 candidate × autoferry: deployment-realistic
+  (non-anchored) rows **byte-identical**; the `*_anchored` diagnostic mode moves
+  (some worse, e.g. `scenario16_anchored` gospa 2.67→8.42) because the per-sensor
+  EO/IR bearing bias now converges to the *full* offset and the env-2 seed
+  (7.0°/4.9°, `autoferry_r_calibration.py`) was calibrated against the buggy
+  half-loop. Reported as a delta; re-derive the seed against the corrected loop
+  before re-freezing the Cl-4 gauntlet — estimator NOT tuned to match the old seed.
+- **Unblocks the F2 provenance cycle** (correct bias chain now available for its
+  garbage-bias × broken-chain attribution question).
+- **2026-07-14 rebase + adversarial-review cycle (arbiter acceptance).** Rebased
+  onto master `34367f6` (wave-2 merged); clean — only evaluation-log conflicted,
+  ArpaAdapter W3.3 composes with wave-2's datum-sink reproject by design. 3-lens
+  fresh-agent adversarial review: runtime math CONFIRMED correct (sign/frame +
+  reconstruction). 3 findings FIXED with teeth — v2 outlier gate now on the
+  innovation not |meas| (finding B5, was freezing on large true bias); ARPA pair
+  extractor skips the (0,0) own-ship-unset sentinel (TLL-before-first-pose origin
+  hole); per-sensor anchor uses its corrected position (no add-back). One finding
+  (v2 emit sign untested) verified a FALSE POSITIVE — already load-bearing via
+  test_tracker_bearing_innovation_emit + test_bearing_bias_convergence. Strict
+  suite **1195/1195, 0 skips**. env-2 EO/IR seed re-derived (7.0/4.9° are mean-
+  ABS noise, not signed bias; true signed ≈ EO +1.7° / IR −1.9°, noise-dominated)
+  → adoption PARKED as the Cl-4 reconciliation addendum (frozen rows safe).

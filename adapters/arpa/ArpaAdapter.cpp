@@ -84,6 +84,19 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
     const double sigma = cfg_.position_std_m;
     m.covariance = Eigen::Matrix2d::Identity() * (sigma * sigma);
     m.hints.sensor_track_id = target_num;
+    // W3.3: carry own-ship ENU (when a pose is available) so the bias pair
+    // extractor forms bearings about own-ship, not the datum origin. TLL is an
+    // absolute lat/lon fix, so unlike TTM (which drops on no pose) it keeps its
+    // position even before the first own-ship pose; in that case
+    // sensor_position_enu stays at the (0,0) "unset" sentinel and the pair
+    // extractor SKIPS it (see AisArpaPairExtractor) rather than measuring a
+    // bearing about the datum origin.
+    if (const auto own_opt = own_ship_.poseAtOrBefore(t)) {
+      const Eigen::Vector3d own_enu =
+          datum_.toEnu({own_opt->lat_deg, own_opt->lon_deg, 0.0});
+      m.sensor_position_enu = Eigen::Vector2d(own_enu.x(), own_enu.y());
+      m.sensor_position_std_m = own_opt->position_std_m;
+    }
     buffer_.push_back(std::move(m));
     return true;
   }
@@ -147,6 +160,15 @@ bool ArpaAdapter::ingest(std::string_view line, Timestamp t) {
     m.covariance = out.cov;
     m.hints.sensor_track_id = target_num;
     m.sensor_position_std_m = own_opt->position_std_m;
+    // W3.3: carry the own-ship ENU position (the sensor platform) so the
+    // AIS↔ARPA pair extractor forms bearings about own-ship, not the datum
+    // origin. Without this the estimator measures the angle subtended at the
+    // origin and converges confidently to a geometry-diluted, wrong bias.
+    m.sensor_position_enu = own_xy;
+    // W3.1: record the heading-bias correction just subtracted so the AIS↔ARPA
+    // pair extractor can reconstruct the raw (full-bias) bearing and avoid the
+    // closed-loop double-subtraction. Zero when no bias was published.
+    m.applied_heading_bias_rad = b_hat;
 
     // #20: TTM speed/course. This is the radar's OWN smoothed derivative of the
     // range/bearing detections we already feed, so it is NEVER a recurring

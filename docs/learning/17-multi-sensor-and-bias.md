@@ -198,22 +198,67 @@ b_t = b_{t-1} + w_b,    w_b ~ N(0, q_b · dt)
 `b` drifts slowly. The filter is cheap; the design is in
 `core/bias/HeadingBiasEstimator.{hpp,cpp}`.
 
+### Which way does the bias point? (one convention, watch the sign)
+
+There are two ways to measure an angle, and they turn in *opposite*
+directions:
+
+- **Compass** (what sailors use): 0° is north, and the number grows
+  as you turn **clockwise** (east = 90°, south = 180°).
+- **Map-math** (what the tracker uses inside): 0° is east, and the
+  number grows as you turn **counter-clockwise** (north = 90°).
+
+A gyro that reads a little **too high** on the compass (bias `b`) pushes
+a radar blip **clockwise** — which, on the map-math side, is the
+**opposite** (counter-clockwise-negative) direction. So the same
+physical error looks like `+b` in one frame and `−b` in the other.
+
+We pick **one** convention for the stored bias: `b` is the **compass**
+error the gyro adds to the true heading (`gyro = true + b`), and the
+adapter removes it with `corrected = measured − b`. Three of the five
+observation kinds already speak this language (they compare the gyro to
+another compass heading). The two that work in map-math coordinates —
+the AIS↔ARPA pair and the bearing-innovation — are **flipped to the
+compass convention as they enter the filter**. If they were not, they
+would fight the other three and pull the estimate toward `−b`, and the
+adapter would then *double* the error instead of removing it. (This was
+a real bug, fixed in fix-wave wave 3.)
+
 ### Observations of the bias
 
-We can observe `b` from several sources:
+We can observe `b` from several sources. "Frame" is the convention the
+raw value arrives in; the filter converts everything to the one compass
+convention above:
 
-| Kind                          | What it is                                                  | Math                                                |
-|-------------------------------|-------------------------------------------------------------|-----------------------------------------------------|
-| `AisArpaPairObservation`      | AIS-target bearing vs ARPA-measured bearing pair            | direct `b` measurement at the pair's range          |
-| `BearingInnovation`           | Tracker's own bearing innovation, fed via `IBearingInnovationSink` | `r = wrap(β_obs − β_pred)`; needs an anchor track   |
-| `GyroVsGpsHeadingObservation` | Multi-antenna GPS heading vs gyro                           | direct `b = gyro − gps_hdg`                         |
-| `GyroVsGpsCogObservation`     | GPS course-over-ground vs gyro (with crab-angle uncertainty)| `b = gyro − cog`, gated by SOG/turn-rate            |
-| `GyroVsMagneticObservation`   | Magnetic compass vs gyro (with declination)                 | `b = gyro − (mag + variation)`                      |
+| Kind                          | What it is                                                  | Frame → math                                             |
+|-------------------------------|-------------------------------------------------------------|----------------------------------------------------------|
+| `AisArpaPairObservation`      | AIS-target bearing vs ARPA-measured bearing pair            | map-math → `z = wrap(β_ais − β_arpa)` (flipped to compass) |
+| `BearingInnovation`           | Tracker's own bearing innovation, fed via `IBearingInnovationSink` | map-math → `b = −wrap(β_obs − β_pred)` (negated); needs an anchor track |
+| `GyroVsGpsHeadingObservation` | Multi-antenna GPS heading vs gyro                           | compass → `b = gyro − gps_hdg`                            |
+| `GyroVsGpsCogObservation`     | GPS course-over-ground vs gyro (with crab-angle uncertainty)| compass → `b = gyro − cog`, gated by SOG/turn-rate       |
+| `GyroVsMagneticObservation`   | Magnetic compass vs gyro (with declination)                 | compass → `b = gyro − (mag + variation)`                 |
 
 Any combination can be wired in. Some sources go quiet for hours
 (e.g. AIS-target pairs); others fire continuously (GPS COG).
 The KF handles arbitrary observation gaps because it is
 *time-driven*, not scan-driven.
+
+### The feedback trap: measure the whole bias, not half of it
+
+Once the estimate is good enough, the adapter starts subtracting it from
+every ARPA/EO-IR bearing. But the AIS↔ARPA pairs are built *from those
+already-corrected measurements*, so a pair only shows what is **left
+over** after the correction, not the whole bias. If the filter then
+subtracts its estimate a second time, it settles at **half** the real
+bias — and every corrected bearing keeps the other half forever, while
+the filter reports (wrongly) that it is confident.
+
+The fix: each measurement remembers how much correction was already
+applied to it (carried on `Measurement`/`SourceTouch`), and the pair
+builder **adds that back** to rebuild the original, uncorrected bearing
+before the filter looks at it. Now the filter sees the whole bias and
+converges to the true value. (Fix-wave wave 3; the same "rebuild the raw
+value" idea fixes the per-sensor registration bias in chapter 21.)
 
 ### Why a separate estimator and not bake it into the state?
 

@@ -11,8 +11,12 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kDeg2Rad = kPi / 180.0;
 
-// Build a clean AIS+ARPA pair where the true ENU bearing is `beta_truth_rad`
-// and the ARPA reports `beta_truth_rad + bias_rad`. Range = 1500 m.
+// Build a clean AIS+ARPA pair where the true ENU-math bearing is
+// `beta_truth_rad` and `bias_rad` is the COMPASS gyro bias (gyro reads high
+// by bias_rad, 0 = north CW+; W3.4 convention). A +bias_rad compass bias
+// rotates the projected ARPA return the OTHER way in the ENU-math frame, so
+// the ARPA sits at `beta_truth_rad − bias_rad`. The estimator converges to
+// +bias_rad (the value the adapter subtracts). Range = 1500 m.
 AisArpaPairObservation makePair(Timestamp t, double beta_truth_rad,
                                 double bias_rad, double range_m = 1500.0) {
   AisArpaPairObservation o;
@@ -20,7 +24,7 @@ AisArpaPairObservation makePair(Timestamp t, double beta_truth_rad,
   o.own_position_enu = Eigen::Vector2d::Zero();
   o.ais_target_position_enu =
       range_m * Eigen::Vector2d(std::cos(beta_truth_rad), std::sin(beta_truth_rad));
-  const double beta_arpa = beta_truth_rad + bias_rad;
+  const double beta_arpa = beta_truth_rad - bias_rad;
   o.arpa_target_position_enu =
       range_m * Eigen::Vector2d(std::cos(beta_arpa), std::sin(beta_arpa));
   o.arpa_bearing_std_rad = 0.5 * kDeg2Rad;
