@@ -139,3 +139,36 @@ with ADR-0002's own bounded-latency promotion language.
   `offshore_halfwidth_m = 25` (see `docs/integration-guide.md`). Every other
   named config is byte-identical to master (proven: `Config,
   Cl4OffshoreStripScopedToDeployableConfigOnly`; the R3 two-class A/B).
+
+## Reconciliation addendum (2026-07-15) — post-fix-wave re-pin of the headline rows
+
+The pre-release fix wave landed two correctness fixes that touch the
+gauntlet's autoferry family: W2.4 (sensor-activity coverage measured from
+own-ship, not the ENU origin; identity-keyed cooperative retirement,
+merged 34367f6) and the wave-3/wave-4 estimator repairs (merged
+b284f8f/738e542). Frozen rows re-measured on post-W2.4 master (wave-4
+Stage 0, `docs/baselines/2026-07-13_fixwave_wave4.md`):
+
+| Row | Frozen (d6cc871) | Post-W2.4 | Δ |
+|---|---|---|---|
+| env-2 (channel) | **8/8**, GOSPA 13.38 | **8/8**, 13.75 | +0.37 |
+| env-1 | 16.57 | 15.49 | −1.08 (improved) |
+| harbor (5-seed) | 9.53 | 9.53 | 0 |
+
+**The claim STANDS**: env-2 revival held 8/8 (the decision-carrying fact),
+philos byte-identical, harbor unchanged. The headline numbers are hereby
+re-pinned to the post-W2.4 values (13.75 / 15.49); the small env-2 shift
+and the env-1 improvement are correct-behavior effects of measuring sensor
+coverage from own-ship. Wave 4's estimator fixes left all three rows
+bit-identical to Stage 0.
+
+**Named parked item — the env-2 EO/IR anchored-mode bias seed.** The
+`_anchored` diagnostic seed (7.0°/4.9°) predates the wave-3 bias-chain
+repair and was additionally mis-derived (mean |residual| ≈ 0.8·σ noise
+under min-|residual| association, not a signed bias). Corrected signed
+re-derivation (wave-3 hand-back): EO +1.66°, IR −1.92° (IR sign OPPOSITE
+the seed), both dwarfed by ~7–9° noise. Adoption is PARKED: the deployment
+path is byte-identical (seeds affect the `_anchored` diagnostic mode
+only), and adopting any new seed would perturb the re-pinned rows for a
+diagnostic-only benefit. Revisit if the anchored mode is ever used as a
+claim input, and consider "seed small or not at all" first.

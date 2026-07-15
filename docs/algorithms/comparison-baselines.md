@@ -347,6 +347,10 @@ class in the comparison, not required for Cl-3 itself.
 > **13.38** (best on the sweep surface, beats `pmbm_land` 17.74), while open water
 > (env-1 16.57), harbor (9.53), Imazu and sim are **unchanged** (proven
 > byte-identical — the strip is inert where no charted coastline is loaded).
+> *(Re-pinned 2026-07-15 post-fix-wave, ADR-0003 reconciliation addendum:
+> env-2 **8/8 HELD**, GOSPA 13.38→13.75; env-1 16.57→**15.49** (improved);
+> harbor/philos unchanged — the W2.4 own-ship-coverage correction, measured
+> by wave-4 Stage 0.)*
 > Gauntlet table: the 2026-07-12 freeze in `evaluation-log.md`; full basis in
 > `docs/baselines/2026-07-11_cl4_cliff_price_list.md` +
 > `docs/baselines/2026-07-12_cl4_pending_band_probe.md`.

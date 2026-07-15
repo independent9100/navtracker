@@ -76,3 +76,17 @@ that's the downstream unlock this cycle buys.
 3. Write-up `docs/baselines/<date>_f2_provenance_cycle.md` + eval-log
    entry; update the wave-1 write-up's HELD note with the outcome.
 4. Commit on your branch; do not merge or push master.
+
+## GATE SATISFIED 2026-07-15 (arbiter) — wave 3 is merged; this ticket is live
+
+The sequencing constraint is met: the bias-chain repair (wave 3) is on
+master (b284f8f), so Q(a)'s "repeat on the corrected chain" arm is now the
+PRIMARY measurement, not a future one. Two updates to the instructions:
+
+1. Base `f2-provenance-cycle` on CURRENT master (≥ the wave-3+4 merge the
+   arbiter confirms). The `faaea83` cherry-pick will meet wave-2's changes
+   in `PmbmTracker.cpp` (identity-keyed retirement, W2.4b) — resolve with
+   care; the two changes are functionally independent but nearby.
+2. Wave 5 (pipeline tail) runs in parallel and also touches
+   `PmbmTracker.cpp` (W5.2 double-propagate). If your regions collide,
+   coordinate through the arbiter — first-merged wins, second rebases.
