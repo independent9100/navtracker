@@ -128,6 +128,42 @@ TEST(AisAdapter, LowSogFallsBackToPosition2D) {
   EXPECT_EQ(out[0].value.size(), 2);
 }
 
+// W5.6.1: the SOG gate must reject not just the 1023 "not available" sentinel
+// but the whole physically-impossible band above the AIS valid maximum
+// (102.2 kn, the 0.1-knot field's 1022). A raw or mis-scaled SOG in
+// (102.2, 1023) kn would otherwise be multiplied into a ~100+ m/s velocity that
+// yanks the estimator. The literal 1023 / 3600 not-available sentinels are
+// already dropped (regression-pinned here, green both ways — the Section-D
+// invariant the ticket names); the impossible band is the live teeth.
+TEST(AisAdapter, ImpossibleSogBandAndSentinelsFallBackToPosition2D) {
+  Datum datum({53.5, 8.0, 0.0});
+  AisAdapter adapter(datum);
+  auto pollOne = [&](double sog, double cog, double t) {
+    AisDynamicReport r;
+    r.time = Timestamp::fromSeconds(t);
+    r.lat_deg = 53.5;
+    r.lon_deg = 8.0;
+    r.sog_knots = sog;
+    r.cog_deg = cog;
+    adapter.ingest(r);
+    return adapter.poll();
+  };
+  // TEETH: impossible-band SOG (>102.2, <1023 kn) must NOT become velocity.
+  const auto band = pollOne(200.0, 90.0, 0.0);  // ~102.9 m/s if wrongly accepted
+  ASSERT_EQ(band.size(), 1u);
+  EXPECT_EQ(band[0].model, navtracker::MeasurementModel::Position2D)
+      << "SOG above 102.2 kn is physically impossible; must not be velocity";
+  EXPECT_EQ(band[0].value.size(), 2);
+  // Regression pins (green both ways): the literal not-available sentinels.
+  const auto sog_na = pollOne(1023.0, 90.0, 1.0);  // SOG not available
+  ASSERT_EQ(sog_na.size(), 1u);
+  EXPECT_EQ(sog_na[0].model, navtracker::MeasurementModel::Position2D);
+  const auto cog_na = pollOne(10.0, 3600.0, 2.0);  // COG not available, valid SOG
+  ASSERT_EQ(cog_na.size(), 1u);
+  EXPECT_EQ(cog_na[0].model, navtracker::MeasurementModel::Position2D)
+      << "COG 3600 = not available → no course → no velocity content";
+}
+
 // A consumer that distrusts AIS velocity can turn it off.
 TEST(AisAdapter, VelocityEmissionCanBeDisabled) {
   Datum datum({53.5, 8.0, 0.0});

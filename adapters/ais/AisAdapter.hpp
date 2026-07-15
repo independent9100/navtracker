@@ -31,7 +31,9 @@ struct AisDynamicReport {
   // Target-reported kinematics (backlog #20). All optional: leave unset for a
   // report that does not carry the field, or set the AIS "not available"
   // sentinel value and the adapter will drop it at the edge (invariant #6):
-  //   - sog_knots: speed over ground, knots ([0, 102.2]; 1023 sentinel dropped).
+  //   - sog_knots: speed over ground, knots. Only [0, 102.2] is valid velocity
+  //     content; anything above (the impossible band up to and incl. the 1023
+  //     "not available" sentinel) is dropped to Position2D (W5.6.1).
   //   - cog_deg:   course over ground, deg true ([0, 360); 3600 sentinel).
   //   - heading_deg: true heading, deg ([0, 360); 511 sentinel dropped).
   //   - nav_status: AIS navigational status code (0..15; 15 = undefined/default,
