@@ -9491,3 +9491,60 @@ share the wave-3 chain so its seed mis-scaling is common-mode and cancels.
     `contributing_sources` from the now-truthful channel — empty=honest vs
     populated=useful decision); and the Rider-B channel-conflation correction
     propagates to the review reconciliation / findings-file marks.
+
+## 2026-07-15 — Pre-release fix wave, WAVE 5 (branch `fixwave-wave5`, rebased onto master `3a5fb63` after F2)
+
+Pipeline/lifecycle tail + Section-D test backfill — the last confirmed code
+defects of the fix wave. Full write-up: `docs/baselines/2026-07-15_fixwave_wave5.md`.
+Suite under `NAVTRACKER_REQUIRE_FIXTURES=1`. `fixwave-wave1` (held F2) untouched.
+
+- **W5.1 [HIGH, FIXED].** `Tracker::process()` consumed only
+  `AssociationResult::matches`; a soft (JPDA) associator fills `betas`/`beta_0`, so
+  every single-measurement fix spawned a DUPLICATE track (zero fusion). `process()`
+  now delegates to `processBatch` — byte-identical hard path, soft path works.
+- **W5.2 [MED, FIXED + review-caught sibling].** A detected PMBM Bernoulli stamped
+  `last_update = claimed-meas time` while its state was predicted to `t_max` →
+  mixed-timestamp scans double-propagate F/Q. Fixed to `current_time_`. The
+  adversarial review caught the identical bug on the PPP-birth path (path-specific
+  fix via `NewTargetCandidate::state_time`: PPP→`current_time_`, adaptive→`z.time`).
+  Byte-identical on uniform scans (every bench). **Composition with F2 (rebased onto
+  master `3a5fb63`):** the F2 cycle (`6fcd44e`) re-keyed the SourceTouch provenance
+  walk onto `Bernoulli::last_claimed_meas_index`, which is independent of
+  `last_update` — so the coupling this wave flagged is RESOLVED by the rebase, not
+  routed. The walk no longer reads the stamp W5.2 changed; the two fixes are
+  orthogonal. F2's own test (`MisdetectedTrackDoesNotInheritForeignSource`) covers the
+  never-contributes case on uniform scans; this wave adds the missing positive case,
+  `MixedTimestampMultiSensorAttributesEachClaimedSource` — teeth: reverting the walk
+  to the old `z.time == b.last_update` key drops the earlier-timestamp target's touch,
+  precisely because W5.2 now stamps every claimed Bernoulli at `t_max`.
+- **W5.3 [MED, FIXED].** Plain `Tracker::processBatch` never got the backlog-#15
+  batch sort; unsorted batches stale-drop. Added the MHT/PMBM `stable_sort` preamble
+  (bench-inert — `is_sorted` fast-path).
+- **W5.4 [MED, FIXED, A/B].** `TrackManager::recordMiss` set Coasting on ANY miss incl.
+  never-confirmed Tentative blips → CPA-eligible false collision-risk events. Guard:
+  only Confirmed/Coasting demote. A/B (classic Tracker only — PMBM/MHT bypass
+  `recordMiss`): CPA events **2→0**; bench **byte-identical** (BenchRunner scores only
+  Confirmed; `ekf_cv_gnn`×26 scenarios, 0 diff); **NO Cl-4 row moves** (deployable is
+  PMBM).
+- **W5.5 [MED, FIXED].** MHT deferred-commitment leaf protection was inert (flags one
+  `branch()` behind); `branch()` now inherits `is_protected`. Removing the
+  newly-live delete-sweep grace keeps whole-tree deletion byte-identical to baseline;
+  leaf protection applies within surviving trees. Reduced per-arm MHT churn (dropout:
+  inits 10→8, survivors 1→2) shifted two PRELIMINARY T2T gates — recalibrated (shape
+  fix: geometry-controlled per-track dropout inflation **2.07×**; threshold
+  **1.4→1.25**) with the direction surviving; F2-implementer to sanity-check. Frozen
+  Cl-4 (PMBM) untouched — MHT is the champion comparator.
+- **W5.6 [Section-D backfill].** AIS SOG impossible-band (>102.2 kn) rejected (not just
+  the 1023 sentinel); `loadAisCsv` DMA `dd/mm/yyyy` parsing fixed (was silently
+  dropping all DMA rows); ID-never-reused + end-to-end adapter→TrackOutput determinism
+  pinned; `VetoIsolationHaxrAB` ctest TIMEOUT **300→600** (took **398 s** under `-j`
+  load this run — would have timed out under 300 s).
+- **Verification.** Strict-mode ctest **1222/1222, 0 skips** (post-rebase onto master
+  `3a5fb63`; +15 over master's 1207, adding the wave-5 backfill + the new mixed-ts
+  provenance composition test). Teeth proven for every code fix. Adversarial review (11
+  skeptics + completeness critic + independent verify): 6 claims → 3 confirmed (1
+  fixed in-wave, 1 F2-region — now resolved by the rebase, 1 docs), 3 refuted.
+- **Handoff.** Merge-ready on the branch; per-finding commits; rebased onto master
+  `3a5fb63` (F2 merged), not merged/pushed. One arbiter item remains: **W5.5 T2T gate
+  sanity-check** by the gate author (the W5.2↔F2 SourceTouch coupling is resolved by
+  the rebase — see W5.2 above). No Cl-4 gauntlet headline row moves.

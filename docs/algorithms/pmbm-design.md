@@ -134,6 +134,23 @@ w^j_{k|k−1}      = w^j_{k−1|k−1}            (mixture weights unchanged)
 elsewhere (`SensorBiasEstimator`) and applies to *measurements* before the
 update — predict is unaffected.
 
+**Physical-time stamping (W5.2).** `predict` advances every component to
+`current_time_ = t_max` (the latest timestamp in the batch), so a detected or
+newly-born Bernoulli's *state* lives at `t_max` — not at the timestamp of the
+measurement it claimed. Its `last_update` is therefore stamped at the state's
+physical time (`current_time_` for a detected Bernoulli and for a PPP birth,
+whose moment-matched posterior is at `t_max`; the *measurement* time only for an
+adaptive birth, whose `initiate(z)` state is un-propagated). Stamping the claimed
+measurement's (earlier) time on a mixed-timestamp scan would make the next
+`predict` re-apply `F/Q` over `[claimed_time, t_max]` a second time
+(double-counted process noise). **Uniform-timestamp invariant:** on a scan where
+all measurements share one timestamp (`HarnessBatched` groups exactly these — so
+every bench and unit/scenario test), `last_update == claimed measurement time`,
+making the stamping byte-identical to the pre-fix behaviour. Any downstream reader
+that recovers a Bernoulli's *claimed measurement* must key on
+`last_claimed_meas_index`, not on `z.time == b.last_update` — the latter holds
+only under the uniform-timestamp invariant.
+
 ---
 
 ## 3. Math — update step

@@ -44,7 +44,12 @@ drop; multi-sensor scan grouping inside the window.
    add `z.source_id` to provenance if absent.
 4. Else: `estimator.initiate(z)` → `add` to manager.
 5. Maintenance: for every track, if `z.time − last_observation > miss_timeout`
-   then `recordMiss` (Coasting → Deleted via the lifecycle state machine).
+   then `recordMiss`. Lifecycle on a miss (W5.4): a **Confirmed** track demotes to
+   **Coasting** (and Coasting→Deleted once `misses ≥ delete_misses`); a
+   never-confirmed **Tentative** track stays Tentative and is deleted per M-of-N —
+   it never Coasts. Coasting means "was Confirmed, now propagated through a gap"
+   (`output-contract.md`) and is CPA-eligible, so a one-hit Tentative blip must not
+   enter it.
 
 **Assumptions.** One measurement per `process` call; ≤1 track matches a given
 measurement; `predict` is a no-op for `dt ≤ 0`; the source-of-truth time base
