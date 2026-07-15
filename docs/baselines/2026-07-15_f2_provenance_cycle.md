@@ -111,18 +111,72 @@ provenance lie removed. The regression is real but lives entirely on configs tha
 are not deployed (source-aware gate on). The philos upside likewise lives there,
 not on the deployed config.
 
-## Recommendation (pending arbiter verdict)
-SHIP the correctness fix. Rationale: on the deployed surface it is byte-identical
-+ improving + honest; the regression is confined to non-deployed source-aware
-configs and is already understood (path a, overcount). If SHIP:
-- re-pin the source-aware-family baselines that legitimately move (document as a
-  correctness-driven shift, per the freeze-commit rule);
-- land the continuity guard (done, `2e2b635`);
-- lift the T2T live-pedigree caveat (§10 Rider B / T2T docs) — the provenance the
-  T2T pedigree reads is now truthful.
-Alternative if the source-aware-family regression is unacceptable for those
-diagnostic configs: keep the fix but leave source_aware_misdetection off on any
-config where the overcount is not tolerable (it already is off on the deployed one).
+## Disposition — SHIP (arbiter verdict, 2026-07-15)
+
+Verdict: **ship, re-pin (shrunken), lift the T2T caveat with its own pin.** What
+was done on this branch:
+
+### The correctness-driven shift (the re-pin record)
+**The pre-fix numbers were measured on lying provenance** — the source-touch walk
+credited misdetected Bernoullis measurements they never claimed, and that
+polluted the miss-gate/idle/bias paths. The fix removes the lie, so the metric
+changes are corrections, not regressions in the usual sense.
+
+- **Named path-(a) line (accepted, confined):** on the source-aware-gate
+  diagnostic configs (`makePmbmConfig` family — `imm_cv_ct_pmbm`, `_adapt`,
+  `_adapt_k3`, `_land`, `_bundle`, `_static`, `_occupancy*`, `_birthtarget`,
+  `_cmap`, …) the fix raises autoferry/anchored GOSPA via an overcount/phantom-
+  persistence effect (path a, `source_aware_misdetection`), fully attributed and
+  accepted. **Warning for the future:** if any of these diagnostic configs is
+  ever considered for deployment, this overcount is the line to re-read first —
+  the deployed config avoids it precisely by keeping the source-aware gate off.
+- **Harbor is byte-identical on EVERY source-aware config** (measured, 0.000
+  delta on gospa/false/card/lifetime/id over 5 seeds) — harbor_complete_truth is
+  pure-radar with no AIS cross-source provenance, so the three paths are inert,
+  exactly like the pure-sim scenarios.
+- **Re-pin surface (shrunken, per arbiter):** nothing deployed, frozen, or
+  test-enforced moves. Cl-4/KEEP headline (env-1 15.49 / env-2 8/8 13.75 /
+  harbor 9.53) is byte-identical (KEEP config). Every numeric-metric test
+  (incl. the hard-banded `test_adapt_k3_harbor_knife_guard`) stays green — no
+  re-banding. **No baseline CSV was edited** (dated snapshots are immutable
+  history by convention); the record of what shifted is this doc + the eval-log
+  entry. What moved is confined to non-deployed source-aware configs on
+  autoferry (±anchored) / simms / philos.
+
+### T2T live-pedigree caveat — LIFTED with a corrected rationale + its own pin
+- New E2E pin `tests/integration/test_t2t_live_pedigree_content.cpp`: a live
+  two-sensor pipeline (radar+AIS → one Tracker → `NavtrackerSource` → fuser)
+  proves live pedigree CONTENT is truthful (radar-only track → radar Used, AIS
+  absent; both-fed → both Used). Teeth-proven (feed the radar-only track AIS →
+  pedigree lists AIS → RED).
+- **Correction (propagate to the review reconciliation):** §10 Rider B and the
+  review finding it quoted said `contributing_sources` carried spurious entries
+  from PmbmTracker:1666. That **conflated two channels.** The F2 bug polluted
+  `recent_contributions` (SourceTouch), NOT `contributing_sources` (the field the
+  T2T self-adapter reads). PMBM never writes `contributing_sources`; the flat/MHT
+  path fills it genuinely per-update. So the T2T pedigree was never corrupted by
+  the F2 bug — the lift rests on the E2E pin, not on "F2 fixed it." The
+  findings-file marks should record that F2 fixed the provenance side-channel
+  (`recent_contributions`), which the emitted `contributing_sources` string list
+  is a separate matter.
+- **Diagnostics-only reaffirmed:** pedigree selects the independence verdict for
+  operator value and never enters the CI weights (v1 design). "Caveat lifted" =
+  live pedigree content is now assertable, NOT that pedigree may steer fusion.
+
+### faaea83 deviation statement (acceptance #2 / Rider 3)
+The merged fix (`fb41217`) is **byte-identical to `faaea83`**: the 44 added/
+removed lines of the `PmbmTracker.cpp` source-touch change and the CMakeLists
+test registration are identical; the cherry-pick auto-merged with no manual
+resolution and is disjoint from wave-2's W2.4b (identity-keyed retirement). **No
+deviation → no adversarial re-review triggered; the prior 4-lens review carries.**
+
+### Follow-ups (NOT on this branch — see design spec §14.11)
+1. PMBM leaves `TrackOutput.contributing_sources` empty while flat/MHT populate
+   it — a consumer-surface inconsistency, harmless-but-uninformative for T2T.
+   Post-F2 the truthful `recent_contributions` could feed it. Design decision
+   (empty=honest / populated=useful) captured in §14.11; not built.
+2. The Rider-B channel-conflation correction (above) propagates to the review
+   reconciliation / findings-file marks.
 
 ## Verification
 - Cherry-pick semantic check: PASS (see above).
@@ -135,4 +189,8 @@ config where the overcount is not tolerable (it already is off on the deployed o
   but PASSES CLEAN STANDALONE at 265 s (verified this cycle via the gtest binary,
   no ctest timeout). Inherited infra flake, flagged for wave-2; the F2 fix does
   not touch the haxr/veto path.
-- NO baseline re-pinning; NO T2T caveat lift — awaiting checkpoint verdict.
+- Continuity guard `test_cl4_ais_dropout_continuity.cpp`: GREEN, teeth-proven.
+- T2T live-pedigree pin `test_t2t_live_pedigree_content.cpp`: GREEN, teeth-proven.
+- Post-verdict (2026-07-15): T2T caveat LIFTED (corrected rationale + E2E pin);
+  re-pin is document-only (no baseline CSV edited, no test re-banded — nothing
+  deployed/frozen/enforced moves); two follow-ups filed to §14.11 / review recon.

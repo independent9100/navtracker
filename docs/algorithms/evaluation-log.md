@@ -9464,8 +9464,30 @@ share the wave-3 chain so its seed mis-scaling is common-mode and cancels.
   correctness + byte-identity + anchored improvement + T2T-caveat unblock, not the
   philos number.
 - **Recommendation SHIP** (deployed surface all-upside; regression confined to
-  non-deployed source-aware configs, understood). **PENDING arbiter checkpoint —
-  no baseline re-pinning, no T2T caveat lift yet.** Suite strict 0-skip; sole
+  non-deployed source-aware configs, understood). Suite strict 0-skip; sole
   `-j`-starvation flake is the inherited wave-2 `VetoIsolationHaxrAB` 300 s
   timeout knife-edge (passes clean standalone, 265 s). Commits on branch; not
   merged/pushed.
+- **Arbiter verdict 2026-07-15: SHIP.** Post-verdict on-branch:
+  - **Re-pin (shrunken — document-only).** Nothing deployed/frozen/test-enforced
+    moves: Cl-4/KEEP headline byte-identical, every numeric-metric test green (no
+    re-band), **harbor byte-identical on every source-aware config** (0.000, pure-
+    radar → paths inert). **No baseline CSV edited** (dated snapshots are immutable
+    history). The correctness-driven shift is recorded here + in the write-up:
+    **the pre-fix numbers were measured on lying provenance**; what moved is
+    confined to non-deployed source-aware configs on autoferry(±anchored)/simms/
+    philos (path-(a) overcount — named, attributed, accepted; a warning line for
+    any future deployment of those diagnostic configs).
+  - **T2T §10 Rider B LIFTED** with a corrected rationale + its own pin
+    (`test_t2t_live_pedigree_content.cpp`, teeth-proven). Correction: Rider B (and
+    the review finding) conflated two channels — F2 fixed `recent_contributions`,
+    NOT `contributing_sources` (the field the T2T self-adapter reads; PMBM leaves
+    it empty, flat/MHT fills it genuinely). Lift rests on the E2E pin, not on "F2
+    fixed the pedigree." Reaffirmed pedigree is diagnostics-only (never CI weights).
+  - **faaea83 deviation (acceptance #2):** merged fix byte-identical to `faaea83`
+    (44 lines + CMakeLists identical; clean auto-merge disjoint from W2.4b) → NO
+    re-review; prior 4-lens review carries.
+  - **Follow-ups (off-branch):** design spec §14.11 (populate PMBM
+    `contributing_sources` from the now-truthful channel — empty=honest vs
+    populated=useful decision); and the Rider-B channel-conflation correction
+    propagates to the review reconciliation / findings-file marks.

@@ -236,8 +236,11 @@ independently-mergeable package.
     excellent (lifetime 0.993, 0 id-switches) and byte-identical fix ON vs OFF; the
     idle_halflife risk is doubly moot (idle=0, and radar keeps the track non-idle);
     permanent guard landed. (c) philos improves on source-aware-gate configs but is
-    byte-identical on KEEP. Disposition (SHIP recommended) PENDING arbiter
-    checkpoint; no baseline re-pinning / no T2T caveat lift yet.
+    byte-identical on KEEP. **Arbiter verdict 2026-07-15: SHIP** — F2 fix +
+    isolation flags + continuity guard + T2T live-pedigree pin, §10 Rider B
+    LIFTED (corrected rationale), re-pin document-only (nothing deployed/enforced
+    moves; harbor byte-identical too). Branch `f2-provenance-cycle`, handed to the
+    arbiter for the merge ceremony.
   - **Acceptance criterion #2 was DISCOVERED UNACHIEVABLE, not waived.** The A/B
     input-path evidence is the paper trail: `recent_contributions` feeds three
     tracking paths (source-aware gate, idle-decay, and the emitted-provenance →
