@@ -172,3 +172,10 @@ path is byte-identical (seeds affect the `_anchored` diagnostic mode
 only), and adopting any new seed would perturb the re-pinned rows for a
 diagnostic-only benefit. Revisit if the anchored mode is ever used as a
 claim input, and consider "seed small or not at all" first.
+
+*(Cross-reference, 2026-07-15: the F2 provenance cycle — merged with the
+SHIP verdict — recovered the anchored diagnostic row the mis-derived seed
+had degraded (scenario16 8.42→1.52, anchored aggregate −15.4) as a side
+effect of truthful source-touch provenance. The parked seed question above
+is therefore even less urgent: re-derive only if the anchored mode ever
+becomes a claim input.)*
