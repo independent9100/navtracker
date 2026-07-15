@@ -592,6 +592,19 @@ NavtrackerSource src("navtracker", mgr, [&](ExternalTrack e){ fuser.process(std:
 mgr.setTrackSink(&src);
 ```
 
+> **Note (which trackers populate `contributing_sources`).** The flat/MHT
+> pipeline fills `Track::contributing_sources` per-update from the associated
+> measurement's `source_id` — genuine by construction, and now assertable from a
+> live pipeline (`tests/integration/test_t2t_live_pedigree_content.cpp`; the
+> historical §10-Rider-B prohibition was lifted 2026-07-15). **PMBM leaves it
+> empty**, so a PMBM-sourced `ExternalTrack` carries an all-`Unknown` pedigree —
+> safe (never spurious) but uninformative; downstream independence falls back to
+> `PossiblyCorrelated`. Pedigree is diagnostics-only in the fusion math (it picks
+> the independence verdict, never the CI weights), so an empty pedigree costs
+> tightness, never correctness. Populating it for PMBM from the (now-truthful)
+> `recent_contributions` channel is a tracked future improvement (design spec
+> §14).
+
 **Pedigree — declare what each source used.** A `SourcePedigree` maps each
 sensor-stream id to `Used`, `NotUsed`, or `Unknown`, plus a `default_usage` for
 streams not listed. Rules:

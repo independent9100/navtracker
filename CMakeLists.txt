@@ -243,6 +243,7 @@ add_executable(navtracker_tests
   tests/pmbm/test_pmbm_scenario.cpp
   tests/pmbm/test_pmbm_phase8.cpp
   tests/pmbm/test_pmbm_sensor_activity.cpp
+  tests/pmbm/test_pmbm_contribution_provenance.cpp
   tests/pmbm/test_pmbm_remote_track_fusion.cpp
   tests/pmbm/test_pmbm_land_model.cpp
   tests/pmbm/test_cl4_near_shore_zone.cpp
@@ -286,6 +287,7 @@ add_executable(navtracker_tests
   tests/integration/test_full_stack_pipeline.cpp
   tests/integration/test_static_obstacle_pipeline.cpp
   tests/integration/test_t2t_full_stack.cpp
+  tests/integration/test_t2t_live_pedigree_content.cpp
   tests/scenario/test_filter_comparison.cpp
   tests/scenario/test_cpa_scenario.cpp
   tests/scenario/test_jpda_comparison.cpp
@@ -362,6 +364,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_sim_scenario_run.cpp
   tests/benchmark/test_replay_scenario_run.cpp
   tests/benchmark/test_sim_multisensor_scenario_run.cpp
+  tests/benchmark/test_cl4_ais_dropout_continuity.cpp
   tests/benchmark/test_imazu22_scenario_run.cpp
   tests/benchmark/test_rbad_scenario_run.cpp
   tests/benchmark/test_sweep.cpp

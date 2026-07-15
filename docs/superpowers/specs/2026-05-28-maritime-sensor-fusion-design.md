@@ -548,3 +548,29 @@ subsystem — a roadmap item, not a quick add.
 **Dependency.** The sensor/chart-aware near-shore discriminator needs EO/IR or
 AIS coverage near shore (ADR 0001 A3). Extended-object handling for large single
 static returns overlaps §14.3 (EOT) and should reuse it rather than duplicate.
+
+### 14.11 Populate `TrackOutput.contributing_sources` for PMBM (consumer-surface consistency)
+
+**Observed 2026-07-15 (F2 provenance cycle).** `Track::contributing_sources` —
+the per-track list of sensor streams that fed a track, and the field the T2T
+self-adapter (`NavtrackerSource`) turns into a `SourcePedigree` — is populated by
+the flat/MHT pipeline (per-update from the associated measurement's `source_id`)
+but is left **empty by PMBM**, the deployable tracker. PMBM instead maintains the
+richer `recent_contributions` (`SourceTouch`) provenance vector, which the F2 fix
+made truthful. Nobody had flagged the gap because the field was distrusted until
+F2 landed (§10 Rider B).
+
+**The small decision.** Whether to derive `TrackOutput.contributing_sources` for
+PMBM tracks from the now-truthful `recent_contributions`:
+- **Leave empty (honest).** A PMBM-sourced `ExternalTrack` carries an
+  all-`Unknown` pedigree → T2T independence conservatively falls back to
+  `PossiblyCorrelated`. Costs fused-covariance tightness, never correctness.
+- **Populate (useful).** Distinct sensors on a PMBM track would surface in the
+  output attribute list and let the T2T self-adapter emit a genuine
+  `ProvablyIndependent` verdict for disjoint-source PMBM tracks — the same
+  benefit the flat/MHT path already gets.
+
+**Cost.** Small: fold `recent_contributions` sensor ids into
+`contributing_sources` in `refreshAggregatedTracks` (dedup, alive-id semantics
+already present). Pedigree stays diagnostics-only either way, so this is a
+usefulness improvement, not a correctness fix. Not scheduled.

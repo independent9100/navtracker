@@ -9437,3 +9437,57 @@ standard). `fixwave-wave1` untouched.
 - **Handoff.** All merge-ready; **no Cl-4 finding beyond Stage 0's W2.4 delta**
   (wave-4 leaves the gauntlet headline rows unchanged). Commits on the branch;
   not merged/pushed. Findings-file marks deferred to the arbiter.
+
+## 2026-07-15 — F2 provenance cycle: source-touch fix re-priced on the corrected chain [CHECKPOINT — no re-pin]
+
+Branch `f2-provenance-cycle` off `068a30f` (wave-3+4 merged). Full write-up:
+`docs/baselines/2026-07-15_f2_provenance_cycle.md`. Cherry-picked `faaea83` (F2
+fix, clean auto-merge, semantic check vs W2.4b PASS) + bench path-isolation flags
++ a permanent AIS-dropout continuity guard. A/B: ON = branch, OFF = master; both
+share the wave-3 chain so its seed mis-scaling is common-mode and cancels.
+- **Q(a) — regression is REAL, path-(a) driven, NOT garbage×broken-chain.** Path-
+  isolation ladder (all-three-off = byte-identical everywhere, method validated):
+  removing the bias loop does NOT remove the autoferry regression; removing idle
+  GROWS it. Driver = `source_aware_misdetection` (overcount/phantom persistence:
+  gospa_false +1600…+2900, gospa_missed down, lifetime up). Persists on the
+  corrected chain → not cancellation. CONFINED to source-aware-gate configs.
+- **Deployed KEEP config `imm_cv_ct_pmbm_coverage_land_ivgate`:** byte-identical on
+  autoferry/simms/philos/sim; anchored diagnostic IMPROVES −15.37 (via the bias
+  loop; `scenario16_anchored` 8.42→1.52, recovering wave-3 seed damage).
+- **Q(b) — KEEP AIS-dropout continuity.** Fix byte-identical ON vs OFF (per-scan
+  diag md5-identical). Survival lifetime 0.993/0.992, 0 id-switches, ADR-0002
+  presence satisfied. idle_halflife risk DOUBLY moot (idle=0; radar keeps the
+  track non-idle — forcing idle=3 leaves lifetime 0.993). Guard teeth-proven:
+  `source_aware_misdetection=true` → RED. `test_cl4_ais_dropout_continuity.cpp`.
+- **Q(c) — philos.** Improves on source-aware-gate configs (−0.6…−1.9 gospa) but
+  byte-identical on the deployed KEEP config. Deployment value of the fix =
+  correctness + byte-identity + anchored improvement + T2T-caveat unblock, not the
+  philos number.
+- **Recommendation SHIP** (deployed surface all-upside; regression confined to
+  non-deployed source-aware configs, understood). Suite strict 0-skip; sole
+  `-j`-starvation flake is the inherited wave-2 `VetoIsolationHaxrAB` 300 s
+  timeout knife-edge (passes clean standalone, 265 s). Commits on branch; not
+  merged/pushed.
+- **Arbiter verdict 2026-07-15: SHIP.** Post-verdict on-branch:
+  - **Re-pin (shrunken — document-only).** Nothing deployed/frozen/test-enforced
+    moves: Cl-4/KEEP headline byte-identical, every numeric-metric test green (no
+    re-band), **harbor byte-identical on every source-aware config** (0.000, pure-
+    radar → paths inert). **No baseline CSV edited** (dated snapshots are immutable
+    history). The correctness-driven shift is recorded here + in the write-up:
+    **the pre-fix numbers were measured on lying provenance**; what moved is
+    confined to non-deployed source-aware configs on autoferry(±anchored)/simms/
+    philos (path-(a) overcount — named, attributed, accepted; a warning line for
+    any future deployment of those diagnostic configs).
+  - **T2T §10 Rider B LIFTED** with a corrected rationale + its own pin
+    (`test_t2t_live_pedigree_content.cpp`, teeth-proven). Correction: Rider B (and
+    the review finding) conflated two channels — F2 fixed `recent_contributions`,
+    NOT `contributing_sources` (the field the T2T self-adapter reads; PMBM leaves
+    it empty, flat/MHT fills it genuinely). Lift rests on the E2E pin, not on "F2
+    fixed the pedigree." Reaffirmed pedigree is diagnostics-only (never CI weights).
+  - **faaea83 deviation (acceptance #2):** merged fix byte-identical to `faaea83`
+    (44 lines + CMakeLists identical; clean auto-merge disjoint from W2.4b) → NO
+    re-review; prior 4-lens review carries.
+  - **Follow-ups (off-branch):** design spec §14.11 (populate PMBM
+    `contributing_sources` from the now-truthful channel — empty=honest vs
+    populated=useful decision); and the Rider-B channel-conflation correction
+    propagates to the review reconciliation / findings-file marks.
