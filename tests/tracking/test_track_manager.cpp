@@ -39,6 +39,27 @@ TEST(TrackManager, CoastsThenDeletesAfterMisses) {
   EXPECT_EQ(mgr.size(), 0u);
 }
 
+// W5.4: a never-confirmed Tentative track that misses must NOT become Coasting.
+// Coasting is CPA-eligible (CpaEvaluator gates on Confirmed||Coasting) while
+// Tentative is not, so a one-hit clutter blip that then misses would otherwise
+// emit false collision-risk events; it also violates the documented Coasting
+// definition ("was Confirmed"). A missed Tentative stays Tentative and dies per
+// M-of-N — it never Coasts. (The legitimate Confirmed->Coasting path is still
+// guarded by CoastsThenDeletesAfterMisses above.)
+TEST(TrackManager, TentativeMissStaysTentativeNeverCoasting) {
+  TrackManager mgr(3, 3);  // confirm after 3 hits, delete after 3 misses
+  const TrackId id = mgr.add(Track{});  // hits=1, Tentative, never confirmed
+  ASSERT_EQ(mgr.tracks()[0].status, TrackStatus::Tentative);
+  mgr.recordMiss(id);                   // misses=1 < 3
+  ASSERT_EQ(mgr.size(), 1u);            // not deleted yet
+  EXPECT_EQ(mgr.tracks()[0].status, TrackStatus::Tentative)  // TEETH: was Coasting
+      << "a missed Tentative must not be promoted to CPA-eligible Coasting";
+  mgr.recordMiss(id);                   // misses=2 < 3, still Tentative
+  EXPECT_EQ(mgr.tracks()[0].status, TrackStatus::Tentative);
+  mgr.recordMiss(id);                   // misses=3 -> deleted, never having Coasted
+  EXPECT_EQ(mgr.size(), 0u);
+}
+
 // Guards the TrackId->index map (review #9): deleting a middle track shifts
 // the tail of tracks_ down by one, so every surviving track's cached index
 // must still resolve to the correct element afterward.

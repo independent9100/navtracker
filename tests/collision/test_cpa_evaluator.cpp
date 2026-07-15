@@ -83,6 +83,33 @@ TEST(CpaEvaluator, NoOwnShipIsNoop) {
   EXPECT_TRUE(sink.events.empty());
 }
 
+// W5.4 operational A/B (captured as a teeth test): a one-hit clutter blip on a
+// collision bearing that then misses must emit NO collision-risk event. This is
+// the SAME geometry as EnteredFiresOnHighRisk below (own +5 m/s, target at
+// (100,0) closing at -5 m/s → high-risk CPA), the only difference being the
+// track is never Confirmed. Pre-W5.4 the miss demoted the never-confirmed track
+// to Coasting (CpaEvaluator gates on Confirmed||Coasting) → a false Entered
+// event fired to the operator; post-W5.4 it stays Tentative → silence. The A/B
+// delta (this scenario): 1 false Entered event → 0.
+TEST(CpaEvaluator, NoFalseRiskFromNeverConfirmedTentativeBlipThatMissed) {
+  geo::Datum datum{geo::Geodetic{0.0, 0.0, 0.0}};
+  OwnShipProvider provider{datum};
+  provider.update(makePoseAtDatum(0.0, Eigen::Vector2d(5.0, 0.0)));
+  TrackManager mgr{3, 3};  // needs 3 hits to Confirm — a single blip cannot
+  const TrackId id = mgr.add(
+      makeTrackAt(Eigen::Vector2d(100.0, 0.0), Eigen::Vector2d(-5.0, 0.0), 0.0),
+      Timestamp::fromSeconds(0.0));         // hits=1, Tentative (add() forces it)
+  mgr.recordMiss(id);                        // misses=1<3: pre-W5.4 Coasting, post Tentative
+  ASSERT_EQ(mgr.tracks()[0].status, TrackStatus::Tentative);  // the W5.4 fix
+  CpaEvaluator eval(mgr, provider);
+  RecordingSink sink;
+  eval.setSink(&sink);
+  eval.evaluate(Timestamp::fromSeconds(1.0));
+  EXPECT_EQ(sink.events.size(), 0u)
+      << "a never-confirmed Tentative blip must not be CPA-eligible (would emit "
+         "a false collision-risk event if demoted to Coasting)";
+}
+
 TEST(CpaEvaluator, EnteredFiresOnHighRisk) {
   Scene s;
   s.provider.update(makePoseAtDatum(0.0, Eigen::Vector2d(5.0, 0.0)));
