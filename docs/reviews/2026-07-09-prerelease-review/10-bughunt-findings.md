@@ -1103,3 +1103,74 @@ The 31 unverified MEDIUM findings are triaged in the next section (dated
 2026-07-15); the 41 LOW findings are swept there for duplicates/obsolete with the
 remainder kept as a grouped backlog note. Neither set was adversarially verified
 by the original review.
+
+---
+
+# Medium-finding triage — 2026-07-15
+
+The 31 unverified MEDIUM findings, each hand-traced against current master
+(line numbers re-anchored; the review's were against 317ecfd) and checked
+against the fix-wave diffs. Verdicts: **7 DUPLICATE** (already fixed by a wave),
+**24 PLAUSIBLE-OPEN** (real, unfixed — filed to the improvement-backlog; no
+fixes here). No finding was OBSOLETE or REFUTED — the waves targeted the
+adversarially-*confirmed* defects, so the unverified mediums they did not scope
+survive. IDs M1–M31 index `scratch`-order; see the raw JSON for full text.
+
+| ID | finding (short) | current anchor | verdict | ref |
+|---|---|---|---|---|
+| M1 | `isMeasurementCovariancePsd` never checks R **dim** vs measurement → wrong-size R aborts/OOB | `MeasurementModels.hpp:81` | PLAUSIBLE-OPEN (med) | backlog #35 |
+| M2 | IMM `softUpdate` assumes one shared R across the gated batch (uses `z0.cov`) | `ImmEstimator.cpp:353` | PLAUSIBLE-OPEN (low-med) | backlog #35 |
+| M3 | `murtyKBest` returns EMPTY on any infeasible seed edge — defeats per-row degradation | `Murty.cpp:69` | PLAUSIBLE-OPEN (med) | backlog #34 |
+| M4 | JPDA joint-event enumeration global over whole scan, not per cluster → 1e6 cap trips | `JpdaAssociator.cpp:160` | PLAUSIBLE-OPEN (med-high) | backlog #34 |
+| M5 | Murty cost omits `log(p_D/(1−r·p_D))` → mis-ranked K-best; wrong argmax at K=1 | `PmbmTracker.cpp:821` | PLAUSIBLE-OPEN (med) | backlog #34 |
+| M6 | `clutter_intensity==0` → all-+inf column → (via M3) whole-MBM wipe in one scan | `PmbmTracker.cpp:830` | PLAUSIBLE-OPEN (HIGH-impact, config-conditional) | backlog #34 |
+| M7 | Coasting(ex-Confirmed) re-assoc not restored to Confirmed; `onTrackConfirmed` re-fires | `TrackManager.cpp:36` | PLAUSIBLE-OPEN (med) | backlog #27 |
+| M8 | "leave std 0, call `applyDefaultsIfEmpty`" is a no-op for range/bearing builders | `app/example.cpp:124` | PLAUSIBLE-OPEN (low, doc/UX) | backlog #37 |
+| M9 | `ClutterMapDetectionModel` ENU-keyed cells, no `IDatumChangeSink` → mis-anchored on recenter | `ClutterMapDetectionModel.hpp:128` | PLAUSIBLE-OPEN (med) | backlog #30 |
+| M10 | Maneuver gate envelope from maneuver-contaminated residuals → ~8.8× effective threshold | `OwnShipVelocityEstimator.cpp:126` | PLAUSIBLE-OPEN (med) | backlog #31 |
+| M11 | Cross-sensor Schmidt fold double-debiases the anchor touch | `SensorBiasPairExtractor.cpp:278` | **DUPLICATE** | FIXED W3 `b284f8f` (anchor add-back) |
+| M12 | v2 bearing outlier gate centered on zero, not `b_hat` | `HeadingBiasEstimator.cpp:131` | **DUPLICATE** | FIXED W3 `b284f8f` (innovation-keyed gate) |
+| M13 | Meridian-convergence rotation transposed (output covariance frame) | `TrackOutput.cpp:17` | **DUPLICATE** | FIXED W2 `34367f6` (−γ sign; shared helper) |
+| M14 | CPA own-ship not extrapolated from `pose.time` to t (targets are) | `CpaOwnShip.cpp:10` | PLAUSIBLE-OPEN (med) | backlog #29 |
+| M15 | `minEdgeDistM` skips implicit closing edge; `pointInRing` auto-closes; builder emits unclosed | `CoastlineGeometry.cpp:47` | PLAUSIBLE-OPEN (med) | backlog #32 |
+| M16 | own-ship HDT/HDG/RMC heading&COG `strtod`→0.0 published as authoritative | `OwnShipNmeaAdapter.cpp:266` | PLAUSIBLE-OPEN (high) | backlog #26 |
+| M17 | `wrapDegToPi` `while(rad>π)` **hangs** on Inf/huge parsed angle | `OwnShipNmeaAdapter.cpp:44` | PLAUSIBLE-OPEN (high) | backlog #26 |
+| M18 | `RemoteTrackAdapter` forwards NaN/Inf/non-PSD covariance + NaN velocity | `RemoteTrackAdapter.cpp:49` | PLAUSIBLE-OPEN (high) | backlog #26 |
+| M19 | replay AIS SOG (MarineCadastre/DMA = knots) consumed as m/s | `AisCsvReplayAdapter.cpp:168` | PLAUSIBLE-OPEN (med-high) | backlog #33 |
+| M20 | `GeoJsonCoastline` const `operator[]` on missing `coordinates` (UB); sibling was hardened | `GeoJsonCoastline.cpp:54` | PLAUSIBLE-OPEN (med) | backlog #26 |
+| M21 | `parseTimeString` can't parse DMA `dd/mm/yyyy` → every DMA row dropped | `AisCsvReplayAdapter.cpp:97` | **DUPLICATE** | FIXED W5.6.2 `4c8adae` (pending merge) |
+| M22 | `loadOwnshipCsv` no value validation → (0,0) pose poisons body-frame window | `OwnshipCsvReader.cpp:63` | PLAUSIBLE-OPEN (med-high) | backlog #26 |
+| M23 | Comparator marks worsening signed/target metrics (card_err, nees_*) as improvements | `Comparator.cpp:59` | PLAUSIBLE-OPEN (low, tooling) | backlog #36 |
+| M24 | `TruthResample` finite-differences velocity ACROSS the refused dropout gap | `TruthResample.cpp:97` | PLAUSIBLE-OPEN (low-med, tooling) | backlog #36 |
+| M25 | canonical example bearing-sign comment backwards (positive = starboard) | `app/example.cpp:114` | PLAUSIBLE-OPEN (low, doc) | backlog #37 |
+| M26 | Foxglove detection entity-id collides same-source+timestamp → only last shown | `FoxgloveDebugRecorder.cpp:218` | PLAUSIBLE-OPEN (low, debug-viz) | backlog #38 |
+| M27 | plain `Tracker::processBatch` never got the backlog-#15 time sort | `Tracker.cpp:195` | **DUPLICATE** | FIXED W5.3 `e8d99af` (pending merge) |
+| M28 | PMBM has no cross-batch stale-scan/high-water guard (Tracker/MHT do) | `PmbmTracker.cpp:1315` | PLAUSIBLE-OPEN (med) | backlog #28 (extends #1) |
+| M29 | HDT/HDG before first GGA → (0,0) pose + lazy datum init at Null Island | `OwnShipNmeaAdapter.cpp:272` | PLAUSIBLE-OPEN (med-high) | backlog #26 |
+| M30 | `datumAxisRotation` returns transpose of correct old→new ENU rotation | `AxisRotation.cpp:26` | **DUPLICATE** | FIXED W2 `34367f6` (−γ sign; same as M13) |
+| M31 | UKF measurement update takes arithmetic mean of sigma-point bearings | `UkfEstimator.cpp` | **DUPLICATE** | FIXED W4 `738e542` (circular mean; UKF + IMM inner-UKF) |
+
+**Coupled-defect note.** M3↔M6 are one defect seen twice: M6 (a `clutter_intensity=0`
+column) is the reachable trigger for M3 (Murty empties the whole K-best on an
+infeasible seed); a `clutter_intensity>0` fail-loud ctor guard **or** per-row Murty
+degradation closes both. M13≡M30 (the same −γ `datumAxisRotation` bug at two call
+sites), both already FIXED by W2. The memory "K=1 Murty fix CLOSED" (`45a504d`) was
+the K-th-accepted early-exit, a *different* change — M3/M5's cost-content is untouched.
+
+# Low-finding sweep — 2026-07-15
+
+Per the ticket, the 41 LOW findings were swept for duplicates/obsolete only (no
+per-finding depth); the remainder is a single grouped note.
+
+- **DUPLICATE / FIXED:** L28 (AIS SOG accepted across the impossible 102.3–1022.9-kn
+  band) — FIXED W5.6.1 `64f3fe0` (impossible-band gate, pending merge). L41
+  (example.cpp relative-bearing comment inverted) — same defect as **M25** (backlog #37).
+- **Grouped remainder (kept as backlog context, not individually filed):** the
+  remaining ~39 lows cluster onto themes already captured above — estimator
+  guard/PSD gaps (L1–L6, L11, L20 → backlog #35), PMBM/timestamp edge cases (L7–L9,
+  L40 → backlog #28/#34), datum/antimeridian & recenter (L14, L17, L18, L27 → #26/#30),
+  bias-port doc/sign (L12, L19, L22 → #37), bench/metric tooling (L30–L34, L39 → #36),
+  sim-emitter quirks (L36–L38), lifecycle/sink event timing (L15, L16, L24 → #27/#29),
+  and occupancy/hazard (L23, L25, L26). None are release-blocking; they are available
+  in the raw JSON if a future pass wants to promote any. No new numbered entries for
+  lows (ticket scope).

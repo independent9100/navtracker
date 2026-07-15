@@ -355,3 +355,44 @@ Full list: `40-release-readiness-findings.md`.
 - "Unverified" medium/low findings in the detail files were **not** adversarially
   checked; triage before acting (some are duplicates of confirmed items seen
   from a different unit).
+
+---
+
+## Fix-wave outcome — 2026-07-15 (the review arc's last word)
+
+The review drove six pre-release fix waves + the F2 provenance cycle. This section
+closes the arc; per-finding disposition + shas are in
+`2026-07-09-prerelease-review/10-bughunt-findings.md` (dated 2026-07-15).
+
+**Code defects — all confirmed critical/high/medium FIXED.** A1 (GGA) + F3 (output-cov
+dual API) = W1 `fa4db84`; datum/own-ship cluster (Theme 1) + F-BUILD-1/2 + fixture-skip
+guard = W2 `34367f6`; bias chain (Theme 3) = W3 `b284f8f`; RangeBearing2D + circular
+bearing mean + CPA sign (Themes 2/4) = W4 `738e542`; PMBM SourceTouch (measured
+disposition) = F2 `6fcd44e`; the pipeline/lifecycle tail (Theme 5/6: soft-assoc,
+double-propagate, batch sort, Tentative→Coasting, MHT leaf) + the Section-D test
+backfill = **wave 5, on branch `fixwave-wave5`, pending the arbiter merge**. The
+review's cluster diagnosis held: the fixes concentrated in datum/own-ship handling and
+angle/frame conventions at the edges, exactly as flagged.
+
+**Medium triage.** 31 unverified mediums: 7 were DUPLICATEs already fixed by a wave, 24
+are PLAUSIBLE-OPEN and now filed as improvement-backlog #26–#38 (none release-blocking;
+none were obsolete or refuted — the waves scoped the *confirmed* defects). 41 lows swept
+(L28 fixed = W5.6.1; remainder grouped onto the same themes). Highest-value opens: the
+own-ship/adapter "validate-at-the-edges" remainder (#26, incl. an ingest-thread hang on
+corrupt NMEA) and the PMBM `clutter_intensity=0`→empty-MBM guard (#34).
+
+**Release blockers.** A1 CLEARED (W1). **A2 philos licensing is the one remaining
+blocker** — DEFERRED by user decision 2026-07-12, disposition (purge vs commercial
+license) still open. pohang REMOVED (user, on-disk). Elsevier PDF + install/export +
+ADR-0002 bounded-latency test + HAXR truth fixes ride **fix-wave 6** (hygiene ticket).
+
+**Verdict update.** The code side of "not ready to ship as-is" is resolved (pending the
+wave-5 + wave-6 merges); the ship gate is now **the philos licensing decision**, not the
+codebase.
+
+### Process caveats carried forward
+- The 24 filed opens re-anchor line numbers to master at this reconciliation; they will
+  drift again — each carries a mechanism, not just a line.
+- Two root-of-tree working files remained after the review session: `err.txt` (a 2-line
+  BrokenPipeError — session scratch, safe to delete) and `next.md` (a Tier-1/2/3 roadmap
+  note — a user file, left in place). Neither was committed to this record.
