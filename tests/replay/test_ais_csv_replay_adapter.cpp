@@ -7,6 +7,9 @@
 // same SOG/COG (they share core/estimation/PolarVelocity.hpp).
 #include <cmath>
 #include <fstream>
+#include <iomanip>
+#include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -15,7 +18,13 @@
 
 #include "adapters/ais/AisAdapter.hpp"
 #include "adapters/replay/AisCsvReplayAdapter.hpp"
+#include "core/association/GnnAssociator.hpp"
+#include "core/estimation/ConstantVelocity2D.hpp"
+#include "core/estimation/EkfEstimator.hpp"
 #include "core/geo/Datum.hpp"
+#include "core/output/TrackOutput.hpp"
+#include "core/pipeline/Tracker.hpp"
+#include "core/tracking/TrackManager.hpp"
 #include "core/types/Ids.hpp"
 
 using namespace navtracker;
@@ -86,6 +95,62 @@ TEST(AisCsvReplay, IsoBaseDateTimeParses) {
   ASSERT_EQ(ms.size(), 2u) << "ISO-8601 / BaseDateTime rows must parse";
   EXPECT_NEAR(ms[0].time.seconds(), 1637625600.0, 1.0);
   EXPECT_LT(ms[0].time.seconds(), ms[1].time.seconds());
+}
+
+// W5.6.4 (Section-D): CLAUDE.md invariant #4 (deterministic replay -> identical
+// output) was pinned only at core level, never end-to-end through a REAL adapter
+// to TrackOutput. Drive the CSV loader -> Tracker (EKF+GNN+TrackManager) ->
+// toTrackOutputENU TWICE over the same 2-MMSI stream and assert the ordered,
+// full-precision (setprecision 17) per-step output is byte-identical. Two
+// targets exercise the track-set iteration order in the drain, where an
+// unordered-container nondeterminism would surface. (Deterministic today; this
+// converts the contract into an executing guard for the adapter->drain path.)
+TEST(AisCsvReplay, EndToEndReplayThroughAdapterIsByteIdentical) {
+  const std::string body =
+      "unix_time,mmsi,lat,lon\n"
+      "0.0,111000001,63.4010,10.4000\n"
+      "1.0,222000002,63.4100,10.4100\n"
+      "2.0,111000001,63.4013,10.4004\n"
+      "3.0,222000002,63.4103,10.4104\n"
+      "4.0,111000001,63.4016,10.4008\n"
+      "5.0,222000002,63.4106,10.4108\n";
+  const std::string p = writeTemp("ais_e2e_determinism.csv", body);
+  auto runOnce = [&]() {
+    const auto ms = loadAisCsv(p, testDatum(), "ais");
+    auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+    const EkfEstimator ekf(motion, 5.0);
+    const GnnAssociator gnn(80.0);
+    TrackManager mgr(/*confirm*/ 1, /*delete*/ 5);
+    Tracker trk(ekf, gnn, mgr, /*miss_timeout*/ 100.0);
+    std::ostringstream oss;
+    oss << std::setprecision(17);
+    for (const auto& m : ms) {
+      trk.process(m);
+      for (const auto& t : mgr.tracks()) {
+        const auto o = toTrackOutputENU(t, testDatum());
+        oss << o.id.value << ',' << static_cast<int>(o.status) << ','
+            << o.last_update.seconds() << ',' << o.position.lat_deg << ','
+            << o.position.lon_deg << ',' << o.position.position_covariance_m2(0, 0)
+            << ',' << o.position.position_covariance_m2(0, 1) << ','
+            << o.position.position_covariance_m2(1, 0) << ','
+            << o.position.position_covariance_m2(1, 1) << ','
+            << o.velocity.sog_m_per_s << ',' << o.velocity.cog_deg << ','
+            << o.velocity.sigma_sog_m_per_s << ',' << o.velocity.sigma_cog_deg
+            << ',' << o.velocity.is_valid << ';';
+      }
+      oss << '\n';
+    }
+    return oss.str();
+  };
+  const std::string a = runOnce();
+  const std::string b = runOnce();
+  // Non-vacuity: real tracks must have been drained (a ';' terminates each
+  // emitted TrackOutput) — a determinism test that produced zero tracks would
+  // pass trivially.
+  EXPECT_NE(a.find(';'), std::string::npos)
+      << "no tracks drained — determinism pin would be vacuous";
+  EXPECT_EQ(a, b)
+      << "end-to-end CSV -> Tracker -> TrackOutput replay is not byte-identical";
 }
 
 // ON + above threshold: PositionVelocity2D with the target-reported velocity.
