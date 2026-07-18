@@ -69,9 +69,23 @@ output attribute; no gate, likelihood, existence, or lifecycle path reads it.
 - `docs/superpowers/specs/2026-05-28-…-design.md` §14.11 — marked RESOLVED (POPULATE).
 - `docs/algorithms/pmbm-design.md` §3.6.1 — four-part design note.
 
+## Adversarial review (PMBM output path)
+
+Independent skeptic pass over the diff, seven hunt items: attributes-only, F2
+invariant leak, key-identity, prune/lifecycle (monotonic never-reused `BernoulliId`),
+determinism, const/aliasing, non-dominant-hypothesis parity — **all CLEAR, no
+defects**. One fidelity note (not a defect): the Bhattacharyya-gated output cross-id
+merge folds duplicate id `j` into survivor `i` without unioning `bernoulli_sources_[j]`,
+so a merged track can *under*-report genuine sources — but never gains a spurious one
+(F2/determinism/attributes-only all hold), and it is the identical pre-existing
+limitation of `recent_contributions` (also survivor-keyed). Documented in `pmbm-design.md`
+§3.6.1 as a known cap; closing it means unioning both provenance maps on merge, for both
+channels together.
+
 ## Ways to improve
 
 Per-source last-contributed timestamp (distinguish currently-radar-only from
 AIS-touched-long-ago); carry `SensorKind` alongside `source_id`; evaluate a
-bounded-history variant for very long-lived tracks. None change the cumulative
-default. See `pmbm-design.md` §3.6.1.
+bounded-history variant for very long-lived tracks; union the provenance maps on the
+output-merge path (the fidelity cap above). None change the cumulative default. See
+`pmbm-design.md` §3.6.1.

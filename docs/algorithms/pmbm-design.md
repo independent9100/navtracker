@@ -453,6 +453,16 @@ note); and a PMBM-backed T2T `NavtrackerSource` yields genuine `Used` pedigree
 instead of all-`Unknown`, completing the story the Rider-B lift started. Mirroring
 MHT's `tree_sources_` keeps the semantics identical across trackers.
 
+**Known fidelity cap (not a correctness bug).** The output-side cross-id merge
+(`refreshAggregatedTracks`, Bhattacharyya-gated by `output_merge_bhattacharyya_threshold
+> 0`) folds a duplicate track `j` into survivor `i` but does NOT union
+`bernoulli_sources_[j]` into `[i]` (it is keyed on the survivor id). A merged track can
+therefore *under-report* genuine sources — but it can never gain a *spurious* one, so
+the F2 invariant, determinism, and attributes-only all still hold. This is the identical
+limitation `recent_contributions` already carries (also survivor-keyed); closing it would
+mean unioning both provenance maps on merge, and should be done for both channels together
+if pursued.
+
 **Ways to improve / what to test next.** (1) A per-source last-contributed timestamp
 would let a consumer distinguish a currently-radar-only track from one AIS touched an
 hour ago (today both list `ais`); expose it as an optional windowed view off
@@ -460,7 +470,9 @@ hour ago (today both list `ais`); expose it as an optional windowed view off
 alongside `source_id` if a consumer needs kind-level pedigree without string-matching
 source ids. (3) Evaluate whether a very long-lived track should ever *retire* a source
 that has not contributed for many windows — a bounded-history variant — measured
-against operator expectation before changing the cumulative default.
+against operator expectation before changing the cumulative default. (4) Union the
+provenance maps on the output-merge path (see the fidelity cap above), for both
+`bernoulli_sources_` and `contribution_history_` together.
 
 ---
 
