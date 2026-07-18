@@ -305,6 +305,9 @@ rather than just hypothesized.
 
 ## Build
 
+Dependencies are resolved by Conan (`conanfile.txt`): **Eigen 3.4**,
+**mcap 1.4**, **nlohmann_json 3.11**, and **GoogleTest 1.14** (tests).
+
 ```bash
 conan install . --build=missing --output-folder=build/ -s build_type=Release
 cmake --preset conan-release

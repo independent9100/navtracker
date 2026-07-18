@@ -48,7 +48,10 @@ symlinked.
 
 - **C++17** (no later standard without discussion).
 - **CMake** build, **Conan** dependency management.
-- **GoogleTest (gtest/gmock)** for unit and scenario tests, pulled via Conan.
+- **Dependencies (via Conan):** **Eigen 3.4** (linear-algebra core),
+  **mcap 1.4** (MCAP log read/write), **nlohmann_json 3.11** (JSON config /
+  serialization), and **GoogleTest 1.14** (gtest/gmock) for unit and scenario
+  tests. The authoritative list is `conanfile.txt`.
 
 ## Architecture invariants (do not violate)
 
