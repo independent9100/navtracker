@@ -387,6 +387,7 @@ add_executable(navtracker_tests
   tests/benchmark/test_harbor_boat_near_pier.cpp
   tests/benchmark/test_harbor_gate_scenarios.cpp
   tests/benchmark/test_occupancy_detector_gates.cpp
+  tests/benchmark/test_adr0002_promotion.cpp
   tests/benchmark/test_existence_label.cpp
   tests/sensor_activity/test_declared_sensor_activity.cpp
   tests/docs/test_integration_guide_config_coverage.cpp

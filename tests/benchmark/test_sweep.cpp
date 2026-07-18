@@ -51,13 +51,13 @@ TEST(Sweep, RowCountMatchesMatrix) {
   // + 8 NEES metrics (mean, median, p95, p99, coverage_95, beta_hat, n,
   //   dropped_singular)
   // + 6 NIS metrics per (sensor, model, source_id) source key
-  // + 7 per-truth metrics (lifetime/breaks/switches/RMSE × 4 + rmse_n)
-  //   per truth_id.
+  // + 8 per-truth metrics (lifetime/breaks/switches/RMSE × 4 + rmse_n +
+  //   promotion_latency [W6.1, ADR-0002 rule-3]) per truth_id.
   // + 6 per-scan latency rows (perf round 2): scan_proc_ms mean/p95/p99/max
   //   + scan_interval_s + n_scans (emitted whenever the run had ≥1 scan).
   // TinyStraightLine has one source and one truth target;
-  // total per seed = 18 + 8 + 6 + 7 + 6 = 45.
-  EXPECT_EQ(rows.size(), 2u * 45u);
+  // total per seed = 18 + 8 + 6 + 8 + 6 = 46.
+  EXPECT_EQ(rows.size(), 2u * 46u);
   std::size_t nees_seen = 0;
   std::size_t nis_seen = 0;
   std::size_t per_truth_seen = 0;
@@ -71,7 +71,7 @@ TEST(Sweep, RowCountMatchesMatrix) {
   }
   EXPECT_EQ(nees_seen, 16u);  // 8 NEES * 2 seeds
   EXPECT_GE(nis_seen, 12u);   // ≥ 6 NIS * 2 seeds (≥ 1 source)
-  EXPECT_EQ(per_truth_seen, 14u);  // 7 per-truth * 1 truth * 2 seeds
+  EXPECT_EQ(per_truth_seen, 16u);  // 8 per-truth * 1 truth * 2 seeds
 }
 
 // --- Per-scenario per-sensor detection tables -----------------------------

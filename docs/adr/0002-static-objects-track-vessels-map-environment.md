@@ -185,7 +185,14 @@ carry.
   transition.
 - Add a scenario test: a target that **starts anchored (v≈0), holds, then gets
   underway** — assert it initiates, is not suppressed, and keeps a **stable
-  track_id** through the stop→go transition (unverified today).
+  track_id** through the stop→go transition. **IMPLEMENTED 2026-07-18 (wave-6
+  W6.1):** `tests/benchmark/test_adr0002_promotion.cpp` — on the deployable
+  `imm_cv_ct_pmbm_coverage_land_ivgate`, `harbor_anchored_gets_underway` gives a
+  worst-seed promotion latency of **0 scans**, lifetime 0.97, **id_switches 0**
+  (stable id through stop→go). The new `promotion_latency` bench metric measures
+  scans from motion onset to first-tracked-while-moving; the occupancy
+  suppress→rebirth latency is separately bounded **≤5 scans** by
+  `test_live_occupancy_model.VacatedCellsRecoverWithinBoundedLatency`.
 - Document that navtracker's **CPA covers own-ship × vessel-track only**;
   infrastructure collision warning is the static branch's job, so consumers do
   not over-trust the collision layer for walls.
@@ -354,7 +361,8 @@ Consequences for the design and its gates:
 - New required gate scenario: an anchored boat (mis)classified as structure
   gets underway → recovered as a confirmed track within N scans, stable
   behaviour of the vacated occupancy cells. Extends the existing
-  anchored→underway stable-id row in `comparison-baselines.md`.
+  anchored→underway stable-id row in `comparison-baselines.md`. **Implemented
+  wave-6 W6.1** (see the rule-3 note under "Consequences" above).
 - This does NOT weaken the vessel-vs-environment rule above: where sensors
   CAN discriminate (AIS status 1/5, camera, compact watch-circle + chart
   silent), a vessel must be a track. The amendment only prices the

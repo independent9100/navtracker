@@ -236,6 +236,11 @@ ContinuityCounts computeContinuity(const BenchResult& result,
   if (result.steps.empty() || assigns.size() != result.steps.size())
     return {0, 0, 0};
 
+  // ADR-0002 rule-3: a truth is "moving" once its ground-truth speed exceeds
+  // this. Ground truth carries no noise, so anchored (exactly 0) and underway
+  // (metres/second) separate cleanly; the threshold only has to sit between.
+  constexpr double kMoveSpeedThreshMps = 0.5;
+
   struct PerTruth {
     double present = 0.0;
     double assigned = 0.0;
@@ -243,6 +248,10 @@ ContinuityCounts computeContinuity(const BenchResult& result,
     double switches = 0.0;
     bool in_gap = true;
     std::optional<TrackId> prev;
+    // Promotion-latency tracking (present-step indices, 1-based via `present`).
+    int onset = -1;                 // first moving present step
+    int first_moving_assigned = -1; // first moving+assigned present step
+    int moving_present = 0;         // # moving present steps (the never-promoted sentinel)
   };
   std::map<std::uint64_t, PerTruth> per;  // ordered: deterministic means
 
@@ -255,6 +264,21 @@ ContinuityCounts computeContinuity(const BenchResult& result,
       PerTruth& p = per[truth[i].truth_id];
       p.present += 1.0;
       const auto& a = assign[i];
+      // Promotion latency (ADR-0002 rule-3): index this present step (1-based),
+      // note motion onset and the first moving+assigned step. Uses ground-truth
+      // velocity, so it is config-agnostic — it measures how long, after a truth
+      // starts moving, until a track represents it (0 if tracked through the
+      // transition, so a mover never permanently pinned as static/nothing).
+      {
+        const int ps = static_cast<int>(p.present);  // 1-based present index
+        const bool moving = truth[i].velocity.norm() > kMoveSpeedThreshMps;
+        if (moving) {
+          if (p.onset < 0) p.onset = ps;
+          ++p.moving_present;
+          if (a.has_value() && p.first_moving_assigned < 0)
+            p.first_moving_assigned = ps;
+        }
+      }
       if (a.has_value()) {
         p.assigned += 1.0;
         if (p.in_gap) p.in_gap = false;
@@ -286,7 +310,16 @@ ContinuityCounts computeContinuity(const BenchResult& result,
     c.lifetime_ratio += lr;
     c.track_breaks += p.breaks;
     c.id_switches += p.switches;
-    c.per_truth[id] = PerTruthContinuity{lr, p.breaks, p.switches};
+    // Promotion latency: 0 if the truth never moves; else the gap from motion
+    // onset to first moving+assigned step, or the whole moving-phase length as
+    // a "never promoted while moving" sentinel.
+    double promo = 0.0;
+    if (p.onset >= 0) {
+      promo = (p.first_moving_assigned >= 0)
+                  ? static_cast<double>(p.first_moving_assigned - p.onset)
+                  : static_cast<double>(p.moving_present);
+    }
+    c.per_truth[id] = PerTruthContinuity{lr, p.breaks, p.switches, promo};
   }
   const double n = static_cast<double>(per.size());
   c.lifetime_ratio /= n;
@@ -515,6 +548,7 @@ MetricsResult computeMetrics(const BenchResult& result,
     pt.lifetime_ratio = c.lifetime_ratio;
     pt.track_breaks = c.track_breaks;
     pt.id_switches = c.id_switches;
+    pt.promotion_latency = c.promotion_latency;
   }
   for (const auto& [id, r] : rmse.per_truth) {
     auto& pt = m.per_truth[id];

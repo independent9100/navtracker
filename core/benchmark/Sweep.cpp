@@ -233,6 +233,8 @@ void emit(std::vector<MetricRow>& out,
                    "cog_rmse_deg" + sfx, pt.cog_rmse_deg, "deg"});
     out.push_back({p.run_id, config, scenario, seed,
                    "rmse_n" + sfx, static_cast<double>(pt.rmse_n), "count"});
+    out.push_back({p.run_id, config, scenario, seed,
+                   "promotion_latency" + sfx, pt.promotion_latency, "scans"});
   }
   // (per-scan latency rows are emitted separately by emitScanTiming — they
   //  need the BenchResult, which is not threaded into this metric emitter.)

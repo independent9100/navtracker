@@ -27,6 +27,13 @@ struct PerTruthMetrics {
   double sog_rmse_mps{0.0};     // metres/second
   double cog_rmse_deg{0.0};     // degrees
   std::size_t rmse_n{0};        // # contributing samples (Confirmed only)
+  // ADR-0002 rule-3 (static->moving promotion) latency, in present-steps
+  // (scans at the truth cadence): the count from this truth's motion onset
+  // (first present step with |velocity| > threshold) to the first present
+  // step where it is BOTH moving AND assigned to a track. 0 = tracked through
+  // the transition (or never moves); a large value = "never promoted while
+  // moving" (== the truth's moving-phase duration). See computeContinuity.
+  double promotion_latency{0.0};  // scans
 };
 
 /**
@@ -128,6 +135,7 @@ struct PerTruthContinuity {
   double lifetime_ratio{0.0};
   double track_breaks{0.0};
   double id_switches{0.0};
+  double promotion_latency{0.0};  // scans; ADR-0002 rule-3 (see computeContinuity)
 };
 /** Continuity counts averaged across truths, plus the per-truth-id breakdown. */
 struct ContinuityCounts {
