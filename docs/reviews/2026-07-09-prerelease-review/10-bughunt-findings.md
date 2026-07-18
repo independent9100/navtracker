@@ -1163,7 +1163,7 @@ Per the ticket, the 41 LOW findings were swept for duplicates/obsolete only (no
 per-finding depth); the remainder is a single grouped note.
 
 - **DUPLICATE / FIXED:** L28 (AIS SOG accepted across the impossible 102.3–1022.9-kn
-  band) — FIXED W5.6.1 `64f3fe0` (impossible-band gate, pending merge). L41
+  band) — FIXED W5.6.1 `64f3fe0` (impossible-band gate, merged e4beac1). L41
   (example.cpp relative-bearing comment inverted) — same defect as **M25** (backlog #37).
 - **Grouped remainder (kept as backlog context, not individually filed):** the
   remaining ~39 lows cluster onto themes already captured above — estimator
