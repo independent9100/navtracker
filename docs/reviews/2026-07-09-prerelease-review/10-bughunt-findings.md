@@ -1076,11 +1076,11 @@ author (both directions preserved).
 | T3 sign convention inconsistent across 5 observation kinds | `HeadingBiasEstimator.cpp` | FIXED — unified compass convention | W3 `b284f8f` |
 | T4 output covariance axis (east,north) vs NED contract | `TrackOutput.cpp` | RESOLVED — dual API `toTrackOutputENU/NED` | W1 `fa4db84` (F3) |
 | T4 CPA tcpa-Jacobian sign error | `Cpa.cpp` | FIXED — code + CPA-uncertainty spec §4.3 | W4 `738e542` |
-| T5 `Tracker::process()` drops soft (JPDA) results | `Tracker.cpp` | FIXED — delegates to `processBatch` | W5.1 `9cf83d0` (pending merge) |
+| T5 `Tracker::process()` drops soft (JPDA) results | `Tracker.cpp` | FIXED — delegates to `processBatch` | W5.1 `9cf83d0` (merged e4beac1) |
 | T5 spurious SourceTouch on misdetected Bernoullis | `PmbmTracker.cpp` | FIXED — keyed on `last_claimed_meas_index` (measured disposition) | F2 `6fcd44e` |
-| T5 mixed-timestamp scans double-propagate | `PmbmTracker.cpp` | FIXED — detected-Bernoulli stamped at physical time | W5.2 `86b03ab` (pending merge) |
-| T5 MHT deferred-commitment leaf protection inert **[MED]** | `MhtTracker.cpp` | FIXED — `branch()` propagates `is_protected` | W5.5 `fb21eb6` (pending merge) |
-| T6 Tentative→Coasting promotion on miss **[MED]** | `TrackManager.cpp` | FIXED — a missed Tentative stays Tentative | W5.4 `684ae8a` (pending merge) |
+| T5 mixed-timestamp scans double-propagate | `PmbmTracker.cpp` | FIXED — detected-Bernoulli stamped at physical time | W5.2 `86b03ab` (merged e4beac1) |
+| T5 MHT deferred-commitment leaf protection inert **[MED]** | `MhtTracker.cpp` | FIXED — `branch()` propagates `is_protected` | W5.5 `fb21eb6` (merged e4beac1) |
+| T6 Tentative→Coasting promotion on miss **[MED]** | `TrackManager.cpp` | FIXED — a missed Tentative stays Tentative | W5.4 `684ae8a` (merged e4beac1) |
 
 ## F2 Rider-B channel-conflation correction (2026-07-15)
 
@@ -1138,13 +1138,13 @@ survive. IDs M1–M31 index `scratch`-order; see the raw JSON for full text.
 | M18 | `RemoteTrackAdapter` forwards NaN/Inf/non-PSD covariance + NaN velocity | `RemoteTrackAdapter.cpp:49` | PLAUSIBLE-OPEN (high) | backlog #26 |
 | M19 | replay AIS SOG (MarineCadastre/DMA = knots) consumed as m/s | `AisCsvReplayAdapter.cpp:168` | PLAUSIBLE-OPEN (med-high) | backlog #33 |
 | M20 | `GeoJsonCoastline` const `operator[]` on missing `coordinates` (UB); sibling was hardened | `GeoJsonCoastline.cpp:54` | PLAUSIBLE-OPEN (med) | backlog #26 |
-| M21 | `parseTimeString` can't parse DMA `dd/mm/yyyy` → every DMA row dropped | `AisCsvReplayAdapter.cpp:97` | **DUPLICATE** | FIXED W5.6.2 `4c8adae` (pending merge) |
+| M21 | `parseTimeString` can't parse DMA `dd/mm/yyyy` → every DMA row dropped | `AisCsvReplayAdapter.cpp:97` | **DUPLICATE** | FIXED W5.6.2 `4c8adae` (merged e4beac1) |
 | M22 | `loadOwnshipCsv` no value validation → (0,0) pose poisons body-frame window | `OwnshipCsvReader.cpp:63` | PLAUSIBLE-OPEN (med-high) | backlog #26 |
 | M23 | Comparator marks worsening signed/target metrics (card_err, nees_*) as improvements | `Comparator.cpp:59` | PLAUSIBLE-OPEN (low, tooling) | backlog #36 |
 | M24 | `TruthResample` finite-differences velocity ACROSS the refused dropout gap | `TruthResample.cpp:97` | PLAUSIBLE-OPEN (low-med, tooling) | backlog #36 |
 | M25 | canonical example bearing-sign comment backwards (positive = starboard) | `app/example.cpp:114` | PLAUSIBLE-OPEN (low, doc) | backlog #37 |
 | M26 | Foxglove detection entity-id collides same-source+timestamp → only last shown | `FoxgloveDebugRecorder.cpp:218` | PLAUSIBLE-OPEN (low, debug-viz) | backlog #38 |
-| M27 | plain `Tracker::processBatch` never got the backlog-#15 time sort | `Tracker.cpp:195` | **DUPLICATE** | FIXED W5.3 `e8d99af` (pending merge) |
+| M27 | plain `Tracker::processBatch` never got the backlog-#15 time sort | `Tracker.cpp:195` | **DUPLICATE** | FIXED W5.3 `e8d99af` (merged e4beac1) |
 | M28 | PMBM has no cross-batch stale-scan/high-water guard (Tracker/MHT do) | `PmbmTracker.cpp:1315` | PLAUSIBLE-OPEN (med) | backlog #28 (extends #1) |
 | M29 | HDT/HDG before first GGA → (0,0) pose + lazy datum init at Null Island | `OwnShipNmeaAdapter.cpp:272` | PLAUSIBLE-OPEN (med-high) | backlog #26 |
 | M30 | `datumAxisRotation` returns transpose of correct old→new ENU rotation | `AxisRotation.cpp:26` | **DUPLICATE** | FIXED W2 `34367f6` (−γ sign; same as M13) |

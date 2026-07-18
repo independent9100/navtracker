@@ -231,7 +231,7 @@ Coverage notes (registration-fixtures): WELL COVERED / good news: (1) Zero orpha
 
 The load-bearing D-gaps (each the coverage hole a confirmed bug lived in) were
 backfilled as the fix-wave-5 Section-D deliverable (branch `fixwave-wave5`,
-pending merge) unless noted:
+merged e4beac1) unless noted:
 
 - Same-scan two-sensor fusion of one target, end-to-end — `SameScanTwoSensorFusionSingleTargetSinglePropagation` (W5.2 territory, `86b03ab`).
 - AIS unavailable sentinels (SOG=1023 / COG=3600) fed to the adapter — W5.6.1 `64f3fe0` (impossible-band gate + regression pin).
