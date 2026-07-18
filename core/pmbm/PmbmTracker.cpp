@@ -257,6 +257,8 @@ PmbmTracker::buildNewTargetCandidates(
 
   for (const auto& z : scan) {
     NewTargetCandidate cand;
+    // W5.2: the PPP posterior is moment-matched at current_time_ (== t_max).
+    cand.state_time = current_time_;
 
     // Per-sensor (P_D, λ_C) when a detection model is wired; Config
     // fallback otherwise. Matches MhtTracker's per-measurement
@@ -433,6 +435,9 @@ PmbmTracker::buildAdaptiveBirthCandidates(
 
   for (const auto& z : scan) {
     NewTargetCandidate cand;
+    // W5.2: the adaptive-birth state comes from initiate(z) — un-propagated, so
+    // it lives at the measurement's own time, not t_max.
+    cand.state_time = z.time;
 
     const double lambda_z = detection_model_
         ? detection_model_->paramsFor(z).clutter_intensity
@@ -961,7 +966,27 @@ void PmbmTracker::enumerateChildren(
             }
           }
         }
-        det.last_update = scan[l].time;
+        // W5.2: stamp the state's PHYSICAL time, not the claimed measurement's
+        // time. predict() advanced every component to current_time_ (== t_max,
+        // the latest timestamp in this batch) before enumeration, and the EKF
+        // update does NOT re-predict — so the detected child's mean/covariance
+        // live at current_time_. In a mixed-timestamp scan scan[l].time can be
+        // < t_max; stamping it there rewinds last_update below the state's real
+        // time, and the next predict then applies F/Q over [scan[l].time, t_max]
+        // a SECOND time (double-counted process noise). On a uniform scan
+        // scan[l].time == current_time_, so this is byte-identical (every bench
+        // + existing test feeds uniform scans).
+        //
+        // W5.2<->F2 composition (this branch rebased onto master after the F2
+        // cycle): the SourceTouch provenance walk near line 1693 was re-keyed by
+        // F2 onto det.last_claimed_meas_index (set on the next line), which is
+        // independent of last_update. So stamping last_update at t_max here no
+        // longer affects attribution — the earlier concern (that a MIXED-timestamp
+        // scan would break the old `z.time == b.last_update` key) is moot; the two
+        // fixes are orthogonal. Uniform scans (all benches/tests) are unaffected by
+        // either. The mixed-ts positive-attribution case is pinned by
+        // test_pmbm_contribution_provenance's MixedTimestampMultiSensor... test.
+        det.last_update = current_time_;
         det.last_claimed_meas_index = l;  // R2: true assignment for the feed
         // #25 Phase 2b velocity-runaway guard (default OFF, innov_gate_max_m<=0).
         // The association is already decided (this cell won the assignment) —
@@ -1172,7 +1197,8 @@ void PmbmTracker::enumerateChildren(
       nb.imm_means = nt.imm_means;
       nb.imm_covariances = nt.imm_covariances;
       nb.imm_mode_probabilities = nt.imm_mode_probabilities;
-      nb.last_update = scan[l].time;
+      nb.last_update = nt.state_time;  // W5.2: physical state time (path-specific:
+                                       // t_max for PPP, z.time for adaptive birth)
       nb.last_claimed_meas_index = l;  // R2: this measurement birthed it
       // #25 P2b: a birth has no predicted position to innovate against → sentinel.
       if (diag_sink_ != nullptr) {

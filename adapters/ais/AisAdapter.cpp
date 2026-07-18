@@ -12,6 +12,11 @@ namespace navtracker {
 namespace {
 constexpr double kKnotsToMps = 0.514444;
 constexpr double kDeg2Rad = 3.14159265358979323846 / 180.0;
+// W5.6.1: the AIS 0.1-knot SOG field encodes 0..1022 (0..102.2 kn) with 1023 =
+// "not available". Any decoded SOG above 102.2 kn is therefore physically
+// impossible — a raw/mis-scaled field or a corrupted report — and must not be
+// turned into velocity content.
+constexpr double kAisMaxValidSogKnots = 102.2;
 }  // namespace
 
 AisAdapter::AisAdapter(geo::Datum datum, AisAdapterConfig cfg)
@@ -36,7 +41,8 @@ void AisAdapter::ingest(const AisDynamicReport& r) {
   // fall back to Position2D — "COG down-weighted at low SOG". SOG/COG come from
   // the target's own GPS (independent witness), so this is not double-counting.
   const bool has_speed = r.sog_knots.has_value() && *r.sog_knots >= 0.0 &&
-                         *r.sog_knots < 1023.0;  // 1023 = SOG not available
+                         *r.sog_knots <= kAisMaxValidSogKnots;  // W5.6.1: >102.2 kn
+                         // rejects the impossible band AND the 1023 sentinel
   const bool has_course = r.cog_deg.has_value() && *r.cog_deg >= 0.0 &&
                           *r.cog_deg < 360.0;  // 3600 sentinel already > 360
   const double sog_mps = has_speed ? *r.sog_knots * kKnotsToMps : 0.0;

@@ -222,6 +222,15 @@ void TrackTree::branch(const IEstimator& estimator,
         miss.visibility_given_exists =
             nodes_[leaf_idx].visibility_given_exists;
       }
+      // W5.5: deferred-commitment protection is heritable for exactly one
+      // scan. The global solve sets is_protected on the previous scan's
+      // top-K leaves, but branch() (which runs FIRST next scan) demotes them
+      // to internal — so the child must carry the flag or the pruning passes
+      // that honour it (pruneKLocal/mergeBranches/pruneNScan) never see a
+      // protected leaf. Self-limits: MhtTracker clears + re-sets all flags
+      // after each solve, so an inherited flag is dropped next scan unless
+      // the child is itself re-selected as top-K.
+      miss.is_protected = nodes_[leaf_idx].is_protected;
       nodes_.push_back(miss);
     }
 
@@ -299,6 +308,8 @@ void TrackTree::branch(const IEstimator& estimator,
         hit.existence_probability = nodes_[leaf_idx].existence_probability;
         hit.visibility_given_exists = nodes_[leaf_idx].visibility_given_exists;
       }
+      // W5.5: inherit deferred-commitment protection (see the miss branch).
+      hit.is_protected = nodes_[leaf_idx].is_protected;
       nodes_.push_back(hit);
     }
 

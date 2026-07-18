@@ -381,13 +381,21 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_arg) {
   // method — clutter evidence is labeled from the chosen global
   // hypothesis (existence-weighted claims), not from the birth gate.
 
-  // Drop trees whose best-leaf score is below the delete threshold,
-  // UNLESS any leaf in the tree is protected — in which case an
-  // alternative hypothesis (flagged on the previous scan's global
-  // solve) is still in play and deserves one more scan to either
-  // recover or genuinely fall below threshold. Protection is cleared
-  // each scan so this is bounded: a tree can survive at most one
-  // below-threshold scan via protection alone.
+  // Drop trees whose best-leaf score is below the delete threshold (or,
+  // under IPDA, whose every leaf's existence has decayed below the delete
+  // threshold).
+  //
+  // W5.5: there is deliberately NO is_protected grace here. A flagged tree
+  // has its BEST (highest-score / max-existence) leaf below threshold, so
+  // every leaf — including any protected top-K alternative — is below
+  // threshold too: there is no viable hypothesis to keep alive. The former
+  // `any_protected` grace was inert while leaf protection was one branch()
+  // behind; once branch() propagates is_protected (the W5.5 fix), that grace
+  // would keep a starving tree — whose sole miss-leaf is re-selected as its
+  // own K=1 best and re-protected every scan — alive forever, defeating IPDA
+  // and score deletion (SustainedMissesDeleteTrack). Deferred-commitment
+  // leaf protection still applies WITHIN surviving trees via
+  // pruneKLocal/mergeBranches/pruneNScan, which is what the finding is about.
   std::vector<TrackTree> kept;
   kept.reserve(trees_.size());
   for (TrackTree& tt : trees_) {
@@ -410,13 +418,7 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_arg) {
       }
       existence_dead = max_r < cfg_.ipda_delete_threshold;
     }
-    if (score_dead || existence_dead) {
-      bool any_protected = false;
-      for (const TrackTreeNode& n : tt.nodes()) {
-        if (n.is_leaf && n.is_protected) { any_protected = true; break; }
-      }
-      if (!any_protected) continue;
-    }
+    if (score_dead || existence_dead) continue;
     kept.push_back(std::move(tt));
   }
   trees_ = std::move(kept);

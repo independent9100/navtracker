@@ -419,11 +419,15 @@ endif()
 
 include(GoogleTest)
 # W2.7: per-test TIMEOUT watchdog — a hung fixture-gated test otherwise stalls
-# ctest with no bound. 300 s is far above the slowest real-data replay case
-# while still catching a true hang. DISCOVERY_TIMEOUT guards the build-time
+# ctest with no bound. 600 s: the slowest real-data case is the three-site
+# VetoIsolationHaxrAB veto A/B (~290 s standalone), which starved past a 300 s
+# cap under parallel -j load (wave-3 hand-back, docs/baselines/…wave3.md); 600 s
+# keeps ~2x headroom while still catching a true hang (W5.6.5). The cap is global
+# to every test discovered from navtracker_tests; no legitimate test approaches
+# 300 s except that one. DISCOVERY_TIMEOUT guards the build-time
 # --gtest_list_tests step (which loads the fixture env global) the same way.
 gtest_discover_tests(navtracker_tests
-    PROPERTIES TIMEOUT 300
+    PROPERTIES TIMEOUT 600
     DISCOVERY_TIMEOUT 120)
 
 add_executable(navtracker_core_only_smoke

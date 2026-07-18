@@ -90,12 +90,20 @@ bool parseTimeString(const std::string& s, Timestamp& out) {
     out = Timestamp::fromSeconds(d);
     return true;
   }
-  // ISO 8601: YYYY-MM-DD[T| ]HH:MM:SS[.ffff][Z]
+  // ISO 8601 / BaseDateTime: YYYY-MM-DD[T| ]HH:MM:SS[.ffff][Z]   (year-month-day)
+  // OR DMA (Danish Maritime Authority / aisdk): DD/MM/YYYY HH:MM:SS  (European
+  // day-month-year). W5.6.2: the DMA format is advertised by detectColumns
+  // ("# Timestamp" header) but was silently unparsed, dropping every DMA row.
   std::tm tm{};
   int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
   double frac = 0.0;
-  if (std::sscanf(s.c_str(), "%d-%d-%d%*c%d:%d:%d", &year, &month, &day,
-                  &hour, &minute, &second) < 6) {
+  if (std::sscanf(s.c_str(), "%d-%d-%d%*c%d:%d:%d", &year, &month, &day, &hour,
+                  &minute, &second) >= 6) {
+    // ISO / BaseDateTime — year-month-day, matched above.
+  } else if (std::sscanf(s.c_str(), "%d/%d/%d%*c%d:%d:%d", &day, &month, &year,
+                         &hour, &minute, &second) >= 6) {
+    // DMA — day/month/year (note the reversed capture order).
+  } else {
     return false;
   }
   // Capture fractional seconds, if present.

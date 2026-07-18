@@ -1,3 +1,6 @@
+#include <cstdint>
+#include <vector>
+
 #include <gtest/gtest.h>
 #include <Eigen/Core>
 #include "core/tracking/TrackManager.hpp"
@@ -36,6 +39,27 @@ TEST(TrackManager, CoastsThenDeletesAfterMisses) {
   ASSERT_EQ(mgr.size(), 1u);
   EXPECT_EQ(mgr.tracks()[0].status, TrackStatus::Coasting);
   mgr.recordMiss(id);                   // misses=2 -> Deleted (removed)
+  EXPECT_EQ(mgr.size(), 0u);
+}
+
+// W5.4: a never-confirmed Tentative track that misses must NOT become Coasting.
+// Coasting is CPA-eligible (CpaEvaluator gates on Confirmed||Coasting) while
+// Tentative is not, so a one-hit clutter blip that then misses would otherwise
+// emit false collision-risk events; it also violates the documented Coasting
+// definition ("was Confirmed"). A missed Tentative stays Tentative and dies per
+// M-of-N — it never Coasts. (The legitimate Confirmed->Coasting path is still
+// guarded by CoastsThenDeletesAfterMisses above.)
+TEST(TrackManager, TentativeMissStaysTentativeNeverCoasting) {
+  TrackManager mgr(3, 3);  // confirm after 3 hits, delete after 3 misses
+  const TrackId id = mgr.add(Track{});  // hits=1, Tentative, never confirmed
+  ASSERT_EQ(mgr.tracks()[0].status, TrackStatus::Tentative);
+  mgr.recordMiss(id);                   // misses=1 < 3
+  ASSERT_EQ(mgr.size(), 1u);            // not deleted yet
+  EXPECT_EQ(mgr.tracks()[0].status, TrackStatus::Tentative)  // TEETH: was Coasting
+      << "a missed Tentative must not be promoted to CPA-eligible Coasting";
+  mgr.recordMiss(id);                   // misses=2 < 3, still Tentative
+  EXPECT_EQ(mgr.tracks()[0].status, TrackStatus::Tentative);
+  mgr.recordMiss(id);                   // misses=3 -> deleted, never having Coasted
   EXPECT_EQ(mgr.size(), 0u);
 }
 
@@ -79,4 +103,42 @@ TEST(TrackManager, TracksLastObservationAndPredictAll) {
   // mutableTracks gives writable access (the EKF will write through it).
   mgr.mutableTracks()[0].state = Eigen::VectorXd::Zero(4);
   EXPECT_EQ(mgr.tracks()[0].state.size(), 4);
+}
+
+// W5.6.3 (Section-D): architecture invariant #5 — a track_id is never reused
+// after deletion. next_id_ only increments, so a delete->create cycle must hand
+// out strictly-fresh ids and a survivor keeps its own id. No test pinned this
+// before. (The invariant holds today; this is a coverage pin, not a bugfix.)
+TEST(TrackManager, TrackIdsAreNeverReusedAcrossDeleteCreateCycles) {
+  TrackManager mgr(1, 1);  // delete after a single miss
+  const TrackId a = mgr.add(Track{});
+  const TrackId b = mgr.add(Track{});
+  const TrackId c = mgr.add(Track{});
+  ASSERT_EQ(mgr.size(), 3u);
+  EXPECT_GT(b.value, a.value);
+  EXPECT_GT(c.value, b.value);
+  std::uint64_t max_seen = c.value;  // ids are monotonic; c was added last
+
+  // Delete a and c; b survives.
+  mgr.recordMiss(a);
+  mgr.recordMiss(c);
+  ASSERT_EQ(mgr.size(), 1u);
+  EXPECT_EQ(mgr.tracks()[0].id, b) << "survivor's id must not be reassigned";
+
+  // New tracks must never reuse a deleted (or any prior) id.
+  for (int i = 0; i < 5; ++i) {
+    const TrackId id = mgr.add(Track{});
+    EXPECT_GT(id.value, max_seen)
+        << "track_id " << id.value << " reused after deletion (invariant #5)";
+    max_seen = id.value;
+  }
+
+  // Delete everything, then create once more — still strictly fresh.
+  std::vector<TrackId> live;
+  for (const auto& t : mgr.tracks()) live.push_back(t.id);
+  for (const TrackId id : live) mgr.recordMiss(id);
+  ASSERT_EQ(mgr.size(), 0u);
+  const TrackId fresh = mgr.add(Track{});
+  EXPECT_GT(fresh.value, max_seen)
+      << "id reused after deleting the whole manager (invariant #5)";
 }

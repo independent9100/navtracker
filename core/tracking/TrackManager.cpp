@@ -61,7 +61,18 @@ void TrackManager::recordMiss(TrackId id) {
     }
     return;
   }
-  tracks_[i].status = TrackStatus::Coasting;
+  // W5.4: only an already-Confirmed (or still-Coasting) track demotes to
+  // Coasting on a miss. A never-confirmed Tentative track keeps its status and
+  // ages its miss counter toward deletion — it must NOT become Coasting, which
+  // is CPA-eligible (CpaEvaluator gates on Confirmed||Coasting) and would emit
+  // false collision-risk events for a one-hit clutter blip; Coasting is also
+  // defined as "was Confirmed" (docs/output-contract.md). Setting Coasting on an
+  // already-Coasting track is a no-op, so the || Coasting arm just documents
+  // intent.
+  if (tracks_[i].status == TrackStatus::Confirmed ||
+      tracks_[i].status == TrackStatus::Coasting) {
+    tracks_[i].status = TrackStatus::Coasting;
+  }
 }
 
 void TrackManager::noteObservation(TrackId id, Timestamp t) {

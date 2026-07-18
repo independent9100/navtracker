@@ -848,6 +848,13 @@ class PmbmTracker {
     Eigen::MatrixXd imm_means;
     std::vector<Eigen::MatrixXd> imm_covariances;
     Eigen::VectorXd imm_mode_probabilities;
+    // W5.2: the physical time `mean` lives at. current_time_ (t_max) for the PPP
+    // path (the moment-matched posterior is propagated to t_max before update);
+    // z.time for the adaptive path (initiate(z) state is un-propagated). The
+    // birthed Bernoulli's last_update is stamped from THIS so the next predict
+    // advances by the correct dt on a mixed-timestamp scan — byte-identical on
+    // uniform scans, where current_time_ == z.time.
+    Timestamp state_time{};
   };
 
   std::vector<NewTargetCandidate> buildNewTargetCandidates(
