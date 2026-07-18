@@ -2,19 +2,26 @@
 
 Real-world maritime sensor recordings for validating the tracker against
 the synthetic harness in `tests/scenario/`. Each subdirectory holds a
-representative sample of one source. Files are **not** committed (see
-`.gitignore`); this README is the source-of-truth manifest.
+representative sample of one source. The data **payload** is **not** committed
+(see `.gitignore`); this README — the license/provenance manifest, the record of
+which datasets are non-commercial and what was removed and why — **is**
+git-tracked (W6.3.3), so edits go through a branch like any other doc.
 
 Total on-disk for the bundled samples: ~2.3 GB.
+
+**Status legend.** *Fetched* = present on disk and consumed by the build/tests.
+*Staging-only* = present on disk but **not** consumed by the C++ test suite
+(safe to prune to reclaim disk; re-fetchable via the per-source commands below).
+*Form-gated* / *REMOVED* as noted per row.
 
 | Source       | Sensors                                | License        | Sample size | Status      |
 | ------------ | -------------------------------------- | -------------- | ----------- | ----------- |
 | `dlr/`       | X-band radar (polar HDF5) + AIS (CSV)  | CC-BY-4.0      | 1.4 GB      | Fetched     |
 | `pohang/`    | Marine radar (PNG) + GPS + AHRS        | CC-BY-NC-4.0   | —           | **REMOVED 2026-07-12** (license NO-GO — non-commercial, same class as MOANA/GFW; user directive; zero C++ tests consumed it; re-fetchable from source if ever re-licensed) |
-| `marinecadastre/` | AIS (CSV)                         | US public      | 277 MB      | Fetched     |
-| `dma/`       | AIS (CSV)                              | DMA open data  | 266 MB      | Fetched     |
-| `stonesoup/` | Solent AIS demo + Stone Soup framework | MIT            | 56 MB       | Fetched     |
-| `kystverket/`| Norway live AIS (GeoJSON snapshots)    | NLOD           | 15 MB       | Fetched     |
+| `marinecadastre/` | AIS (CSV)                         | US public      | 277 MB      | **Staging-only** (no C++ test consumes it) |
+| `dma/`       | AIS (CSV)                              | DMA open data  | 266 MB      | **Staging-only** (no C++ test consumes it; the DMA *date-format* handling in `AisCsvReplayAdapter` is unrelated to this dir) |
+| `stonesoup/` | Solent AIS demo + Stone Soup framework | MIT            | 56 MB       | **Staging-only** (framework clone; used only by the offline `tools/stonesoup_gospa_crosscheck.py`, not the build) |
+| `kystverket/`| Norway live AIS (GeoJSON snapshots)    | NLOD           | 15 MB       | **Staging-only** (no C++ test consumes it) |
 | `philos/`    | AIS + radar + EO (R/V Philos)          | CC-BY-NC-SA-4.0| —           | Form-gated  |
 | `autoferry/` | radar + lidar + EO + IR (milliAmpere)  | CC-BY-4.0      | 7 MB        | Fetched     |
 
