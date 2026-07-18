@@ -5,6 +5,10 @@
 #include <iostream>
 #include <string>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/utsname.h>  // uname() for the host provenance field
+#endif
+
 #include "adapters/benchmark/RbadScenarioRun.hpp"
 #include "adapters/benchmark/ReplayScenarioRun.hpp"
 #include "adapters/benchmark/SimMultisensorScenarioRun.hpp"
@@ -22,6 +26,39 @@ std::string nowUtcIso8601() {
   char buf[32];
   std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
   return buf;
+}
+
+// W6.3.2 baseline provenance: git sha (compile-time from CMake), compiler and
+// host (compile/runtime). Best-effort; each returns "unknown" if unavailable.
+std::string buildGitSha() {
+#ifdef NAVTRACKER_GIT_SHA
+  return NAVTRACKER_GIT_SHA;
+#else
+  return "unknown";
+#endif
+}
+
+std::string buildCompiler() {
+#if defined(__clang__)
+  return "clang " + std::to_string(__clang_major__) + "." +
+         std::to_string(__clang_minor__) + "." +
+         std::to_string(__clang_patchlevel__);
+#elif defined(__GNUC__)
+  return "gcc " + std::to_string(__GNUC__) + "." +
+         std::to_string(__GNUC_MINOR__) + "." +
+         std::to_string(__GNUC_PATCHLEVEL__);
+#else
+  return "unknown";
+#endif
+}
+
+std::string buildHost() {
+#if defined(__unix__) || defined(__APPLE__)
+  struct utsname uts;
+  if (uname(&uts) == 0)
+    return std::string(uts.sysname) + " " + uts.machine;  // e.g. "Linux x86_64"
+#endif
+  return "unknown";
 }
 
 std::string argv_str(int argc, char** argv, const std::string& flag) {
@@ -291,10 +328,10 @@ int main(int argc, char** argv) {
   CsvProvenance prov;
   prov.run_id = run_id;
   prov.started_at_utc = nowUtcIso8601();
-  prov.git_sha = "unknown";  // wire in via CMake-generated header later
+  prov.git_sha = buildGitSha();  // W6.3.2: from CMake at configure time
   prov.build_type = "Release";
-  prov.compiler = "unknown";
-  prov.host = "unknown";
+  prov.compiler = buildCompiler();
+  prov.host = buildHost();
   for (std::uint32_t s = 0; s < synthetic_seeds; ++s) prov.seeds.push_back(s);
   prov.config_count = static_cast<std::uint32_t>(configs.size());
   prov.scenario_count = static_cast<std::uint32_t>(all.size());
