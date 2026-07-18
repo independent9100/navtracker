@@ -9548,3 +9548,51 @@ Suite under `NAVTRACKER_REQUIRE_FIXTURES=1`. `fixwave-wave1` (held F2) untouched
   `3a5fb63` (F2 merged), not merged/pushed. One arbiter item remains: **W5.5 T2T gate
   sanity-check** by the gate author (the W5.2↔F2 SourceTouch coupling is resolved by
   the rebase — see W5.2 above). No Cl-4 gauntlet headline row moves.
+
+## 2026-07-18 — Pre-release fix wave, WAVE 6 (W6.2): HAXR truth fixes — corrected numbers measure the tracker, not truth sparsity
+
+Branch `fixwave-wave6` (off master `b8b754d`). **Bench-side only; tracker
+byte-untouched** (acceptance #2). The HAXR (Kattwyk radar+AIS) replay truth had two
+bugs that made its OSPA/GOSPA unreadable as tracker accuracy: (1) truth velocity
+hardcoded to zero in `HaxrTruthLoader` (the HAXR AIS CSV carries no SOG/COG); (2)
+sparse AIS truth (~10–20 s/fix) scored on a ~1 Hz clock with no resample/hold. Both
+fixed by the ONE shared helper the philos path already uses —
+`resampleTruthToClock(truth, /*period=*/1.0, /*max_gap=*/30.0)`
+(`core/scenario/TruthResample`), which interpolates position AND finite-differences
+velocity — inserted into the HAXR bench path (`ReplayScenarioRun::HaxrScenarioRun`)
+and the standalone `test_haxr_ospa.cpp`. No reinvention.
+
+**A/B on the deployable `imm_cv_ct_pmbm_coverage_land_ivgate`, kattwyk_08_t40
+(302,509 raw CFAR plots, 1 seed):**
+
+| metric | BEFORE (zero-vel, unresampled) | AFTER (resampled) | reading |
+|---|---|---|---|
+| gospa_false (m²) | 20956 | 20912 | **~unchanged** — over-count is truth-independent |
+| gospa_missed (m²) | 826 | **7922** | sparsity HID the miss; dense truth reveals it |
+| gospa_localization (m²) | 4.22 | 44.74 | before, only near-perfect matches were scored |
+| card_err_mean (tracks) | 100.7 | 65.0 | before inflated by absent truth |
+| sog_rmse (m/s) | 0.247 | **1.279** | before scored vs a FAKE zero velocity |
+| ospa_mean (m) | 496.6 | 472.0 | — |
+| gospa_mean (m) | 143.4 | 168.1 | — |
+
+**Interpretation (the ticket's thesis, confirmed):** the old numbers reflected
+**truth sparsity + fake-zero velocity, not tracker error.** With truth absent at most
+eval steps, `gospa_missed`/`gospa_localization` were artificially low, `card_err`
+artificially high, and `sog_rmse` meaningless (tracker speed vs a hardcoded zero). The
+corrected truth reveals the HONEST — less flattering — behavior: on RAW CFAR
+(unextracted detections; extraction is upstream's job, extraction-boundary ruling
+2026-07-06) this config is dominated by structure/clutter phantoms — high `gospa_false`
+(~20900, unchanged, truth-independent) AND high `gospa_missed` (misses most real AIS
+vessels). The fix does not improve the tracker; it makes the metric MEASURE the tracker
+instead of the truth's sparsity.
+
+**Standalone `HaxrOspa.KattwykHourEkfGnnBaseline`** (bare EKF+GNN, not the deployable):
+mean OSPA 199.51 → 195.89 m — barely moves, same reason (bare baseline over-counts on
+raw CFAR → cardinality-dominated either way); still passes the <200 m assert. Truth
+14,794 raw → 143,304 @ 1 Hz.
+
+**Scope:** dated baseline snapshots are NOT retro-edited; these corrected numbers
+supersede the sparsity-artifact figures on record (2026-07-04 increment-8, 2026-07-09
+veto-isolation) for reading HAXR as *accuracy*. The veto/LOS HAXR A/B gates shift with
+the truth (common-mode across both ON/OFF arms, so their deltas hold) — confirmed in
+the wave-6 strict suite.
