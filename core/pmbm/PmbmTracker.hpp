@@ -958,6 +958,16 @@ class PmbmTracker {
   std::map<BernoulliId, std::vector<Track::SourceTouch>>
       contribution_history_;
   static constexpr double kContributionWindowSec = 2.0;
+  // Per-Bernoulli-id CUMULATIVE set of source_ids that genuinely updated the
+  // track over its life — the output-provenance channel (§14.11, pmbm-design.md
+  // §3.6.1). Fed from the SAME claimed-source event as contribution_history_
+  // (last_claimed_meas_index ≥ 0), first-seen order, deduplicated; the MHT
+  // tree_sources_ analog. Unlike contribution_history_ it is NOT time-windowed
+  // (matches flat/MHT cumulative semantics) — pruned only when the Bernoulli id
+  // leaves every hypothesis. Folded into each emitted Track's contributing_sources
+  // by refreshAggregatedTracks. Output attribute only: no gate/likelihood/
+  // existence/lifecycle path reads it, so metrics stay byte-identical.
+  std::map<BernoulliId, std::vector<std::string>> bernoulli_sources_;
   mutable std::vector<Track> aggregated_tracks_;
   mutable bool aggregated_tracks_dirty_{true};
 

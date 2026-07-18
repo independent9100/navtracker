@@ -1729,6 +1729,14 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
       touch.sensor_position_enu = best->sensor_position_enu;
       touch.own_position_std_m = best->sensor_position_std_m;
       touch.covariance_is_default = best->covariance_is_default;
+      // §14.11: cumulative output-provenance set, fed from the SAME claimed
+      // measurement (dedup, first-seen order) — the MHT tree_sources_ idiom.
+      // Not windowed: it is the track's whole-life source set (contributing_sources).
+      {
+        auto& srcs = bernoulli_sources_[b.id];
+        if (std::find(srcs.begin(), srcs.end(), best->source_id) == srcs.end())
+          srcs.push_back(best->source_id);
+      }
       auto& history = contribution_history_[b.id];
       history.push_back(std::move(touch));
       const std::int64_t window_ns =
@@ -1750,6 +1758,11 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     for (auto it = contribution_history_.begin();
          it != contribution_history_.end();) {
       if (alive.count(it->first) == 0) it = contribution_history_.erase(it);
+      else ++it;
+    }
+    // §14.11: prune the cumulative source set on the same alive-id rule.
+    for (auto it = bernoulli_sources_.begin(); it != bernoulli_sources_.end();) {
+      if (alive.count(it->first) == 0) it = bernoulli_sources_.erase(it);
       else ++it;
     }
     // Task 5: prune last_activity_check_ alongside contribution_history_.
@@ -2363,6 +2376,12 @@ void PmbmTracker::refreshAggregatedTracks() const {
     auto hit = contribution_history_.find(id);
     if (hit != contribution_history_.end()) {
       t.recent_contributions = hit->second;
+    }
+    // §14.11: surface the cumulative genuine-contributor set on the output field,
+    // matching the flat/MHT contributing_sources semantics (ordered, deduplicated).
+    auto src_hit = bernoulli_sources_.find(id);
+    if (src_hit != bernoulli_sources_.end()) {
+      t.contributing_sources = src_hit->second;
     }
     aggregated_tracks_.push_back(std::move(t));
   }

@@ -549,7 +549,20 @@ subsystem — a roadmap item, not a quick add.
 AIS coverage near shore (ADR 0001 A3). Extended-object handling for large single
 static returns overlaps §14.3 (EOT) and should reuse it rather than duplicate.
 
-### 14.11 Populate `TrackOutput.contributing_sources` for PMBM (consumer-surface consistency)
+### 14.11 Populate `TrackOutput.contributing_sources` for PMBM (consumer-surface consistency) — RESOLVED 2026-07-15 (POPULATE)
+
+**RESOLVED — POPULATE (arbiter ruling).** Implemented on branch
+`pmbm-contributing-sources`: PMBM now fills `Track::contributing_sources` from the
+F2-truthful claimed-source channel, cumulative and deduplicated, matching the
+flat/MHT semantics (a sibling `bernoulli_sources_` map fed at the same
+`last_claimed_meas_index`-gated site as `contribution_history_`, read in
+`refreshAggregatedTracks`). Attributes-only: the R3 two-class A/B is byte-identical
+on every accuracy/state/consistency metric (18 PMBM configs × 26 scenarios). The F2
+invariant extends to the output field (`test_pmbm_contribution_provenance` +
+`test_t2t_live_pedigree_content` PMBM-backed pin, both teeth-proven). Pedigree
+stays diagnostics-only in fusion math. See
+`docs/baselines/2026-07-15_pmbm_contributing_sources.md` and `pmbm-design.md`
+§3.6.1. The original decision record follows.
 
 **Observed 2026-07-15 (F2 provenance cycle).** `Track::contributing_sources` —
 the per-track list of sensor streams that fed a track, and the field the T2T
@@ -570,7 +583,8 @@ PMBM tracks from the now-truthful `recent_contributions`:
   `ProvablyIndependent` verdict for disjoint-source PMBM tracks — the same
   benefit the flat/MHT path already gets.
 
-**Cost.** Small: fold `recent_contributions` sensor ids into
-`contributing_sources` in `refreshAggregatedTracks` (dedup, alive-id semantics
-already present). Pedigree stays diagnostics-only either way, so this is a
-usefulness improvement, not a correctness fix. Not scheduled.
+**Cost.** Small: fold the claimed-source ids into `contributing_sources` in
+`refreshAggregatedTracks` (dedup, alive-id semantics already present). Pedigree
+stays diagnostics-only either way, so this is a usefulness improvement, not a
+correctness fix. **Done** (see the RESOLVED banner above) — the "populate" arm was
+chosen and shipped attributes-only.

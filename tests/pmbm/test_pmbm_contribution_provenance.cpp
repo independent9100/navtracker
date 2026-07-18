@@ -79,6 +79,14 @@ bool listsSource(const Track& tr, const std::string& src) {
                      });
 }
 
+// The OUTPUT provenance field (§14.11): the cumulative set of sensors that
+// genuinely updated the carried Bernoulli, surfaced on Track::contributing_sources.
+bool listsOutputSource(const Track& tr, const std::string& src) {
+  return std::find(tr.contributing_sources.begin(),
+                   tr.contributing_sources.end(), src)
+         != tr.contributing_sources.end();
+}
+
 }  // namespace
 
 TEST(PmbmContributionProvenance, MisdetectedTrackDoesNotInheritForeignSource) {
@@ -212,4 +220,108 @@ TEST(PmbmContributionProvenance, MixedTimestampMultiSensorAttributesEachClaimedS
   EXPECT_TRUE(a_has_radar_at_5)
       << "the radar target's claimed 5.0 return must be recorded as a SourceTouch "
          "at t=5.0";
+}
+
+// ---------------------------------------------------------------------------
+// §14.11 — the F2 invariant EXTENDED to the OUTPUT path. Track::contributing_sources
+// (not just recent_contributions) must list only sensors that ACTUALLY updated the
+// track. Same misdetection scenario as MisdetectedTrackDoesNotInheritForeignSource,
+// but asserting the output field the deployable's TrackOutput / T2T pedigree read.
+// TEETH: on master (contributing_sources left empty) the positive EXPECT_TRUE
+// (radar listed) is RED — the population is what turns it green; the negative
+// (AIS absent) guards against a spurious/over-broad fill.
+// ---------------------------------------------------------------------------
+TEST(PmbmContributionProvenance, OutputContributingSourcesExcludesForeignSource) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  PmbmTracker::Config c;
+  c.probability_of_detection = 0.9;
+  c.clutter_intensity = 1e-6;
+  c.survival_probability = 1.0;
+  c.adaptive_birth = true;
+  c.birth_existence_target = 0.6;
+  c.confirm_threshold = 0.5;
+  c.source_aware_misdetection = true;
+  c.idle_halflife_sec = 10.0;
+  c.r_min = 1e-4;
+  PmbmTracker tracker(ekf, c);
+
+  for (int k = 0; k <= 5; ++k) {
+    tracker.predict(Timestamp::fromSeconds(k));
+    tracker.processBatch({mkPos(k, 0.0, 0.0, SensorKind::ArpaTtm, "radar")});
+  }
+  // Misdetection scan: only a distant foreign AIS return, no radar for the origin.
+  tracker.predict(Timestamp::fromSeconds(6));
+  tracker.processBatch({mkPos(6, 5000.0, 5000.0, SensorKind::Ais, "ais",
+                              std::optional<std::uint32_t>{123456789U})});
+
+  const Track* origin = nearestTrack(tracker, 0.0, 0.0);
+  ASSERT_NE(origin, nullptr);
+  EXPECT_TRUE(listsOutputSource(*origin, "radar"))
+      << "the radar-updated track must list radar in contributing_sources (§14.11)";
+  EXPECT_FALSE(listsOutputSource(*origin, "ais"))
+      << "a radar-only track must never list AIS in the OUTPUT contributing_sources "
+         "— the F2 invariant extends to the emitted field";
+
+  const Track* ais_track = nearestTrack(tracker, 5000.0, 5000.0);
+  if (ais_track != nullptr && ais_track != origin) {
+    EXPECT_TRUE(listsOutputSource(*ais_track, "ais"))
+        << "the AIS-born track must list AIS in contributing_sources";
+    EXPECT_FALSE(listsOutputSource(*ais_track, "radar"))
+        << "the AIS-born track never saw radar";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// §14.11 — genuine multi-sensor fusion + CUMULATIVE retention + DETERMINISTIC order.
+// One target at the origin, alternately fed by radar (even scans) and the SAME
+// vessel's AIS (odd scans). The single carried Bernoulli claims whichever sensor is
+// present each scan, so contributing_sources must UNION both — and keep both after a
+// later radar-only scan (cumulative, not a sliding window). Order is first-seen
+// (radar before ais), deterministic.
+// TEETH: RED on master (field empty → neither listed).
+// ---------------------------------------------------------------------------
+TEST(PmbmContributionProvenance, OutputContributingSourcesUnionsGenuineContributorsCumulatively) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  PmbmTracker::Config c;
+  c.probability_of_detection = 0.9;
+  c.clutter_intensity = 1e-6;
+  c.survival_probability = 1.0;
+  c.adaptive_birth = true;
+  c.birth_existence_target = 0.6;
+  c.confirm_threshold = 0.5;
+  c.source_aware_misdetection = true;
+  c.source_aware_identity = true;
+  c.idle_halflife_sec = 10.0;
+  c.r_min = 1e-4;
+  PmbmTracker tracker(ekf, c);
+
+  const std::optional<std::uint32_t> mmsi{555000111U};
+  // Scan 0 radar (births the track); then alternate ais/radar so ONE Bernoulli
+  // is fed by both sensors over its life.
+  for (int k = 0; k <= 8; ++k) {
+    tracker.predict(Timestamp::fromSeconds(k));
+    if (k % 2 == 0)
+      tracker.processBatch({mkPos(k, 0.0, 0.0, SensorKind::ArpaTtm, "radar")});
+    else
+      tracker.processBatch({mkPos(k, 0.0, 0.0, SensorKind::Ais, "ais", mmsi)});
+  }
+  // Final scans 9,10: radar only — the AIS contribution must PERSIST (cumulative).
+  for (int k = 9; k <= 10; ++k) {
+    tracker.predict(Timestamp::fromSeconds(k));
+    tracker.processBatch({mkPos(k, 0.0, 0.0, SensorKind::ArpaTtm, "radar")});
+  }
+
+  const Track* trk = nearestTrack(tracker, 0.0, 0.0);
+  ASSERT_NE(trk, nullptr);
+  EXPECT_TRUE(listsOutputSource(*trk, "radar"));
+  EXPECT_TRUE(listsOutputSource(*trk, "ais"))
+      << "a sensor that genuinely contributed earlier must remain listed after "
+         "radar-only scans — contributing_sources is cumulative, not windowed";
+  // Deterministic first-seen order: radar (scan 0) precedes ais (scan 1); no dupes.
+  ASSERT_EQ(trk->contributing_sources.size(), 2u)
+      << "exactly the two genuine sensors, deduplicated";
+  EXPECT_EQ(trk->contributing_sources.front(), "radar");
+  EXPECT_EQ(trk->contributing_sources.back(), "ais");
 }

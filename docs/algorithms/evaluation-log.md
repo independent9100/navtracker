@@ -9548,3 +9548,30 @@ Suite under `NAVTRACKER_REQUIRE_FIXTURES=1`. `fixwave-wave1` (held F2) untouched
   `3a5fb63` (F2 merged), not merged/pushed. One arbiter item remains: **W5.5 T2T gate
   sanity-check** by the gate author (the W5.2↔F2 SourceTouch coupling is resolved by
   the rebase — see W5.2 above). No Cl-4 gauntlet headline row moves.
+
+## 2026-07-15 — §14.11: PMBM `contributing_sources` populated (branch `pmbm-contributing-sources`, off master `66e55b3`) [consumer surface / attributes-only]
+
+- **What.** The F2 cycle's Finding A: PMBM (the deployable) left
+  `TrackOutput.contributing_sources` empty while flat/MHT populated it. Arbiter ruling
+  POPULATE. PMBM now fills it from the F2-truthful claimed-source channel, cumulative +
+  deduplicated, matching flat/MHT semantics (sibling `bernoulli_sources_` map fed at the
+  same `last_claimed_meas_index`-gated site as `contribution_history_`, read in
+  `refreshAggregatedTracks`; the MHT `tree_sources_` analog). Design note: `pmbm-design.md`
+  §3.6.1.
+- **Attributes-only (R3 two-class A/B).** ON (branch) vs OFF (master PmbmTracker), same
+  bench binary, `--config-filter pmbm --skip-replays --seeds 1` → 18 PMBM configs × 26
+  scenarios. Every accuracy/state/consistency metric (OSPA/GOSPA/T-GOSPA/card_err/NEES/
+  NIS/RMSE/id_switches/lifetime/track_breaks/occupancy, incl. per-truth) **byte-identical**
+  (21,468 rows); only wall-clock timing differs. `bernoulli_sources_` feeds only the output
+  attribute — no gate/likelihood/existence/lifecycle reads it.
+- **Invariant + tests (teeth).** F2 invariant extended to the OUTPUT field
+  (`test_pmbm_contribution_provenance`: radar-only never lists AIS; alternating radar/AIS
+  unions both, cumulative, exactly-two, deterministic order). T2T E2E pedigree pin extended
+  (`test_t2t_live_pedigree_content.PmbmBackedSourcePedigreeIsGenuine`: PMBM-backed source →
+  both-sensor Used, radar-only AIS non-Used) — completes the Rider-B lift story (PMBM
+  pedigree now genuine, not all-Unknown). Teeth: M1 (disable fill)→population RED, M2
+  (spurious source)→invariant RED; reverted, 6/6 GREEN.
+- **Docs.** output-contract (field note), integration-guide §3.10 (was "PMBM empty →
+  all-Unknown"), design spec §14.11 (RESOLVED), pmbm-design §3.6.1 (four-part), write-up
+  `docs/baselines/2026-07-15_pmbm_contributing_sources.md`.
+- **Handoff.** On branch, not merged/pushed. Pedigree stays diagnostics-only in fusion math.
