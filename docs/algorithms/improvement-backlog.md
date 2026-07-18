@@ -1216,3 +1216,149 @@ the DECISION, not more building: the promotion dossier
 (`docs/superpowers/plans/2026-07-09-pmbm-promotion-dossier-ticket.md`)
 compiles both contenders through the full gauntlet at one commit; the
 canonical-promotion call is the user's.
+
+---
+
+# Entries from the 2026-07-09 pre-release review (medium-finding triage, filed 2026-07-15)
+
+The 2026-07-09→11 review's confirmed defects shipped in fix waves 1–5 + the F2
+cycle (see `docs/reviews/2026-07-09-prerelease-open-points.md` and the dated
+disposition in `docs/reviews/2026-07-09-prerelease-review/10-bughunt-findings.md`).
+The entries below are the **PLAUSIBLE-OPEN** verdicts from triaging the review's
+31 unverified MEDIUM findings — real, unfixed, and out of the fix-wave scope.
+Entries only; no fixes were made. `M<n>` = the triage-table id.
+
+## 26. Finish "validate at the edges" on the input adapters (the A1/W1 remainder) — HIGH
+
+A1/W1 hardened the **GGA position** path only; the same class of bug survives on
+the sibling numeric/parse paths (fact-free, buildable now — no deployment facts
+needed). Complementary to backlog #18 (which is the pose-*delta* health guard, a
+different layer). Sub-items:
+- **M17 (hang, do first):** `wrapDegToPi` / `gyroRateRadPerSec` `while(rad>π) rad-=2π`
+  never terminates on an Inf/huge parsed angle (`adapters/own_ship/OwnShipNmeaAdapter.cpp:44`);
+  ~1/256 corrupt lines pass the 8-bit NMEA checksum → ingest thread freezes, no diagnostic.
+- **M16:** HDT/HDG/RMC heading&COG use bare `strtod` (no finite/empty guard) → `""`→0.0
+  published as authoritative heading/gyro sample (`OwnShipNmeaAdapter.cpp:220,222,266,297`).
+- **M29:** HDT/HDG arriving before the first GGA publishes a (0,0) pose and lazily
+  inits the datum at Null Island (`OwnShipNmeaAdapter.cpp:272,291,318`); heading-before-fix
+  is the NORMAL 10 Hz-vs-1 Hz startup order.
+- **M18:** `RemoteTrackAdapter` gates only lat/lon → NaN/Inf/non-PSD covariance and NaN
+  velocity flow into the Measurement (`adapters/remote_track/RemoteTrackAdapter.cpp:49,64-72`).
+- **M22:** `loadOwnshipCsv` does no finite/range/null-island check → a blank lat/lon row
+  becomes a (0,0) pose that poisons every body-frame projection in its window
+  (`adapters/replay/OwnshipCsvReader.cpp:63`); the sibling AIS loader already validates.
+- **M20:** `GeoJsonCoastline` const `operator[]` on a missing `coordinates` key (assert/UB)
+  + unguarded `parse` (`adapters/land/GeoJsonCoastline.cpp:43,54`); the sibling
+  `GeoJsonStaticObstacles` was hardened (R7.2) — mirror it here.
+
+## 27. Lifecycle: restore Coasting→Confirmed on re-association + single-fire onTrackConfirmed (M7) — MEDIUM
+
+A Coasting (ex-Confirmed) track that re-associates is not restored to Confirmed until
+`confirm_hits` fresh hits (`recordMiss` resets `hits=0`), so Confirmed-only output
+filters drop an actively-updated vessel for `confirm_hits−1` cycles; and the eventual
+re-promotion re-fires `onTrackConfirmed` (`was_unconfirmed` true), violating the
+`ITrackSink` "fires once" contract → double-allocated UI/alerts.
+`core/tracking/TrackManager.cpp:36,48`. Distinct from W5.4 (which guarded `recordMiss`).
+
+## 28. PMBM cross-batch stale-scan / high-water guard (M28) — MEDIUM — extends #1
+
+`PmbmTracker::processBatch` sorts within a batch but has no reject-stale / high-water
+guard; an out-of-order batch reaches `predict()` where `dt<=0` rewinds `current_time_`
+and returns without propagating, then the update runs against newer states.
+`Tracker`/`MhtTracker` both drop stale batches — PMBM silently processes them.
+`core/pmbm/PmbmTracker.cpp:1315` (+ the `dt<=0` branch ~:209). This is the PMBM face
+of backlog #1 (out-of-order input guard); also covers low L7.
+
+## 29. CPA own-ship extrapolation from pose.time (M14) — MEDIUM
+
+`CpaEvaluator` extrapolates target tracks to the query time but stamps own-ship's
+`last_update = t` around the raw latest fix, so `dt_a = 0` and own-ship is never
+advanced from `pose.time` despite a valid velocity → a `|v_own|·(t−pose.time)` error
+injected into `cpa_distance`, `tcpa`, and P(below threshold) on stale GPS.
+`core/collision/CpaOwnShip.cpp:10`. (Fold in low L24: `CpaEvaluator` runs the
+uncertainty path without a state/cov sanity check.)
+
+## 30. ClutterMap detection-model datum sink (M9) — MEDIUM
+
+`ClutterMapSensorDetectionModel` caches learned λ-cells keyed by ENU grid index but
+implements no `IDatumChangeSink` and offers no shift/clear API, so after an auto-datum
+recenter the learned map applies ~30 km off and stale hot cells persist. The three
+other ENU-caching models are registered datum sinks (CLAUDE.md auto-datum section);
+this one was missed. `core/tracking/ClutterMapDetectionModel.hpp:128`.
+
+## 31. Own-ship maneuver-gate self-defeating noise envelope (M10) — MEDIUM
+
+The two-halves maneuver gate builds its suppression envelope from FULL-window
+constant-velocity residuals, which during a maneuver contain the maneuver signal, so
+the effective threshold is ~8.8× the configured one (worked: trips only at dv>4.4 m/s
+for a 0.5 m/s setting) → biased own-ship velocity published ~5.6σ overconfident during
+moderate maneuvers. `core/own_ship/OwnShipVelocityEstimator.cpp:126`; `UereEstimator.cpp`
+shares the formula (milder there).
+
+## 32. Coastline signed-distance vs point-in-ring closure mismatch (M15) — MEDIUM
+
+`minEdgeDistM` iterates `i+1<size` and requires an explicitly-closed ring; `pointInRing`
+auto-closes (`j=n-1`). Nothing validates closure and `buildSyntheticShore` emits an
+unclosed ring, so the closing edge is present for inside/outside but invisible to the
+distance calc → a discontinuous, wrong signed-distance prior along that edge.
+`core/land/CoastlineGeometry.cpp:47` + `core/scenario/Builders.cpp:628`.
+
+## 33. Replay AIS SOG knots→m/s for external schemas (M19) — MEDIUM
+
+The bare `sog` column alias exists to load MarineCadastre/DMA CSVs, which publish SOG
+in **knots**, but the value is fed straight to `sogCogToEnuVelocity` (m/s contract) and
+compared against the m/s min-speed gate; the not-available sentinel 102.3 kn becomes a
+102.3 m/s velocity. Distinct from W5.6.1 (sentinel band, `AisAdapter.cpp`) and W5.6.2
+(DMA timestamp). `adapters/replay/AisCsvReplayAdapter.cpp:168`.
+
+## 34. PMBM/association ranking & degradation robustness (M3, M4, M5, M6) — MEDIUM (one HIGH-impact, config-conditional)
+
+- **M6 (HIGH impact):** `clutter_intensity==0` for a sensor makes an unclaimed
+  measurement's column all-+inf → (via M3) zero children → the whole MBM can go empty
+  in one scan (every track lost). Add a `clutter_intensity>0` fail-loud ctor guard.
+  `core/pmbm/PmbmTracker.cpp:830` (ctor ~:176).
+- **M3:** `murtyKBest` returns EMPTY on any infeasible seed edge, defeating the per-row
+  degradation contract both callers were built against (their `isfinite` re-checks are
+  dead code). `core/association/Murty.cpp:69`. M3↔M6 close together.
+- **M5:** Murty cost omits `log(p_D/(1−r·p_D))` → K-best enumeration order ≠ posterior
+  order → wrong argmax under K=1 / adaptive-K floor. `core/pmbm/PmbmTracker.cpp:821`.
+  (The 2026 K=1 Murty fix `45a504d` was the K-th-accepted early-exit — a different change.)
+- **M4:** JPDA enumerates joint events globally over the whole scan, not per gating
+  cluster, so the event count is the PRODUCT across independent clusters → ordinary
+  ~20-track scenes trip the 1e6 cap (silent whole-scan GNN degrade) and materialize the
+  full event vector before the overflow check. `core/association/JpdaAssociator.cpp:160`,
+  `core/association/JointEvents.cpp:20`.
+
+## 35. Estimator measurement-covariance robustness (M1, M2) — MEDIUM — relates to #14
+
+- **M1:** `isMeasurementCovariancePsd` never compares R's **dimension** to the
+  measurement (it never receives it), so a square-but-wrong-size R passes then mismatches
+  in `H·P·Hᵀ + z.cov` → Eigen `eigen_assert` abort in debug, OOB read under NDEBUG.
+  `core/estimation/MeasurementModels.hpp:81`.
+- **M2:** IMM `softUpdate` builds S / gain / per-measurement weights / Joseph arm from
+  `z0.covariance` (the first gated measurement) while per-measurement R is a supported
+  input; asserts check model + sensor position, not covariance. `core/estimation/ImmEstimator.cpp:353`
+  (`EkfEstimator::softUpdate` shares it). See backlog #14 (per-measurement covariance).
+
+## 36. Bench/reporting-tooling correctness (M23, M24) — LOW (research tooling; no runtime effect)
+
+- **M23:** `Comparator::isLowerBetter` returns true for everything except `lifetime_ratio`,
+  so signed/target metrics (`card_err_mean`, `nees_*`, `nis_coverage_95`, `nis_trace_ratio`)
+  get an "improvement" arrow whenever they merely decrease. `core/benchmark/Comparator.cpp:59`.
+- **M24:** `TruthResample` finite-differences velocity ACROSS the refused dropout gap
+  (uses the gap segment the function declines to bridge for position). `core/scenario/TruthResample.cpp:97`.
+
+## 37. Canonical-example & default-covariance docs (M25, M8) — LOW (doc/UX)
+
+- **M25:** the canonical wiring example states the relative-bearing sign backwards
+  ("to port of bow" for +0.5 rad, which is starboard). `app/example.cpp:114` (= low L41).
+- **M8:** the "leave std 0 and call `applyDefaultsIfEmpty`" advice is a guaranteed no-op
+  for the range/bearing builders (they emit `Position2D` with covariance always set;
+  the defaults key on `RangeBearing2D`), so no diagnostic fires. `app/example.cpp:124`,
+  `CLAUDE.md:122`.
+
+## 38. Foxglove detection entity-id collision (M26) — LOW (debug-viz)
+
+Detection entity id is `det-<source_id>-<nanos>`, identical for every measurement of a
+scan (same source + timestamp), and Foxglove SceneUpdate replace-semantics then show
+only the last detection of each scan on `/detections`. `adapters/foxglove/FoxgloveDebugRecorder.cpp:218`.
