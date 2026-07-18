@@ -401,6 +401,79 @@ Emit as a `TrackOutput` with `status = Confirmed` iff
 aggregated `P(exists)` is *strictly more information* than today's M-of-N
 state and replaces it on the output.
 
+### 3.6.1 Output provenance — `contributing_sources` (§14.11)
+
+**Math — where it lives, how it maps.** The truthful per-track source attribution
+lives on the Bernoulli through the F2 claimed-source channel: for each Bernoulli
+that claimed a measurement this scan (`last_claimed_meas_index ≥ 0`), a `SourceTouch`
+carrying `source_id` is appended under `contribution_history_[b.id]` (§2.2). The
+output field `Track::contributing_sources` is the ordered set of `source_id`s that
+GENUINELY updated the carried Bernoulli over its life, accumulated in a sibling map
+`bernoulli_sources_[b.id]` at the *same* claimed-source site (dedup, first-seen
+order — the exact idiom MHT uses for `tree_sources_`) and copied into the aggregated
+output track at extraction:
+
+```
+best                       = scan[b.last_claimed_meas_index]      (claimed ≥ 0 only)
+bernoulli_sources_[b.id]  ∪= { best.source_id }                   (dedup, ordered)
+Track(id).contributing_sources = bernoulli_sources_[id]           (at aggregation)
+```
+
+**Retention window.** Cumulative over the Bernoulli label's life — NOT the 2 s
+`kContributionWindowSec` window that bounds `recent_contributions`. Pruned only when
+the label leaves every hypothesis. This matches the flat/MHT semantics exactly
+(`tree_sources_` is likewise cumulative; the estimators push cumulatively), so the
+field carries no per-tracker asterisk. The two channels share one truthful source
+event but keep two retention policies for two contracts: `recent_contributions` wants
+RECENT touches (its consumers are the bias loop and the source-aware/idle gates);
+`contributing_sources` wants the whole history ("the sensors that have contributed to
+this track", a stable set, not a sliding window).
+
+**Hypothesis switch.** `bernoulli_sources_` is keyed by the stable `BernoulliId`
+label and fed from the *dominant* hypothesis's claimed measurements; the aggregated
+output track (one per label) reads the label's accumulated set. On a hypothesis switch
+the label persists, so the aggregated track adopts the carrying Bernoulli's full
+history with no special handling — the same last-write-wins adoption as R11
+`platform_id` surfacing (the winning hypothesis's Bernoulli carries identity; here it
+carries provenance, and because provenance is keyed by the shared label the set stays
+continuous across the switch).
+
+**Assumptions.** (a) Fed from the same claimed-source event F2 guards → a sensor that
+never genuinely updated the track never appears (the output-path extension of the F2
+invariant, pinned by `test_pmbm_contribution_provenance`). (b) `bernoulli_sources_`
+feeds ONLY the output attribute — no gate, likelihood, existence, or lifecycle path
+reads it — so kinematics/existence/lifecycle metrics are byte-identical (proven by the
+R3 two-class A/B). (c) Storage is an ordered `std::map` and the value is a first-seen
+vector → no unordered-container order leaks into output (determinism invariant 4).
+
+**Rationale.** POPULATE, not leave empty (arbiter ruling): now that the channel is
+truthful and test-guarded, "empty = honest" buys nothing; output consistency across
+trackers is consumer surface (the guide documents the field without a per-tracker
+note); and a PMBM-backed T2T `NavtrackerSource` yields genuine `Used` pedigree
+instead of all-`Unknown`, completing the story the Rider-B lift started. Mirroring
+MHT's `tree_sources_` keeps the semantics identical across trackers.
+
+**Known fidelity cap (not a correctness bug).** The output-side cross-id merge
+(`refreshAggregatedTracks`, Bhattacharyya-gated by `output_merge_bhattacharyya_threshold
+> 0`) folds a duplicate track `j` into survivor `i` but does NOT union
+`bernoulli_sources_[j]` into `[i]` (it is keyed on the survivor id). A merged track can
+therefore *under-report* genuine sources — but it can never gain a *spurious* one, so
+the F2 invariant, determinism, and attributes-only all still hold. This is the identical
+limitation `recent_contributions` already carries (also survivor-keyed); closing it would
+mean unioning both provenance maps on merge, and should be done for both channels together
+if pursued.
+
+**Ways to improve / what to test next.** (1) A per-source last-contributed timestamp
+would let a consumer distinguish a currently-radar-only track from one AIS touched an
+hour ago (today both list `ais`); expose it as an optional windowed view off
+`recent_contributions` without changing the cumulative default. (2) Carry `SensorKind`
+alongside `source_id` if a consumer needs kind-level pedigree without string-matching
+source ids. (3) Evaluate whether a very long-lived track should ever *retire* a source
+that has not contributed for many windows — a bounded-history variant — measured
+against operator expectation before changing the cumulative default. (4) Union the
+provenance maps on the output-merge path (see the fidelity cap above), for both
+`bernoulli_sources_` and `contribution_history_` together.
+
 ---
 
 ## 4. Assumptions

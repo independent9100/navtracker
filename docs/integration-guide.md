@@ -592,18 +592,23 @@ NavtrackerSource src("navtracker", mgr, [&](ExternalTrack e){ fuser.process(std:
 mgr.setTrackSink(&src);
 ```
 
-> **Note (which trackers populate `contributing_sources`).** The flat/MHT
-> pipeline fills `Track::contributing_sources` per-update from the associated
-> measurement's `source_id` — genuine by construction, and now assertable from a
-> live pipeline (`tests/integration/test_t2t_live_pedigree_content.cpp`; the
-> historical §10-Rider-B prohibition was lifted 2026-07-15). **PMBM leaves it
-> empty**, so a PMBM-sourced `ExternalTrack` carries an all-`Unknown` pedigree —
-> safe (never spurious) but uninformative; downstream independence falls back to
-> `PossiblyCorrelated`. Pedigree is diagnostics-only in the fusion math (it picks
-> the independence verdict, never the CI weights), so an empty pedigree costs
-> tightness, never correctness. Populating it for PMBM from the (now-truthful)
-> `recent_contributions` channel is a tracked future improvement (design spec
-> §14).
+> **Note (which trackers populate `contributing_sources`).** **All three
+> trackers populate it** — flat, MHT, and PMBM (the deployable) — from the
+> sensors that genuinely updated the track, so a PMBM-sourced `ExternalTrack`
+> now carries a genuine pedigree (both contributing arms `Used`, a
+> never-contributing sensor absent), not the all-`Unknown` it emitted while the
+> field was left empty (§14.11, resolved 2026-07-15). The flat/MHT path fills it
+> per-update from the associated measurement's `source_id`; PMBM fills it from
+> the F2-truthful claimed-source channel (`last_claimed_meas_index`), cumulative
+> and deduplicated — the same semantics, so the field carries no per-tracker
+> asterisk. Content is assertable from a live pipeline
+> (`tests/integration/test_t2t_live_pedigree_content.cpp`, both flat and
+> PMBM-backed; the historical §10-Rider-B prohibition was lifted 2026-07-15).
+> Pedigree remains **diagnostics-only** in the fusion math (it picks the
+> independence verdict, never the CI weights): a genuine pedigree buys
+> fused-covariance tightness (a real `ProvablyIndependent` verdict for
+> disjoint-source tracks), never correctness. An empty/`Unknown` pedigree is
+> still safe (falls back to `PossiblyCorrelated`).
 
 **Pedigree — declare what each source used.** A `SourcePedigree` maps each
 sensor-stream id to `Used`, `NotUsed`, or `Unknown`, plus a `default_usage` for
