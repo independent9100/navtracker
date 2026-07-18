@@ -23,8 +23,15 @@ CMakeUserPresets.json
 /.zprofile
 /.zshrc
 
-# Local datasets / fixtures / renders — multi-GB, never committed.
-/data/
+# Local datasets / fixtures / renders — multi-GB, never committed. The data
+# PAYLOAD stays ignored, but the manifest (data/README.md — license/provenance
+# record, e.g. the pohang-REMOVED row) and the data-dir policy (data/.gitignore)
+# are version-tracked: they are documentation, not data. (The nested
+# data/.gitignore's `!README.md` always intended this; a parent `/data/` rule
+# had silently defeated it, so the manifest was never actually committed.)
+/data/*
+!/data/README.md
+!/data/.gitignore
 /vids/
 /tests/fixtures/*
 /.claude/
