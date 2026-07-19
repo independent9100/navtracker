@@ -283,6 +283,14 @@ class HaxrScenarioRun : public ScenarioRun {
               [](const TruthSample& a, const TruthSample& b) {
                 return a.time < b.time;
               });
+    // W6.2: resample the sparse (~10-20 s) AIS truth onto a shared 1 Hz clock,
+    // identical to the philos path above. This (a) finite-differences the
+    // velocity that loadHaxrTruth hardcodes to zero (the HAXR AIS CSV carries no
+    // SOG/COG) and (b) fills the stale gaps between fixes, so HAXR OSPA/GOSPA
+    // reads tracker error rather than truth sparsity. 30 s gap guard bridges AIS
+    // report intervals without bridging real dropouts.
+    s.truth = resampleTruthToClock(s.truth, /*period_s=*/1.0,
+                                   /*max_gap_s=*/30.0);
     // Nominal fixed anchor. HAXR is a LOCAL METRE frame (stations.csv is
     // x_m/y_m — no geodetic origin), so the datum's lat/lon is only a label; it
     // exists so the Stage-1b LiveOccupancyModel / land / obstacle wiring (gated

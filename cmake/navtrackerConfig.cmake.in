@@ -1,0 +1,17 @@
+@PACKAGE_INIT@
+
+# navtracker package config (W6.4). The exported consumer targets
+# (navtracker::navtracker_core / _nmea / _t2t) have exactly one PUBLIC external
+# dependency — Eigen3 — so that is all we re-find here. nlohmann_json (land) and
+# mcap (foxglove) are PRIVATE to non-exported targets and are not needed by a
+# consumer of the exported set.
+#
+# The consumer must be able to resolve Eigen3 (via their own Conan generators,
+# a system install, or CMAKE_PREFIX_PATH). navtracker delegates dependency
+# provisioning to the consumer's build exactly as it does inside this repo.
+include(CMakeFindDependencyMacro)
+find_dependency(Eigen3)
+
+include("${CMAKE_CURRENT_LIST_DIR}/navtrackerTargets.cmake")
+
+check_required_components(navtracker)

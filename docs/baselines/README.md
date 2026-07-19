@@ -294,10 +294,15 @@ factored into how you read a comparison.
    units are plain). If a future config name introduces a comma, that
    will break the reader silently — needs proper CSV quoting then.
 
-6. **`git_sha`, `compiler`, `host` are emitted as `unknown`.** The
-   bench executable does not yet read these from a CMake-generated
-   header. Wire it in if you need the field populated for traceability;
-   the schema is ready.
+6. **`git_sha`, `compiler`, and `host` are populated (W6.3.2).** `git_sha`
+   is captured by CMake at **configure** time (`bench/CMakeLists.txt`) as
+   `<short-sha> (clean|dirty)`, where dirty tracks uncommitted changes to
+   **tracked** files only; `compiler` and `host` are read from the build
+   at compile/run time. Because the sha is a configure-time snapshot,
+   **re-run `cmake` before generating a baseline** you want stamped with a
+   fresh sha (a rebuild alone will not refresh it). If git is unavailable
+   or this is not a checkout, the field falls back to `unknown`. Existing
+   dated snapshots are immutable and are NOT retro-stamped.
 
 7. **The first committed baseline (`2026-06-07_baseline.csv`) runs only
    the 7 synthetic scenarios** (5 × 7 × 10 × 8 = 2800 rows). The

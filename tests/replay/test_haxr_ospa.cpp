@@ -24,6 +24,7 @@
 
 #include "adapters/replay/HaxrTruthLoader.hpp"
 #include "adapters/replay/PlotCsvReplayAdapter.hpp"
+#include "core/scenario/TruthResample.hpp"
 #include "core/association/GnnAssociator.hpp"
 #include "core/estimation/ConstantVelocity2D.hpp"
 #include "core/estimation/EkfEstimator.hpp"
@@ -87,9 +88,20 @@ TEST(HaxrOspa, KattwykHourEkfGnnBaseline) {
   std::cerr << "[HAXR] loaded " << plots.size() << " plots from " << plots_csv
             << "\n";
 
-  const auto truth = loadHaxrTruth(kAisCsv, "kattwyk", stations);
+  auto truth = loadHaxrTruth(kAisCsv, "kattwyk", stations);
   ASSERT_FALSE(truth.empty()) << "AIS truth parsed empty";
-  std::cerr << "[HAXR] loaded " << truth.size() << " AIS truth samples\n";
+  std::cerr << "[HAXR] loaded " << truth.size() << " raw AIS truth samples\n";
+  // W6.2: the AIS truth is sparse (~10-20 s between fixes) and carries no
+  // SOG/COG, and loadHaxrTruth hardcodes velocity to zero. Resample onto a 1 Hz
+  // clock (sorted first) so velocity is finite-differenced from consecutive
+  // fixes AND the OSPA windows below score against dense, non-stale truth. The
+  // pre-fix mean OSPA (~199.5 m) was pegged at the 200 m cutoff because most
+  // 1 Hz windows found no fix — truth sparsity, not tracker error. Shared helper,
+  // same as the philos/bench replay paths.
+  std::sort(truth.begin(), truth.end(),
+            [](const auto& a, const auto& b) { return a.time < b.time; });
+  truth = resampleTruthToClock(truth, /*period_s=*/1.0, /*max_gap_s=*/30.0);
+  std::cerr << "[HAXR] resampled to " << truth.size() << " truth samples @ 1 Hz\n";
 
   // Restrict to the plots' time window so we score against in-window truth.
   const Timestamp t0 = plots.front().time;

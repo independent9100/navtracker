@@ -4,11 +4,17 @@ Local copies of papers cited in navtracker's design docs, so the citation
 survives even if the upstream link rots. Cite the arXiv/DOI in prose; keep the
 PDF here for offline reading.
 
+**Redistribution policy:** only PDFs we may lawfully redistribute live here
+(author-posted arXiv preprints). A **publisher-paywalled** paper (e.g. Elsevier)
+is represented by a citation-only **`*.pdf.stub.md`** stub with its DOI, never the
+PDF — obtain those from the DOI. (History rewrite for already-committed blobs is
+parked with the philos A2 decision; removals here are from HEAD.)
+
 | File | Citation | Cited by |
 |---|---|---|
 | `2508.16169v1-herrmann-2025-hybrid-tbd-coastal-radar.pdf` | Herrmann, García-Fernández, Brekke & Eide, *A Scalable Hybrid Track-Before-Detect Tracking System: Application to Coastal Maritime Radar Surveillance*, arXiv:2508.16169v1 (22 Aug 2025; for IEEE J. Oceanic Eng.) | [ADR 0002](../adr/0002-static-objects-track-vessels-map-environment.md) "Prior art & validation"; design spec §14.10 (fixed-vs-moving caveat); `docs/algorithms/comparison-baselines.md` (TBD-for-weak-targets roadmap row) |
 | `2502.18368v1-dalhaug-2025-near-shore-mapping-vessels.pdf` | Dalhaug, Stahl, Mester & Brekke, *Near-Shore Mapping for Detection and Tracking of Vessels*, arXiv:2502.18368v1 (25 Feb 2025), NTNU Trondheim | [ADR 0002](../adr/0002-static-objects-track-vessels-map-environment.md) "Prior art & validation"; design spec §14.10 (extent-is-interim discriminator); `docs/superpowers/plans/2026-07-02-static-branch-review-fixes.md` R3 |
-| `S0029801822005753-helgesen-2022-heterogeneous-multisensor-littoral.pdf` | Helgesen, Vasstein, Brekke & Stahl, *Heterogeneous multi-sensor tracking for an autonomous surface vehicle in a littoral environment*, Ocean Engineering 252 (2022) 111168 (PII S0029801822005753; **paywalled Elsevier**, dataset: autoferry.github.io/sensor_fusion_dataset) | `docs/baselines/helgesen2022_reference.md` (Cl-1 baseline + GOSPA methodology); `docs/algorithms/comparison-baselines.md` (source bibliography) |
+| `S0029801822005753-…-littoral.pdf.stub.md` (PDF **removed** — paywalled Elsevier) | Helgesen, Vasstein, Brekke & Stahl, *Heterogeneous multi-sensor tracking for an autonomous surface vehicle in a littoral environment*, Ocean Engineering 252 (2022) 111168 (DOI [10.1016/j.oceaneng.2022.111168](https://doi.org/10.1016/j.oceaneng.2022.111168); PII S0029801822005753; dataset: autoferry.github.io/sensor_fusion_dataset) | `docs/baselines/helgesen2022_reference.md` (Cl-1 baseline + GOSPA methodology); `docs/algorithms/comparison-baselines.md` (source bibliography) |
 
 **Why this one matters (summary):** the closest published system to
 navtracker's static-obstacle direction — a real coastal X-band radar tracker
