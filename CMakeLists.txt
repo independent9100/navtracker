@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(navtracker CXX)
+project(navtracker VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+include(GNUInstallDirs)  # W6.4: CMAKE_INSTALL_{LIB,INCLUDE}DIR for install/export
 
 # Emit compile_commands.json for clangd / IDE LSPs. Symlinked at the repo
 # root (compile_commands.json -> build/compile_commands.json) so clangd
@@ -85,7 +87,9 @@ add_library(navtracker_core
   core/static/BearingWedgeModel.cpp
   core/sensor_activity/DeclaredSensorActivity.cpp
 )
-target_include_directories(navtracker_core PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(navtracker_core PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)  # W6.4
 target_link_libraries(navtracker_core PUBLIC Eigen3::Eigen)
 
 # Track-to-track fusion (tracker-of-trackers). Consumer target: links the pure
@@ -96,7 +100,9 @@ add_library(navtracker_t2t
   core/t2t/T2tAssociator.cpp
   core/t2t/T2tFuser.cpp
 )
-target_include_directories(navtracker_t2t PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(navtracker_t2t PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)  # W6.4
 target_link_libraries(navtracker_t2t PUBLIC navtracker_core Eigen3::Eigen)
 
 add_library(navtracker_nmea
@@ -108,7 +114,9 @@ add_library(navtracker_nmea
   adapters/own_ship/OwnShipNmeaAdapter.cpp
   adapters/remote_track/RemoteTrackAdapter.cpp
 )
-target_include_directories(navtracker_nmea PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(navtracker_nmea PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)  # W6.4
 target_link_libraries(navtracker_nmea PUBLIC navtracker_core Eigen3::Eigen)
 
 add_library(navtracker_replay
@@ -466,5 +474,50 @@ if(NAVTRACKER_BUILD_FOXGLOVE)
   target_link_libraries(navtracker_foxglove_pmbm_scenario PRIVATE
     navtracker_core navtracker_replay navtracker_foxglove Eigen3::Eigen)
 endif()
+
+# ---------------------------------------------------------------------------
+# W6.4 — install / export for library consumers.
+#
+# Exposes the three consumer library targets via find_package(navtracker):
+#   navtracker::navtracker_core   (pure domain + ports; PUBLIC dep: Eigen3)
+#   navtracker::navtracker_nmea   (NMEA adapters; links core)
+#   navtracker::navtracker_t2t    (track-to-track fusion; links core)
+# Headers install structure-preserving so consumers keep including
+# "core/...", "ports/...", "adapters/..." exactly as in-tree. The
+# add_subdirectory / FetchContent path stays fully supported and needs none
+# of this — see docs/integration-guide.md §1.
+include(CMakePackageConfigHelpers)
+
+install(TARGETS navtracker_core navtracker_nmea navtracker_t2t
+  EXPORT navtrackerTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+# Public headers (consumers include "core/...", "ports/...", "adapters/...").
+install(DIRECTORY core ports adapters
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  FILES_MATCHING PATTERN "*.hpp")
+
+install(EXPORT navtrackerTargets
+  NAMESPACE navtracker::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/navtracker
+  FILE navtrackerTargets.cmake)
+
+configure_package_config_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/navtrackerConfig.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/navtrackerConfig.cmake
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/navtracker)
+
+write_basic_package_version_file(
+  ${CMAKE_CURRENT_BINARY_DIR}/navtrackerConfigVersion.cmake
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion)
+
+install(FILES
+  ${CMAKE_CURRENT_BINARY_DIR}/navtrackerConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/navtrackerConfigVersion.cmake
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/navtracker)
 
 add_subdirectory(bench)

@@ -69,7 +69,41 @@ The shortest path: build an `OwnShipProvider`, push one pose, build a
   you already have parsed sensor data and build `Measurement`s yourself.
 - `navtracker_nmea` — the NMEA-0183 adapters. Link this *in addition* only if your
   input is raw NMEA strings.
+- `navtracker_t2t` — track-to-track fusion (tracker-of-trackers). Link this *in
+  addition* when your inputs are other trackers' *tracks*, not raw detections (§3.10).
 - `navtracker_sim` is tests-only; ignore it.
+
+**How to consume it from your CMake build.** Three supported paths; `find_package`
+gives you `navtracker::`-namespaced targets, the in-tree paths give the bare names.
+
+1. **`add_subdirectory`** (vendored / submodule — simplest, works today):
+   ```cmake
+   add_subdirectory(third_party/navtracker)
+   target_link_libraries(your_app PRIVATE navtracker_core)  # + _nmea / _t2t as needed
+   ```
+2. **`FetchContent`** (pin a tag/commit):
+   ```cmake
+   include(FetchContent)
+   FetchContent_Declare(navtracker GIT_REPOSITORY <url> GIT_TAG <sha>)
+   FetchContent_MakeAvailable(navtracker)
+   target_link_libraries(your_app PRIVATE navtracker_core)
+   ```
+3. **`find_package`** (against an installed navtracker):
+   ```cmake
+   find_package(navtracker REQUIRED)
+   target_link_libraries(your_app PRIVATE navtracker::navtracker_core)
+   ```
+   Install first (`cmake --install <build> --prefix <prefix>`), then point the
+   consumer at it (`-Dnavtracker_DIR=<prefix>/lib/cmake/navtracker`). A runnable
+   example is in `examples/consumer_find_package/`.
+
+**Dependency contract.** The exported consumer targets (`core` / `nmea` / `t2t`)
+have exactly ONE public external dependency — **Eigen3** — so `find_package(navtracker)`
+re-finds only Eigen3, and your build must be able to resolve it (your Conan
+generators, a system install, or `CMAKE_PREFIX_PATH`). navtracker delegates its
+dependency provisioning to your build exactly as it does in-tree. `nlohmann_json`
+(used by `navtracker_land`) and `mcap` (Foxglove) are PRIVATE — only needed if you
+link those non-core targets.
 
 The following is the real assembled pipeline from `app/example.cpp` (the canonical
 end-to-end example — read it in full for context).
