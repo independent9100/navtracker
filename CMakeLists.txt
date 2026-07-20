@@ -356,6 +356,7 @@ add_executable(navtracker_tests
   tests/replay/test_radar_truth_loader.cpp
   tests/replay/test_camera_bearing_loader.cpp
   tests/replay/test_ais_csv_replay_adapter.cpp
+  tests/replay/test_ownship_csv_reader.cpp
   tests/replay/test_autoferry_json_replay.cpp
   tests/estimation/test_noise_models.cpp
   tests/tracking/test_sensor_detection_models.cpp

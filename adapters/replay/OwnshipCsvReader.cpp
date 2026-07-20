@@ -2,11 +2,14 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "adapters/util/EdgeValidation.hpp"
 
 namespace navtracker::replay {
 namespace {
@@ -59,10 +62,20 @@ std::vector<OwnShipPose> loadOwnshipCsv(const std::string& path) {
     if (!splitLine(line, fields)) continue;
     const int max_col = std::max({c_time, c_lat, c_lon, c_hdg});
     if (max_col >= static_cast<int>(fields.size())) continue;
+    // #26 M22: validate each row at the edge. A blank lat/lon field parses via
+    // strtod to 0.0, so an unvalidated row became a (0,0) Null-Island pose that
+    // poisons every body-frame projection in its window. Skip non-finite times
+    // and implausible / (0,0) positions — the sibling AIS loader already does.
+    const double t_s = std::strtod(fields[c_time].c_str(), nullptr);
+    const double lat = std::strtod(fields[c_lat].c_str(), nullptr);
+    const double lon = std::strtod(fields[c_lon].c_str(), nullptr);
+    if (!std::isfinite(t_s)) continue;
+    if (lat == 0.0 && lon == 0.0) continue;
+    if (!edge::isPlausibleLatLon(lat, lon)) continue;
     OwnShipPose p;
-    p.time = Timestamp::fromSeconds(std::strtod(fields[c_time].c_str(), nullptr));
-    p.lat_deg = std::strtod(fields[c_lat].c_str(), nullptr);
-    p.lon_deg = std::strtod(fields[c_lon].c_str(), nullptr);
+    p.time = Timestamp::fromSeconds(t_s);
+    p.lat_deg = lat;
+    p.lon_deg = lon;
     p.heading_true_deg = (c_hdg >= 0) ? std::strtod(fields[c_hdg].c_str(), nullptr) : 0.0;
     out.push_back(std::move(p));
   }

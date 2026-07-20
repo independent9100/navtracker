@@ -96,6 +96,61 @@ TEST(RemoteTrackAdapter, RejectsImplausibleLatLonAtEdge) {
   EXPECT_EQ(adapter.rejectedCount(), 2u);
 }
 
+// #26 M18: the feed gated only lat/lon. A NaN/Inf or non-PSD stated covariance
+// and a non-finite velocity flowed straight into the Measurement, poisoning the
+// track's uncertainty (and, downstream, aborting the estimator). Validate the
+// stated covariances and (accepted) velocity at the edge.
+TEST(RemoteTrackAdapter, RejectsNonFiniteStatedCovariance) {
+  Datum d = hh();
+  RemoteTrackAdapter adapter(d);
+  RemoteTrackReport r = at(1.0, 1, 53.54, 9.97);
+  r.position_covariance = Eigen::Matrix2d::Identity() * 100.0;
+  r.position_covariance(0, 1) = std::numeric_limits<double>::quiet_NaN();
+  r.position_covariance(1, 0) = std::numeric_limits<double>::quiet_NaN();
+  adapter.ingest(r);
+  EXPECT_TRUE(adapter.poll().empty());
+  EXPECT_EQ(adapter.rejectedCount(), 1u);
+}
+
+TEST(RemoteTrackAdapter, RejectsNonPsdStatedCovariance) {
+  Datum d = hh();
+  RemoteTrackAdapter adapter(d);
+  RemoteTrackReport r = at(1.0, 1, 53.54, 9.97);
+  // Negative variance is finite but not a valid covariance.
+  r.position_covariance = Eigen::Matrix2d::Identity() * -4.0;
+  adapter.ingest(r);
+  EXPECT_TRUE(adapter.poll().empty());
+  EXPECT_EQ(adapter.rejectedCount(), 1u);
+}
+
+TEST(RemoteTrackAdapter, RejectsNonFiniteVelocityWhenAccepted) {
+  Datum d = hh();
+  RemoteTrackAdapterConfig cfg;
+  cfg.accept_velocity = true;
+  RemoteTrackAdapter adapter(d, cfg);
+  RemoteTrackReport r = at(1.0, 1, 53.54, 9.97);
+  r.has_velocity = true;
+  r.velocity_enu = Eigen::Vector2d(std::numeric_limits<double>::infinity(), 0.0);
+  adapter.ingest(r);
+  EXPECT_TRUE(adapter.poll().empty());
+  EXPECT_EQ(adapter.rejectedCount(), 1u);
+}
+
+TEST(RemoteTrackAdapter, ValidCovarianceAndVelocityStillAccepted) {
+  Datum d = hh();
+  RemoteTrackAdapterConfig cfg;
+  cfg.accept_velocity = true;
+  RemoteTrackAdapter adapter(d, cfg);
+  RemoteTrackReport r = at(1.0, 1, 53.54, 9.97);
+  r.position_covariance = Eigen::Matrix2d::Identity() * 25.0;
+  r.has_velocity = true;
+  r.velocity_enu = Eigen::Vector2d(1.0, -2.0);
+  r.velocity_covariance = Eigen::Matrix2d::Identity() * 0.5;
+  adapter.ingest(r);
+  EXPECT_EQ(adapter.poll().size(), 1u);
+  EXPECT_EQ(adapter.rejectedCount(), 0u);
+}
+
 TEST(RemoteTrackAdapter, RateThinningDropsTooSoonSameTrack) {
   Datum d = hh();
   RemoteTrackAdapterConfig cfg;

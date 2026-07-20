@@ -104,6 +104,11 @@ class OwnShipNmeaAdapter {
   // lat/lon fields, or implausible position). Nonzero means the nav feed is
   // dropping fixes — surface it rather than silently coasting on stale poses.
   std::size_t skippedNoFixGga()        const { return skip_no_fix_gga_; }
+  // #26 M16/M17: HDT/HDG/RMC sentences rejected because a required numeric
+  // field (heading / SOG / COG) was empty or parsed to a non-finite value.
+  // Without this guard a "" field became a 0.0 authoritative sample and an
+  // Inf field hung the wrap loop — surface the drop instead.
+  std::size_t skippedNonFinite()       const { return skip_non_finite_; }
 
  private:
   void pushGyroSample(Timestamp t, double heading_deg);
@@ -150,6 +155,7 @@ class OwnShipNmeaAdapter {
   std::size_t skip_mag_var_{0};
   std::size_t skip_stale_{0};
   std::size_t skip_no_fix_gga_{0};
+  std::size_t skip_non_finite_{0};
 };
 
 }  // namespace navtracker
