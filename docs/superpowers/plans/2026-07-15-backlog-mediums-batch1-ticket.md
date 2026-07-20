@@ -3,8 +3,9 @@
 Status: ready to hand off. Paste everything below the line. Origin: the
 review reconciliation filed 24 PLAUSIBLE-OPEN medium findings as
 improvement-backlog entries #26–#38 (hand-traced, re-anchored to master,
-none release-blocking). You wrote those entries — this ticket has you pull
-the first batch. Budget ~2 days including the selection checkpoint.
+none release-blocking). The entries are self-contained in
+`docs/algorithms/improvement-backlog.md` — this ticket has you pull the
+first batch. Budget ~2 days including the selection checkpoint.
 
 ---
 
@@ -12,7 +13,8 @@ You are working in the navtracker repo (C++17, read `CLAUDE.md`; worktree
 `git worktree add ../navtracker-bm1 -b backlog-mediums-batch1` off current
 master, own build dir, fixtures inner-level symlinked; suite under
 `NAVTRACKER_REQUIRE_FIXTURES=1`. Commit on your branch; never merge/push
-master. Tear down your merged `csrc` worktree first.)
+master. If you still have a worktree from a previous merged ticket
+(e.g. `../navtracker-csrc`), tear it down first.)
 
 ## Step 1 — selection (checkpoint BEFORE any code)
 
