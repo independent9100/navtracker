@@ -347,7 +347,7 @@ void MhtTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     // unobservable); they only extend existing trees via branch(). Drop
     // unassociated ones — see canInitiateTrack.
     if (!canInitiateTrack(scan[j].model) ||
-        !isMeasurementCovariancePsd(scan[j].covariance))
+        !isMeasurementCovariancePsd(scan[j].covariance, scan[j].dim()))  // #35 M1
       continue;
     const TrackId id{next_external_id_++};
     birth_id_for_meas.emplace(j, id.value);

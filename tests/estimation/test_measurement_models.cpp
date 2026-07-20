@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 #include "core/estimation/MeasurementModels.hpp"
 
+using navtracker::isMeasurementCovariancePsd;
 using navtracker::MeasurementModel;
 using navtracker::measurementResidual;
 using navtracker::predictMeasurement;
@@ -11,6 +12,27 @@ using navtracker::wrapAngle;
 namespace {
 constexpr double kPi = 3.14159265358979323846;
 }  // namespace
+
+// #35 M1: isMeasurementCovariancePsd never received the measurement dimension,
+// so a square-but-wrong-size R passed the PSD check and then mismatched in
+// H·P·Hᵀ + z.cov (Eigen abort in debug / OOB read under NDEBUG). The
+// dimension-aware overload rejects a wrong-size R up front.
+TEST(MeasurementModels, PsdGuardRejectsWrongSizeRForMeasurement) {
+  const Eigen::MatrixXd r3 = Eigen::MatrixXd::Identity(3, 3);
+  EXPECT_FALSE(isMeasurementCovariancePsd(r3, 2));  // 3x3 R for a 2-D measurement
+  const Eigen::MatrixXd r2 = Eigen::MatrixXd::Identity(2, 2);
+  EXPECT_TRUE(isMeasurementCovariancePsd(r2, 2));   // correctly sized
+
+  // The dimension check composes with the finite/PSD checks, not replaces them.
+  const Eigen::MatrixXd r2_neg = Eigen::MatrixXd::Identity(2, 2) * -1.0;
+  EXPECT_FALSE(isMeasurementCovariancePsd(r2_neg, 2));  // right size, not PSD
+  const Eigen::MatrixXd r1 = Eigen::MatrixXd::Identity(1, 1);
+  EXPECT_TRUE(isMeasurementCovariancePsd(r1, 1));   // 1-D (bearing-only)
+
+  // Single-arg overload unchanged: dimension-agnostic PSD check.
+  EXPECT_TRUE(isMeasurementCovariancePsd(r2));
+  EXPECT_FALSE(isMeasurementCovariancePsd(r2_neg));
+}
 
 TEST(MeasurementModels, Position2DLinear) {
   const Eigen::Vector4d x(3.0, 4.0, 1.0, -2.0);

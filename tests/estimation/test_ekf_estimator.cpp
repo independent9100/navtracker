@@ -48,6 +48,29 @@ TEST(EkfEstimator, PositionUpdatePullsStateAndShrinksCovariance) {
   EXPECT_LT(t.covariance(0, 0), 100.0);
 }
 
+TEST(EkfEstimator, WrongSizeMeasurementCovarianceIsRejectedNotCrash) {
+  // #35 M1: a Position2D (2-D) measurement carrying a 3x3 covariance. The
+  // dimension-blind PSD guard passed it, then H·P·Hᵀ (2x2) + z.cov (3x3)
+  // aborted in Eigen (debug) / read OOB (NDEBUG). The dimension check now
+  // rejects it — the update is a safe no-op, state/covariance untouched.
+  auto model = std::make_shared<ConstantVelocity2D>(1.0);
+  const EkfEstimator ekf(model);
+  Track t;
+  t.last_update = Timestamp::fromSeconds(10.0);
+  t.state = Eigen::Vector4d::Zero();
+  t.covariance = Eigen::Matrix4d::Identity() * 100.0;
+  const Eigen::Vector4d state0 = t.state;
+  const Eigen::Matrix4d cov0 = t.covariance;
+  Measurement z;
+  z.time = Timestamp::fromSeconds(10.0);
+  z.model = MeasurementModel::Position2D;
+  z.value = Eigen::Vector2d(10.0, 0.0);
+  z.covariance = Eigen::MatrixXd::Identity(3, 3);  // wrong size for a 2-D measurement
+  ekf.update(t, z);
+  EXPECT_EQ(t.state, state0);
+  EXPECT_EQ(t.covariance, cov0);
+}
+
 TEST(EkfEstimator, RangeBearingUpdateOnConsistentMeasurementIsStable) {
   auto model = std::make_shared<ConstantVelocity2D>(1.0);
   const EkfEstimator ekf(model);

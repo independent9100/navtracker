@@ -59,7 +59,7 @@ void UkfEstimator::predict(Track& track, Timestamp to) const {
 void UkfEstimator::update(Track& track, const Measurement& z) const {
   // Defensive guard: NaN/non-PSD R would propagate through K and
   // permanently corrupt track.covariance. (Phase 8 R3 fix.)
-  if (!isMeasurementCovariancePsd(z.covariance)) return;
+  if (!isMeasurementCovariancePsd(z.covariance, z.dim())) return;  // #35 M1
   // Standard-form UKF update: re-draw sigma points from the predicted
   // (state, covariance) — predict() left them there. That is why the
   // cross-covariance below uses xd = sp.points[i] - track.state: the

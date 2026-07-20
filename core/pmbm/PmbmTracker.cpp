@@ -458,7 +458,8 @@ PmbmTracker::buildAdaptiveBirthCandidates(
         ? detection_model_->paramsFor(z).clutter_intensity
         : cfg_.clutter_intensity;
 
-    if (!canInitiateTrack(z.model) || !isMeasurementCovariancePsd(z.covariance)) {
+    if (!canInitiateTrack(z.model) ||
+        !isMeasurementCovariancePsd(z.covariance, z.dim())) {  // #35 M1
       // Bearing-only, otherwise non-initiable, or malformed (empty/non-PSD
       // covariance) measurement: never births a Bernoulli. The total
       // intensity is still the clutter mass so assignment cells stay balanced.
@@ -1539,7 +1540,8 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
   // Birth fixes by replacing ρ_target with an independent λ_birth.
   if (cfg_.measurement_driven_birth && !cfg_.adaptive_birth) {
     for (const auto& z : scan) {
-      if (!canInitiateTrack(z.model) || !isMeasurementCovariancePsd(z.covariance))
+      if (!canInitiateTrack(z.model) ||
+          !isMeasurementCovariancePsd(z.covariance, z.dim()))  // #35 M1
         continue;
 
       // Smart birth: skip when an existing high-r Bernoulli already

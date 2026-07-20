@@ -25,7 +25,7 @@ bool IEstimator::gate(const Track& track,
   // Defensive guard (Phase 8 iter 4 R3-strengthen): NaN/non-PSD R
   // would produce a NaN Mahalanobis and a non-deterministic gate
   // outcome. Reject the measurement (gate fails closed).
-  if (!isMeasurementCovariancePsd(z.covariance)) return false;
+  if (!isMeasurementCovariancePsd(z.covariance, z.dim())) return false;  // #35 M1
   const MeasurementPrediction pred = predictMeasurement(
       z.model, track.state, z.sensor_position_enu);
   const Eigen::VectorXd y =
@@ -42,7 +42,7 @@ double IEstimator::logLikelihood(const Track& track,
   // would produce a NaN log-likelihood that propagates into the
   // associator cost matrix. Return −inf instead, which the
   // associator treats as "infeasible cell".
-  if (!isMeasurementCovariancePsd(z.covariance)) {
+  if (!isMeasurementCovariancePsd(z.covariance, z.dim())) {  // #35 M1
     return -std::numeric_limits<double>::infinity();
   }
   const MeasurementPrediction pred = predictMeasurement(

@@ -35,7 +35,7 @@ void EkfEstimator::update(Track& track, const Measurement& z) const {
   // Defensive guard: a non-finite or non-PSD R would propagate NaN into
   // K and permanently poison track.covariance. Skip the update — the
   // track stays at its predicted state for this scan. (Phase 8 R3 fix.)
-  if (!isMeasurementCovariancePsd(z.covariance)) return;
+  if (!isMeasurementCovariancePsd(z.covariance, z.dim())) return;  // #35 M1
   const Eigen::VectorXd x_pred = track.state;
   const Eigen::MatrixXd P_pred = track.covariance;
   const MeasurementPrediction pred = predictMeasurement(z.model, track.state, z.sensor_position_enu);
@@ -74,7 +74,7 @@ Track EkfEstimator::initiate(const Measurement& z) const {
   // return a default "did not initiate" track (empty state, no sources) so no
   // track is born from malformed input. Callers must supply R (or call
   // applyDefaultsIfEmpty) before initiating.
-  if (!isMeasurementCovariancePsd(z.covariance)) return t;
+  if (!isMeasurementCovariancePsd(z.covariance, z.dim())) return t;  // #35 M1
 
   t.last_update = z.time;
   t.status = TrackStatus::Tentative;
