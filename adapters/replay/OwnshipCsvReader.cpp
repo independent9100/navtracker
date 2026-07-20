@@ -9,8 +9,6 @@
 #include <utility>
 #include <vector>
 
-#include "adapters/util/EdgeValidation.hpp"
-
 namespace navtracker::replay {
 namespace {
 
@@ -69,9 +67,14 @@ std::vector<OwnShipPose> loadOwnshipCsv(const std::string& path) {
     const double t_s = std::strtod(fields[c_time].c_str(), nullptr);
     const double lat = std::strtod(fields[c_lat].c_str(), nullptr);
     const double lon = std::strtod(fields[c_lon].c_str(), nullptr);
-    if (!std::isfinite(t_s)) continue;
+    // Inline the plausibility check (same as the sibling AIS loader) rather
+    // than depend on adapters/util/EdgeValidation — navtracker_replay is linked
+    // into targets (e.g. navtracker_bench_baseline) that do not pull in the
+    // edge-validation TU.
+    if (!std::isfinite(t_s) || !std::isfinite(lat) || !std::isfinite(lon))
+      continue;
     if (lat == 0.0 && lon == 0.0) continue;
-    if (!edge::isPlausibleLatLon(lat, lon)) continue;
+    if (std::abs(lat) > 90.0 || std::abs(lon) > 180.0) continue;
     OwnShipPose p;
     p.time = Timestamp::fromSeconds(t_s);
     p.lat_deg = lat;
