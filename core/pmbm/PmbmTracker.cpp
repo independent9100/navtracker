@@ -193,6 +193,21 @@ PmbmTracker::PmbmTracker(const IEstimator& estimator, Config cfg,
         "use_sensor_activity alone (the honest per-duty-cycle coverage model). See "
         "R9 in docs/superpowers/plans/2026-07-02-static-branch-review-fixes.md.");
   }
+  // #34 M6 (fail-loud): a non-positive clutter intensity makes an unclaimed
+  // measurement's assignment column all-+inf, so the whole MBM can collapse to
+  // empty in a single scan — every track lost, silently. Refuse it at
+  // construction rather than let a misconfigured λ_C drop every track mid-run.
+  // (Per-sensor λ_C supplied by an ISensorDetectionModel is validated by that
+  // model; this guards the single-λ_C fallback in cfg_.)
+  if (!(cfg_.clutter_intensity > 0.0)) {
+    throw std::invalid_argument(
+        "PmbmTracker: clutter_intensity must be > 0 (got " +
+        std::to_string(cfg_.clutter_intensity) +
+        "). A zero/negative clutter intensity makes an unclaimed measurement's "
+        "cost column all-+inf, collapsing the whole Multi-Bernoulli Mixture to "
+        "empty in one scan (every track lost). Set a positive false-alarm "
+        "intensity, or supply a per-sensor ISensorDetectionModel.");
+  }
 }
 
 void PmbmTracker::predict(Timestamp to) {

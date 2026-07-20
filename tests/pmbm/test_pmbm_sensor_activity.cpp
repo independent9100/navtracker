@@ -1328,3 +1328,32 @@ TEST(PmbmConfigGuard, EitherMissModelAloneIsAccepted) {
     EXPECT_NO_THROW(PmbmTracker(ekf, c));
   }
 }
+
+// ---------------------------------------------------------------------------
+// #34 M6 (HIGH-impact): clutter_intensity == 0 makes an unclaimed measurement's
+// assignment column all-+inf, so the whole MBM can go empty in a single scan
+// (every track lost). A zero/negative clutter intensity is not a usable
+// detection model — refuse it at construction (fail-loud, the R8.8 lesson)
+// rather than silently dropping every track mid-run.
+// ---------------------------------------------------------------------------
+TEST(PmbmConfigGuard, RejectsZeroClutterIntensity) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  PmbmTracker::Config c;
+  c.clutter_intensity = 0.0;
+  EXPECT_THROW(PmbmTracker(ekf, c), std::invalid_argument);
+}
+
+TEST(PmbmConfigGuard, RejectsNegativeClutterIntensity) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  PmbmTracker::Config c;
+  c.clutter_intensity = -1e-4;
+  EXPECT_THROW(PmbmTracker(ekf, c), std::invalid_argument);
+}
+
+TEST(PmbmConfigGuard, DefaultClutterIntensityIsAccepted) {
+  auto motion = std::make_shared<ConstantVelocity2D>(0.1);
+  EkfEstimator ekf(motion, 5.0);
+  EXPECT_NO_THROW(PmbmTracker(ekf, PmbmTracker::Config{}));  // default 1e-4 > 0
+}
