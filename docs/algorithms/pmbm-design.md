@@ -154,6 +154,35 @@ keys on `last_claimed_meas_index` accordingly (F2 cycle); the mixed-timestamp
 attribution case is pinned by `test_pmbm_contribution_provenance`'s
 `MixedTimestampMultiSensorAttributesEachClaimedSource`.
 
+### 2.3 Cross-batch stale-input guard (backlog #28)
+
+`processBatch` sorts *within* a batch (backlog #15) but, before this fix, had no
+*cross-batch* reject-stale guard. An out-of-order batch — one whose earliest
+instant precedes the last accepted batch — reached `predict()`, whose `dt ≤ 0`
+branch **rewinds** `current_time_` to the stale instant and returns *without*
+propagating; the subsequent update then ran against the newer (un-rewound)
+component states. `Tracker` and `MhtTracker` both drop such a batch; PMBM
+silently processed it. The guard now mirrors the sibling trackers
+(`Tracker.cpp:162` / `MhtTracker.cpp:228` shape): a high-water mark is set to the
+**front** (earliest, post-sort) instant of the last accepted batch, and a batch
+whose front precedes it is dropped when `Config::reject_stale_measurements`
+(default **on**) is set. Drops are counted (`staleDropped()`).
+
+The high-water key is the batch **front**, matching the sibling trackers, even
+though `predict()` advances the filter to `t_max`. Deterministic in-order replay
+(every bench and scenario test) never trips the guard, so the tracked state is
+**bit-identical**; it only fires on a genuinely out-of-order batch.
+
+**Forced divergence from `MhtTracker` (intentional, not improvised).**
+`MhtTracker`/`Tracker` early-return on an **empty** batch. PMBM instead treats an
+empty scan as a first-class **all-miss** step (§3.3 / §8: it advances the filter
+and applies misdetection to every Bernoulli — the coverage/visibility channel
+depends on this). An empty batch carries no instant to compare against the
+high-water mark, so the guard is scoped to non-empty batches and the empty-scan
+path is left unchanged. This is the one place the PMBM guard is not a
+line-for-line copy of the MHT guard, and it is deliberate. Pinned by
+`test_pmbm_stale_guard`.
+
 ---
 
 ## 3. Math — update step

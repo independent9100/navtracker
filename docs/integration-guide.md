@@ -1384,6 +1384,13 @@ environment models (`use_land_model`, `use_static_obstacle_model`,
 `estimate_coverage_sector`, §7) — a wired model pointer does nothing until its
 flag is on.
 
+`reject_stale_measurements` (default **`true`**) drops an out-of-order batch
+whose earliest measurement precedes the high-water mark, matching
+`Tracker`/`MhtTracker`; deterministic in-order replay never trips it. Drops are
+observable via `PmbmTracker::staleDropped()`. Turn it off only for a caller that
+deliberately relies on PMBM's set-wise, order-robust update of a late batch
+(#28).
+
 **Velocity-runaway guard (backlog #25 Phase 2b, default OFF).** At a detection
 update whose position innovation ‖measurement − predicted position‖ exceeds
 `innov_gate_max_m` (metres), the accepted measurement is treated as a gross

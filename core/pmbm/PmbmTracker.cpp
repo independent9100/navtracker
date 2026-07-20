@@ -1357,6 +1357,32 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     std::stable_sort(scan_ordered.begin(), scan_ordered.end(), by_time);
   }
   const std::vector<Measurement>& scan_in = need_sort ? scan_ordered : scan_arg;
+  // #28 (backlog #1's PMBM face): reject an out-of-order (stale) batch instead
+  // of letting predict()'s dt<=0 branch rewind current_time_ and return without
+  // propagating (the update would then run against newer states). Mirrors the
+  // MhtTracker guard (Tracker.cpp:162 / MhtTracker.cpp:228 shape): the high-water
+  // key is the batch FRONT (earliest instant, post-sort), the same convention as
+  // the sibling trackers even though predict() advances to t_max. Default on;
+  // deterministic in-order replay never trips it (bit-identical).
+  //
+  // Forced divergence from MhtTracker (documented in docs/algorithms/pmbm-design.md):
+  // MhtTracker/Tracker early-return on an EMPTY batch; PMBM instead processes an
+  // empty scan as an all-miss step (it advances the filter and applies
+  // misdetection to every Bernoulli). An empty batch has no instant to compare,
+  // so the guard is scoped to non-empty batches; the empty-scan path is
+  // unchanged.
+  if (!scan_in.empty()) {
+    const Timestamp t_front = scan_in.front().time;
+    if (has_high_water_ && t_front < high_water_) {
+      if (cfg_.reject_stale_measurements) {
+        stale_dropped_ += scan_in.size();
+        return;
+      }
+    } else {
+      high_water_ = t_front;
+      has_high_water_ = true;
+    }
+  }
   // Task 6: reset per-scan stale set. enumerateChildren will populate it.
   cooperative_overdue_ids_.clear();
   // Backlog #25: reset per-scan structural-event counters (diagnostic only).
