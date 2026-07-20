@@ -113,7 +113,7 @@ void runCellAndAggregate(navtracker::Scenario&& s, double cutoff, int confirm,
   pose.position_std_m = 1.0;
   pose.velocity_enu = own_velocity;
   pose.velocity_is_valid = false;
-  const Track own_ship = synthesizeOwnShipTrack(pose, t_ref, provider);
+  const Track own_ship = synthesizeOwnShipTrack(pose, provider);
 
   for (const Track& tr : mgr.tracks()) {
     if (tr.status != TrackStatus::Confirmed || tr.state.size() < 4) continue;

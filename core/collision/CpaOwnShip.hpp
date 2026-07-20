@@ -14,9 +14,12 @@ namespace navtracker {
  * sigma_v is pose.velocity_std_m_per_s when pose.velocity_is_valid is true, or
  * zero otherwise. Velocity is read from pose.velocity_enu.
  * id is the reserved sentinel TrackId{0}; not entered into TrackManager.
+ *
+ * The track is stamped `last_update = pose.time` (the fix instant), NOT the CPA
+ * query time, so `computeCpaWithUncertainty` extrapolates own-ship to its
+ * `t_ref` symmetrically with the target tracks (#29).
  */
 Track synthesizeOwnShipTrack(const OwnShipPose& pose,
-                             Timestamp t,
                              const OwnShipProvider& provider);
 
 }  // namespace navtracker

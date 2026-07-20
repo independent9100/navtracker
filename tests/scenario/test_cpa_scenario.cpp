@@ -105,8 +105,7 @@ TEST(CpaScenario, PerpendicularPassTwoSigmaBandContainsTruth) {
   pose.position_std_m = 1.0;
   pose.velocity_enu = Eigen::Vector2d::Zero();
   pose.velocity_is_valid = false;
-  const Track own_ship = synthesizeOwnShipTrack(
-      pose, Timestamp::fromSeconds(kTRefSeconds), provider);
+  const Track own_ship = synthesizeOwnShipTrack(pose, provider);
 
   // Run CPA with uncertainty at t_ref = 10 s.
   const CpaPrediction p = computeCpaWithUncertainty(
@@ -173,8 +172,7 @@ TEST(CpaScenario, PerpendicularPassNoiseSweepReport) {
     pose.position_std_m = r.sigma_own_pos;
     pose.velocity_enu = Eigen::Vector2d::Zero();
     pose.velocity_is_valid = false;
-    const Track own_ship = synthesizeOwnShipTrack(
-        pose, Timestamp::fromSeconds(kTRefSeconds), provider);
+    const Track own_ship = synthesizeOwnShipTrack(pose, provider);
     const CpaPrediction p = computeCpaWithUncertainty(
         own_ship, target_track, Timestamp::fromSeconds(kTRefSeconds),
         kDThresholdM);
@@ -220,16 +218,14 @@ TEST(CpaScenario, PerpendicularPassVelocityUncertaintyGrowsSigmaCpa) {
   pose_baseline.velocity_enu = Eigen::Vector2d::Zero();
   pose_baseline.velocity_std_m_per_s = 0.0;
   pose_baseline.velocity_is_valid = false;
-  const Track own_baseline = synthesizeOwnShipTrack(
-      pose_baseline, Timestamp::fromSeconds(0.0), provider);
+  const Track own_baseline = synthesizeOwnShipTrack(pose_baseline, provider);
   const CpaPrediction p_baseline = computeCpaWithUncertainty(
       own_baseline, target, Timestamp::fromSeconds(0.0), kDThresholdM);
 
   OwnShipPose pose_v = pose_baseline;
   pose_v.velocity_std_m_per_s = 1.0;
   pose_v.velocity_is_valid = true;
-  const Track own_v = synthesizeOwnShipTrack(
-      pose_v, Timestamp::fromSeconds(0.0), provider);
+  const Track own_v = synthesizeOwnShipTrack(pose_v, provider);
   const CpaPrediction p_v = computeCpaWithUncertainty(
       own_v, target, Timestamp::fromSeconds(0.0), kDThresholdM);
 
@@ -291,8 +287,7 @@ TEST(CpaScenario, PerpendicularPassVelocityUncertaintySweepReport) {
       pose.velocity_std_m_per_s = 0.0;
       pose.velocity_is_valid = false;
     }
-    const Track own_ship = synthesizeOwnShipTrack(
-        pose, Timestamp::fromSeconds(0.0), provider);
+    const Track own_ship = synthesizeOwnShipTrack(pose, provider);
     const CpaPrediction p = computeCpaWithUncertainty(
         own_ship, target, Timestamp::fromSeconds(0.0), 200.0);
     std::fprintf(stderr,

@@ -14,10 +14,24 @@ CpaEvaluator::CpaEvaluator(const TrackManager& manager,
                            CpaEvaluatorConfig cfg)
     : manager_(manager), provider_(provider), cfg_(cfg) {}
 
+// L24: computeCpaWithUncertainty reads state(0..3) and the 4×4 kinematic block
+// of the covariance and inverts a relative-position covariance. A malformed
+// track (too-short state, wrong-size or non-finite covariance) would abort in
+// Eigen (debug) / read OOB (NDEBUG) or produce NaN risk. Gate the uncertainty
+// path on a cheap sanity check and skip the offending pair.
+namespace {
+bool cpaStateSane(const Track& tr) {
+  return tr.state.size() >= 4 && tr.covariance.rows() >= 4 &&
+         tr.covariance.cols() >= 4 && tr.state.allFinite() &&
+         tr.covariance.allFinite();
+}
+}  // namespace
+
 void CpaEvaluator::evaluate(Timestamp t) {
   const auto pose = provider_.latest();
   if (!pose.has_value()) return;
-  const Track own = synthesizeOwnShipTrack(*pose, t, provider_);
+  const Track own = synthesizeOwnShipTrack(*pose, provider_);
+  if (!cpaStateSane(own)) return;  // L24: no CPA on a malformed own-ship state
 
   std::unordered_set<std::uint64_t> seen_this_cycle;
 
@@ -28,6 +42,7 @@ void CpaEvaluator::evaluate(Timestamp t) {
         || tr.status == TrackStatus::Confirmed
         || tr.status == TrackStatus::Coasting;
     if (!status_ok) continue;
+    if (!cpaStateSane(tr)) continue;  // L24: skip a malformed target track
 
     const CpaPrediction pred =
         computeCpaWithUncertainty(own, tr, t, cfg_.d_threshold_m);
