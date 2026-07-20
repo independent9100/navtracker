@@ -1375,28 +1375,31 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
   const std::vector<Measurement>& scan_in = need_sort ? scan_ordered : scan_arg;
   // #28 (backlog #1's PMBM face): reject an out-of-order (stale) batch instead
   // of letting predict()'s dt<=0 branch rewind current_time_ and return without
-  // propagating (the update would then run against newer states). Mirrors the
-  // MhtTracker guard (Tracker.cpp:162 / MhtTracker.cpp:228 shape): the high-water
-  // key is the batch FRONT (earliest instant, post-sort), the same convention as
-  // the sibling trackers even though predict() advances to t_max. Default on;
-  // deterministic in-order replay never trips it (bit-identical).
+  // propagating (the update would then run against newer states). Same INTENT
+  // as the MhtTracker guard (Tracker.cpp:162 / MhtTracker.cpp:228), but keyed on
+  // the batch's LATEST instant (t_max), not its front.
   //
-  // Forced divergence from MhtTracker (documented in docs/algorithms/pmbm-design.md):
-  // MhtTracker/Tracker early-return on an EMPTY batch; PMBM instead processes an
-  // empty scan as an all-miss step (it advances the filter and applies
-  // misdetection to every Bernoulli). An empty batch has no instant to compare,
-  // so the guard is scoped to non-empty batches; the empty-scan path is
-  // unchanged.
-  if (!scan_in.empty()) {
-    const Timestamp t_front = scan_in.front().time;
-    if (has_high_water_ && t_front < high_water_) {
-      if (cfg_.reject_stale_measurements) {
-        stale_dropped_ += scan_in.size();
-        return;
-      }
-    } else {
-      high_water_ = t_front;
-      has_high_water_ = true;
+  // Forced divergence from MhtTracker (documented in docs/algorithms/pmbm-design.md
+  // §2.3): MhtTracker/Tracker process a batch AT its front instant, so front is
+  // the correct high-water key there. PMBM predicts to t_max (the batch's
+  // latest instant), and predict()'s dt<=0 rewind fires exactly when
+  // t_max < current_time_ — independent of the front. A front-keyed guard would
+  // accept an overlapping batch whose front is fresh but whose t_max is stale,
+  // then rewind. So the guard compares the batch t_max against the filter's
+  // current_time_ (which already IS the high-water instant — the last accepted
+  // batch's t_max). t_max == current_time_ is NOT stale (predict sees dt==0: no
+  // propagation, no rewind, the update applies at the current instant).
+  // Deterministic in-order replay never trips it (bit-identical). Also,
+  // MhtTracker/Tracker early-return on an EMPTY batch; PMBM processes an empty
+  // scan as an all-miss step, so the guard is scoped to non-empty batches.
+  if (has_current_time_ && !scan_in.empty()) {
+    Timestamp t_max = scan_in.front().time;
+    for (const auto& z : scan_in)
+      if (z.time.seconds() > t_max.seconds()) t_max = z.time;
+    if (t_max.secondsSince(current_time_) < 0.0 &&
+        cfg_.reject_stale_measurements) {
+      stale_dropped_ += scan_in.size();
+      return;
     }
   }
   // Task 6: reset per-scan stale set. enumerateChildren will populate it.

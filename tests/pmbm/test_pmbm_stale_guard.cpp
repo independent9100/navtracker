@@ -61,6 +61,37 @@ TEST(PmbmStaleGuard, RejectsStaleBatchAndDoesNotRewindClock) {
   EXPECT_EQ(tracker.tracks().size(), n_tracks);
 }
 
+// #28 (adversarial-review gap): the guard must key on the batch's LATEST
+// instant (t_max — what predict() advances to), not its front. predict(t_max)
+// rewinds current_time_ whenever t_max < current_time_, regardless of the
+// front. A front-keyed guard accepted an overlapping batch whose t_max is stale
+// and then rewound the clock and updated against newer states.
+TEST(PmbmStaleGuard, RejectsOverlappingBatchWhoseLatestPrecedesFilterTime) {
+  Fixture f;
+  PmbmTracker tracker(f.ekf, {});
+  // Batch A spans [20, 40] -> current_time_ = 40.
+  tracker.processBatch({pos2d(20.0, 0.0, 0.0, 0.5), pos2d(40.0, 1.0, 0.0, 0.5)});
+  ASSERT_DOUBLE_EQ(tracker.currentTime().seconds(), 40.0);
+  // Batch B = {25, 30}: its front (25) is AFTER A's front (20), so a front-keyed
+  // guard would accept it — but its t_max (30) is before current_time_ (40), so
+  // predict(30) would rewind the clock. It must be dropped whole.
+  tracker.processBatch({pos2d(25.0, 5.0, 5.0, 0.5), pos2d(30.0, 6.0, 6.0, 0.5)});
+  EXPECT_EQ(tracker.staleDropped(), 2u);
+  EXPECT_DOUBLE_EQ(tracker.currentTime().seconds(), 40.0);  // NOT rewound to 30
+}
+
+// A same-instant batch (t_max == current_time_) is NOT stale: predict() sees
+// dt == 0 (no propagation, no rewind) and the update applies at the current
+// instant. It must be processed, not dropped.
+TEST(PmbmStaleGuard, SameInstantBatchIsNotDropped) {
+  Fixture f;
+  PmbmTracker tracker(f.ekf, {});
+  tracker.processBatch({pos2d(10.0, 0.0, 0.0, 0.5)});
+  tracker.processBatch({pos2d(10.0, 1.0, 0.0, 0.5)});  // same t_max
+  EXPECT_EQ(tracker.staleDropped(), 0u);
+  EXPECT_DOUBLE_EQ(tracker.currentTime().seconds(), 10.0);
+}
+
 TEST(PmbmStaleGuard, InOrderBatchesAreNeverDropped) {
   Fixture f;
   PmbmTracker tracker(f.ekf, {});

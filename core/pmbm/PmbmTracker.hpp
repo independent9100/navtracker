@@ -936,11 +936,10 @@ class PmbmTracker {
   PmbmDensity density_;
   Timestamp current_time_{};
   bool has_current_time_{false};
-  // #28: cross-batch stale-input guard state (mirrors MhtTracker). high_water_
-  // is the earliest instant of the last accepted batch; a batch whose front
-  // precedes it is rejected when reject_stale_measurements is on.
-  bool has_high_water_{false};
-  Timestamp high_water_{};
+  // #28: count of BATCHES dropped by the cross-batch stale-input guard. The
+  // high-water instant is current_time_ itself (the last accepted batch's
+  // t_max), so no separate member is needed — a batch whose t_max precedes
+  // current_time_ is rejected when reject_stale_measurements is on.
   std::size_t stale_dropped_{0};
   BernoulliId next_bernoulli_id_{1};
   // Phase 8 iter 5 birth-id cache: (parent_idx, measurement_idx) → id.
