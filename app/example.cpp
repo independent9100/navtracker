@@ -111,7 +111,7 @@ int main() {
 
   {
     const double range_m = 1500.0;
-    const double rel_bearing_rad = 0.5;   // 28.6° to port of bow
+    const double rel_bearing_rad = 0.5;   // 28.6° to starboard of bow (+ = CW from bow)
     const double range_std_m = 50.0;
     const double bearing_std_rad = 1.0 * 3.14159265358979 / 180.0;
 

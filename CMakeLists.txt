@@ -248,6 +248,7 @@ add_executable(navtracker_tests
   tests/pmbm/test_pmbm_types.cpp
   tests/pmbm/test_pmbm_tracker_predict.cpp
   tests/pmbm/test_pmbm_tracker_update.cpp
+  tests/pmbm/test_pmbm_stale_guard.cpp
   tests/pmbm/test_pmbm_scenario.cpp
   tests/pmbm/test_pmbm_phase8.cpp
   tests/pmbm/test_pmbm_sensor_activity.cpp
@@ -356,6 +357,7 @@ add_executable(navtracker_tests
   tests/replay/test_radar_truth_loader.cpp
   tests/replay/test_camera_bearing_loader.cpp
   tests/replay/test_ais_csv_replay_adapter.cpp
+  tests/replay/test_ownship_csv_reader.cpp
   tests/replay/test_autoferry_json_replay.cpp
   tests/estimation/test_noise_models.cpp
   tests/tracking/test_sensor_detection_models.cpp

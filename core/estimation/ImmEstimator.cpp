@@ -168,7 +168,7 @@ void ImmEstimator::predict(Track& track, Timestamp to) const {
 void ImmEstimator::update(Track& track, const Measurement& z) const {
   // Defensive guard: NaN/non-PSD R poisons every mode's innovation
   // covariance and propagates through the IMM ensemble. (Phase 8 R3.)
-  if (!isMeasurementCovariancePsd(z.covariance)) return;
+  if (!isMeasurementCovariancePsd(z.covariance, z.dim())) return;  // #35 M1
   if (track.imm_means.cols() == 0) return;
   const int K = static_cast<int>(track.imm_means.cols());
   const int n = static_cast<int>(track.imm_means.rows());

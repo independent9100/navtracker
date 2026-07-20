@@ -95,7 +95,7 @@ You construct Measurements directly from your parsed sensor data. The NMEA adapt
 
 ### Auto-datum pattern
 
-The `OwnShipProvider` owns and manages the working datum (local tangent plane origin). Construct it with no arguments; it auto-initializes from the first `update(pose)` call and auto-recenters (replaces the datum) when own-ship moves > 30 km. This eliminates the need to pass a `Datum` object through the measurement builders.
+The `OwnShipProvider` owns and manages the working datum (local tangent plane origin). Construct it with no arguments; it auto-initializes from the first `update(pose)` call *that carries a real position* (a non-finite / out-of-range / exactly-(0,0) pose is stored but never anchors or recenters the datum — a heading-only NMEA sentence arriving before the first GPS fix must not pin the datum at Null Island; #26 M29) and auto-recenters (replaces the datum) when own-ship moves > 30 km. This eliminates the need to pass a `Datum` object through the measurement builders.
 
 When the datum shifts, the provider fires an `IDatumChangeSink` event. Wire a sink that calls `shiftTracksOnDatumChange(TrackManager&, old_datum, new_datum)` to keep your track state consistent with the new ENU frame:
 

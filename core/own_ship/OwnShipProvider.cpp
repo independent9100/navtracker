@@ -8,6 +8,26 @@
 #include "ports/INavHealthSink.hpp"
 
 namespace navtracker {
+namespace {
+
+// #26 M29: the working datum (tangent-plane origin) must be a REAL fix. A
+// heading-only NMEA sentence before the first GPS fix carries the default
+// (0,0) position; without this guard it lazily initialised the datum at Null
+// Island — or, arriving after a real fix, tripped the >30 km auto-recenter and
+// teleported the datum to (0,0). Both silently corrupt every downstream ENU
+// conversion. The pose is still STORED (heading readable); it is just not
+// trusted to define the frame. Byte-identical for any real position — this
+// only rejects (0,0) / non-finite / out-of-range origins that never occur on a
+// live GPS feed.
+bool isAnchorablePosition(const OwnShipPose& pose) {
+  if (!std::isfinite(pose.lat_deg) || !std::isfinite(pose.lon_deg)) return false;
+  if (std::abs(pose.lat_deg) > 90.0 || std::abs(pose.lon_deg) > 180.0)
+    return false;
+  if (pose.lat_deg == 0.0 && pose.lon_deg == 0.0) return false;  // Null Island
+  return true;
+}
+
+}  // namespace
 
 OwnShipProvider::OwnShipProvider(std::size_t history_size,
                                  DatumRecenterPolicy policy)
@@ -31,8 +51,9 @@ void OwnShipProvider::update(const OwnShipPose& pose) {
   }
 
   if (!current_datum_) {
-    current_datum_ = geo::Datum(geo::Geodetic{pose.lat_deg, pose.lon_deg, pose.alt_m});
-  } else if (policy_.enable_auto_recenter) {
+    if (isAnchorablePosition(pose))
+      current_datum_ = geo::Datum(geo::Geodetic{pose.lat_deg, pose.lon_deg, pose.alt_m});
+  } else if (policy_.enable_auto_recenter && isAnchorablePosition(pose)) {
     const Eigen::Vector3d enu = current_datum_->toEnu(
         geo::Geodetic{pose.lat_deg, pose.lon_deg, pose.alt_m});
     const double d_m = std::sqrt(enu.x() * enu.x() + enu.y() * enu.y());

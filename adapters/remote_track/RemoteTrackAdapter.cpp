@@ -4,8 +4,21 @@
 
 #include "adapters/util/DatumReproject.hpp"
 #include "adapters/util/EdgeValidation.hpp"
+#include "core/estimation/MeasurementModels.hpp"  // isMeasurementCovariancePsd
 
 namespace navtracker {
+namespace {
+
+// #26 M18: a stated 2×2 covariance is usable iff it is the zero sentinel (the
+// adapter then substitutes the pessimistic default) OR finite and PSD. A
+// NaN/Inf or negative-variance matrix is neither — reject the report at the
+// edge rather than let it poison the track covariance (and, downstream, abort
+// the estimator's H·P·Hᵀ + z.cov).
+bool statedCovarianceUsable(const Eigen::Matrix2d& c) {
+  return c.isZero() || isMeasurementCovariancePsd(Eigen::MatrixXd(c));
+}
+
+}  // namespace
 
 RemoteTrackAdapter::RemoteTrackAdapter(geo::Datum datum,
                                        RemoteTrackAdapterConfig config)
@@ -17,6 +30,22 @@ void RemoteTrackAdapter::ingest(const RemoteTrackReport& r) {
   if (!edge::isPlausibleLatLon(r.lat_deg, r.lon_deg)) {
     ++rejected_;
     return;
+  }
+
+  // #26 M18: validate the stated covariances and (accepted) velocity at the
+  // edge before they reach the Measurement. Only the covariances that will
+  // actually be used are checked: position always, velocity only when both
+  // accepted by config and present on the report.
+  if (!statedCovarianceUsable(r.position_covariance)) {
+    ++rejected_;
+    return;
+  }
+  if (config_.accept_velocity && r.has_velocity) {
+    if (!r.velocity_enu.allFinite() ||
+        !statedCovarianceUsable(r.velocity_covariance)) {
+      ++rejected_;
+      return;
+    }
   }
 
   // The feed carries this vessel's identity regardless of thinning — record it

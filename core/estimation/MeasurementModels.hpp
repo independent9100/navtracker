@@ -91,4 +91,21 @@ inline bool isMeasurementCovariancePsd(const Eigen::MatrixXd& R) {
   return true;
 }
 
+/**
+ * Dimension-aware guard (#35 M1). The single-argument form above never sees the
+ * measurement it accompanies, so a square-but-wrong-size R (e.g. a 3×3 R on a
+ * 2-D Position2D measurement) passed the PSD check and then mismatched in
+ * `H·P·Hᵀ + z.cov` — an `eigen_assert` abort in debug, an out-of-bounds read
+ * under NDEBUG. Estimator/tracker entry points that have the measurement pass
+ * its dimension (`z.dim()` == the measurement value size) so a mis-sized R is
+ * rejected before the update runs. Composes with the PSD/finite checks; on a
+ * correctly-sized R the result is identical to the single-argument form
+ * (byte-identical downstream).
+ */
+inline bool isMeasurementCovariancePsd(const Eigen::MatrixXd& R,
+                                       int expected_dim) {
+  if (R.rows() != expected_dim) return false;
+  return isMeasurementCovariancePsd(R);
+}
+
 }  // namespace navtracker

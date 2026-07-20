@@ -154,6 +154,42 @@ keys on `last_claimed_meas_index` accordingly (F2 cycle); the mixed-timestamp
 attribution case is pinned by `test_pmbm_contribution_provenance`'s
 `MixedTimestampMultiSensorAttributesEachClaimedSource`.
 
+### 2.3 Cross-batch stale-input guard (backlog #28)
+
+`processBatch` sorts *within* a batch (backlog #15) but, before this fix, had no
+*cross-batch* reject-stale guard. A stale batch reached `predict()`, whose
+`dt ≤ 0` branch **rewinds** `current_time_` to the stale instant and returns
+*without* propagating; the subsequent update then ran against the newer
+(un-rewound) component states. `Tracker` and `MhtTracker` both drop such a
+batch; PMBM silently processed it. The guard now shares the *intent* of the
+sibling trackers (`Tracker.cpp:162` / `MhtTracker.cpp:228`) — reject a batch
+whose measurements are in the past of the filter — with `Config::reject_stale_measurements`
+(default **on**); drops are counted (`staleDropped()`).
+
+**The key is the batch `t_max`, NOT its front (a deliberate divergence from
+`MhtTracker`).** `MhtTracker`/`Tracker` process a batch *at* its front instant,
+so front is the correct high-water key there. PMBM predicts to **`t_max`** (the
+batch's latest instant, matching the update convention), and `predict()`'s
+`dt ≤ 0` rewind fires exactly when `t_max < current_time_` — independent of the
+front. A front-keyed guard would accept an *overlapping* batch whose front is
+fresh but whose `t_max` is stale (e.g. after a batch spanning `[20, 40]`, a
+batch `{25, 30}` has `front = 25 ≥ 20` yet `t_max = 30 < 40`), then rewind the
+clock to 30 and update against `t = 40` states. So the guard compares the batch
+`t_max` against the filter's `current_time_` — which already *is* the high-water
+instant (the last accepted batch's `t_max`), so no separate high-water member is
+needed. `t_max == current_time_` is **not** stale (`predict` sees `dt == 0`: no
+propagation, no rewind; the update applies at the current instant). Deterministic
+in-order replay (every bench and scenario test) never trips the guard, so the
+tracked state is **bit-identical**; it fires only on a genuinely stale batch.
+
+**Second divergence (empty scans).** `MhtTracker`/`Tracker` early-return on an
+**empty** batch. PMBM instead treats an empty scan as a first-class **all-miss**
+step (§3.3 / §8: it advances the filter and applies misdetection to every
+Bernoulli — the coverage/visibility channel depends on this). An empty batch
+carries no instant to compare, so the guard is scoped to non-empty batches and
+the empty-scan path is left unchanged. Both divergences are pinned by
+`test_pmbm_stale_guard` (incl. the overlapping-`t_max` and same-instant cases).
+
 ---
 
 ## 3. Math — update step

@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cmath>
 #include <stdexcept>
 
 #include "adapters/own_ship/OwnShipProvider.hpp"
@@ -243,4 +244,64 @@ TEST(OwnShipProviderTest, ExplicitDatumConstructorHasDatumImmediately) {
   Datum d(Geodetic{53.5, 8.0, 0.0});
   OwnShipProvider p(d);
   EXPECT_TRUE(p.hasDatum());
+}
+
+// #26 M29: a positionless (0,0) pose — a heading-only NMEA sentence before the
+// first GPS fix — must be STORED (heading readable) but must NOT become the
+// tangent-plane origin. Anchoring at Null Island silently corrupts every
+// downstream ENU conversion (and, once a real fix lands >30 km away, fires a
+// spurious auto-recenter). The datum-origin invariant lives here in the
+// provider, so a (0,0) / implausible pose defers the datum.
+TEST(OwnShipProviderTest, NullIslandPoseStoredButDoesNotAnchorDatum) {
+  OwnShipProvider p;
+  OwnShipPose heading_only;  // lat/lon default to (0,0)
+  heading_only.time = Timestamp::fromSeconds(1.0);
+  heading_only.heading_true_deg = 123.5;
+  p.update(heading_only);
+  ASSERT_TRUE(p.latest().has_value());
+  EXPECT_DOUBLE_EQ(p.latest()->heading_true_deg, 123.5);
+  EXPECT_FALSE(p.hasDatum());  // NOT anchored at Null Island
+
+  OwnShipPose fix;
+  fix.time = Timestamp::fromSeconds(2.0);
+  fix.lat_deg = 53.5;
+  fix.lon_deg = 8.0;
+  p.update(fix);
+  ASSERT_TRUE(p.hasDatum());
+  const auto enu = p.datum().toEnu(Geodetic{53.5, 8.0, 0.0});
+  EXPECT_NEAR(enu.x(), 0.0, 1e-3);
+  EXPECT_NEAR(enu.y(), 0.0, 1e-3);
+}
+
+TEST(OwnShipProviderTest, ImplausibleFirstPoseDoesNotAnchorDatum) {
+  OwnShipProvider p;
+  OwnShipPose bad;
+  bad.time = Timestamp::fromSeconds(1.0);
+  bad.lat_deg = 200.0;  // out of [-90, 90] — a nonsense tangent-plane origin
+  bad.lon_deg = 8.0;
+  p.update(bad);
+  EXPECT_FALSE(p.hasDatum());
+  ASSERT_TRUE(p.latest().has_value());  // still stored, just not trusted
+}
+
+TEST(OwnShipProviderTest, NullIslandPoseAfterRealFixDoesNotRecenter) {
+  OwnShipProvider p;
+  CountingSink sink;
+  p.registerDatumSink(&sink);
+  OwnShipPose a;
+  a.time = Timestamp::fromSeconds(1.0);
+  a.lat_deg = 53.5;
+  a.lon_deg = 8.0;
+  p.update(a);
+  ASSERT_TRUE(p.hasDatum());
+  const double origin_lat0 = p.datum().origin().lat_deg;
+
+  // A stray heading-only (0,0) pose is ~6000 km from Hamburg and would trip
+  // the 30 km auto-recenter, teleporting the datum to Null Island.
+  OwnShipPose heading_only;
+  heading_only.time = Timestamp::fromSeconds(2.0);
+  heading_only.heading_true_deg = 90.0;  // lat/lon default to (0,0)
+  p.update(heading_only);
+  EXPECT_EQ(sink.call_count, 0);
+  EXPECT_DOUBLE_EQ(p.datum().origin().lat_deg, origin_lat0);
 }

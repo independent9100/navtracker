@@ -78,6 +78,16 @@ class PmbmTracker {
     // MhtTracker::Config::gate_threshold; 9.0 ≈ 99 % χ²₂.
     double gate_threshold = 9.0;
 
+    // #28 (backlog #1's PMBM face): reject an out-of-order (stale) BATCH whose
+    // earliest measurement precedes the high-water mark, instead of feeding it
+    // to predict() (where dt<=0 rewinds current_time_ and returns without
+    // propagating, then update runs against newer states). Mirrors
+    // MhtTracker::Config::reject_stale_measurements — default ON. Deterministic
+    // in-order replay never triggers it (bit-identical). Turn OFF only for a
+    // caller that deliberately relies on PMBM's set-wise, order-robust update
+    // of a late batch. Drops are counted (staleDropped()).
+    bool reject_stale_measurements = true;
+
     // PDA soft detected-branch update (default OFF). Under K=1 GNN a detected
     // Bernoulli hard-commits to its single lowest-cost gated measurement; a
     // gate-closer CLUTTER return then pulls the state off a real target (open-sea
@@ -664,6 +674,10 @@ class PmbmTracker {
   Timestamp currentTime() const noexcept { return current_time_; }
   /** True once the filter time has been initialised by the first predict/processBatch. */
   bool hasCurrentTime() const noexcept { return has_current_time_; }
+  /** #28: count of BATCHES dropped by the stale-input guard
+   *  (reject_stale_measurements). Nonzero means an out-of-order batch reached
+   *  the tracker — surface it rather than silently rewinding the clock. */
+  std::size_t staleDropped() const noexcept { return stale_dropped_; }
   /** The configuration this tracker was constructed with. */
   const Config& config() const noexcept { return cfg_; }
 
@@ -922,6 +936,11 @@ class PmbmTracker {
   PmbmDensity density_;
   Timestamp current_time_{};
   bool has_current_time_{false};
+  // #28: count of BATCHES dropped by the cross-batch stale-input guard. The
+  // high-water instant is current_time_ itself (the last accepted batch's
+  // t_max), so no separate member is needed — a batch whose t_max precedes
+  // current_time_ is rejected when reject_stale_measurements is on.
+  std::size_t stale_dropped_{0};
   BernoulliId next_bernoulli_id_{1};
   // Phase 8 iter 5 birth-id cache: (parent_idx, measurement_idx) → id.
   // Cleared at the start of each processBatch. Populated when adaptive

@@ -1228,7 +1228,15 @@ The entries below are the **PLAUSIBLE-OPEN** verdicts from triaging the review's
 31 unverified MEDIUM findings — real, unfixed, and out of the fix-wave scope.
 Entries only; no fixes were made. `M<n>` = the triage-table id.
 
-## 26. Finish "validate at the edges" on the input adapters (the A1/W1 remainder) — HIGH
+## 26. Finish "validate at the edges" on the input adapters (the A1/W1 remainder) — HIGH — **FIXED 2026-07-20 (174964f + follow-up a9f151f, branch backlog-mediums-batch1)**
+
+**FIXED (all six sub-items):** M17 wrap-hang guard, M16 empty/non-finite
+heading&COG rejection, M29 datum-anchor-from-positionless-pose (fixed
+provider-side: a (0,0)/implausible pose is stored but never anchors/recenters
+the datum), M18 RemoteTrackAdapter covariance(finite+PSD)/velocity validation,
+M22 loadOwnshipCsv row validation (**0/35 real ownship.csv fixtures affected** —
+condition-2 report), M20 GeoJsonCoastline hardening mirroring R7.2. Write-up:
+`docs/baselines/2026-07-20_backlog_mediums_batch1.md`.
 
 A1/W1 hardened the **GGA position** path only; the same class of bug survives on
 the sibling numeric/parse paths (fact-free, buildable now — no deployment facts
@@ -1260,7 +1268,14 @@ re-promotion re-fires `onTrackConfirmed` (`was_unconfirmed` true), violating the
 `ITrackSink` "fires once" contract → double-allocated UI/alerts.
 `core/tracking/TrackManager.cpp:36,48`. Distinct from W5.4 (which guarded `recordMiss`).
 
-## 28. PMBM cross-batch stale-scan / high-water guard (M28) — MEDIUM — extends #1
+## 28. PMBM cross-batch stale-scan / high-water guard (M28) — MEDIUM — extends #1 — **FIXED 2026-07-20 (8dea53a + follow-up 00627cc)**
+
+**FIXED:** `Config::reject_stale_measurements` (default on; `staleDropped()`).
+Guard keys on the batch `t_max` vs `current_time_` (NOT the front — adversarial
+review caught that a front-key missed the overlapping-`t_max` rewind case;
+`00627cc`). Byte-identical on in-order deterministic replay. Two forced
+divergences from MhtTracker (t_max key; empty-scan handling) documented in
+`pmbm-design.md §2.3`.
 
 `PmbmTracker::processBatch` sorts within a batch but has no reject-stale / high-water
 guard; an out-of-order batch reaches `predict()` where `dt<=0` rewinds `current_time_`
@@ -1269,7 +1284,12 @@ and returns without propagating, then the update runs against newer states.
 `core/pmbm/PmbmTracker.cpp:1315` (+ the `dt<=0` branch ~:209). This is the PMBM face
 of backlog #1 (out-of-order input guard); also covers low L7.
 
-## 29. CPA own-ship extrapolation from pose.time (M14) — MEDIUM
+## 29. CPA own-ship extrapolation from pose.time (M14) — MEDIUM — **FIXED 2026-07-20 (a2b2f9c)**
+
+**FIXED:** synthesizeOwnShipTrack now stamps last_update = pose.time (fix
+instant) so computeCpaWithUncertainty extrapolates own-ship symmetrically with
+targets; L24 state/cov sanity check folded into CpaEvaluator. Full-stack CPA
+hysteresis test green (no Entered/Exited timing shift).
 
 `CpaEvaluator` extrapolates target tracks to the query time but stamps own-ship's
 `last_update = t` around the raw latest fix, so `dt_a = 0` and own-ship is never
@@ -1311,7 +1331,13 @@ compared against the m/s min-speed gate; the not-available sentinel 102.3 kn bec
 102.3 m/s velocity. Distinct from W5.6.1 (sentinel band, `AisAdapter.cpp`) and W5.6.2
 (DMA timestamp). `adapters/replay/AisCsvReplayAdapter.cpp:168`.
 
-## 34. PMBM/association ranking & degradation robustness (M3, M4, M5, M6) — MEDIUM (one HIGH-impact, config-conditional)
+## 34. PMBM/association ranking & degradation robustness (M3, M4, M5, M6) — MEDIUM (one HIGH-impact, config-conditional) — **M6 FIXED 2026-07-20 (85cb0a4); M3/M5/M4 OPEN**
+
+**M6 FIXED:** `clutter_intensity > 0` fail-loud ctor guard added. **M5, M3
+(Murty cost term + empty-on-infeasible) NOT pulled** — they change association
+ranking on the deployable adaptive-K PMBM (its-own-cycle / F2 precedent; parked
+with the #25 close-pass Murty cycle per the batch-1 arbiter ruling). **M4 (JPDA
+global event enumeration) NOT pulled** — non-deployable associator, separate.
 
 - **M6 (HIGH impact):** `clutter_intensity==0` for a sensor makes an unclaimed
   measurement's column all-+inf → (via M3) zero children → the whole MBM can go empty
@@ -1329,7 +1355,12 @@ compared against the m/s min-speed gate; the not-available sentinel 102.3 kn bec
   full event vector before the overflow check. `core/association/JpdaAssociator.cpp:160`,
   `core/association/JointEvents.cpp:20`.
 
-## 35. Estimator measurement-covariance robustness (M1, M2) — MEDIUM — relates to #14
+## 35. Estimator measurement-covariance robustness (M1, M2) — MEDIUM — relates to #14 — **M1 FIXED 2026-07-20 (39a520e); M2 OPEN**
+
+**M1 FIXED:** dimension-aware `isMeasurementCovariancePsd(R, expected_dim)`;
+callers pass `z.dim()`. Byte-identical on correctly-sized R. **M2 (IMM/EKF
+softUpdate uses z0.covariance for ALL gated measurements) NOT pulled** — changes
+the IMM update math on the deployable config (its-own-cycle / F2 precedent).
 
 - **M1:** `isMeasurementCovariancePsd` never compares R's **dimension** to the
   measurement (it never receives it), so a square-but-wrong-size R passes then mismatches
@@ -1340,7 +1371,12 @@ compared against the m/s min-speed gate; the not-available sentinel 102.3 kn bec
   input; asserts check model + sensor position, not covariance. `core/estimation/ImmEstimator.cpp:353`
   (`EkfEstimator::softUpdate` shares it). See backlog #14 (per-measurement covariance).
 
-## 36. Bench/reporting-tooling correctness (M23, M24) — LOW (research tooling; no runtime effect)
+## 36. Bench/reporting-tooling correctness (M23, M24) — LOW (research tooling; no runtime effect) — **M23 FIXED 2026-07-20 (772f8e7); M24 OPEN**
+
+**M23 FIXED (rider):** `metricDirection` classifier adds a Neutral category for
+signed/target metrics (card_err_*, nees_*, nis_*) → non-directional "~"
+indicator instead of a false improvement arrow. **M24 (TruthResample velocity
+across the refused dropout gap) NOT pulled** — deferred, bench-truth only.
 
 - **M23:** `Comparator::isLowerBetter` returns true for everything except `lifetime_ratio`,
   so signed/target metrics (`card_err_mean`, `nees_*`, `nis_coverage_95`, `nis_trace_ratio`)
@@ -1348,7 +1384,11 @@ compared against the m/s min-speed gate; the not-available sentinel 102.3 kn bec
 - **M24:** `TruthResample` finite-differences velocity ACROSS the refused dropout gap
   (uses the gap segment the function declines to bridge for position). `core/scenario/TruthResample.cpp:97`.
 
-## 37. Canonical-example & default-covariance docs (M25, M8) — LOW (doc/UX)
+## 37. Canonical-example & default-covariance docs (M25, M8) — LOW (doc/UX) — **M25 FIXED 2026-07-20 (772f8e7); M8 OPEN**
+
+**M25 FIXED (rider):** `app/example.cpp` relative-bearing comment corrected
+(+0.5 rad is to STARBOARD of bow, not port). **M8 (applyDefaultsIfEmpty no-op
+for the range/bearing builders) NOT pulled** — deferred, doc/diagnostic.
 
 - **M25:** the canonical wiring example states the relative-bearing sign backwards
   ("to port of bow" for +0.5 rad, which is starboard). `app/example.cpp:114` (= low L41).

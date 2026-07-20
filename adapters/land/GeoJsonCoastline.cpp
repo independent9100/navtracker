@@ -12,9 +12,13 @@ namespace {
 /// Parse one GeoJSON coordinate ring [lon, lat] → Eigen::Vector2d(lon, lat).
 std::vector<Eigen::Vector2d> parseRing(const nlohmann::json& coords) {
   std::vector<Eigen::Vector2d> r;
+  if (!coords.is_array()) return r;  // #26 M20: tolerate a non-array ring
   r.reserve(coords.size());
   for (const auto& pt : coords) {
-    if (pt.is_array() && pt.size() >= 2)
+    // #26 M20: a vertex must be an array of ≥2 NUMBERS. get<double>() on a
+    // string / null threw a type_error that escaped the whole parse; skip it.
+    if (pt.is_array() && pt.size() >= 2 && pt[0].is_number() &&
+        pt[1].is_number())
       r.emplace_back(pt[0].get<double>(), pt[1].get<double>());  // [lon, lat]
   }
   return r;
@@ -40,22 +44,40 @@ void addPolygon(const nlohmann::json& poly_coords,
 
 CoastlineGeometry parseCoastlineGeoJson(const std::string& json_text,
                                         CoastlinePriorParams params) {
-  const auto j = nlohmann::json::parse(json_text);
+  // #26 M20: surface malformed JSON as the documented std::runtime_error rather
+  // than leaking a raw nlohmann::json::parse_error to the caller (mirrors the
+  // R7.2 hardening of GeoJsonStaticObstacles).
+  nlohmann::json j;
+  try {
+    j = nlohmann::json::parse(json_text);
+  } catch (const nlohmann::json::exception& e) {
+    throw std::runtime_error(std::string("invalid coastline GeoJSON: ") +
+                             e.what());
+  }
   std::vector<LandPolygon> polys;
 
-  static const nlohmann::json kEmptyArray = nlohmann::json::array();
-  const nlohmann::json& feats =
-      j.contains("features") ? j["features"] : kEmptyArray;
-  for (const auto& feat : feats) {
-    if (!feat.contains("geometry") || feat["geometry"].is_null()) continue;
-    const auto& geom = feat["geometry"];
-    const std::string type = geom.value("type", std::string{});
-    if (type == "Polygon") {
-      addPolygon(geom["coordinates"], polys);
-    } else if (type == "MultiPolygon") {
-      for (const auto& poly : geom["coordinates"]) addPolygon(poly, polys);
+  if (!j.contains("features") || !j["features"].is_array())
+    return CoastlineGeometry(std::move(polys), params);
+  for (const auto& feat : j["features"]) {
+    // #26 M20: any per-feature error skips that feature rather than aborting
+    // the whole parse, and a missing "coordinates" key is guarded (const
+    // operator[] on a missing key is UB / a debug assert).
+    try {
+      if (!feat.contains("geometry") || feat["geometry"].is_null()) continue;
+      const auto& geom = feat["geometry"];
+      const std::string type = geom.value("type", std::string{});
+      if (!geom.contains("coordinates")) continue;
+      const auto& coords = geom["coordinates"];
+      if (type == "Polygon") {
+        addPolygon(coords, polys);
+      } else if (type == "MultiPolygon") {
+        if (coords.is_array())
+          for (const auto& poly : coords) addPolygon(poly, polys);
+      }
+      // Other geometry types (Point, LineString, etc.) are silently skipped.
+    } catch (const nlohmann::json::exception&) {
+      continue;
     }
-    // Other geometry types (Point, LineString, etc.) are silently skipped.
   }
   return CoastlineGeometry(std::move(polys), params);
 }

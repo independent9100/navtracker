@@ -3,11 +3,17 @@
 namespace navtracker {
 
 Track synthesizeOwnShipTrack(const OwnShipPose& pose,
-                             Timestamp t,
                              const OwnShipProvider& provider) {
   Track tr;
   tr.id = TrackId{0};
-  tr.last_update = t;
+  // #29: stamp the FIX time, not the CPA query time. computeCpaWithUncertainty
+  // extrapolates every track to its t_ref, so stamping the query time made
+  // own-ship's dt = 0 — it was never advanced from pose.time despite a valid
+  // velocity, injecting a |v_own|·(t_ref - pose.time) error into cpa_distance /
+  // tcpa / P(below) on stale GPS. Stamping pose.time makes own-ship extrapolate
+  // symmetrically with the targets, and its velocity uncertainty grows over the
+  // interval through the CPA Jacobian.
+  tr.last_update = pose.time;
   tr.status = TrackStatus::Confirmed;
 
   const Eigen::Vector3d enu = provider.datum().toEnu({pose.lat_deg, pose.lon_deg, 0.0});

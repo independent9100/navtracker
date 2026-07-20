@@ -193,6 +193,21 @@ PmbmTracker::PmbmTracker(const IEstimator& estimator, Config cfg,
         "use_sensor_activity alone (the honest per-duty-cycle coverage model). See "
         "R9 in docs/superpowers/plans/2026-07-02-static-branch-review-fixes.md.");
   }
+  // #34 M6 (fail-loud): a non-positive clutter intensity makes an unclaimed
+  // measurement's assignment column all-+inf, so the whole MBM can collapse to
+  // empty in a single scan — every track lost, silently. Refuse it at
+  // construction rather than let a misconfigured λ_C drop every track mid-run.
+  // (Per-sensor λ_C supplied by an ISensorDetectionModel is validated by that
+  // model; this guards the single-λ_C fallback in cfg_.)
+  if (!(cfg_.clutter_intensity > 0.0)) {
+    throw std::invalid_argument(
+        "PmbmTracker: clutter_intensity must be > 0 (got " +
+        std::to_string(cfg_.clutter_intensity) +
+        "). A zero/negative clutter intensity makes an unclaimed measurement's "
+        "cost column all-+inf, collapsing the whole Multi-Bernoulli Mixture to "
+        "empty in one scan (every track lost). Set a positive false-alarm "
+        "intensity, or supply a per-sensor ISensorDetectionModel.");
+  }
 }
 
 void PmbmTracker::predict(Timestamp to) {
@@ -443,7 +458,8 @@ PmbmTracker::buildAdaptiveBirthCandidates(
         ? detection_model_->paramsFor(z).clutter_intensity
         : cfg_.clutter_intensity;
 
-    if (!canInitiateTrack(z.model) || !isMeasurementCovariancePsd(z.covariance)) {
+    if (!canInitiateTrack(z.model) ||
+        !isMeasurementCovariancePsd(z.covariance, z.dim())) {  // #35 M1
       // Bearing-only, otherwise non-initiable, or malformed (empty/non-PSD
       // covariance) measurement: never births a Bernoulli. The total
       // intensity is still the clutter mass so assignment cells stay balanced.
@@ -1357,6 +1373,35 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     std::stable_sort(scan_ordered.begin(), scan_ordered.end(), by_time);
   }
   const std::vector<Measurement>& scan_in = need_sort ? scan_ordered : scan_arg;
+  // #28 (backlog #1's PMBM face): reject an out-of-order (stale) batch instead
+  // of letting predict()'s dt<=0 branch rewind current_time_ and return without
+  // propagating (the update would then run against newer states). Same INTENT
+  // as the MhtTracker guard (Tracker.cpp:162 / MhtTracker.cpp:228), but keyed on
+  // the batch's LATEST instant (t_max), not its front.
+  //
+  // Forced divergence from MhtTracker (documented in docs/algorithms/pmbm-design.md
+  // §2.3): MhtTracker/Tracker process a batch AT its front instant, so front is
+  // the correct high-water key there. PMBM predicts to t_max (the batch's
+  // latest instant), and predict()'s dt<=0 rewind fires exactly when
+  // t_max < current_time_ — independent of the front. A front-keyed guard would
+  // accept an overlapping batch whose front is fresh but whose t_max is stale,
+  // then rewind. So the guard compares the batch t_max against the filter's
+  // current_time_ (which already IS the high-water instant — the last accepted
+  // batch's t_max). t_max == current_time_ is NOT stale (predict sees dt==0: no
+  // propagation, no rewind, the update applies at the current instant).
+  // Deterministic in-order replay never trips it (bit-identical). Also,
+  // MhtTracker/Tracker early-return on an EMPTY batch; PMBM processes an empty
+  // scan as an all-miss step, so the guard is scoped to non-empty batches.
+  if (has_current_time_ && !scan_in.empty()) {
+    Timestamp t_max = scan_in.front().time;
+    for (const auto& z : scan_in)
+      if (z.time.seconds() > t_max.seconds()) t_max = z.time;
+    if (t_max.secondsSince(current_time_) < 0.0 &&
+        cfg_.reject_stale_measurements) {
+      stale_dropped_ += scan_in.size();
+      return;
+    }
+  }
   // Task 6: reset per-scan stale set. enumerateChildren will populate it.
   cooperative_overdue_ids_.clear();
   // Backlog #25: reset per-scan structural-event counters (diagnostic only).
@@ -1498,7 +1543,8 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
   // Birth fixes by replacing ρ_target with an independent λ_birth.
   if (cfg_.measurement_driven_birth && !cfg_.adaptive_birth) {
     for (const auto& z : scan) {
-      if (!canInitiateTrack(z.model) || !isMeasurementCovariancePsd(z.covariance))
+      if (!canInitiateTrack(z.model) ||
+          !isMeasurementCovariancePsd(z.covariance, z.dim()))  // #35 M1
         continue;
 
       // Smart birth: skip when an existing high-r Bernoulli already

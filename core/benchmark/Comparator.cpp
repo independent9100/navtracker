@@ -6,10 +6,13 @@
 //
 // Math:        per (input, scenario, config, metric) cell: mean = (1/N) sum
 //              x_i across seeds. Delta vs. baseline = mean_input - mean_base.
-//              Direction sign depends on the metric's "lower is better" flag:
+//              Direction depends on the metric's kind (metricDirection):
 //              lower-is-better => improvement when delta < 0; higher-is-
-//              better => improvement when delta > 0. |delta| < 1e-9 is
-//              reported as "no change" regardless of sign.
+//              better => improvement when delta > 0; signed/target metrics
+//              (NEES, NIS_*, card_err_*) are direction-NEUTRAL and get the
+//              non-directional "~" indicator (a decrease is not an improvement
+//              without a target the renderer does not know). |delta| < 1e-9 is
+//              reported as "no change" regardless of kind.
 // Assumptions: inputs[0] is the baseline; all subsequent inputs are diffed
 //              against it. Rows are already per-seed values (one row per
 //              seed) — the comparator aggregates by mean across seeds. The
@@ -54,12 +57,26 @@ const std::vector<std::string>& canonicalMetrics() {
   return v;
 }
 
-// Metric -> "lower is better". Anything not in this map is treated as
-// lower-is-better (the safer default for error/breakage metrics).
-bool isLowerBetter(const std::string& metric) {
-  // Higher-is-better metrics.
-  if (metric == "lifetime_ratio") return false;
-  return true;
+// #36 M23: a metric's "better" direction is one of three, not two. Error /
+// breakage metrics are lower-is-better; lifetime_ratio is higher-is-better; but
+// SIGNED / TARGET metrics (card_err_mean is signed about 0; NEES targets the
+// state dimension; nis_coverage_95 targets 0.95; nis_trace_ratio targets 1.0)
+// have no unambiguous direction the pure renderer can know — a mere decrease is
+// not an "improvement". Treating them as lower-is-better rendered a false
+// up-arrow. Classify them Neutral (no directional arrow); the reader compares
+// the raw numbers against the target.
+enum class MetricDirection { LowerBetter, HigherBetter, Neutral };
+
+bool startsWith(const std::string& s, const char* prefix) {
+  return s.rfind(prefix, 0) == 0;
+}
+
+MetricDirection metricDirection(const std::string& metric) {
+  if (metric == "lifetime_ratio") return MetricDirection::HigherBetter;
+  if (startsWith(metric, "nees") || startsWith(metric, "nis_") ||
+      startsWith(metric, "card_err"))
+    return MetricDirection::Neutral;
+  return MetricDirection::LowerBetter;  // safe default for error/breakage metrics
 }
 
 // Format with 3 significant figures (matches MarkdownRenderer.fmt3).
@@ -91,14 +108,22 @@ std::string shortSha(const std::string& git_sha) {
 }
 
 // "up" indicator (improvement) using Unicode BLACK UP-POINTING TRIANGLE.
-const char* kIndUp = u8"▲";    // U+25B2
-const char* kIndDown = u8"▼";  // U+25BC
-const char* kIndSame = u8"·";  // middle dot
+const char* kIndUp = u8"▲";       // U+25B2
+const char* kIndDown = u8"▼";     // U+25BC
+const char* kIndSame = u8"·";     // middle dot — no change
+const char* kIndNeutral = u8"~";  // #36 M23 — changed, but no directional claim
 
 const char* indicatorFor(const std::string& metric, double delta) {
   if (std::abs(delta) < 1e-9) return kIndSame;
-  const bool improved = isLowerBetter(metric) ? (delta < 0.0) : (delta > 0.0);
-  return improved ? kIndUp : kIndDown;
+  switch (metricDirection(metric)) {
+    case MetricDirection::Neutral:
+      return kIndNeutral;  // signed/target metric — compare raw vs target
+    case MetricDirection::HigherBetter:
+      return delta > 0.0 ? kIndUp : kIndDown;
+    case MetricDirection::LowerBetter:
+      break;
+  }
+  return delta < 0.0 ? kIndUp : kIndDown;
 }
 
 // Formats the delta token: "+X" / "-X" / "0".

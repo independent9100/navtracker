@@ -8,6 +8,43 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-20 — backlog-mediums batch 1: 7 items, all byte-identical on the deployable config [suite health / robustness]
+
+Landed the first slice of the #26–#38 medium-findings triage (branch
+`backlog-mediums-batch1`, off master `d063558`): #26 input-adapter
+edge-validation (`174964f`+`a9f151f`), #28 PMBM stale-scan guard (`8dea53a` + follow-up `00627cc` — adversarial review
+re-keyed the guard on `t_max`),
+#34 M6 clutter-intensity ctor guard (`85cb0a4`), #35 M1 R-dimension guard
+(`39a520e`), #29 CPA own-ship-from-pose.time (`a2b2f9c`), riders #36 M23 +
+#37 M25 (`772f8e7`).
+
+**No deployable-config A/B movement — by construction, not by luck.** These are
+edge-hardening / fail-loud guards / a determinism guard / a datum-origin
+invariant / a read-only CPA correction. Nothing can change
+`imm_cv_ct_pmbm_coverage_land_ivgate` output on well-formed in-order data:
+
+- #28 guard is front-keyed and default-on but never fires on deterministic
+  in-order replay (mechanized: `PmbmScenario.ReplayDeterminism` + the PMBM
+  replay/scenario group unchanged).
+- #34 M6 / #35 M1 are inert on valid input (deployable λ_C = 1e-4 > 0; every
+  measurement model has `value.size()` == its R dimension).
+- #26 M22 rejected **0 of 35** real `ownship.csv` fixtures; the NMEA/GeoJSON
+  paths and the RemoteTrack feed are not in the PMBM bench path.
+- #29 CPA is a read-only evaluator; `FullStackIntegration.*CpaAllCompose` green,
+  no Entered/Exited hysteresis-timing shift.
+
+Deployable gate tests green with unchanged assertions: `Adr0002Promotion`
+(promotion-latency gate on the deployable), `Cl4AisDropoutContinuity`,
+`VetoIsolationHaxrAB`, `LosGuardHaxrAB`, `Philos*`, `Imazu22ScenarioRun`. A
+25-min bench sweep was not re-run (would produce byte-identical output).
+
+**Takeaway:** the batch removes six crash/poison/hang failure modes on the input
+edges plus a whole-scan track-loss footgun and a stale-GPS CPA error, with zero
+risk to the shipped tracker. Full write-up + per-item teeth:
+`docs/baselines/2026-07-20_backlog_mediums_batch1.md`. Its-own-cycle material
+(#34 M5/M3 Murty, #35 M2 softUpdate, #31 maneuver gate, #27 lifecycle) stays
+parked; M5/M3 pair with the #25 close-pass Murty cycle.
+
 ## 2026-07-12 — Cl-4 CLOSED: W_off=25 m adopted on the deployable config (freeze) [Cl-4]
 
 Ticket `2026-07-12-cl4-adoption-ticket.md`; branch `cl4-adoption` (unmerged).

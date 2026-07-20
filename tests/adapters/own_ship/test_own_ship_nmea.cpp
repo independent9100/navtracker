@@ -452,3 +452,118 @@ TEST(OwnShipNmeaAdapter, ValidFixStillProducesPose) {
   EXPECT_TRUE(provider.hasDatum());
   EXPECT_NEAR(provider.latest()->lat_deg, 48.1173, 1e-4);
 }
+
+// ---------------------------------------------------------------------------
+// #26 M17 (hang, do first): wrapDegToPi / gyroRateRadPerSec used unbounded
+// `while (rad > kPi) rad -= 2π` loops that never terminate on an Inf parsed
+// angle (Inf - finite == Inf). ~1/256 corrupt lines pass the 8-bit NMEA
+// checksum, so a single garbage HDT could freeze the ingest thread with no
+// diagnostic. The heading field must be validated finite at the edge before
+// it reaches the wrap, and the wrap itself must be finite-safe (defence in
+// depth). strtod("1e400") == +HUGE_VAL == +Inf.
+// ---------------------------------------------------------------------------
+TEST(OwnShipNmeaAdapterTest, NonFiniteHdtHeadingDoesNotHangAndIsRejected) {
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+  // Establish a valid fix + a good heading first.
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("GPGGA,120000,5333.000,N,00959.000,E,1,08,0.9,10.0,M,46.9,M,,"),
+      Timestamp::fromSeconds(1.0)));
+  ASSERT_TRUE(adapter.ingest(makeNmea("GPHDT,123.5,T"),
+                             Timestamp::fromSeconds(2.0)));
+  ASSERT_DOUBLE_EQ(provider.latest()->heading_true_deg, 123.5);
+
+  // A corrupt HDT whose heading parses to +Inf. Must return promptly (no
+  // hang) and be rejected — never published as an Inf heading.
+  const bool produced =
+      adapter.ingest(makeNmea("GPHDT,1e400,T"), Timestamp::fromSeconds(3.0));
+  EXPECT_FALSE(produced);
+  EXPECT_EQ(adapter.skippedNonFinite(), 1u);
+  ASSERT_TRUE(provider.latest().has_value());
+  EXPECT_TRUE(std::isfinite(provider.latest()->heading_true_deg));
+  EXPECT_DOUBLE_EQ(provider.latest()->heading_true_deg, 123.5);
+}
+
+// ---------------------------------------------------------------------------
+// #26 M16: HDT/HDG/RMC heading & COG used bare strtod with no finite/empty
+// guard, so an empty field ("")->0.0 was published as an AUTHORITATIVE
+// heading/gyro sample. An empty-heading HDT must be rejected, not silently
+// treated as due-north.
+// ---------------------------------------------------------------------------
+TEST(OwnShipNmeaAdapterTest, EmptyHdtHeadingRejectedNotPublishedAsZero) {
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("GPGGA,120000,5333.000,N,00959.000,E,1,08,0.9,10.0,M,46.9,M,,"),
+      Timestamp::fromSeconds(1.0)));
+  ASSERT_TRUE(adapter.ingest(makeNmea("GPHDT,123.5,T"),
+                             Timestamp::fromSeconds(2.0)));
+
+  // Empty heading field: strtod("") == 0.0 today -> heading clobbered to 0.
+  const bool produced =
+      adapter.ingest(makeNmea("GPHDT,,T"), Timestamp::fromSeconds(3.0));
+  EXPECT_FALSE(produced);
+  EXPECT_EQ(adapter.skippedNonFinite(), 1u);
+  // Prior good heading preserved, not overwritten with 0.
+  EXPECT_DOUBLE_EQ(provider.latest()->heading_true_deg, 123.5);
+}
+
+TEST(OwnShipNmeaAdapterTest, EmptyRmcSogRejected) {
+  OwnShipProvider provider;
+  OwnShipNmeaAdapter adapter(provider);
+  // RMC with status A but an EMPTY SOG field (field 6). strtod("")==0.0 today
+  // buffers a bogus zero-velocity as if it were a real measurement.
+  const bool produced = adapter.ingest(
+      makeNmea("GPRMC,123519,A,4807.038,N,01131.000,E,,045.0,230394,003.1,W"),
+      Timestamp::fromSeconds(0.0));
+  EXPECT_FALSE(produced);
+  EXPECT_EQ(adapter.skippedNonFinite(), 1u);
+}
+
+// ---------------------------------------------------------------------------
+// #26 M29: HDT/HDG arriving BEFORE the first GGA lazily initialised the working
+// datum at Null Island — a (0,0) heading-only pose became the tangent-plane
+// origin. Heading-before-fix is the NORMAL 10 Hz-vs-1 Hz startup order, so this
+// fires on essentially every cold start. The heading pose is still STORED (the
+// documented multi-heading contract reads heading fields from a pre-fix
+// sentence), but the datum MUST NOT anchor until a pose carries a real
+// position; the first valid GGA anchors it at the true origin (no spurious
+// ~6000 km recenter). The datum-origin invariant lives in OwnShipProvider, so
+// the fix is provider-side.
+// ---------------------------------------------------------------------------
+TEST(OwnShipNmeaAdapterTest, HdtBeforeFirstFixDoesNotAnchorDatumAtNullIsland) {
+  OwnShipProvider provider;  // no datum yet
+  OwnShipNmeaAdapter adapter(provider);
+
+  // Heading arrives first (10 Hz vs 1 Hz). Pose is stored (heading readable)
+  // but the datum must NOT anchor at (0,0).
+  ASSERT_TRUE(
+      adapter.ingest(makeNmea("GPHDT,123.5,T"), Timestamp::fromSeconds(1.0)));
+  ASSERT_TRUE(provider.latest().has_value());
+  EXPECT_DOUBLE_EQ(provider.latest()->heading_true_deg, 123.5);
+  EXPECT_FALSE(provider.hasDatum());  // NOT anchored at Null Island
+
+  // First real fix anchors the datum at Hamburg, at the true origin.
+  ASSERT_TRUE(adapter.ingest(
+      makeNmea("GPGGA,120002,5333.000,N,00959.000,E,1,08,0.9,10.0,M,46.9,M,,"),
+      Timestamp::fromSeconds(2.0)));
+  ASSERT_TRUE(provider.hasDatum());
+  EXPECT_GT(provider.latest()->lat_deg, 53.0);
+  // Datum origin is the real fix, not Null Island: own-ship maps to ~ENU (0,0).
+  const auto enu = provider.datum().toEnu(
+      navtracker::geo::Geodetic{provider.latest()->lat_deg,
+                                provider.latest()->lon_deg, 0.0});
+  EXPECT_NEAR(enu.x(), 0.0, 1.0);
+  EXPECT_NEAR(enu.y(), 0.0, 1.0);
+}
+
+TEST(OwnShipNmeaAdapterTest, HdgBeforeFirstFixDoesNotAnchorDatumAtNullIsland) {
+  OwnShipProvider provider;  // no datum yet
+  OwnShipNmeaAdapter adapter(provider);
+
+  // Magnetic-heading sentence before any fix: stored, but no datum anchor.
+  ASSERT_TRUE(adapter.ingest(makeNmea("HCHDG,123.5,0.0,E,2.0,W"),
+                             Timestamp::fromSeconds(1.0)));
+  ASSERT_TRUE(provider.latest().has_value());
+  EXPECT_FALSE(provider.hasDatum());
+}

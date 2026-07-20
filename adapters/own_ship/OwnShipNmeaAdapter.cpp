@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <optional>
 
 #include "adapters/util/EdgeValidation.hpp"
 #include "adapters/util/Nmea.hpp"
@@ -38,8 +39,27 @@ double signedFromDir(double magnitude, const std::string& dir) {
   return std::nan("");
 }
 
+// #26 M16/M17: parse a REQUIRED numeric NMEA field. Returns nullopt when the
+// field is empty or does not parse to a FINITE value — both the empty-field
+// strtod("")==0.0 case (which used to publish a bogus due-north / zero-SOG
+// sample) and the strtod("1e400")==+Inf case (which used to hang wrapDegToPi's
+// wrap loop, freezing the ingest thread). Callers must treat nullopt as
+// "reject this sentence", never as 0.
+std::optional<double> parseFiniteField(const std::string& s) {
+  if (s.empty()) return std::nullopt;
+  char* end = nullptr;
+  const double v = std::strtod(s.c_str(), &end);
+  if (end == s.c_str()) return std::nullopt;   // no digits consumed
+  if (!std::isfinite(v)) return std::nullopt;  // Inf / NaN / overflow
+  return v;
+}
+
 double wrapDegToPi(double a) {
   double rad = a * kDegToRad;
+  // #26 M17: never spin on a non-finite input. Inf - 2π == Inf, so the wrap
+  // loops below never terminate on Inf; NaN falls straight through. Required
+  // callers gate on parseFiniteField, but keep the wrap itself total.
+  if (!std::isfinite(rad)) return rad;
   constexpr double kPi = 3.14159265358979323846;
   while (rad > kPi) rad -= 2.0 * kPi;
   while (rad <= -kPi) rad += 2.0 * kPi;
@@ -99,6 +119,9 @@ double OwnShipNmeaAdapter::gyroRateRadPerSec(Timestamp t,
   if (dt <= 0.0 || dt > max_dt_s) return 0.0;
   constexpr double kPi = 3.14159265358979323846;
   double dh = b.heading_rad - a.heading_rad;
+  // #26 M17: the stored headings come from parseFiniteField-gated wrapDegToPi,
+  // so dh is finite; guard anyway so a non-finite slip can never spin the wrap.
+  if (!std::isfinite(dh)) return 0.0;
   while (dh > kPi) dh -= 2.0 * kPi;
   while (dh < -kPi) dh += 2.0 * kPi;
   return dh / dt;
@@ -217,9 +240,17 @@ bool OwnShipNmeaAdapter::ingest(std::string_view line, Timestamp t) {
     // [8]=date, [9]=magvar, [10]=E/W, [11]=mode(optional).
     if (parsed->fields.size() < 8) return false;
     if (parsed->fields[1] != "A") return false;  // V = navigation receiver warning
-    const double sog_knots = std::strtod(parsed->fields[6].c_str(), nullptr);
-    const double sog_m_per_s = sog_knots * 0.514444;  // 1 knot = 1852/3600 m/s
-    const double cog_deg = std::strtod(parsed->fields[7].c_str(), nullptr);
+    // #26 M16: SOG (field 6) and COG (field 7) are required. A bare strtod
+    // turned an empty field into 0.0 — a bogus zero-velocity buffered as a real
+    // measurement — and an overflow into Inf. Reject the sentence instead.
+    const auto sog_knots_opt = parseFiniteField(parsed->fields[6]);
+    const auto cog_deg_opt = parseFiniteField(parsed->fields[7]);
+    if (!sog_knots_opt || !cog_deg_opt) {
+      ++skip_non_finite_;
+      return false;
+    }
+    const double sog_m_per_s = *sog_knots_opt * 0.514444;  // 1 kn = 1852/3600 m/s
+    const double cog_deg = *cog_deg_opt;
     const double cog_rad = cog_deg * kDegToRad;
     // ENU: east = SOG · sin(COG_true), north = SOG · cos(COG_true)
     // (COG is measured clockwise from true north).
@@ -263,7 +294,15 @@ bool OwnShipNmeaAdapter::ingest(std::string_view line, Timestamp t) {
   }
   if (parsed->formatter == "HDT") {
     if (parsed->fields.empty()) return false;
-    const double heading_deg = std::strtod(parsed->fields[0].c_str(), nullptr);
+    // #26 M16/M17: an empty heading field parsed to 0.0 (published as an
+    // authoritative due-north sample) and an overflowed field to Inf (which
+    // hung wrapDegToPi's wrap loop). Reject a non-finite heading at the edge.
+    const auto heading_deg_opt = parseFiniteField(parsed->fields[0]);
+    if (!heading_deg_opt) {
+      ++skip_non_finite_;
+      return false;
+    }
+    const double heading_deg = *heading_deg_opt;
     const bool routed_gps =
         cfg_.gps_heading_talkers.count(parsed->talker) > 0;
     if (routed_gps) {
@@ -294,7 +333,14 @@ bool OwnShipNmeaAdapter::ingest(std::string_view line, Timestamp t) {
   }
   if (parsed->formatter == "HDG") {
     if (parsed->fields.empty()) return false;
-    const double mag_raw_deg = std::strtod(parsed->fields[0].c_str(), nullptr);
+    // #26 M16: the magnetic heading (field 0) is required; reject empty /
+    // non-finite rather than publish a 0.0 due-north sample.
+    const auto mag_raw_deg_opt = parseFiniteField(parsed->fields[0]);
+    if (!mag_raw_deg_opt) {
+      ++skip_non_finite_;
+      return false;
+    }
+    const double mag_raw_deg = *mag_raw_deg_opt;
     double dev_deg = 0.0;
     if (parsed->fields.size() > 2 && !parsed->fields[1].empty()) {
       const double dev_mag = std::strtod(parsed->fields[1].c_str(), nullptr);

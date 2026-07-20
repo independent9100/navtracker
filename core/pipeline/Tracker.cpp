@@ -274,7 +274,7 @@ void Tracker::processBatch(const std::vector<Measurement>& scan_arg) {
 
   for (std::size_t j = 0; j < scan.size(); ++j) {
     if (!meas_used[j] && canInitiateTrack(scan[j].model) &&
-        isMeasurementCovariancePsd(scan[j].covariance)) {
+        isMeasurementCovariancePsd(scan[j].covariance, scan[j].dim())) {  // #35 M1
       Track seed = estimator_.initiate(scan[j]);
       manager_.add(seed, t);
     }

@@ -183,8 +183,12 @@ the whole engine works in. `OwnShipProvider`
 (`core/own_ship/OwnShipProvider.hpp`) owns it for you.
 
 - Construct with **no arguments** — it lazily initialises the datum from the first
-  `update(pose)` call (`core/own_ship/OwnShipProvider.hpp`). A second constructor
-  pins an explicit `geo::Datum` if you need one
+  `update(pose)` call **that carries a real position** (`core/own_ship/OwnShipProvider.hpp`).
+  A pose with a non-finite, out-of-range, or exactly-`(0,0)` (Null Island) position
+  is still stored (so a heading-only sentence before the first GPS fix keeps its
+  heading readable) but does **not** anchor or recenter the datum — anchoring at
+  Null Island would silently corrupt every downstream ENU conversion (#26 M29).
+  A second constructor pins an explicit `geo::Datum` if you need one
   (`core/own_ship/OwnShipProvider.hpp`).
 - It **auto-recenters** when own-ship moves more than the threshold in
   `DatumRecenterPolicy` — default **`recenter_threshold_km{30.0}`**
@@ -1379,6 +1383,15 @@ environment models (`use_land_model`, `use_static_obstacle_model`,
 `feed_clutter_map`, §7) and the coverage channel (`use_sensor_activity`,
 `estimate_coverage_sector`, §7) — a wired model pointer does nothing until its
 flag is on.
+
+`reject_stale_measurements` (default **`true`**) drops a stale batch — one whose
+LATEST instant (`t_max`, what `predict` advances to) precedes the filter's
+current time — sharing the intent of `Tracker`/`MhtTracker` (which key on the
+front because they process at the front; PMBM keys on `t_max`, see
+`pmbm-design.md §2.3`). Deterministic in-order replay never trips it. Drops are
+observable via `PmbmTracker::staleDropped()`. Turn it off only for a caller that
+deliberately relies on PMBM's set-wise, order-robust update of a late batch
+(#28).
 
 **Velocity-runaway guard (backlog #25 Phase 2b, default OFF).** At a detection
 update whose position innovation ‖measurement − predicted position‖ exceeds
