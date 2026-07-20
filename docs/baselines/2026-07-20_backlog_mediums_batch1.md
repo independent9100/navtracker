@@ -122,7 +122,7 @@ are decoration only, per condition 4):
 
 | Tracking-path item | Byte-identical basis (deployable) | Mechanized by |
 |--------------------|-----------------------------------|---------------|
-| #28 stale guard | in-order deterministic replay never trips the front-keyed guard | `PmbmScenario.ReplayDeterminism`, `PmbmTrackerUpdate.ReplayDeterministicallyReproducesState`, `PmbmClutterFeed.DeterministicFeed`, all PMBM replay/scenario tests |
+| #28 stale guard | in-order deterministic replay never trips the (t_max-keyed) guard | `PmbmScenario.ReplayDeterminism`, `PmbmTrackerUpdate.ReplayDeterministicallyReproducesState`, `PmbmClutterFeed.DeterministicFeed`, all PMBM replay/scenario tests |
 | #34 M6 ctor guard | deployable `clutter_intensity` = 1e-4 > 0 (no `=0` config exists in-tree) | ctor unchanged for valid λ_C; full PMBM group green |
 | #35 M1 R-dim guard | every model has `value.size()` == required R dim → correct R passes identically | full estimator + PMBM/MHT/Tracker scenario groups green |
 
