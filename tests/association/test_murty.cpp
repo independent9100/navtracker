@@ -147,3 +147,58 @@ TEST(Murty, ZeroOrEmptyArguments) {
   EXPECT_TRUE(murtyKBest(c2, 0).assignments.empty());
   EXPECT_TRUE(murtyKBest(c2, -1).assignments.empty());
 }
+
+// ── Backlog #34 M3: per-row degradation on an infeasible seed ──────────────
+// When no full matching on finite edges exists, the Hungarian seed crosses a
+// +∞ cell (BIG_M fallback). murtyKBest MUST drop that infeasible edge and
+// return the feasible subset — NOT an empty result that silently drops the
+// whole cluster's children. Both callers (PmbmTracker, MhtTracker) were built
+// against this contract: they re-check isfinite per assigned cell and skip
+// unassigned (-1) rows; the empty-return made those checks dead code.
+
+TEST(Murty, DegradesToFeasibleSubsetOnAllInfeasibleRow) {
+  // Row 0 is entirely forbidden (+∞): row 0 can never be feasibly assigned.
+  Eigen::MatrixXd c(2, 2);
+  c << kInf, kInf,
+       1.0,  2.0;
+  const auto m = murtyKBest(c, 3);
+  ASSERT_GE(m.assignments.size(), 1u);  // NOT empty (the M3 defect)
+  // Row 0 → unassigned; row 1 takes its cheapest finite column (col 0).
+  EXPECT_EQ(m.assignments[0][0], -1);
+  EXPECT_EQ(m.assignments[0][1], 0);
+  EXPECT_NEAR(m.costs[0], 1.0, 1e-12);
+  // No returned assignment crosses a +∞ edge.
+  for (const auto& a : m.assignments)
+    for (int r = 0; r < static_cast<int>(a.size()); ++r)
+      if (a[r] >= 0) EXPECT_TRUE(std::isfinite(c(r, a[r])));
+}
+
+TEST(Murty, DegradesToFeasibleSubsetOnAllInfeasibleColumn) {
+  // Column 0 is entirely forbidden: no row can feasibly claim it, so it stays
+  // unmatched while the finite column is assigned to its cheapest row.
+  Eigen::MatrixXd c(2, 2);
+  c << kInf, 1.0,
+       kInf, 2.0;
+  const auto m = murtyKBest(c, 3);
+  ASSERT_GE(m.assignments.size(), 1u);
+  // Col 1 → row 0 (cheapest), row 1 unassigned (its only finite col is taken).
+  EXPECT_EQ(m.assignments[0][0], 1);
+  EXPECT_EQ(m.assignments[0][1], -1);
+  EXPECT_NEAR(m.costs[0], 1.0, 1e-12);
+  for (const auto& a : m.assignments)
+    for (int r = 0; r < static_cast<int>(a.size()); ++r)
+      if (a[r] >= 0) EXPECT_TRUE(std::isfinite(c(r, a[r])));
+}
+
+TEST(Murty, FullyFeasibleWithSomeForbiddenIsUnchanged) {
+  // Byte-identical guard: when a full finite matching EXISTS despite some +∞
+  // cells, degradation must not alter it (this is the common gauntlet case).
+  Eigen::MatrixXd c(2, 2);
+  c << kInf, 1.0,
+       1.0, kInf;
+  const auto m = murtyKBest(c, 1);
+  ASSERT_EQ(m.assignments.size(), 1u);
+  EXPECT_EQ(m.assignments[0][0], 1);
+  EXPECT_EQ(m.assignments[0][1], 0);
+  EXPECT_NEAR(m.costs[0], 2.0, 1e-12);
+}

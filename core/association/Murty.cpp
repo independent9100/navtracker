@@ -46,6 +46,19 @@ bool feasibleAgainst(const std::vector<int>& assignment,
   return true;
 }
 
+// Per-row degradation (backlog #34 M3): unassign (set to -1) every row whose
+// assigned cell is +∞ in `C`. A +∞ in the Hungarian result is the BIG_M
+// fallback for a row with no feasible edge; keeping the finite remainder yields
+// a valid partial assignment instead of discarding the whole result. No-op when
+// the assignment is already fully feasible.
+void dropInfeasibleEdges(std::vector<int>& assignment,
+                         const Eigen::MatrixXd& C) {
+  for (int r = 0; r < static_cast<int>(assignment.size()); ++r) {
+    const int c = assignment[r];
+    if (c >= 0 && !std::isfinite(C(r, c))) assignment[r] = -1;
+  }
+}
+
 struct Partition {
   Eigen::MatrixXd cost;            // working matrix with locks applied
   std::vector<int> assignment;     // row -> col
@@ -65,8 +78,14 @@ KBestResult murtyKBest(const Eigen::MatrixXd& C0, int K) {
   if (K <= 0 || C0.rows() == 0 || C0.cols() == 0) return out;
 
   // Seed: solve LSAP on the unconstrained cost.
-  const std::vector<int> seed_assign = hungarianAssignment(C0);
-  if (!feasibleAgainst(seed_assign, C0)) return out;
+  std::vector<int> seed_assign = hungarianAssignment(C0);
+  // Per-row degradation (backlog #34 M3): drop any infeasible (+∞) seed edge and
+  // keep the feasible subset, rather than returning EMPTY and silently dropping
+  // the whole cluster's children. Both callers (PmbmTracker, MhtTracker) filter
+  // per-cell on isfinite and skip unassigned (-1) rows — the contract they were
+  // built against. No-op on a fully-feasible seed (byte-identical; the common
+  // case — Phase-0 probe measured 0 infeasible-seed hits across the gauntlet).
+  dropInfeasibleEdges(seed_assign, C0);
 
   std::priority_queue<Partition> heap;
   heap.push(Partition{C0, seed_assign,
