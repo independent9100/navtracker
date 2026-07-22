@@ -678,6 +678,37 @@ void PmbmTracker::enumerateChildren(
     return any_coverage ? (1.0 - survive) : 0.0;
   };
 
+  // Reconciled miss-baseline M_i (backlog #34 M5). Returns the EXACT log-weight
+  // the misdetection branch below adds when Bernoulli `b` is missed this scan:
+  //   - 0 when source-aware coverage says this scan could not have observed b
+  //     (!should_misdetect → the idle-decay path adds no weight);
+  //   - use_sensor_activity: log(1 − r·opp.p_D) on a completed surveillance sweep
+  //     that covered b, else 0 (mid-sweep / out of coverage / cooperative-only);
+  //   - legacy: log(1 − r·compute_miss_pD(b)), else 0 (out of all coverage).
+  // The assignment cost subtracts this from every detection cell so the K-best
+  // enumeration order equals the applied posterior order. It MUST stay identical
+  // to the log-weight the misdetection branch applies (the two sites are
+  // cross-referenced below); changing one without the other reopens M5. Pure —
+  // no staging, matching evaluate() the misdetection branch reads from the same
+  // frozen last_activity_check_ snapshot, so the two agree per Bernoulli.
+  auto miss_baseline_logw = [&](const Bernoulli& b) -> double {
+    if (!should_misdetect(b.id)) return 0.0;
+    const double r = b.existence_probability;
+    if (cfg_.use_sensor_activity && sensor_activity_ != nullptr) {
+      auto ait = last_activity_check_.find(b.id);
+      const Timestamp last_check =
+          (ait != last_activity_check_.end()) ? ait->second : b.birth_time;
+      const MissOpportunity opp = sensor_activity_->evaluate(
+          b.mean.head<2>(), own_ship_enu_, b.mmsi, b.platform_id, last_check,
+          current_time_);
+      if (!opp.surveillance_miss) return 0.0;
+      return std::log(std::max(1.0 - r * opp.p_D, 1e-300));
+    }
+    const double pD = compute_miss_pD(b);
+    if (pD <= 0.0) return 0.0;
+    return std::log(std::max(1.0 - r * pD, 1e-300));
+  };
+
   // Edge case: empty scan. Only one child = parent with all-miss updates.
   // Misdetection: r ← (1 − p_D)·r / (1 − r + (1 − p_D)·r), state unchanged.
   // Hypothesis weight gains a Σ log(1 − r·p_D) shift (relative ordering
@@ -802,6 +833,9 @@ void PmbmTracker::enumerateChildren(
   for (int i = 0; i < n; ++i) {
     const Bernoulli& b = parent.bernoullis[i];
     if (b.existence_probability <= 0.0) continue;
+    // M5 (#34): the miss baseline factored out of this Bernoulli's detection
+    // cells. Depends on b, not on l → computed once per row.
+    const double miss_baseline = miss_baseline_logw(b);
     Track t = toTrack(b);
     for (int l = 0; l < m; ++l) {
       if (cfg_.gate_threshold > 0.0 &&
@@ -840,7 +874,18 @@ void PmbmTracker::enumerateChildren(
       }
       updated[i][l] = std::move(upd);
       const double r = b.existence_probability;
-      const double cost_val = -(std::log(r) + ll);
+      // M5 (#34): full detection-pricing cost. The applied posterior weight of a
+      // detected Bernoulli is log(r·p_D·ℓ) (PmbmTracker.cpp detection branch);
+      // factoring out the all-miss baseline Σ_i M_i (constant across a scan's
+      // children) gives the per-cell cost
+      //   −log(r·p_D·ℓ) + M_i  =  −(log r + log pD_l + ll) + miss_baseline
+      // where p_D = pD_l[l], the SAME per-measurement detection probability the
+      // detection weight uses, and M_i = miss_baseline_logw(b) is the SAME
+      // expression the misdetection branch adds. Omitting −log pD_l + M_i made
+      // the K-best argmin differ from the max-posterior assignment (K=1 committed
+      // to the wrong child).
+      const double cost_val =
+          -(std::log(r) + std::log(pD_l[l]) + ll) + miss_baseline;
       C(i, l) = std::isfinite(cost_val) ? cost_val : kInf;
     }
   }
@@ -861,27 +906,24 @@ void PmbmTracker::enumerateChildren(
       : std::max(1, cfg_.k_best_per_hypothesis);
 
   // Backlog #34 Phase-0 offline probe (diagnostic-only). Runs only when a diag
-  // sink is attached; a pure read (recomputes + re-solves the cost matrix, never
+  // sink is attached; a pure read (reconstructs + re-solves cost matrices, never
   // touches tracking state) → tracking output is byte-identical with or without
-  // a sink. Measures the blast radius of the two association-correctness
-  // defects on THIS cost matrix, and settles the M5 fix-form fork (arbiter
-  // ruling 2026-07-20): whether the cost's miss-baseline must be reconciled with
-  // the APPLIED (conditional surveillance-miss) weight, or the textbook
-  // unconditional baseline picks the same children gauntlet-wide.
-  //   M5 — two corrected costs, both adding the omitted detection-pricing term
-  //        by re-pricing the finite Bernoulli detection cells (new-target rows
-  //        unchanged; the +∞ pattern is preserved so feasibility is shared):
-  //          C'  (textbook)   : cost += −log(pD_l) + log(1 − r·pD_l)   [uncond.]
-  //          C'' (reconciled) : cost += −log(pD_l) + M_i^applied       [= the exact
-  //             log-weight the miss branch would add for Bernoulli i: conditional
-  //             surveillance-miss opp.p_D under use_sensor_activity, compute_miss_pD
-  //             legacy, 0 when !should_misdetect / !surveillance_miss / p_D≤0]
-  //        counts: k1_flips = argmin(C) suboptimal under C' (textbook blast radius);
-  //        recon_flips = argmin(C) suboptimal under C''; form_div = argmin(C')
-  //        suboptimal under C'' (the two fix forms pick different children → the
-  //        reconciliation is NOT free and the reconciled form must ship).
-  //   M3 — count how often the current Hungarian seed crosses an infinite edge;
-  //        today murtyKBest returns EMPTY there, dropping this parent's children.
+  // a sink. Since the M5 fix, `C` above IS the shipped reconciled cost, so the
+  // probe reconstructs the two REFERENCE costs from the in-scope quantities and
+  // measures the M5 blast radius against the shipped cost (the numbers stay
+  // reproducible from the fixed code):
+  //     C_buggy(i,l) = −(log r + ll)                          [pre-#34 M5 cost]
+  //     C_text (i,l) = C_buggy − log(pD_l) + log(1 − r·pD_l)  [textbook form]
+  //     C            = −(log r + log pD_l + ll) + M_i^applied [shipped reconciled]
+  // (all three share C's +∞ pattern — only finite detection cells are re-priced).
+  // Counts, per parent cost matrix:
+  //   recon_flips = argmin(C_buggy) suboptimal under C  → the DEPLOYED blast
+  //                 radius (shipped reconciled cost vs the pre-fix cost);
+  //   k1_flips    = argmin(C_buggy) suboptimal under C_text → textbook blast radius;
+  //   form_div    = argmin(C_text) suboptimal under C → the two fix forms would
+  //                 pick different children (why the reconciled form was chosen);
+  //   order_changes / form_order_div = the K>1 top-k analogues;
+  //   infeasible_seed = M3 seed crosses a +∞ edge (0 across the gauntlet post-M6).
   if (diag_sink_ != nullptr) {
     ++probe_n_matrices_;
     auto seed_feasible = [](const std::vector<int>& a,
@@ -899,60 +941,38 @@ void PmbmTracker::enumerateChildren(
       return t;
     };
     // Strictly-suboptimal test: assignment `a` (optimal for some matrix) would be
-    // beaten under matrix `M` → shipping the cost that produced `a` selects the
-    // wrong child relative to `M`. Ties excluded via the 1e-9 margin.
+    // beaten under matrix `M` → the cost that produced `a` selects a different
+    // child than `M` would. Ties excluded via the 1e-9 margin.
     auto beaten_under = [&](const std::vector<int>& a, const Eigen::MatrixXd& M) {
       const std::vector<int> opt = hungarianAssignment(M);
       return seed_feasible(a, M) && seed_feasible(opt, M) &&
              total_cost(a, M) > total_cost(opt, M) + 1e-9;
     };
-    // M_i^applied: the exact log-weight the miss branch adds for Bernoulli i
-    // (see the misdetection branches below). No staging side effects — pure read.
-    auto applied_miss_logw = [&](const Bernoulli& b) -> double {
-      if (!should_misdetect(b.id)) return 0.0;  // idle-decay only, no weight
-      const double r = b.existence_probability;
-      if (cfg_.use_sensor_activity && sensor_activity_ != nullptr) {
-        auto ait = last_activity_check_.find(b.id);
-        const Timestamp last_check =
-            (ait != last_activity_check_.end()) ? ait->second : b.birth_time;
-        const MissOpportunity opp = sensor_activity_->evaluate(
-            b.mean.head<2>(), own_ship_enu_, b.mmsi, b.platform_id, last_check,
-            current_time_);
-        if (!opp.surveillance_miss) return 0.0;
-        return std::log(std::max(1.0 - r * opp.p_D, 1e-300));
-      }
-      const double pD = compute_miss_pD(b);
-      if (pD <= 0.0) return 0.0;
-      return std::log(std::max(1.0 - r * pD, 1e-300));
-    };
-    Eigen::MatrixXd Cp = C;   // textbook  (unconditional log(1−r·pD_l))
-    Eigen::MatrixXd Cr = C;   // reconciled (applied miss log-weight)
+    Eigen::MatrixXd Cbuggy = C;  // pre-#34 M5 cost: −(log r + ll)
+    Eigen::MatrixXd Ctext = C;   // textbook: unconditional log(1 − r·pD_l) baseline
     for (int i = 0; i < n; ++i) {
-      const Bernoulli& b = parent.bernoullis[i];
-      const double r = b.existence_probability;
+      const double r = parent.bernoullis[i].existence_probability;
       if (r <= 0.0) continue;
-      const double Mi = applied_miss_logw(b);
       for (int l = 0; l < m; ++l) {
-        if (!std::isfinite(C(i, l))) continue;
+        if (!std::isfinite(C(i, l))) continue;  // gated/forbidden cell — shared
         const double pd = pD_l[l];
-        Cp(i, l) = C(i, l) - std::log(pd) + std::log(std::max(1.0 - r * pd, 1e-300));
-        Cr(i, l) = C(i, l) - std::log(pd) + Mi;
+        Cbuggy(i, l) = -(std::log(r) + log_lik[i][l]);
+        Ctext(i, l) =
+            Cbuggy(i, l) - std::log(pd) + std::log(std::max(1.0 - r * pd, 1e-300));
       }
     }
-    const std::vector<int> seed_cur = hungarianAssignment(C);
-    if (!seed_feasible(seed_cur, C)) ++probe_n_infeasible_seed_;
-    if (beaten_under(seed_cur, Cp)) ++probe_n_k1_flips_;    // textbook blast radius
-    if (beaten_under(seed_cur, Cr)) ++probe_n_recon_flips_;  // reconciled blast radius
-    // Fix-form fork: does the textbook argmin lose under the reconciled cost?
-    const std::vector<int> seed_text = hungarianAssignment(Cp);
-    if (beaten_under(seed_text, Cr)) ++probe_n_form_div_;
-    // Order changes within the used K (only meaningful for adaptive K>1).
+    const std::vector<int> seed_buggy = hungarianAssignment(Cbuggy);
+    if (!seed_feasible(hungarianAssignment(C), C)) ++probe_n_infeasible_seed_;
+    if (beaten_under(seed_buggy, C)) ++probe_n_recon_flips_;      // shipped vs buggy
+    if (beaten_under(seed_buggy, Ctext)) ++probe_n_k1_flips_;     // textbook vs buggy
+    const std::vector<int> seed_text = hungarianAssignment(Ctext);
+    if (beaten_under(seed_text, C)) ++probe_n_form_div_;          // textbook vs shipped
     if (k_effective > 1) {
-      const auto kb_cur = murtyKBest(C, k_effective).assignments;
-      const auto kb_text = murtyKBest(Cp, k_effective).assignments;
-      const auto kb_recon = murtyKBest(Cr, k_effective).assignments;
-      if (kb_cur != kb_text) ++probe_n_order_changes_;
-      if (kb_text != kb_recon) ++probe_n_form_order_div_;
+      const auto kb_buggy = murtyKBest(Cbuggy, k_effective).assignments;
+      const auto kb_text = murtyKBest(Ctext, k_effective).assignments;
+      const auto kb_ship = murtyKBest(C, k_effective).assignments;
+      if (kb_buggy != kb_ship) ++probe_n_order_changes_;
+      if (kb_text != kb_ship) ++probe_n_form_order_div_;
     }
   }
 
