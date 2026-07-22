@@ -99,6 +99,26 @@ struct PmbmScanDiag {
   int n_hyp_dropped_floor{0};      // global hypotheses removed by weight floor
   int n_hyp_dropped_cap{0};        // global hypotheses removed by the size cap
   int n_bernoulli_pruned_rmin{0};  // Bernoullis erased by r_min (across hyps)
+  // Backlog #34 Phase-0 Murty association-correctness probe. Bench-side offline
+  // diagnostic: measures the blast radius of adding the omitted detection-pricing
+  // term −log(p_D/(1−r·p_D)) to the assignment cost (M5) and how often the
+  // infeasible-seed empty-return path (M3) is taken. Accumulated over ALL
+  // per-parent cost matrices built in this scan's enumerateChildren. Populated
+  // only when a diag sink is attached; the probe is a pure read (recomputes cost
+  // matrices + solves them, never mutates tracking state), so tracking output is
+  // byte-identical whether or not a sink is present. See
+  // docs/baselines/2026-07-20_murty_association_correctness.md.
+  // Two corrected-cost forms are compared (arbiter fix-form fork 2026-07-20):
+  //   textbook   = unconditional log(1−r·pD_l) miss-baseline;
+  //   reconciled = the exact applied miss log-weight (conditional surveillance
+  //                miss under use_sensor_activity, else compute_miss_pD / 0).
+  long probe_n_cost_matrices{0};          // per-parent cost matrices seen (m>0)
+  long probe_n_k1_winner_flips{0};        // argmin(C) suboptimal under textbook C'
+  long probe_n_recon_flips{0};            // argmin(C) suboptimal under reconciled C''
+  long probe_n_form_div{0};               // argmin(C') suboptimal under C'' (forms differ)
+  long probe_n_order_changes_within_k{0}; // top-k(C) != top-k(C') (k_effective>1)
+  long probe_n_form_order_div_within_k{0};// top-k(C') != top-k(C'') (k_effective>1)
+  long probe_n_infeasible_seed_head{0};   // seed edge infinite → today returns EMPTY
   std::vector<PmbmBernoulliDiag> bernoullis;
 };
 

@@ -12,6 +12,7 @@
 
 #include <Eigen/Dense>
 
+#include "core/association/Hungarian.hpp"
 #include "core/association/Murty.hpp"
 #include "core/estimation/MeasurementModels.hpp"
 #include "core/pipeline/BiasCorrection.hpp"
@@ -858,6 +859,103 @@ void PmbmTracker::enumerateChildren(
   const int k_effective = (k_override >= 1)
       ? k_override
       : std::max(1, cfg_.k_best_per_hypothesis);
+
+  // Backlog #34 Phase-0 offline probe (diagnostic-only). Runs only when a diag
+  // sink is attached; a pure read (recomputes + re-solves the cost matrix, never
+  // touches tracking state) → tracking output is byte-identical with or without
+  // a sink. Measures the blast radius of the two association-correctness
+  // defects on THIS cost matrix, and settles the M5 fix-form fork (arbiter
+  // ruling 2026-07-20): whether the cost's miss-baseline must be reconciled with
+  // the APPLIED (conditional surveillance-miss) weight, or the textbook
+  // unconditional baseline picks the same children gauntlet-wide.
+  //   M5 — two corrected costs, both adding the omitted detection-pricing term
+  //        by re-pricing the finite Bernoulli detection cells (new-target rows
+  //        unchanged; the +∞ pattern is preserved so feasibility is shared):
+  //          C'  (textbook)   : cost += −log(pD_l) + log(1 − r·pD_l)   [uncond.]
+  //          C'' (reconciled) : cost += −log(pD_l) + M_i^applied       [= the exact
+  //             log-weight the miss branch would add for Bernoulli i: conditional
+  //             surveillance-miss opp.p_D under use_sensor_activity, compute_miss_pD
+  //             legacy, 0 when !should_misdetect / !surveillance_miss / p_D≤0]
+  //        counts: k1_flips = argmin(C) suboptimal under C' (textbook blast radius);
+  //        recon_flips = argmin(C) suboptimal under C''; form_div = argmin(C')
+  //        suboptimal under C'' (the two fix forms pick different children → the
+  //        reconciliation is NOT free and the reconciled form must ship).
+  //   M3 — count how often the current Hungarian seed crosses an infinite edge;
+  //        today murtyKBest returns EMPTY there, dropping this parent's children.
+  if (diag_sink_ != nullptr) {
+    ++probe_n_matrices_;
+    auto seed_feasible = [](const std::vector<int>& a,
+                            const Eigen::MatrixXd& M) {
+      for (int r = 0; r < static_cast<int>(a.size()); ++r) {
+        const int c = a[r];
+        if (c >= 0 && !std::isfinite(M(r, c))) return false;
+      }
+      return true;
+    };
+    auto total_cost = [](const std::vector<int>& a, const Eigen::MatrixXd& M) {
+      double t = 0.0;
+      for (int r = 0; r < static_cast<int>(a.size()); ++r)
+        if (a[r] >= 0) t += M(r, a[r]);
+      return t;
+    };
+    // Strictly-suboptimal test: assignment `a` (optimal for some matrix) would be
+    // beaten under matrix `M` → shipping the cost that produced `a` selects the
+    // wrong child relative to `M`. Ties excluded via the 1e-9 margin.
+    auto beaten_under = [&](const std::vector<int>& a, const Eigen::MatrixXd& M) {
+      const std::vector<int> opt = hungarianAssignment(M);
+      return seed_feasible(a, M) && seed_feasible(opt, M) &&
+             total_cost(a, M) > total_cost(opt, M) + 1e-9;
+    };
+    // M_i^applied: the exact log-weight the miss branch adds for Bernoulli i
+    // (see the misdetection branches below). No staging side effects — pure read.
+    auto applied_miss_logw = [&](const Bernoulli& b) -> double {
+      if (!should_misdetect(b.id)) return 0.0;  // idle-decay only, no weight
+      const double r = b.existence_probability;
+      if (cfg_.use_sensor_activity && sensor_activity_ != nullptr) {
+        auto ait = last_activity_check_.find(b.id);
+        const Timestamp last_check =
+            (ait != last_activity_check_.end()) ? ait->second : b.birth_time;
+        const MissOpportunity opp = sensor_activity_->evaluate(
+            b.mean.head<2>(), own_ship_enu_, b.mmsi, b.platform_id, last_check,
+            current_time_);
+        if (!opp.surveillance_miss) return 0.0;
+        return std::log(std::max(1.0 - r * opp.p_D, 1e-300));
+      }
+      const double pD = compute_miss_pD(b);
+      if (pD <= 0.0) return 0.0;
+      return std::log(std::max(1.0 - r * pD, 1e-300));
+    };
+    Eigen::MatrixXd Cp = C;   // textbook  (unconditional log(1−r·pD_l))
+    Eigen::MatrixXd Cr = C;   // reconciled (applied miss log-weight)
+    for (int i = 0; i < n; ++i) {
+      const Bernoulli& b = parent.bernoullis[i];
+      const double r = b.existence_probability;
+      if (r <= 0.0) continue;
+      const double Mi = applied_miss_logw(b);
+      for (int l = 0; l < m; ++l) {
+        if (!std::isfinite(C(i, l))) continue;
+        const double pd = pD_l[l];
+        Cp(i, l) = C(i, l) - std::log(pd) + std::log(std::max(1.0 - r * pd, 1e-300));
+        Cr(i, l) = C(i, l) - std::log(pd) + Mi;
+      }
+    }
+    const std::vector<int> seed_cur = hungarianAssignment(C);
+    if (!seed_feasible(seed_cur, C)) ++probe_n_infeasible_seed_;
+    if (beaten_under(seed_cur, Cp)) ++probe_n_k1_flips_;    // textbook blast radius
+    if (beaten_under(seed_cur, Cr)) ++probe_n_recon_flips_;  // reconciled blast radius
+    // Fix-form fork: does the textbook argmin lose under the reconciled cost?
+    const std::vector<int> seed_text = hungarianAssignment(Cp);
+    if (beaten_under(seed_text, Cr)) ++probe_n_form_div_;
+    // Order changes within the used K (only meaningful for adaptive K>1).
+    if (k_effective > 1) {
+      const auto kb_cur = murtyKBest(C, k_effective).assignments;
+      const auto kb_text = murtyKBest(Cp, k_effective).assignments;
+      const auto kb_recon = murtyKBest(Cr, k_effective).assignments;
+      if (kb_cur != kb_text) ++probe_n_order_changes_;
+      if (kb_text != kb_recon) ++probe_n_form_order_div_;
+    }
+  }
+
   const KBestResult kb = murtyKBest(C, k_effective);
 
   for (std::size_t k = 0; k < kb.assignments.size(); ++k) {
@@ -1409,6 +1507,13 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     diag_hyp_dropped_floor_ = 0;
     diag_hyp_dropped_cap_ = 0;
     diag_bernoulli_pruned_rmin_ = 0;
+    probe_n_matrices_ = 0;
+    probe_n_k1_flips_ = 0;
+    probe_n_recon_flips_ = 0;
+    probe_n_form_div_ = 0;
+    probe_n_order_changes_ = 0;
+    probe_n_form_order_div_ = 0;
+    probe_n_infeasible_seed_ = 0;
   }
   // Task 5 Step-4 fix: reset the per-scan staging maps. enumerateChildren
   // reads the persistent maps as a frozen snapshot and writes resolved
@@ -2492,6 +2597,13 @@ void PmbmTracker::emitPmbmDiagnostics(Timestamp t) {
   d.n_hyp_dropped_floor = diag_hyp_dropped_floor_;
   d.n_hyp_dropped_cap = diag_hyp_dropped_cap_;
   d.n_bernoulli_pruned_rmin = diag_bernoulli_pruned_rmin_;
+  d.probe_n_cost_matrices = probe_n_matrices_;
+  d.probe_n_k1_winner_flips = probe_n_k1_flips_;
+  d.probe_n_recon_flips = probe_n_recon_flips_;
+  d.probe_n_form_div = probe_n_form_div_;
+  d.probe_n_order_changes_within_k = probe_n_order_changes_;
+  d.probe_n_form_order_div_within_k = probe_n_form_order_div_;
+  d.probe_n_infeasible_seed_head = probe_n_infeasible_seed_;
 
   struct Agg {
     double mass{0.0};
