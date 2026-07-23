@@ -32,20 +32,6 @@ double totalCostAgainstOriginal(const std::vector<int>& assignment,
   return total;
 }
 
-// Feasibility against a partition's working cost matrix: every assigned
-// cell must be finite. Hungarian falls back to BIG_M for infeasible
-// rows; we reject those so the K-best loop doesn't propagate impossible
-// children.
-bool feasibleAgainst(const std::vector<int>& assignment,
-                     const Eigen::MatrixXd& C) {
-  for (int r = 0; r < static_cast<int>(assignment.size()); ++r) {
-    const int c = assignment[r];
-    if (c < 0) continue;
-    if (!std::isfinite(C(r, c))) return false;
-  }
-  return true;
-}
-
 // Per-row degradation (backlog #34 M3): unassign (set to -1) every row whose
 // assigned cell is +∞ in `C`. A +∞ in the Hungarian result is the BIG_M
 // fallback for a row with no feasible edge; keeping the finite remainder yields
@@ -76,6 +62,16 @@ struct Partition {
 KBestResult murtyKBest(const Eigen::MatrixXd& C0, int K) {
   KBestResult out;
   if (K <= 0 || C0.rows() == 0 || C0.cols() == 0) return out;
+
+  // A measurement column is "explainable" if it has ANY finite cell in the
+  // ORIGINAL cost. A column that is all-+∞ in C0 (e.g. a rho==0 measurement with
+  // no in-gate Bernoulli) is genuinely unexplainable — every assignment must drop
+  // it. Used by the #34 F2 child-degradation to tell a genuinely-partial child
+  // (keep) from a dead partition branch that a lock/forbid stranded (reject).
+  std::vector<char> col_explainable(C0.cols(), 0);
+  for (int cc = 0; cc < C0.cols(); ++cc)
+    for (int rr = 0; rr < C0.rows(); ++rr)
+      if (std::isfinite(C0(rr, cc))) { col_explainable[cc] = 1; break; }
 
   // Seed: solve LSAP on the unconstrained cost.
   std::vector<int> seed_assign = hungarianAssignment(C0);
@@ -118,12 +114,34 @@ KBestResult murtyKBest(const Eigen::MatrixXd& C0, int K) {
       // Child: forbid (r, c) in the current locked matrix.
       Eigen::MatrixXd C_child = C_locked;
       C_child(r, c) = kInf;
-      const std::vector<int> child_assign = hungarianAssignment(C_child);
-      if (feasibleAgainst(child_assign, C_child)) {
+      std::vector<int> child_assign = hungarianAssignment(C_child);
+      // Per-row degradation (backlog #34 F2): let a child be a partial in exactly
+      // the same way the seed (M3) can — but ONLY where the infeasibility is
+      // genuine. Hungarian routes a column onto BIG_M only when that column has no
+      // finite cell under the partition's locks. Two cases:
+      //   - the column is unexplainable in the ORIGINAL C0 (all-+∞, e.g. rho==0):
+      //     no assignment can explain it → drop the edge and keep the partial, so
+      //     the K genuine siblings survive (review Finding 2);
+      //   - the column IS explainable in C0 but a lock/forbid stranded it here:
+      //     this partition branch has no feasible completion → reject the whole
+      //     child. This preserves correct Murty pruning (feasibleAgainst was
+      //     load-bearing, not a bug) so ordinary matrices enumerate unchanged.
+      // On every real config rho_l>0 for all l → col_explainable is all true →
+      // this reduces exactly to the pre-#34 wholesale rejection (byte-identical;
+      // 0 infeasible children were seen across the gauntlet).
+      bool dead_branch = false;
+      for (int rr = 0; rr < static_cast<int>(child_assign.size()); ++rr) {
+        const int cc = child_assign[rr];
+        if (cc >= 0 && !std::isfinite(C_child(rr, cc))) {
+          if (col_explainable[cc]) { dead_branch = true; break; }
+          child_assign[rr] = -1;  // genuinely unexplainable column → degrade
+        }
+      }
+      if (!dead_branch) {
         Partition child;
         child.cost = std::move(C_child);
-        child.assignment = child_assign;
-        child.total_cost = totalCostAgainstOriginal(child_assign, C0);
+        child.assignment = std::move(child_assign);
+        child.total_cost = totalCostAgainstOriginal(child.assignment, C0);
         if (std::isfinite(child.total_cost)) {
           heap.push(std::move(child));
         }

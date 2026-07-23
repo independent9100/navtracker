@@ -190,6 +190,44 @@ TEST(Murty, DegradesToFeasibleSubsetOnAllInfeasibleColumn) {
       if (a[r] >= 0) EXPECT_TRUE(std::isfinite(c(r, a[r])));
 }
 
+TEST(Murty, ChildrenDegradeOnUnexplainableColumnAtKGt1) {
+  // #34 F2: column 1 is genuinely unexplainable (all +∞ — the rho==0 measurement
+  // of the review's Finding 2); column 0 can be claimed by any of the three rows.
+  // The K best assignments differ in WHO explains column 0, each dropping column
+  // 1. Pre-F2 the child branch rejected every sibling wholesale (they cross
+  // column 1's +∞) so murtyKBest returned ONLY the seed; F2 keeps the genuine
+  // partials, restoring the K alternatives the adaptive-K lever needs.
+  Eigen::MatrixXd c(3, 2);
+  c << 1.0, kInf,
+       2.0, kInf,
+       3.0, kInf;
+  const auto m = murtyKBest(c, 3);
+  ASSERT_EQ(m.assignments.size(), 3u);  // teeth: pre-F2 this was exactly 1
+  EXPECT_EQ(m.assignments[0], (std::vector<int>{0, -1, -1}));
+  EXPECT_EQ(m.assignments[1], (std::vector<int>{-1, 0, -1}));
+  EXPECT_EQ(m.assignments[2], (std::vector<int>{-1, -1, 0}));
+  EXPECT_NEAR(m.costs[0], 1.0, 1e-12);
+  EXPECT_NEAR(m.costs[1], 2.0, 1e-12);
+  EXPECT_NEAR(m.costs[2], 3.0, 1e-12);
+  for (std::size_t i = 1; i < m.costs.size(); ++i)
+    EXPECT_LE(m.costs[i - 1], m.costs[i] + 1e-12);  // ordering preserved
+}
+
+TEST(Murty, DeadPartitionBranchOnStrandedExplainableColumnIsRejected) {
+  // #34 F2 guard: the ONLY feasible full matching is the finite diagonal, so
+  // forbidding any diagonal edge strands a column that C0 CAN explain — a dead
+  // branch that must be pruned, not degraded into a spurious cheaper partial.
+  // murtyKBest must return exactly the one real assignment.
+  Eigen::MatrixXd c(3, 3);
+  c << 1.0,  kInf, kInf,
+       kInf, 1.0,  kInf,
+       kInf, kInf, 1.0;
+  const auto m = murtyKBest(c, 3);
+  ASSERT_EQ(m.assignments.size(), 1u);
+  EXPECT_EQ(m.assignments[0], (std::vector<int>{0, 1, 2}));
+  EXPECT_NEAR(m.costs[0], 3.0, 1e-12);
+}
+
 TEST(Murty, FullyFeasibleWithSomeForbiddenIsUnchanged) {
   // Byte-identical guard: when a full finite matching EXISTS despite some +∞
   // cells, degradation must not alter it (this is the common gauntlet case).
