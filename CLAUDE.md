@@ -62,6 +62,20 @@ symlinked.
 5. **Stable track identity.** Every track has a unique internal `track_id` that is its primary key, independent of external identity (MMSI/name). IDs are never reused after deletion. External identifiers are *attributes/hints*, never the fusion key.
 6. **Validate at the edges.** Adapters validate parsing/units/NaN/plausibility. Internal stages trust their inputs.
 
+## Standing ruling: never lean on broken math (2026-07-22)
+
+If a formula is confirmed wrong, the correct form ships — **even when the bug
+accidentally protects results** ("wrong math as armor"). If correcting it
+exposes a weakness elsewhere, we accept the interim regression, document it as
+a named cost, and fix the weakness **structurally**; we do not keep (or
+reintroduce) the wrong math to hide it. Corollary: a regression caused by a
+correctness fix is a finding about the *structure it unmasked*, never an
+argument against the fix. Precedent: the deployable config already dropped the
+wrong-math `dedup_miss_pd` crutch for the honest land model
+(`docs/algorithms/pmbm-design.md` §"honest substitute"); named as a standing
+ruling during the Murty M5 cycle (user decision 2026-07-22; extends the
+2026-07-15 recalibrate-vs-defer ruling).
+
 ## Module layout
 
 ```
