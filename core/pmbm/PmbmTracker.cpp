@@ -678,37 +678,6 @@ void PmbmTracker::enumerateChildren(
     return any_coverage ? (1.0 - survive) : 0.0;
   };
 
-  // Reconciled miss-baseline M_i (backlog #34 M5). Returns the EXACT log-weight
-  // the misdetection branch below adds when Bernoulli `b` is missed this scan:
-  //   - 0 when source-aware coverage says this scan could not have observed b
-  //     (!should_misdetect → the idle-decay path adds no weight);
-  //   - use_sensor_activity: log(1 − r·opp.p_D) on a completed surveillance sweep
-  //     that covered b, else 0 (mid-sweep / out of coverage / cooperative-only);
-  //   - legacy: log(1 − r·compute_miss_pD(b)), else 0 (out of all coverage).
-  // The assignment cost subtracts this from every detection cell so the K-best
-  // enumeration order equals the applied posterior order. It MUST stay identical
-  // to the log-weight the misdetection branch applies (the two sites are
-  // cross-referenced below); changing one without the other reopens M5. Pure —
-  // no staging, matching evaluate() the misdetection branch reads from the same
-  // frozen last_activity_check_ snapshot, so the two agree per Bernoulli.
-  auto miss_baseline_logw = [&](const Bernoulli& b) -> double {
-    if (!should_misdetect(b.id)) return 0.0;
-    const double r = b.existence_probability;
-    if (cfg_.use_sensor_activity && sensor_activity_ != nullptr) {
-      auto ait = last_activity_check_.find(b.id);
-      const Timestamp last_check =
-          (ait != last_activity_check_.end()) ? ait->second : b.birth_time;
-      const MissOpportunity opp = sensor_activity_->evaluate(
-          b.mean.head<2>(), own_ship_enu_, b.mmsi, b.platform_id, last_check,
-          current_time_);
-      if (!opp.surveillance_miss) return 0.0;
-      return std::log(std::max(1.0 - r * opp.p_D, 1e-300));
-    }
-    const double pD = compute_miss_pD(b);
-    if (pD <= 0.0) return 0.0;
-    return std::log(std::max(1.0 - r * pD, 1e-300));
-  };
-
   // Edge case: empty scan. Only one child = parent with all-miss updates.
   // Misdetection: r ← (1 − p_D)·r / (1 − r + (1 − p_D)·r), state unchanged.
   // Hypothesis weight gains a Σ log(1 − r·p_D) shift (relative ordering
@@ -810,6 +779,60 @@ void PmbmTracker::enumerateChildren(
     return;
   }
 
+  // #34 F4: single source of truth for each Bernoulli's misdetection decision,
+  // evaluated ONCE here against the frozen pre-scan snapshot and then read by BOTH
+  // the M5 assignment-cost miss baseline (miss_baseline_of, below) AND the
+  // misdetection branch in the per-child loop — instead of each site calling
+  // should_misdetect()/sensor_activity_->evaluate()/compute_miss_pD() again. This
+  // removes the extra per-row evaluate() the M5 cost introduced (cost-build +
+  // misdetection each evaluated the same Bernoulli), and makes the cost/weight
+  // agreement STRUCTURAL — the M5 self-consistency invariant is now "both read the
+  // same struct" rather than "two code paths happen to match". Pure over the
+  // frozen snapshot (staged writes land in staged_activity_check_, committed only
+  // after the batch), so it is byte-identical to the pre-F4 per-site evaluation.
+  struct MissEval {
+    bool should_md{true};    // should_misdetect(b.id)
+    bool use_activity{false};// sensor-activity coverage model in force
+    MissOpportunity opp{};   // valid when should_md && use_activity
+    double legacy_pD{0.0};   // valid when should_md && !use_activity
+  };
+  const bool activity_mode = cfg_.use_sensor_activity && sensor_activity_ != nullptr;
+  std::vector<MissEval> miss_eval(n);
+  for (int i = 0; i < n; ++i) {
+    const Bernoulli& b = parent.bernoullis[i];
+    MissEval& me = miss_eval[i];
+    me.should_md = should_misdetect(b.id);
+    if (!me.should_md) continue;
+    me.use_activity = activity_mode;
+    if (activity_mode) {
+      auto ait = last_activity_check_.find(b.id);
+      const Timestamp last_check =
+          (ait != last_activity_check_.end()) ? ait->second : b.birth_time;
+      me.opp = sensor_activity_->evaluate(
+          b.mean.head<2>(), own_ship_enu_, b.mmsi, b.platform_id, last_check,
+          current_time_);
+    } else {
+      me.legacy_pD = compute_miss_pD(b);
+    }
+  }
+  // Reconciled miss-baseline M_i (backlog #34 M5), derived from the cache. Returns
+  // the EXACT log-weight the misdetection branch adds when Bernoulli i is missed:
+  // 0 when this scan could not have observed it (!should_md, mid-sweep / out of
+  // coverage, or legacy pD<=0); else log(1 − r·pD). The assignment cost subtracts
+  // this from every detection cell so the K-best order equals the applied
+  // posterior order.
+  auto miss_baseline_of = [&](int i) -> double {
+    const MissEval& me = miss_eval[i];
+    if (!me.should_md) return 0.0;
+    const double r = parent.bernoullis[i].existence_probability;
+    if (me.use_activity) {
+      if (!me.opp.surveillance_miss) return 0.0;
+      return std::log(std::max(1.0 - r * me.opp.p_D, 1e-300));
+    }
+    if (me.legacy_pD <= 0.0) return 0.0;
+    return std::log(std::max(1.0 - r * me.legacy_pD, 1e-300));
+  };
+
   // Build cost matrix C: (n + m) × m.
   // - C[i, l]      = −log(r_i · ℓ_{i,l})            i = 0..n−1  (Bernoulli ↔ z_l)
   // - C[n+l', l]   = −log(ρ_total_l) iff l == l'                (new target absorbs z_l)
@@ -834,8 +857,8 @@ void PmbmTracker::enumerateChildren(
     const Bernoulli& b = parent.bernoullis[i];
     if (b.existence_probability <= 0.0) continue;
     // M5 (#34): the miss baseline factored out of this Bernoulli's detection
-    // cells. Depends on b, not on l → computed once per row.
-    const double miss_baseline = miss_baseline_logw(b);
+    // cells. Depends on b, not on l → read from the F4 per-row cache.
+    const double miss_baseline = miss_baseline_of(i);
     Track t = toTrack(b);
     for (int l = 0; l < m; ++l) {
       if (cfg_.gate_threshold > 0.0 &&
@@ -1190,7 +1213,9 @@ void PmbmTracker::enumerateChildren(
           miss.last_innovation_norm_m = -1.0;
         }
         // Misdetection: no update at this scan → predicted == filtered.
-        if (!should_misdetect(b.id)) {
+        // #34 F4: read the per-row miss decision cached above (same frozen
+        // snapshot the M5 cost used) instead of re-evaluating it here.
+        if (!miss_eval[i].should_md) {
           miss.existence_probability *= idle_decay_for(b);
           appendTrajectoryPoint(miss, cfg_.trajectory_window_scans,
                                 current_time_, b.mean, b.covariance);
@@ -1198,13 +1223,8 @@ void PmbmTracker::enumerateChildren(
           continue;
         }
         // Task 5: honest per-duty-cycle coverage model (spec §4).
-        if (cfg_.use_sensor_activity && sensor_activity_ != nullptr) {
-          auto ait = last_activity_check_.find(b.id);
-          const Timestamp last_check =
-              (ait != last_activity_check_.end()) ? ait->second : b.birth_time;
-          const MissOpportunity opp = sensor_activity_->evaluate(
-              b.mean.head<2>(), own_ship_enu_, b.mmsi, b.platform_id,
-              last_check, current_time_);
+        if (miss_eval[i].use_activity) {
+          const MissOpportunity& opp = miss_eval[i].opp;
           if (!opp.surveillance_miss) {
             // No surveillance opportunity (mid-sweep, out of coverage,
             // or cooperative-only channel). Existence UNCHANGED by miss math.
@@ -1248,7 +1268,7 @@ void PmbmTracker::enumerateChildren(
         }
         // Legacy path (use_sensor_activity == false): unchanged, bit-identical.
         const double r = b.existence_probability;
-        const double pD = compute_miss_pD(b);
+        const double pD = miss_eval[i].legacy_pD;  // #34 F4: cached compute_miss_pD
         if (pD <= 0.0) {  // out of any sensor's coverage; no penalty
           miss.existence_probability *= idle_decay_for(b);
           appendTrajectoryPoint(miss, cfg_.trajectory_window_scans,
