@@ -12,7 +12,6 @@
 
 #include <Eigen/Dense>
 
-#include "core/association/Hungarian.hpp"
 #include "core/association/Murty.hpp"
 #include "core/estimation/MeasurementModels.hpp"
 #include "core/pipeline/BiasCorrection.hpp"
@@ -928,77 +927,6 @@ void PmbmTracker::enumerateChildren(
       ? k_override
       : std::max(1, cfg_.k_best_per_hypothesis);
 
-  // Backlog #34 Phase-0 offline probe (diagnostic-only). Runs only when a diag
-  // sink is attached; a pure read (reconstructs + re-solves cost matrices, never
-  // touches tracking state) → tracking output is byte-identical with or without
-  // a sink. Since the M5 fix, `C` above IS the shipped reconciled cost, so the
-  // probe reconstructs the two REFERENCE costs from the in-scope quantities and
-  // measures the M5 blast radius against the shipped cost (the numbers stay
-  // reproducible from the fixed code):
-  //     C_buggy(i,l) = −(log r + ll)                          [pre-#34 M5 cost]
-  //     C_text (i,l) = C_buggy − log(pD_l) + log(1 − r·pD_l)  [textbook form]
-  //     C            = −(log r + log pD_l + ll) + M_i^applied [shipped reconciled]
-  // (all three share C's +∞ pattern — only finite detection cells are re-priced).
-  // Counts, per parent cost matrix:
-  //   recon_flips = argmin(C_buggy) suboptimal under C  → the DEPLOYED blast
-  //                 radius (shipped reconciled cost vs the pre-fix cost);
-  //   k1_flips    = argmin(C_buggy) suboptimal under C_text → textbook blast radius;
-  //   form_div    = argmin(C_text) suboptimal under C → the two fix forms would
-  //                 pick different children (why the reconciled form was chosen);
-  //   order_changes / form_order_div = the K>1 top-k analogues;
-  //   infeasible_seed = M3 seed crosses a +∞ edge (0 across the gauntlet post-M6).
-  if (diag_sink_ != nullptr) {
-    ++probe_n_matrices_;
-    auto seed_feasible = [](const std::vector<int>& a,
-                            const Eigen::MatrixXd& M) {
-      for (int r = 0; r < static_cast<int>(a.size()); ++r) {
-        const int c = a[r];
-        if (c >= 0 && !std::isfinite(M(r, c))) return false;
-      }
-      return true;
-    };
-    auto total_cost = [](const std::vector<int>& a, const Eigen::MatrixXd& M) {
-      double t = 0.0;
-      for (int r = 0; r < static_cast<int>(a.size()); ++r)
-        if (a[r] >= 0) t += M(r, a[r]);
-      return t;
-    };
-    // Strictly-suboptimal test: assignment `a` (optimal for some matrix) would be
-    // beaten under matrix `M` → the cost that produced `a` selects a different
-    // child than `M` would. Ties excluded via the 1e-9 margin.
-    auto beaten_under = [&](const std::vector<int>& a, const Eigen::MatrixXd& M) {
-      const std::vector<int> opt = hungarianAssignment(M);
-      return seed_feasible(a, M) && seed_feasible(opt, M) &&
-             total_cost(a, M) > total_cost(opt, M) + 1e-9;
-    };
-    Eigen::MatrixXd Cbuggy = C;  // pre-#34 M5 cost: −(log r + ll)
-    Eigen::MatrixXd Ctext = C;   // textbook: unconditional log(1 − r·pD_l) baseline
-    for (int i = 0; i < n; ++i) {
-      const double r = parent.bernoullis[i].existence_probability;
-      if (r <= 0.0) continue;
-      for (int l = 0; l < m; ++l) {
-        if (!std::isfinite(C(i, l))) continue;  // gated/forbidden cell — shared
-        const double pd = pD_l[l];
-        Cbuggy(i, l) = -(std::log(r) + log_lik[i][l]);
-        Ctext(i, l) =
-            Cbuggy(i, l) - std::log(pd) + std::log(std::max(1.0 - r * pd, 1e-300));
-      }
-    }
-    const std::vector<int> seed_buggy = hungarianAssignment(Cbuggy);
-    if (!seed_feasible(hungarianAssignment(C), C)) ++probe_n_infeasible_seed_;
-    if (beaten_under(seed_buggy, C)) ++probe_n_recon_flips_;      // shipped vs buggy
-    if (beaten_under(seed_buggy, Ctext)) ++probe_n_k1_flips_;     // textbook vs buggy
-    const std::vector<int> seed_text = hungarianAssignment(Ctext);
-    if (beaten_under(seed_text, C)) ++probe_n_form_div_;          // textbook vs shipped
-    if (k_effective > 1) {
-      const auto kb_buggy = murtyKBest(Cbuggy, k_effective).assignments;
-      const auto kb_text = murtyKBest(Ctext, k_effective).assignments;
-      const auto kb_ship = murtyKBest(C, k_effective).assignments;
-      if (kb_buggy != kb_ship) ++probe_n_order_changes_;
-      if (kb_text != kb_ship) ++probe_n_form_order_div_;
-    }
-  }
-
   const KBestResult kb = murtyKBest(C, k_effective);
 
   for (std::size_t k = 0; k < kb.assignments.size(); ++k) {
@@ -1547,13 +1475,6 @@ void PmbmTracker::processBatch(const std::vector<Measurement>& scan_arg) {
     diag_hyp_dropped_floor_ = 0;
     diag_hyp_dropped_cap_ = 0;
     diag_bernoulli_pruned_rmin_ = 0;
-    probe_n_matrices_ = 0;
-    probe_n_k1_flips_ = 0;
-    probe_n_recon_flips_ = 0;
-    probe_n_form_div_ = 0;
-    probe_n_order_changes_ = 0;
-    probe_n_form_order_div_ = 0;
-    probe_n_infeasible_seed_ = 0;
   }
   // Task 5 Step-4 fix: reset the per-scan staging maps. enumerateChildren
   // reads the persistent maps as a frozen snapshot and writes resolved
@@ -2637,13 +2558,6 @@ void PmbmTracker::emitPmbmDiagnostics(Timestamp t) {
   d.n_hyp_dropped_floor = diag_hyp_dropped_floor_;
   d.n_hyp_dropped_cap = diag_hyp_dropped_cap_;
   d.n_bernoulli_pruned_rmin = diag_bernoulli_pruned_rmin_;
-  d.probe_n_cost_matrices = probe_n_matrices_;
-  d.probe_n_k1_winner_flips = probe_n_k1_flips_;
-  d.probe_n_recon_flips = probe_n_recon_flips_;
-  d.probe_n_form_div = probe_n_form_div_;
-  d.probe_n_order_changes_within_k = probe_n_order_changes_;
-  d.probe_n_form_order_div_within_k = probe_n_form_order_div_;
-  d.probe_n_infeasible_seed_head = probe_n_infeasible_seed_;
 
   struct Agg {
     double mass{0.0};

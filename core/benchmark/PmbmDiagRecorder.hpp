@@ -35,9 +35,7 @@ class PmbmDiagRecorder : public pmbm::IPmbmDiagnosticSink {
     scan_.precision(std::numeric_limits<double>::max_digits10);
     bern_.precision(std::numeric_limits<double>::max_digits10);
     scan_ << "scan,time_s,n_meas,n_hyp,n_bernoulli,n_ids,"
-             "hyp_dropped_floor,hyp_dropped_cap,bernoulli_pruned_rmin,"
-             "probe_n_matrices,probe_k1_flips,probe_recon_flips,probe_form_div,"
-             "probe_order_changes,probe_form_order_div,probe_infeasible_seed\n";
+             "hyp_dropped_floor,hyp_dropped_cap,bernoulli_pruned_rmin\n";
     bern_ << "scan,time_s,id,agg_mass,r_best,hyp_count,claimed_meas,"
              "east_m,north_m,speed_mps,in_dominant,in_output,confirmed,"
              "innov_east_m,innov_north_m,innov_norm_m,imm_weights\n";
@@ -47,12 +45,7 @@ class PmbmDiagRecorder : public pmbm::IPmbmDiagnosticSink {
     scan_ << d.scan_index << ',' << d.time_s << ',' << d.n_measurements << ','
           << d.n_global_hypotheses << ',' << d.n_bernoulli_total << ','
           << d.n_ids << ',' << d.n_hyp_dropped_floor << ','
-          << d.n_hyp_dropped_cap << ',' << d.n_bernoulli_pruned_rmin << ','
-          << d.probe_n_cost_matrices << ',' << d.probe_n_k1_winner_flips << ','
-          << d.probe_n_recon_flips << ',' << d.probe_n_form_div << ','
-          << d.probe_n_order_changes_within_k << ','
-          << d.probe_n_form_order_div_within_k << ','
-          << d.probe_n_infeasible_seed_head << '\n';
+          << d.n_hyp_dropped_cap << ',' << d.n_bernoulli_pruned_rmin << '\n';
     for (const auto& b : d.bernoullis) {
       bern_ << d.scan_index << ',' << d.time_s << ',' << b.id << ','
             << b.agg_mass << ',' << b.existence_r_best << ',' << b.hyp_count

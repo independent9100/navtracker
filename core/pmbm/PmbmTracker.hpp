@@ -1008,18 +1008,6 @@ class PmbmTracker {
   int diag_hyp_dropped_cap_{0};
   int diag_bernoulli_pruned_rmin_{0};
   int diag_last_scan_meas_count_{0};
-  // Backlog #34 Phase-0 Murty association-correctness probe accumulators.
-  // Reset per scan, incremented per parent cost matrix in enumerateChildren,
-  // flushed into PmbmScanDiag by emitPmbmDiagnostics. Diagnostic-only: written
-  // and read only when diag_sink_ != nullptr; the probe never mutates tracking
-  // state (byte-identical with or without a sink).
-  long probe_n_matrices_{0};
-  long probe_n_k1_flips_{0};        // textbook form: argmin(C) suboptimal under C'
-  long probe_n_recon_flips_{0};     // reconciled form: argmin(C) suboptimal under C''
-  long probe_n_form_div_{0};        // argmin(C'_textbook) suboptimal under C''_reconciled
-  long probe_n_order_changes_{0};   // textbook top-k order != current (k_eff>1)
-  long probe_n_form_order_div_{0};  // textbook top-k order != reconciled (k_eff>1)
-  long probe_n_infeasible_seed_{0};
   // Task 6: set of Bernoulli ids whose cooperative own-identity report was
   // overdue in the current scan (populated by enumerateChildren, cleared at
   // the start of each processBatch, read by refreshAggregatedTracks to set
