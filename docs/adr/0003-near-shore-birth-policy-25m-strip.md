@@ -179,3 +179,40 @@ had degraded (scenario16 8.42→1.52, anchored aggregate −15.4) as a side
 effect of truthful source-touch provenance. The parked seed question above
 is therefore even less urgent: re-derive only if the anchored mode ever
 becomes a claim input.)*
+
+## Correctness addendum (2026-07-24) — the philos strip deviation was
+## dominantly the M5 association-cost bug, not the environment
+
+The #34 M5 fix (merged 106da6f,
+`docs/baselines/2026-07-20_murty_association_correctness.md`) corrected
+the PMBM assignment cost: the term `log(p_D/(1−r·p_D))` was missing, so
+K-best enumeration order did not match the applied posterior weights and
+the tracker sometimes hard-committed the second-best association —
+concentrated exactly in dense, anchored, near-shore scans. On philos —
+the geography whose in-strip phantom over-count this ADR priced as the
+accepted deviation — correct pricing collapses the deviation:
+**card_err +17.35 → −4 (≈0)**, gospa_false −76 % (5640 → 1360),
+gospa_mean 84.6 → 58.0, gospa_missed ~flat (seed-0 deterministic replay).
+
+**Re-reading of this ADR's honest claim.** The "+17.35 strip-confined
+card_err (+10.45 tracks/scan, user-repriced)" recorded at adoption was
+NOT primarily uncharted-pier structure — it was dominantly the
+association bug ranking birth/clutter interpretations above confident
+existing tracks in contested near-shore scans. The W_off=25 m policy
+itself is unchanged and remains correct; the env-2 8/8 dwelling-revival
+gates (the decision-carrying fact) stayed green through the cycle, and
+no deployable-config pin moved. What changes is the *price*: the
+policy's philos cost is now ≈0. The pending-band (0–25 m) parking and
+its reopen trigger are unaffected.
+
+**Named cost carried elsewhere (not on this ADR's rows).** The M5
+correction ships with a known K=1 near-tie cost in dense/close-pass
+scenes (autoferry sc2/sc16, imazu_12/18) — documented in the cycle
+write-up and structurally ticketed as backlog #39 per the standing
+"never lean on broken math" ruling (CLAUDE.md, 2026-07-22).
+
+**Headline-aggregate note.** The cycle's A/B was per-scenario (seed-0);
+the re-pinned headline aggregates in the 2026-07-15 addendum above
+(env-2 13.75 / env-1 15.49 / harbor 9.53) were not re-measured and
+should be refreshed at the next full-gauntlet re-pin before being
+quoted as current.
