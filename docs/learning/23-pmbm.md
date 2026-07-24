@@ -67,6 +67,12 @@ Plain words: "I expected to see this target with probability `p_D`. I didn't. So
 
 **Step D — Read off tracks.** For each unique Bernoulli identity, sum its weight × existence across all branches. Above some threshold (≈ 0.5), call it a confirmed track and report it. Below, call it tentative. That's it — no separate M-of-N machine, no separate IPDA recursion, no separate delete-misses counter. All of them are *one number*: aggregated `P(target exists)`.
 
+### A subtlety: "cheapest" must mean "most probable" (and why picking only ONE branch can hurt)
+
+Murty's K-best keeps the K *cheapest* branches. For "cheapest" to mean "most probable", the cost of assigning a measurement to a track must be the exact negative-log of the weight that branch will actually get. If the cost leaves a piece out, the cheapest branch is no longer the most probable one — and then the tracker prefers the wrong story. This is exactly the bug fixed in backlog #34 (M5): the cost was missing the "how likely was I to detect this at all" piece (`p_D`), so at `K=1` the tracker sometimes committed to the *second*-best explanation. See `docs/algorithms/pmbm-design.md` §3.4.1.
+
+Now the deeper point. Our shipped config keeps only **one** branch per prior (`K = 1`) — it is fast and, when one explanation is clearly best, correct. But sometimes two explanations are almost *tied*: think of two boats passing very close, where a single radar blip could belong to either. With `K = 1` the tracker must pick one **right now**, by a hair, with no way to change its mind later. If it picks wrong, one real boat can be quietly absorbed into the other and vanish for a while (we call this *coalescence*), or one boat can be split into two ghosts. Keeping a *second* branch alive at a near-tie — so later scans can settle the argument with more evidence — sounds like the cure, and it does help when the tie is a rare, isolated close pass. But in a scene that is ambiguous *everywhere* (many blips, all a little uncertain), keeping extra branches every scan breeds ghost tracks faster than it saves real ones. A single fixed "how close counts as a tie?" number cannot tell those two situations apart. So for now `K = 1` is what ships, its close-pass weakness is a **named, documented cost**, and a smarter, scene-aware rule is a filed follow-up (improvement-backlog #39).
+
 ---
 
 ## 4. Why does this fix the Cl-2 #2 failure?

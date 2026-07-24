@@ -8,6 +8,45 @@ this file holds *observations* only.
 Tracker configuration unless noted: `ConstantVelocity2D(q=0.1)`,
 `GnnAssociator`, `TrackManager`, baseline thresholds from the scenario tests.
 
+## 2026-07-24 — #34 Murty association-correctness (M5+M3): correct cost, K=1 near-tie cost, lever NO-GO [association ranking]
+
+Branch `murty-association-correctness` off master `3606c25`. Full write-up +
+Phase-0/Step-1/sweep tables: `docs/baselines/2026-07-20_murty_association_correctness.md`.
+
+**Fix.** M5 (`83be3c7`) corrects the PMBM Murty assignment cost from `−log(r·ℓ)` to
+`−log(r·p_D·ℓ) + M_i` (reconciled miss-baseline); M3 (`026ec81`) degrades
+`murtyKBest` per-row on an infeasible seed instead of returning EMPTY. + review
+hardenings F2 (`8229008`, children degrade on genuinely-unexplainable columns),
+F4 (`68cec4e`, cache the miss decision — cost/weight now one source of truth),
+F1 (`4daa5ea`, drop the diagnostic probe).
+
+**Deployable A/B (seed-0; replays deterministic).** philos is a clean win:
+gospa_mean 84.6→58.0 (−31 %), gospa_false 5640→1360 (−76 %), gospa_missed flat,
+card_err +17.35→−4.0. Gauntlet-wide gospa_false −8.9 %, gospa_missed +1.4 %. The
++missed is concentrated at close passes: the K=1 hard commit resolves genuine
+near-ties by fiat — autoferry_scenario2 truth coalesced away ~40–582 s
+(ospa 91→183); imazu_12/18 track-break (ospa 75→125, 74→140);
+autoferry_scenario16 over-split (gospa_false 0→65, missed flat). Every damaging
+Murty flip measured ≤ 1.83 nats of the runner-up.
+
+**Lever NO-GO.** Ambiguity-keyed adaptive-K (keep near-tie alternatives) built +
+swept (margin × k_cap). No setting passes: autoferry_scenario2 gospa_false
+explodes at every margin (≥76 vs master 24.7); imazu_18 fixed only at m2.0/k2, a
+knife-edge coinciding with sc2's worst point. A single global margin can't
+separate an isolated close-pass near-tie (fixed) from pervasive ambiguity
+(phantom flood). Preserved on `murty-lever-wip` (`4296dc7`); structural follow-up
+= backlog #39. Fix ships with the K=1 close-pass cost as a named, ticketed cost
+(user ruling: never lean on broken math).
+
+**Suite.** 1259 pass. No deployable-config pin moved. 5 research-probe tests
+moved (M5 shifts the existence/birth landscape the occupancy/LOS features
+consume): 2 recalibrated (HarborGateScenarios churn suppress_hits 28→~10 = fewer
+clutter tracks to suppress; PmbmClutterFeedR2 = M5 RESTORES the dense_clutter feed
+lifetime 0.26→0.85, superseding the R2 "spiral is assignment-orthogonal"
+finding); 3 `DISABLED_` (backlog #40, real M5-unmasked interactions in the
+non-deployable occupancy/LOS research features — occupancy→hazard emission and
+camera-eviction↔suppression↔birth — not number-tweakable without papering over).
+
 ## 2026-07-20 — backlog-mediums batch 1: 7 items, all byte-identical on the deployable config [suite health / robustness]
 
 Landed the first slice of the #26–#38 medium-findings triage (branch

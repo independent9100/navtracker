@@ -1331,23 +1331,37 @@ compared against the m/s min-speed gate; the not-available sentinel 102.3 kn bec
 102.3 m/s velocity. Distinct from W5.6.1 (sentinel band, `AisAdapter.cpp`) and W5.6.2
 (DMA timestamp). `adapters/replay/AisCsvReplayAdapter.cpp:168`.
 
-## 34. PMBM/association ranking & degradation robustness (M3, M4, M5, M6) — MEDIUM (one HIGH-impact, config-conditional) — **M6 FIXED 2026-07-20 (85cb0a4); M3/M5/M4 OPEN**
+## 34. PMBM/association ranking & degradation robustness (M3, M4, M5, M6) — MEDIUM (one HIGH-impact, config-conditional) — **M6 FIXED 2026-07-20 (85cb0a4); M5+M3 FIXED 2026-07-23 (Murty cycle); M4 OPEN**
 
-**M6 FIXED:** `clutter_intensity > 0` fail-loud ctor guard added. **M5, M3
-(Murty cost term + empty-on-infeasible) NOT pulled** — they change association
-ranking on the deployable adaptive-K PMBM (its-own-cycle / F2 precedent; parked
-with the #25 close-pass Murty cycle per the batch-1 arbiter ruling). **M4 (JPDA
+**M5 + M3 FIXED 2026-07-23** on branch `murty-association-correctness` (M3
+`026ec81`, M5 `83be3c7`; + review hardenings F2 `8229008`, F4 `68cec4e`, probe
+drop F1 `4daa5ea`). M5 ships the **reconciled** cost (miss-baseline = the exact
+applied misdetection log-weight, per the self-consistency invariant). The fix
+unmasked the **K=1 hard-commit near-tie limitation** (see follow-up #39): under
+genuine ambiguity the single committed assignment resolves a near-tie by fiat —
+coalescing a real vessel away for minutes (autoferry_scenario2) or over-splitting
+(autoferry_scenario16 / imazu). An ambiguity-keyed adaptive-K lever was built and
+**evaluated NO-GO** (side branch `murty-lever-wip` `4296dc7`). Shipped as a named
+cost; counterweight: gauntlet phantoms −8.9 %, philos card_err +17.35 → −4,
+imazu_15/22 improved. Full evidence:
+`docs/baselines/2026-07-20_murty_association_correctness.md`. **M6 FIXED**
+(2026-07-20, `85cb0a4`): `clutter_intensity > 0` fail-loud ctor guard. **M4 (JPDA
 global event enumeration) NOT pulled** — non-deployable associator, separate.
 
 - **M6 (HIGH impact):** `clutter_intensity==0` for a sensor makes an unclaimed
   measurement's column all-+inf → (via M3) zero children → the whole MBM can go empty
   in one scan (every track lost). Add a `clutter_intensity>0` fail-loud ctor guard.
   `core/pmbm/PmbmTracker.cpp:830` (ctor ~:176).
-- **M3:** `murtyKBest` returns EMPTY on any infeasible seed edge, defeating the per-row
-  degradation contract both callers were built against (their `isfinite` re-checks are
-  dead code). `core/association/Murty.cpp:69`. M3↔M6 close together.
-- **M5:** Murty cost omits `log(p_D/(1−r·p_D))` → K-best enumeration order ≠ posterior
-  order → wrong argmax under K=1 / adaptive-K floor. `core/pmbm/PmbmTracker.cpp:821`.
+- **M3 (FIXED `026ec81`):** `murtyKBest` returned EMPTY on any infeasible seed edge,
+  defeating the per-row degradation contract both callers were built against. Now drops
+  only the infeasible edges, keeping the feasible partial. `core/association/Murty.cpp`.
+  F2 (`8229008`) extends the same per-row degradation to children, but only for a
+  genuinely-unexplainable (all-+∞ in C0) column — a lock-stranded column stays a
+  correctly-pruned dead branch.
+- **M5 (FIXED `83be3c7`):** Murty cost omitted `log(p_D/(1−r·p_D))` → K-best order ≠
+  posterior order → wrong argmax under K=1. Fixed to `−log(r·p_D·ℓ) + M_i` (reconciled
+  M_i). `core/pmbm/PmbmTracker.cpp`. F4 (`68cec4e`) caches the per-Bernoulli miss
+  decision so cost and applied weight are one source of truth.
   (The 2026 K=1 Murty fix `45a504d` was the K-th-accepted early-exit — a different change.)
 - **M4:** JPDA enumerates joint events globally over the whole scan, not per gating
   cluster, so the event count is the PRODUCT across independent clusters → ordinary
@@ -1402,3 +1416,68 @@ for the range/bearing builders) NOT pulled** — deferred, doc/diagnostic.
 Detection entity id is `det-<source_id>-<nanos>`, identical for every measurement of a
 scan (same source + timestamp), and Foxglove SceneUpdate replace-semantics then show
 only the last detection of each scan on `/detections`. `adapters/foxglove/FoxgloveDebugRecorder.cpp:218`.
+
+## 39. Scene-adaptive association-ambiguity handling — MEDIUM (structural; unmasked by #34 M5)
+
+**Root cause.** With the M5 assignment-cost fix in place, the deployable K=1
+hard-commit resolves a genuine association near-tie *by fiat* — it commits one
+assignment and the alternative dies by argmax. Under sustained dense ambiguity a
+real vessel is coalesced away for minutes (autoferry_scenario2 truth lost
+~40–582 s); close passes break tracks (imazu_12/18) or over-split
+(autoferry_scenario16). This is ADR-0002's failure class.
+
+**Evidence / what's been tried.** A global-margin **ambiguity-keyed adaptive-K**
+lever (raise K when the top-2 cost margin is within a near-tie band) was built and
+**evaluated NO-GO** — side branch `murty-lever-wip` (`4296dc7`), full margin×k_cap
+sweep in `docs/baselines/2026-07-20_murty_association_correctness.md`. A single
+global margin cannot separate an *isolated* close-pass near-tie (where keeping the
+alternative recovers a starved real target — imazu fixed) from *pervasive*
+ambiguity (where it floods phantoms — autoferry_scenario2 gospa_false explodes at
+every margin); the one margin that fixed imazu_18 was a knife-edge coinciding with
+autoferry_scenario2's worst over-split. Latency also blows up on the dense scans.
+
+**Candidate directions (a discriminator beyond a global cost margin).**
+- **Ambiguity-density keying** — gate the K-raise on how *pervasive* near-ties are
+  this scan (raise K only for locally-isolated contests, not scenes saturated with
+  mild ambiguity).
+- **Starvation-history keying** — raise K only when a nearby confirmed track is
+  being repeatedly missed while in-gate measurements exist (the coalescence
+  signature), not on every near-tie.
+- **Coalescence detection** — a post-commit check that two truths collapsed onto
+  one track / one truth spawned a duplicate, triggering a targeted re-hypothesis.
+- **Detection-vs-birth-only K-raise** — restrict the alternative to the
+  detect-vs-new-target contest (the coalescence mechanism), never track-vs-track.
+
+Queues on merits like everything else. Start from the `murty-lever-wip` code + the
+sweep table.
+
+## 40. M5 unmasked interactions in non-deployable occupancy/LOS research features — LOW (research; 3 tests DISABLED, not skipped)
+
+The #34 M5 reconciled assignment cost correctly changed the PMBM existence/birth
+landscape. Three NON-deployable research-feature tests (config
+`imm_cv_ct_pmbm_occupancy_detector_coverage` + camera/LOS-shadow) were pinned to
+the pre-M5 landscape and now fail on genuine invariant/emission flips — not
+number drift. They are `DISABLED_`-prefixed (visible every run, not skipped)
+pending a research cycle; the deployable config is unaffected.
+
+- **`LosShadowGuard.DISABLED_CarCarrierNearYachtCellGuardOnVsOff`**: the LOS-shadow
+  guard MECHANISM still works (fires 9/9, holds occupancy mass 0.749 through the
+  35 s occlusion), but the emitted static-hazard presence collapsed to 0 in BOTH
+  arms (was ON≈0.8 / OFF≈0.51) and the yacht is not tracked either (5/316 shadow
+  scans, nearest 56.9 m). So the held mass no longer surfaces as a hazard under
+  M5. Investigate the occupancy→static-hazard emission gate vs M5's existence
+  changes (`core/static/LiveOccupancyModel`, `core/collision/StaticHazardEvaluator`).
+  Possible ADR-0002 presence-emission concern in this research config.
+- **`LosShadowGuard.DISABLED_SimAnchoredControlGuardInert`**: same root cause — M5
+  shifted the control's occupancy mass baseline (ON 1.027 vs OFF 0.864, Δ0.163 >
+  the 0.02 inertness tolerance).
+- **`PhilosCoverageDecay6c.DISABLED_SunsetCameraEvictionRemovesDepartedPinsHoldsChartStructure`**:
+  the vacated-ferry-berth post-move window flips 0/0 → off=0/on=19 — turning
+  camera eviction ON now ADDS 19 post-move hazard-scans, violating "eviction can
+  only spend pins, never add them". Localization: eviction erases the frozen
+  persistence and re-derives suppression; under M5's changed births the lifted
+  suppression admits a birth that re-creates the berth pin. Investigate the
+  eviction↔suppression-re-derivation↔birth path (`LiveOccupancyModel` eviction).
+
+Re-enable each by removing its `DISABLED_` prefix once the feature interaction is
+resolved (fix + a re-pinned assertion, or a documented premise change).
