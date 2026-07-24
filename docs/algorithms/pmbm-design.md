@@ -389,8 +389,8 @@ This is the combinatorial step. For each *prior* global hypothesis `j` with
 `C^j ∈ ℝ^{(n_j + m) × m}`:
 
 ```
-C^j[i, l]            = − log( ℓ^{j,i}_l · r^{j,i}_{k|k−1} )      for i = 1..n_j   (Bernoulli i ↔ z_l)
-C^j[n_j + l', l]     = − log( ρ_l · 𝟙[l = l'] )                  for l' = 1..m    (z_l is new target / clutter)
+C^j[i, l]            = − log( r^{j,i} · p_{D,l} · ℓ^{j,i}_l ) + M^{j,i}   for i = 1..n_j   (Bernoulli i ↔ z_l)
+C^j[n_j + l', l]     = − log( ρ_l · 𝟙[l = l'] )                          for l' = 1..m    (z_l is new target / clutter)
 ```
 
 A column-perfect assignment of `C^j` is a *child global hypothesis* `j'`.
@@ -405,6 +405,55 @@ normalised across all children of all prior `j`. Exhaustive enumeration is
 (Phase 0, already shipped in `core/association/Murty.{hpp,cpp}`), keeping
 the K cheapest assignments per prior. The same shared truncator services
 the MHT global-non-conflict step.
+
+#### 3.4.1 Assignment-cost self-consistency (#34: M5, M3, F2)
+
+**Math.** The applied posterior log-weight of a *detected* Bernoulli is
+`log(r · p_D · ℓ)`; a *missed* Bernoulli contributes `M^{j,i}` — its exact
+misdetection log-weight, which is `log(1 − r · p_D)` under an in-coverage
+surveillance miss and `0` when this scan could not have observed the target
+(source-aware skip, mid-sweep, out of coverage, or `p_D ≤ 0`). A child that
+detects a subset `D` of Bernoulli rows has log-weight
+`Σ_{i∈D} log(r·p_D·ℓ) + Σ_{i∉D} M^{j,i} + Σ_{births} log ρ`. Factoring out the
+scan-constant all-miss baseline `Σ_i M^{j,i}`, the per-detection-cell cost is
+`−log(r·p_D·ℓ) + M^{j,i}`, so **argmin(total assignment cost) = argmax(child
+log-weight)** for every K. This is the form shown above.
+
+**Assumptions.** `M^{j,i}` in the cost must be *byte-identical* to the
+log-weight the misdetection branch actually applies (they read one cached
+`MissEval` per Bernoulli — F4 — evaluated once against the frozen pre-scan
+snapshot). If the two diverge, the K-best enumeration no longer ranks by the
+applied posterior and the K=1 commit is not the MAP assignment.
+
+**Rationale.** Before #34 M5 the cost was `−log(r·ℓ)` — it omitted the
+detection-pricing term `−log(p_D/(1−r·p_D)) = −log p_D + M`, so under the
+deployable **K=1 hard commit** the cost-argmin could differ from the
+max-posterior assignment and the tracker committed to the wrong child. M3 is a
+sibling fix in the truncator: `murtyKBest` returned EMPTY on an infeasible seed
+edge; it now degrades per-row to the feasible subset (F2 extends the same
+per-row degradation to children, but only for a *genuinely* unexplainable
+column — an all-`+∞` column in the original cost, e.g. `ρ_l = 0` — never a
+lock-stranded one, which stays a correctly-pruned dead branch).
+
+**Known cost / ways to improve — the K=1 near-tie limitation.** Correcting the
+cost is unconditionally right (standing ruling: never lean on broken math), but
+it unmasked a structural weakness of the K=1 hard commit: under **genuine
+association ambiguity** the single committed assignment resolves a near-tie *by
+fiat*. Measured consequence on the deployable config
+(`docs/baselines/2026-07-20_murty_association_correctness.md`): at a sustained
+dense-ambiguity pass a real vessel can be coalesced away for minutes
+(autoferry_scenario2 truth lost ~40–582 s), and close passes can break tracks
+(imazu_12/18) or over-split (autoferry_scenario16) — ADR-0002's failure class,
+now a **named, structurally-ticketed cost**. The counterweight, same fix:
+gauntlet-wide phantoms −8.9 %, the philos accepted deviation collapses
+(card_err +17.35 → −4), and imazu_15/22 improve. An ambiguity-keyed adaptive-K
+lever was built and **evaluated NO-GO** (a single global near-tie margin cannot
+separate an isolated close-pass near-tie, which it fixes, from pervasive
+ambiguity, where it floods phantoms; the one margin that fixed imazu_18 was a
+knife-edge coinciding with autoferry_scenario2's worst over-split). The
+structural follow-up — a discriminator beyond a global margin (ambiguity-density
+/ starvation-history / coalescence detection) — is filed in the improvement
+backlog.
 
 ### 3.5 Mixture pruning + Bernoulli merging
 

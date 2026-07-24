@@ -178,10 +178,15 @@ TEST(HarborGateScenarios, ChurnSuppressionGateBaseline) {
             << "  +occ   : gospa_false=" << gf_occ << " lifetime=" << life_occ
             << " suppress_hits=" << hits << "\n"
             << std::flush;
-  // #24: (1) banded floor, not >0 — measured ~28 suppress_hits on churn; a floor
-  // of 10 catches a partial collapse of the mechanism, not only total death.
-  EXPECT_GT(hits, 10.0)
-      << "occupancy suppression barely fired on churn (measured ~28): " << hits;
+  // #24 / #34: (1) banded floor, not >0. Originally ~28 suppress_hits on churn;
+  // #34 M5 (the reconciled detection-pricing cost) leaves FEWER clutter-born churn
+  // tracks alive to suppress — the correctness fix working, the (b) confident-
+  // clutter-persistence axis in reverse — so the post-M5 8-seed mean is ~10. Floor
+  // at 5 still catches a real collapse of the mechanism toward zero (mechanism
+  // death), which is what this gate exists to detect.
+  EXPECT_GT(hits, 5.0)
+      << "occupancy suppression collapsed on churn (post-#34-M5 baseline ~10): "
+      << hits;
   // (2) boats preserved (ADR 0002): the old 1e-9 slack was FP-equality on an
   // adaptive lifetime ratio; use a real no-regression band (both arms ~0.975, a
   // 1-of-N boat drop is ~0.16, so 0.05 sits well below a real drop).
