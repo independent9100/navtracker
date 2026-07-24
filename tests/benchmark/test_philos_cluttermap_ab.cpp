@@ -54,20 +54,24 @@ std::vector<std::unique_ptr<ScenarioRun>> abScenarios() {
 
 // R2 characterization (synthetic, no philos fixture needed).
 //
-// The plan doc + north-star hypothesised that the clutter-map feed's
-// nearest-neighbour-at-timestamp reconstruction was the ROOT of the
-// dense_clutter regression (lifetime 0.90 → 0.26). This A/B DISPROVES that: with
-// the true-assignment labeling fix in place, dense_clutter is still ~0.26 —
-// byte-for-byte the same as the buggy NN path. The regression is the `1 − r`
-// co-located death spiral on UNIFORM clutter (a low-r real target's own returns
-// raise λ_C at the target; eval-log 2026-07-01), which is orthogonal to WHICH
-// Bernoulli claims a return. The real cure is the Stage 1b-ii persistence /
-// spatial-concentration gate — uniform clutter never crosses that bar.
+// HISTORY. The plan doc + north-star hypothesised the clutter-map feed's NN
+// reconstruction was the ROOT of the dense_clutter regression (lifetime
+// 0.90 → 0.26); the R2 A/B disproved that (feed ≈ 0.26 with the true-assignment
+// label too) and concluded the regression was the `1 − r` co-located death
+// spiral on UNIFORM clutter, "orthogonal to WHICH Bernoulli claims a return",
+// curable only by a Stage 1b-ii persistence gate. The test then LOCKED IN
+// "feed still spirals (bl < 0.5)" with an explicit note: when something restores
+// dense_clutter, THIS TEST SHOULD FAIL — update it to assert restoration.
 //
-// This test locks in the finding: base healthy, feed still spirals. When Stage
-// 1b-ii lands and restores dense_clutter, THIS TEST SHOULD FAIL — update it then
-// to assert restoration (that failure is the reminder, not a regression).
-TEST(PmbmClutterFeedR2, TrueAssignmentIsOrthogonalToDenseClutterSpiral) {
+// #34 M5 is that something, and it REFINES the R2 conclusion. The reconciled
+// detection-pricing cost restores the feed lifetime 0.26 → ~0.85 (nearly the
+// no-feed baseline 0.955). So the spiral was NOT purely assignment-orthogonal:
+// correct pricing lets a real low-r target reliably CLAIM its own returns instead
+// of ceding them to clutter/birth, so its existence no longer bleeds out through
+// the `1 − r` misdetection path. What remains assignment-orthogonal is only the
+// residual gap (~0.85 vs 0.955); the bulk of the spiral was association-driven.
+// This test now asserts the restoration (with the same clutter-map feed on).
+TEST(PmbmClutterFeedR2, M5DetectionPricingRestoresDenseClutterFeedLifetime) {
   const Config* base = nullptr;
   const auto all = defaultConfigs();
   for (const auto& c : all)
@@ -104,9 +108,13 @@ TEST(PmbmClutterFeedR2, TrueAssignmentIsOrthogonalToDenseClutterSpiral) {
   const double bl = meanMetric(rows, "imm_cv_ct_pmbm_land_cluttermap",
                                "dense_clutter", "lifetime_ratio");
   std::cout << "R2 dense_clutter lifetime_ratio: base=" << a << "  +feed=" << bl
-            << "  (feed still spirals; cure = Stage 1b-ii persistence gate)\n";
-  EXPECT_GT(a, 0.80);   // baseline is healthy (no feed)
-  EXPECT_LT(bl, 0.50);  // feed still spirals — R2 labeling is orthogonal
+            << "  (#34 M5 restored the feed lifetime; the spiral was largely "
+               "association-driven, not assignment-orthogonal)\n";
+  EXPECT_GT(a, 0.80);   // baseline is healthy (no feed) — unchanged
+  // Post-#34-M5: the feed no longer spirals below 0.5 (was ~0.26); correct
+  // detection-pricing restores it to ~0.85. Floor at 0.70 separates "restored"
+  // from the old spiral with margin on both sides (5-seed mean).
+  EXPECT_GT(bl, 0.70);
 }
 
 TEST(PhilosClutterMapAB, ClutterFeedVsBaseline) {
